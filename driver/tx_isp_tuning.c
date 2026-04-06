@@ -932,6 +932,17 @@ static inline uint32_t tiziano_bcsh_StrenCal(uint32_t a1, uint32_t a2, uint32_t 
     return (uint32_t)(num / d23);
 }
 
+/* OEM-exact unsigned interpolation: handles both ascending and descending
+ * list values without uint32 wraparound.  Direct division matches OEM. */
+static inline uint32_t oem_interp_u32(uint32_t lo_val, uint32_t hi_val,
+                                      uint32_t dist, uint32_t range)
+{
+    if (hi_val >= lo_val)
+        return dist * (hi_val - lo_val) / range + lo_val;
+    else
+        return lo_val - dist * (lo_val - hi_val) / range;
+}
+
 /* Compute OEM-shaped S-vectors (StrenCal/TransitParam surrogate)
  * Output: three 4-element vectors to feed arg1..arg3 at 0x8000..0x8014.
  * We interpolate S-min/max lists by EV, then derive three segment vectors.
@@ -946,7 +957,7 @@ static void tiziano_bcsh_compute_S_vectors(const struct isp_tuning_data *tuning,
      * then apply StrenCal with two controls (data_9a91d, data_9a91f)
      * exactly as: first pass (c1) with 0/0x80 or 0x80/0x100 endpoints based on sign,
      * second pass (c2) with (0,0x80, 0, current) when c2 signed >= 0. */
-    uint32_t ev_shifted, ev_low, ev_high, range, dist, w8;
+    uint32_t ev_shifted, ev_low, ev_high, range, dist;
     uint32_t sminS_now = 0, smaxS_now = 0, sminM_now = 0, smaxM_now = 0;
     uint32_t base0[4], base1[4], base2[4], base3[4];
     uint32_t arr0[4], arr1[4], arr2[4], arr3[4];
@@ -967,14 +978,16 @@ static void tiziano_bcsh_compute_S_vectors(const struct isp_tuning_data *tuning,
     } else {
         for (i = 0; i < 8; ++i) {
             ev_low = EvList[i]; ev_high = EvList[i+1];
-            if (ev_shifted >= ev_low && ev_shifted < ev_high) {
-                range = ev_high - ev_low;
-                dist  = ev_shifted - ev_low;
-                w8    = range ? (dist << 8) / range : 0; /* 8.8 weight */
-                sminS_now = SminS[i] + (((SminS[i+1] - SminS[i]) * w8) >> 8);
-                smaxS_now = SmaxS[i] + (((SmaxS[i+1] - SmaxS[i]) * w8) >> 8);
-                sminM_now = SminM[i] + (((SminM[i+1] - SminM[i]) * w8) >> 8);
-                smaxM_now = SmaxM[i] + (((SmaxM[i+1] - SmaxM[i]) * w8) >> 8);
+            if (ev_shifted >= ev_low && ev_high >= ev_shifted) {
+                dist  = (ev_low <= ev_shifted) ?
+                        (ev_shifted - ev_low) : (ev_low - ev_shifted);
+                range = (ev_low <= ev_high) ?
+                        (ev_high - ev_low) : (ev_low - ev_high);
+                if (range == 0) range = 1;
+                sminS_now = oem_interp_u32(SminS[i], SminS[i+1], dist, range);
+                smaxS_now = oem_interp_u32(SmaxS[i], SmaxS[i+1], dist, range);
+                sminM_now = oem_interp_u32(SminM[i], SminM[i+1], dist, range);
+                smaxM_now = oem_interp_u32(SmaxM[i], SmaxM[i+1], dist, range);
                 break;
             }
         }
@@ -1026,9 +1039,18 @@ static void tiziano_bcsh_compute_S_vectors(const struct isp_tuning_data *tuning,
         }
     }
 
-    /* Provide first three arrays as arg1..arg3 to lut_parameter. */
+    /* OEM S-vector (arg11 to tiziano_bcsh_lut_parameter):
+     * [SminS, SmaxS, SminM, SmaxM] — four DIFFERENT interpolated values,
+     * NOT the same value replicated.  The OEM stores these as contiguous
+     * scalars (tisp_BCSH_ai32Svalue, data_b5444, data_b5448, data_b544c)
+     * which get packed into registers 0x806c-0x8070 and drive the Sstep
+     * saturation-transition slope computation at 0x8064. */
+    out1[0] = (uint16_t)(arr0[0] & 0xFFFF);  /* SminS after StrenCal */
+    out1[1] = (uint16_t)(arr1[0] & 0xFFFF);  /* SmaxS after StrenCal */
+    out1[2] = (uint16_t)(arr2[0] & 0xFFFF);  /* SminM after StrenCal */
+    out1[3] = (uint16_t)(arr3[0] & 0xFFFF);  /* SmaxM after StrenCal */
+    /* out2/out3: diagnostic only (not written to hardware) */
     for (i = 0; i < 4; ++i) {
-        out1[i] = (uint16_t)(arr0[i] & 0xFFFF);
         out2[i] = (uint16_t)(arr1[i] & 0xFFFF);
         out3[i] = (uint16_t)(arr2[i] & 0xFFFF);
     }
@@ -1273,13 +1295,15 @@ static void tiziano_bcsh_reg_apply(struct isp_tuning_data *tuning)
     {
         u32 ev10 = tuning->bcsh_ev >> 10; /* matches data_9a614 >> 10 */
         u32 *EvList = bcsh_wdr_enabled ? bcsh_EvList_wdr : bcsh_EvList;
-        /* Clamp indices as per BN: [1..9] */
-        u32 idxA = 1; /* default for data_c53e4 */
-        u32 idxB = 9; /* default for data_c53ec */
+        /* OEM: data_b53d4 = clip0[1], data_b53dc = clip0[3], clamped to [1..9] */
+        u32 idxA = bcsh_clip0[1];
+        u32 idxB = bcsh_clip0[3];
         if (idxA < 1) idxA = 1; if (idxA > 9) idxA = 9;
         if (idxB < 1) idxB = 1; if (idxB > 9) idxB = 9;
 
-        u32 s1_3 = 0;
+        /* OEM: s1_3 defaults to HLSP[2]<<16 | HLSP[1] when neither
+         * clip0 branch is taken (clip0[0]!=1 && clip0[2]!=1). */
+        u32 s1_3 = (HLSP[2] << 16) | (HLSP[1] & 0xFFFF);
         if (bcsh_clip0[0] == 1) {
             u32 a0_48 = EvList[idxA - 1];
             if (ev10 < a0_48) {
@@ -1296,8 +1320,8 @@ static void tiziano_bcsh_reg_apply(struct isp_tuning_data *tuning)
                 if (clip0_2) hi = (a2_11 * HLSP[2]) / clip0_2;
                 s1_3 = (hi << 16) | (lo & 0xFFFF);
             }
-        } else {
-            /* BN alt branch when data_c53e8 == 1: approximate enable */
+        } else if (bcsh_clip0[2] == 1) {
+            /* OEM: only enter this branch when clip0[2] (data_b53d8) == 1 */
             u32 v1_8 = EvList[8]; /* EvList[8] */
             if (ev10 < v1_8) {
                 u32 a0_50 = EvList[idxB - 1];
@@ -4405,37 +4429,32 @@ static int tiziano_bcsh_update(struct isp_tuning_data *tuning)
         return 0;
     }
 
-    // Find interpolation interval
+    /* OEM EXACT: find interpolation interval and use direct unsigned
+     * abs-diff division — avoids uint32 wraparound when v2 < v1
+     * and matches OEM precision (no Q8 quantization). */
     for (i = 0; i < 8; i++) {
         uint32_t ev_low = tuning->bcsh_au32EvList_now[i];
         uint32_t ev_high = tuning->bcsh_au32EvList_now[i + 1];
 
-        if (ev_shifted >= ev_low && ev_shifted < ev_high) {
-            // Linear interpolation between points
-            uint32_t range = ev_high - ev_low;
-            uint32_t dist = ev_shifted - ev_low;
-            uint32_t weight = range ? (dist << 8) / range : 0;  // Fixed point 8.8
+        if (ev_shifted >= ev_low && ev_high >= ev_shifted) {
+            uint32_t dist = (ev_low <= ev_shifted) ?
+                            (ev_shifted - ev_low) : (ev_low - ev_shifted);
+            uint32_t range = (ev_low <= ev_high) ?
+                             (ev_high - ev_low) : (ev_low - ev_high);
+            if (range == 0) range = 1;
 
-            // Interpolate SminListS
-            uint32_t v1 = tuning->bcsh_au32SminListS_now[i];
-            uint32_t v2 = tuning->bcsh_au32SminListS_now[i + 1];
-            tuning->bcsh_saturation_value = v1 + (((v2 - v1) * weight) >> 8);
-
-            // Interpolate SmaxListS
-            v1 = tuning->bcsh_au32SmaxListS_now[i];
-            v2 = tuning->bcsh_au32SmaxListS_now[i + 1];
-            tuning->bcsh_saturation_max = v1 + (((v2 - v1) * weight) >> 8);
-
-            // Interpolate SminListM
-            v1 = tuning->bcsh_au32SminListM_now[i];
-            v2 = tuning->bcsh_au32SminListM_now[i + 1];
-            tuning->bcsh_saturation_min = v1 + (((v2 - v1) * weight) >> 8);
-
-            // Interpolate SmaxListM
-            v1 = tuning->bcsh_au32SmaxListM_now[i];
-            v2 = tuning->bcsh_au32SmaxListM_now[i + 1];
-            tuning->bcsh_saturation_mult = v1 + (((v2 - v1) * weight) >> 8);
-
+            tuning->bcsh_saturation_value = oem_interp_u32(
+                tuning->bcsh_au32SminListS_now[i],
+                tuning->bcsh_au32SminListS_now[i + 1], dist, range);
+            tuning->bcsh_saturation_max = oem_interp_u32(
+                tuning->bcsh_au32SmaxListS_now[i],
+                tuning->bcsh_au32SmaxListS_now[i + 1], dist, range);
+            tuning->bcsh_saturation_min = oem_interp_u32(
+                tuning->bcsh_au32SminListM_now[i],
+                tuning->bcsh_au32SminListM_now[i + 1], dist, range);
+            tuning->bcsh_saturation_mult = oem_interp_u32(
+                tuning->bcsh_au32SmaxListM_now[i],
+                tuning->bcsh_au32SmaxListM_now[i + 1], dist, range);
             break;
         }
     }
@@ -22137,6 +22156,27 @@ static void tiziano_bcsh_params_refresh(void)
     memcpy(tiziano_MMatrix,    p + BCSH_TPARAMS_MMATRIX_OFF,       0x24);
     memcpy(tiziano_MinvMatrix, p + BCSH_TPARAMS_MINVMATRIX_OFF,    0x24);
     memcpy(bcsh_clip2,         p + BCSH_TPARAMS_CLIP2_OFF,         0x10);
+
+    pr_info("BCSH_SLISTS: SminS=[%u,%u,%u,%u,%u,%u,%u,%u,%u]\n",
+            bcsh_SminListS[0], bcsh_SminListS[1], bcsh_SminListS[2],
+            bcsh_SminListS[3], bcsh_SminListS[4], bcsh_SminListS[5],
+            bcsh_SminListS[6], bcsh_SminListS[7], bcsh_SminListS[8]);
+    pr_info("BCSH_SLISTS: SmaxS=[%u,%u,%u,%u,%u,%u,%u,%u,%u]\n",
+            bcsh_SmaxListS[0], bcsh_SmaxListS[1], bcsh_SmaxListS[2],
+            bcsh_SmaxListS[3], bcsh_SmaxListS[4], bcsh_SmaxListS[5],
+            bcsh_SmaxListS[6], bcsh_SmaxListS[7], bcsh_SmaxListS[8]);
+    pr_info("BCSH_SLISTS: SminM=[%u,%u,%u,%u,%u,%u,%u,%u,%u]\n",
+            bcsh_SminListM[0], bcsh_SminListM[1], bcsh_SminListM[2],
+            bcsh_SminListM[3], bcsh_SminListM[4], bcsh_SminListM[5],
+            bcsh_SminListM[6], bcsh_SminListM[7], bcsh_SminListM[8]);
+    pr_info("BCSH_SLISTS: SmaxM=[%u,%u,%u,%u,%u,%u,%u,%u,%u]\n",
+            bcsh_SmaxListM[0], bcsh_SmaxListM[1], bcsh_SmaxListM[2],
+            bcsh_SmaxListM[3], bcsh_SmaxListM[4], bcsh_SmaxListM[5],
+            bcsh_SmaxListM[6], bcsh_SmaxListM[7], bcsh_SmaxListM[8]);
+    pr_info("BCSH_SLISTS: EvList=[%u,%u,%u,%u,%u,%u,%u,%u,%u]\n",
+            bcsh_EvList[0], bcsh_EvList[1], bcsh_EvList[2],
+            bcsh_EvList[3], bcsh_EvList[4], bcsh_EvList[5],
+            bcsh_EvList[6], bcsh_EvList[7], bcsh_EvList[8]);
 }
 
 /* tiziano_bcsh_init - BCSH initialization */
