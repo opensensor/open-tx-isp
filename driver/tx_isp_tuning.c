@@ -1779,7 +1779,7 @@ module_param(isp_bypass_override, uint, 0644);
  *          isp_block_enable=0xDD24 adds GIB (green imbalance correction) to crisp set
  *          isp_block_enable=0xDD34 adds GIB+LSC (green correction + lens shading)
  */
-static uint isp_block_enable = 0x3DDB4;  /* All OEM blocks including GIB(5) */
+static uint isp_block_enable = 0x3DD94;  /* All OEM blocks except GIB(5) — GIB deferred until libimp sends params */
 module_param(isp_block_enable, uint, 0644);
 MODULE_PARM_DESC(isp_block_enable,
 		 "Block enable bitmask: set bits enable ISP blocks (0=all bypassed)");
@@ -1906,6 +1906,7 @@ static int mdns_bulk_loading;
 static int mdns_runtime_parked = 0;    /* MDNS enabled but deferred: no HW writes until tuning params arrive */
 static int mdns_params_received = 0;   /* Deferred init: set to 1 when libimp sends real MDNS tuning params */
 static int dpc_params_received = 0;    /* Deferred init: set to 1 when libimp sends real DPC tuning params */
+static int gib_params_received = 0;    /* Deferred init: set to 1 when libimp sends real GIB tuning params */
 static uint32_t mdns_frame_width = 0;
 static uint32_t mdns_frame_height = 0;
 static uint32_t mdns_wdr_en = 0;
@@ -10759,7 +10760,20 @@ int tisp_gib_set_par_cfg(void *in_buf)
         if (tisp_gib_param_array_set(i, p, &sz) != 0) return -EINVAL;
         p += sz; total += sz;
     }
-    pr_debug("tisp_gib_set_par_cfg: total=%d\n", total);
+    pr_info("tisp_gib_set_par_cfg: CALLED (gib_params_received=%d) total=%d\n",
+            gib_params_received, total);
+
+    if (!gib_params_received) {
+        u32 reg_0c;
+        gib_params_received = 1;
+        /* Enable GIB block now that libimp sent real params.
+         * Clear bit 5 in bypass register to activate GIB. */
+        isp_block_enable |= 0x20;  /* Add GIB bit 5 to whitelist */
+        reg_0c = system_reg_read(0xc);
+        reg_0c &= ~0x20;  /* Clear bit 5 = enable GIB */
+        system_reg_write(0xc, reg_0c);
+        pr_info("tisp_gib_set_par_cfg: GIB ENABLED in bypass register (0x%08x)\n", reg_0c);
+    }
     return 0;
 }
 int tisp_rdns_set_par_cfg(void *in_buf)
@@ -15729,7 +15743,12 @@ int tiziano_gib_init(void)
                           tiziano_gib_deir_g_m,
                           tiziano_gib_deir_b_m);
 
-    pr_info("tiziano_gib_init: GIB initialized (deir_en=%d, day_night=%d, DEIR_EN=%d)\n",
+    /* Deferred init: GIB stays bypassed until libimp sends real DEIR params
+     * via tisp_gib_set_par_cfg. Same pattern as MDNS/DPC. */
+    gib_params_received = 0;
+
+    pr_info("tiziano_gib_init: GIB initialized, deferred until params arrive "
+            "(deir_en=%d, day_night=%d, DEIR_EN=%d)\n",
             deir_en, ourISPdev->day_night, GIB_CFG_DEIR_EN);
     return 0;
 }
