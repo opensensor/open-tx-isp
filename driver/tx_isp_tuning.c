@@ -1779,7 +1779,7 @@ module_param(isp_bypass_override, uint, 0644);
  *          isp_block_enable=0xDD24 adds GIB (green imbalance correction) to crisp set
  *          isp_block_enable=0xDD34 adds GIB+LSC (green correction + lens shading)
  */
-static uint isp_block_enable = 0x3DD94;  /* All OEM except GIB(5) — hardware darkens even with all-zero regs; needs ISP core-level fix */
+static uint isp_block_enable = 0x3DDB4;  /* All OEM blocks including GIB(5) */
 module_param(isp_block_enable, uint, 0644);
 MODULE_PARM_DESC(isp_block_enable,
 		 "Block enable bitmask: set bits enable ISP blocks (0=all bypassed)");
@@ -3062,11 +3062,42 @@ static uint8_t *rdns_text_base_thres_array_now;
 static void tisp_rdns_all_reg_refresh(uint32_t gain);
 static void tisp_rdns_intp_reg_refresh(uint32_t gain);
 
-/* GIB parameter arrays - OEM-backed defaults recovered from OEM-tx-isp-t31.ko
- * Config line: 12 x uint32_t control values (data_9a2e0..data_9a30c)
- * BLC arrays: 9-entry interpolation curves for tisp_simple_intp
- * DEIR arrays: 33-entry coefficient LUTs for DEIR register programming
- * DEIR matrices: 15-entry coefficient LUTs */
+/* GIB tuning binary blob offsets — verified against OEM memcpy addresses.
+ * OEM tparams_day base: 0x84B10; offset = OEM_addr - 0x84B10.
+ * tiziano_gib_params_refresh reads ALL GIB data from the tuning blob. */
+#define GIB_TBIN_CONFIG_LINE    0x2A48  /* 12 × u32 = 48 bytes */
+#define GIB_TBIN_RG_LINEAR      0x2A78  /*  2 × u32 =  8 bytes */
+#define GIB_TBIN_BIR_LINEAR     0x2A80  /*  2 × u32 =  8 bytes */
+#define GIB_TBIN_BLC_R          0x2A88  /*  9 × u32 = 36 bytes */
+#define GIB_TBIN_BLC_GR         0x2AAC  /*  9 × u32 = 36 bytes */
+#define GIB_TBIN_BLC_GB         0x2AD0  /*  9 × u32 = 36 bytes */
+#define GIB_TBIN_BLC_B          0x2AF4  /*  9 × u32 = 36 bytes */
+#define GIB_TBIN_BLC_IR         0x2B18  /*  9 × u32 = 36 bytes */
+#define GIB_TBIN_IR_POINT       0x2B3C  /*  4 × u32 = 16 bytes */
+#define GIB_TBIN_IR_RESER       0x2B4C  /* 15 × u32 = 60 bytes */
+#define GIB_TBIN_DEIR_R_H       0x2B88  /* 33 × u32 = 132 bytes */
+#define GIB_TBIN_DEIR_G_H       0x2C0C  /* 33 × u32 = 132 bytes */
+#define GIB_TBIN_DEIR_B_H       0x2C90  /* 33 × u32 = 132 bytes */
+#define GIB_TBIN_DEIR_R_M       0x2D14  /* 33 × u32 = 132 bytes */
+#define GIB_TBIN_DEIR_G_M       0x2D98  /* 33 × u32 = 132 bytes */
+#define GIB_TBIN_DEIR_B_M       0x2E1C  /* 33 × u32 = 132 bytes */
+#define GIB_TBIN_DEIR_R_L       0x2EA0  /* 33 × u32 = 132 bytes */
+#define GIB_TBIN_DEIR_G_L       0x2F24  /* 33 × u32 = 132 bytes */
+#define GIB_TBIN_DEIR_B_L       0x2FA8  /* 33 × u32 = 132 bytes */
+#define GIB_TBIN_DEIR_MAT_H     0x302C  /* 15 × u32 = 60 bytes */
+#define GIB_TBIN_DEIR_MAT_M     0x3068  /* 15 × u32 = 60 bytes */
+#define GIB_TBIN_DEIR_MAT_L     0x30A4  /* 15 × u32 = 60 bytes */
+
+/* GB (Green Balance) tuning binary blob offsets — for tisp_gb_params_refresh.
+ * OEM addresses: 0x9730C..0x973F0 → offsets 0x127FC..0x128E0 */
+#define GB_TBIN_DGAIN_SHIFT     0x127FC /*  2 × u32 =  8 bytes */
+#define GB_TBIN_DGAIN_RGBIR_L   0x12804 /*  4 × u32 = 16 bytes */
+#define GB_TBIN_DGAIN_RGBIR_S   0x12814 /*  4 × u32 = 16 bytes */
+#define GB_TBIN_BLC_OFFSET_BASE 0x12824 /* 4×9 u32 = 144 bytes (ch4,ch3,ch2,ch1) */
+#define GB_TBIN_BLC_MIN         0x128E0 /*  9 × u32 = 36 bytes */
+
+/* GIB parameter arrays — static defaults used when tuning binary is not loaded.
+ * When tuning binary IS loaded, tiziano_gib_params_refresh reads from the blob. */
 static const uint32_t tiziano_gib_config_line_oem[12] = {
     1, 1, 0, 0, 1, 0, 0, 0, 0, 3, 4095, 4095,
 };
@@ -3881,6 +3912,21 @@ int tisp_init(void *sensor_info_arg, char *param_name)
     system_reg_write(0x1c, 8);
     system_reg_write(0x800, 1);  /* CRITICAL: This starts ISP processing */
     pr_info("*** tisp_init: ISP processing engine STARTED (reg 0x800=1) ***\n");
+
+    /* Core register dump to compare with OEM for GIB investigation */
+    pr_info("ISP_CORE: 0x00=%08x 0x04=%08x 0x08=%08x 0x0c=%08x\n",
+            system_reg_read(0x00), system_reg_read(0x04),
+            system_reg_read(0x08), system_reg_read(0x0c));
+    pr_info("ISP_CORE: 0x10=%08x 0x14=%08x 0x18=%08x 0x1c=%08x\n",
+            system_reg_read(0x10), system_reg_read(0x14),
+            system_reg_read(0x18), system_reg_read(0x1c));
+    pr_info("ISP_CORE: 0x20=%08x 0x24=%08x 0x28=%08x 0x2c=%08x 0x30=%08x\n",
+            system_reg_read(0x20), system_reg_read(0x24),
+            system_reg_read(0x28), system_reg_read(0x2c),
+            system_reg_read(0x30));
+    pr_info("ISP_CORE: 0x800=%08x 0x804=%08x 0x808=%08x 0x80c=%08x\n",
+            system_reg_read(0x800), system_reg_read(0x804),
+            system_reg_read(0x808), system_reg_read(0x80c));
 
     /* Binary Ninja: Initialize event system and callbacks */
     pr_info("*** tisp_init: INITIALIZING ISP EVENT SYSTEM ***\n");
@@ -15309,67 +15355,101 @@ int tiziano_gamma_init(uint32_t width, uint32_t height, uint32_t fps)
 
 /* ===== GIB (Green Imbalance) — OEM EXACT implementations ===== */
 
-/* OEM EXACT: tiziano_gib_params_refresh — restore OEM GIB defaults.
- * The OEM binary copies from embedded static data addresses, not from the
- * day/night tuning blob. Runtime tuning updates later override the live banks
- * through tisp_gib_param_array_set(). */
+/* OEM EXACT: tiziano_gib_params_refresh — load GIB params from tuning binary.
+ * The OEM copies tparams_day into a static buffer at 0x84B10, then reads GIB
+ * parameters from specific offsets within that buffer (0x87558 = offset 0x2A48, etc.).
+ * We read directly from tparams_day/tparams_active at the same offsets.
+ * Falls back to static OEM defaults if tuning binary is not loaded. */
 static int tiziano_gib_params_refresh(void)
 {
-    memcpy(tiziano_gib_config_line,         tiziano_gib_config_line_oem,
-           sizeof(tiziano_gib_config_line));
-    memcpy(tiziano_gib_r_g_linear,          tiziano_gib_r_g_linear_oem,
-           sizeof(tiziano_gib_r_g_linear));
-    memcpy(tiziano_gib_b_ir_linear,         tiziano_gib_b_ir_linear_oem,
-           sizeof(tiziano_gib_b_ir_linear));
-    memcpy(tiziano_gib_deirm_blc_r_linear,  tiziano_gib_deirm_blc_r_linear_oem,
-           sizeof(tiziano_gib_deirm_blc_r_linear));
-    memcpy(tiziano_gib_deirm_blc_gr_linear, tiziano_gib_deirm_blc_gr_linear_oem,
-           sizeof(tiziano_gib_deirm_blc_gr_linear));
-    memcpy(tiziano_gib_deirm_blc_gb_linear, tiziano_gib_deirm_blc_gb_linear_oem,
-           sizeof(tiziano_gib_deirm_blc_gb_linear));
-    memcpy(tiziano_gib_deirm_blc_b_linear,  tiziano_gib_deirm_blc_b_linear_oem,
-           sizeof(tiziano_gib_deirm_blc_b_linear));
-    memcpy(tiziano_gib_deirm_blc_ir_linear, tiziano_gib_deirm_blc_ir_linear_oem,
-           sizeof(tiziano_gib_deirm_blc_ir_linear));
-    memcpy(gib_ir_point, gib_ir_point_oem, sizeof(gib_ir_point));
-    memcpy(gib_ir_reser, gib_ir_reser_oem, sizeof(gib_ir_reser));
-    memcpy(tiziano_gib_deir_r_h, tiziano_gib_deir_r_h_oem,
-           sizeof(tiziano_gib_deir_r_h));
-    memcpy(tiziano_gib_deir_g_h, tiziano_gib_deir_g_h_oem,
-           sizeof(tiziano_gib_deir_g_h));
-    memcpy(tiziano_gib_deir_b_h, tiziano_gib_deir_b_h_oem,
-           sizeof(tiziano_gib_deir_b_h));
-    memcpy(tiziano_gib_deir_r_m, tiziano_gib_deir_r_m_oem,
-           sizeof(tiziano_gib_deir_r_m));
-    memcpy(tiziano_gib_deir_g_m, tiziano_gib_deir_g_m_oem,
-           sizeof(tiziano_gib_deir_g_m));
-    memcpy(tiziano_gib_deir_b_m, tiziano_gib_deir_b_m_oem,
-           sizeof(tiziano_gib_deir_b_m));
-    memcpy(tiziano_gib_deir_r_l, tiziano_gib_deir_r_l_oem,
-           sizeof(tiziano_gib_deir_r_l));
-    memcpy(tiziano_gib_deir_g_l, tiziano_gib_deir_g_l_oem,
-           sizeof(tiziano_gib_deir_g_l));
-    memcpy(tiziano_gib_deir_b_l, tiziano_gib_deir_b_l_oem,
-           sizeof(tiziano_gib_deir_b_l));
-    memcpy(tiziano_gib_deir_matrix_h, tiziano_gib_deir_matrix_h_oem,
-           sizeof(tiziano_gib_deir_matrix_h));
-    memcpy(tiziano_gib_deir_matrix_m, tiziano_gib_deir_matrix_m_oem,
-           sizeof(tiziano_gib_deir_matrix_m));
-    memcpy(tiziano_gib_deir_matrix_l, tiziano_gib_deir_matrix_l_oem,
-           sizeof(tiziano_gib_deir_matrix_l));
+    const u8 *p = (const u8 *)(tparams_active ? tparams_active : tparams_day);
 
-    pr_err("gib_params_refresh: cfg={%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u}\n",
+    if (p && tuning_bin_loaded) {
+        memcpy(tiziano_gib_config_line,         p + GIB_TBIN_CONFIG_LINE, 0x30);
+        memcpy(tiziano_gib_r_g_linear,          p + GIB_TBIN_RG_LINEAR,   0x08);
+        memcpy(tiziano_gib_b_ir_linear,         p + GIB_TBIN_BIR_LINEAR,  0x08);
+        memcpy(tiziano_gib_deirm_blc_r_linear,  p + GIB_TBIN_BLC_R,      0x24);
+        memcpy(tiziano_gib_deirm_blc_gr_linear, p + GIB_TBIN_BLC_GR,     0x24);
+        memcpy(tiziano_gib_deirm_blc_gb_linear, p + GIB_TBIN_BLC_GB,     0x24);
+        memcpy(tiziano_gib_deirm_blc_b_linear,  p + GIB_TBIN_BLC_B,      0x24);
+        memcpy(tiziano_gib_deirm_blc_ir_linear, p + GIB_TBIN_BLC_IR,     0x24);
+        memcpy(gib_ir_point,                     p + GIB_TBIN_IR_POINT,   0x10);
+        memcpy(gib_ir_reser,                     p + GIB_TBIN_IR_RESER,   0x3c);
+        memcpy(tiziano_gib_deir_r_h,             p + GIB_TBIN_DEIR_R_H,   0x84);
+        memcpy(tiziano_gib_deir_g_h,             p + GIB_TBIN_DEIR_G_H,   0x84);
+        memcpy(tiziano_gib_deir_b_h,             p + GIB_TBIN_DEIR_B_H,   0x84);
+        memcpy(tiziano_gib_deir_r_m,             p + GIB_TBIN_DEIR_R_M,   0x84);
+        memcpy(tiziano_gib_deir_g_m,             p + GIB_TBIN_DEIR_G_M,   0x84);
+        memcpy(tiziano_gib_deir_b_m,             p + GIB_TBIN_DEIR_B_M,   0x84);
+        memcpy(tiziano_gib_deir_r_l,             p + GIB_TBIN_DEIR_R_L,   0x84);
+        memcpy(tiziano_gib_deir_g_l,             p + GIB_TBIN_DEIR_G_L,   0x84);
+        memcpy(tiziano_gib_deir_b_l,             p + GIB_TBIN_DEIR_B_L,   0x84);
+        memcpy(tiziano_gib_deir_matrix_h,        p + GIB_TBIN_DEIR_MAT_H, 0x3c);
+        memcpy(tiziano_gib_deir_matrix_m,        p + GIB_TBIN_DEIR_MAT_M, 0x3c);
+        memcpy(tiziano_gib_deir_matrix_l,        p + GIB_TBIN_DEIR_MAT_L, 0x3c);
+        pr_info("gib_params_refresh: loaded from tuning binary\n");
+    } else {
+        /* Fallback: use static defaults embedded in the driver */
+        memcpy(tiziano_gib_config_line,         tiziano_gib_config_line_oem,
+               sizeof(tiziano_gib_config_line));
+        memcpy(tiziano_gib_r_g_linear,          tiziano_gib_r_g_linear_oem,
+               sizeof(tiziano_gib_r_g_linear));
+        memcpy(tiziano_gib_b_ir_linear,         tiziano_gib_b_ir_linear_oem,
+               sizeof(tiziano_gib_b_ir_linear));
+        memcpy(tiziano_gib_deirm_blc_r_linear,  tiziano_gib_deirm_blc_r_linear_oem,
+               sizeof(tiziano_gib_deirm_blc_r_linear));
+        memcpy(tiziano_gib_deirm_blc_gr_linear, tiziano_gib_deirm_blc_gr_linear_oem,
+               sizeof(tiziano_gib_deirm_blc_gr_linear));
+        memcpy(tiziano_gib_deirm_blc_gb_linear, tiziano_gib_deirm_blc_gb_linear_oem,
+               sizeof(tiziano_gib_deirm_blc_gb_linear));
+        memcpy(tiziano_gib_deirm_blc_b_linear,  tiziano_gib_deirm_blc_b_linear_oem,
+               sizeof(tiziano_gib_deirm_blc_b_linear));
+        memcpy(tiziano_gib_deirm_blc_ir_linear, tiziano_gib_deirm_blc_ir_linear_oem,
+               sizeof(tiziano_gib_deirm_blc_ir_linear));
+        memcpy(gib_ir_point, gib_ir_point_oem, sizeof(gib_ir_point));
+        memcpy(gib_ir_reser, gib_ir_reser_oem, sizeof(gib_ir_reser));
+        memcpy(tiziano_gib_deir_r_h, tiziano_gib_deir_r_h_oem,
+               sizeof(tiziano_gib_deir_r_h));
+        memcpy(tiziano_gib_deir_g_h, tiziano_gib_deir_g_h_oem,
+               sizeof(tiziano_gib_deir_g_h));
+        memcpy(tiziano_gib_deir_b_h, tiziano_gib_deir_b_h_oem,
+               sizeof(tiziano_gib_deir_b_h));
+        memcpy(tiziano_gib_deir_r_m, tiziano_gib_deir_r_m_oem,
+               sizeof(tiziano_gib_deir_r_m));
+        memcpy(tiziano_gib_deir_g_m, tiziano_gib_deir_g_m_oem,
+               sizeof(tiziano_gib_deir_g_m));
+        memcpy(tiziano_gib_deir_b_m, tiziano_gib_deir_b_m_oem,
+               sizeof(tiziano_gib_deir_b_m));
+        memcpy(tiziano_gib_deir_r_l, tiziano_gib_deir_r_l_oem,
+               sizeof(tiziano_gib_deir_r_l));
+        memcpy(tiziano_gib_deir_g_l, tiziano_gib_deir_g_l_oem,
+               sizeof(tiziano_gib_deir_g_l));
+        memcpy(tiziano_gib_deir_b_l, tiziano_gib_deir_b_l_oem,
+               sizeof(tiziano_gib_deir_b_l));
+        memcpy(tiziano_gib_deir_matrix_h, tiziano_gib_deir_matrix_h_oem,
+               sizeof(tiziano_gib_deir_matrix_h));
+        memcpy(tiziano_gib_deir_matrix_m, tiziano_gib_deir_matrix_m_oem,
+               sizeof(tiziano_gib_deir_matrix_m));
+        memcpy(tiziano_gib_deir_matrix_l, tiziano_gib_deir_matrix_l_oem,
+               sizeof(tiziano_gib_deir_matrix_l));
+        pr_info("gib_params_refresh: using static defaults (no tuning binary)\n");
+    }
+
+    pr_info("gib_params_refresh: cfg={%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u}\n",
             tiziano_gib_config_line[0], tiziano_gib_config_line[1],
             tiziano_gib_config_line[2], tiziano_gib_config_line[3],
             tiziano_gib_config_line[4], tiziano_gib_config_line[5],
             tiziano_gib_config_line[6], tiziano_gib_config_line[7],
             tiziano_gib_config_line[8], tiziano_gib_config_line[9],
             tiziano_gib_config_line[10], tiziano_gib_config_line[11]);
-    pr_err("gib_params_refresh: rg={%u,%u} bir={%u,%u} blc_r[0..2]={%u,%u,%u}\n",
+    pr_info("gib_params_refresh: rg={%u,%u} bir={%u,%u} blc_r[0..2]={%u,%u,%u}\n",
             tiziano_gib_r_g_linear[0], tiziano_gib_r_g_linear[1],
             tiziano_gib_b_ir_linear[0], tiziano_gib_b_ir_linear[1],
             tiziano_gib_deirm_blc_r_linear[0], tiziano_gib_deirm_blc_r_linear[1],
             tiziano_gib_deirm_blc_r_linear[2]);
+    pr_info("gib_params_refresh: deir_r_m[0..3]={%u,%u,%u,%u}\n",
+            tiziano_gib_deir_r_m[0], tiziano_gib_deir_r_m[1],
+            tiziano_gib_deir_r_m[2], tiziano_gib_deir_r_m[3]);
     return 0;
 }
 
@@ -15417,11 +15497,6 @@ static int tisp_gib_gain_interpolation(uint32_t gain)
         break;
     }
 
-    pr_err("gib_blc: gain=0x%x bayer=0x%x r=%u gr=%u gb=%u b=%u ir=%u\n",
-            gain, bayer, blc_r, blc_gr, blc_gb, blc_b, blc_ir);
-    pr_err("gib_blc: reg0x1060=0x%x reg0x1064=0x%x reg0x1068=0x%x\n",
-            ch0, (ch2 << 16) | ch1, (ch4 << 16) | ch3);
-
     system_reg_write_gib(1, 0x1060, ch0);
     system_reg_write_gib(1, 0x1064, (ch2 << 16) | ch1);
     system_reg_write_gib(1, 0x1068, (ch4 << 16) | ch3);
@@ -15453,13 +15528,6 @@ static int tiziano_gib_lut_parameter(void)
         (GIB_CFG_DEIR_MODE << 3) |
         GIB_CFG_DEIR_STR);
 
-    pr_err("gib_lut: reg0x1038=0x%x reg0x103c=0x%x reg0x106c=0x%x\n",
-            (GIB_CFG_WGT_HI << 16) | GIB_CFG_WGT_LO,
-            (GIB_CFG_BLEND << 16) | (GIB_CFG_BLC_SHIFT << 14) |
-            (tiziano_gib_config_line[0] << 12) | (GIB_CFG_EN_BLC << 10) |
-            (GIB_CFG_GIB_MODE << 8) | (GIB_CFG_BLC_THR << 4) | (GIB_CFG_BLC_GAIN << 2),
-            (GIB_CFG_DEIR_EN << 16) | (GIB_CFG_DEIR_MODE << 3) | GIB_CFG_DEIR_STR);
-
     /* Interpolate BLC offsets based on current gain */
     tisp_gib_gain_interpolation(tisp_gib_blc_ag);
 
@@ -15469,9 +15537,6 @@ static int tiziano_gib_lut_parameter(void)
             (tiziano_gib_r_g_linear[1] << 16) | tiziano_gib_r_g_linear[0]);
         system_reg_write_gib(1, 0x1034,
             (tiziano_gib_b_ir_linear[1] << 16) | tiziano_gib_b_ir_linear[0]);
-        pr_err("gib_lut: reg0x1030=0x%x reg0x1034=0x%x\n",
-                (tiziano_gib_r_g_linear[1] << 16) | tiziano_gib_r_g_linear[0],
-                (tiziano_gib_b_ir_linear[1] << 16) | tiziano_gib_b_ir_linear[0]);
         gib_lut_init_done = 1;
     }
 
@@ -15645,7 +15710,9 @@ int tiziano_gib_dn_params_refresh(void)
 EXPORT_SYMBOL(tiziano_gib_dn_params_refresh);
 
 /* OEM EXACT: tiziano_gib_init — full GIB initialization.
- * Loads params, configures DEIR enable, programs LUT and DEIR coefficient registers. */
+ * OEM at 0x22190: params_refresh → set DEIR_EN → lut_parameter → deir_reg.
+ * NOTE: OEM does NOT call tisp_gb_init/tisp_gb_init_reg here; that is a
+ * separate function only called during WDR init (tisp_gb_init at 0x22c7c). */
 int tiziano_gib_init(void)
 {
     tiziano_gib_params_refresh();
@@ -15662,34 +15729,8 @@ int tiziano_gib_init(void)
                           tiziano_gib_deir_g_m,
                           tiziano_gib_deir_b_m);
 
-    tisp_gb_params_refresh();
-    tisp_gb_init_reg();
-
-    pr_err("tiziano_gib_init: GIB initialized (deir_en=%d, day_night=%d, DEIR_EN=%d)\n",
+    pr_info("tiziano_gib_init: GIB initialized (deir_en=%d, day_night=%d, DEIR_EN=%d)\n",
             deir_en, ourISPdev->day_night, GIB_CFG_DEIR_EN);
-    pr_err("gib_init: deir_r_m[0..3]={%u,%u,%u,%u} deir_g_m[0..3]={%u,%u,%u,%u}\n",
-            tiziano_gib_deir_r_m[0], tiziano_gib_deir_r_m[1],
-            tiziano_gib_deir_r_m[2], tiziano_gib_deir_r_m[3],
-            tiziano_gib_deir_g_m[0], tiziano_gib_deir_g_m[1],
-            tiziano_gib_deir_g_m[2], tiziano_gib_deir_g_m[3]);
-
-    /* GIB register dump — find any register with wrong hardware default */
-    pr_err("GIB_REGS: 0x1000=%08x 0x1004=%08x 0x1008=%08x 0x100c=%08x\n",
-            system_reg_read(0x1000), system_reg_read(0x1004),
-            system_reg_read(0x1008), system_reg_read(0x100c));
-    pr_err("GIB_REGS: 0x1010=%08x 0x1014=%08x 0x1018=%08x 0x101c=%08x\n",
-            system_reg_read(0x1010), system_reg_read(0x1014),
-            system_reg_read(0x1018), system_reg_read(0x101c));
-    pr_err("GIB_REGS: 0x1020=%08x 0x1024=%08x 0x1028=%08x 0x102c=%08x\n",
-            system_reg_read(0x1020), system_reg_read(0x1024),
-            system_reg_read(0x1028), system_reg_read(0x102c));
-    pr_err("GIB_REGS: 0x1030=%08x 0x1034=%08x 0x1038=%08x 0x103c=%08x\n",
-            system_reg_read(0x1030), system_reg_read(0x1034),
-            system_reg_read(0x1038), system_reg_read(0x103c));
-    pr_err("GIB_REGS: 0x1060=%08x 0x1064=%08x 0x1068=%08x 0x106c=%08x 0x1070=%08x\n",
-            system_reg_read(0x1060), system_reg_read(0x1064),
-            system_reg_read(0x1068), system_reg_read(0x106c),
-            system_reg_read(0x1070));
     return 0;
 }
 
@@ -22383,36 +22424,45 @@ static int tisp_rdns_par_refresh(uint32_t gain, uint32_t threshold, int enable_w
 	return 0;
 }
 
-/* OEM EXACT: tisp_gb_params_refresh — reset GB parameters to static defaults.
- * OEM copies from .data section addresses into mutable runtime arrays.
- * tisp_gb_blc_offset (OEM: tisp_gb_blc_ir) gets 5 copies of blc_ir_linear. */
+/* OEM EXACT: tisp_gb_params_refresh — load GB parameters from tuning binary.
+ * OEM at 0x22b2c: reads dgain/BLC arrays from tuning blob (offset 0x127FC+).
+ * BLC offset channels 4..1 come from tuning blob; channel 0 is BSS zero. */
 static int tisp_gb_params_refresh(void)
 {
-    int i;
-    /* OEM static defaults for dgain arrays — already initialized, just
-     * reset them in case libimp changed them */
-    tisp_gb_dgain_shift[0] = 0;
-    tisp_gb_dgain_shift[1] = 0;
-    tisp_gb_dgain_rgbir_l[0] = 0x400;
-    tisp_gb_dgain_rgbir_l[1] = 0x400;
-    tisp_gb_dgain_rgbir_l[2] = 0x400;
-    tisp_gb_dgain_rgbir_l[3] = 0x400;
-    tisp_gb_dgain_rgbir_s[0] = 0x400;
-    tisp_gb_dgain_rgbir_s[1] = 0x400;
-    tisp_gb_dgain_rgbir_s[2] = 0x400;
-    tisp_gb_dgain_rgbir_s[3] = 0x400;
+    const u8 *p = (const u8 *)(tparams_active ? tparams_active : tparams_day);
 
-    /* OEM: all 5 channels of tisp_gb_blc_ir initialized to blc_ir_linear values.
-     * Confirmed from OEM binary dump: tisp_gb_blc_ir[0x2d] at 0x9a310 =
-     * {0x41,0x3f,0x43,0x42,0x3f,0x3f,0x3f,0x3f,0x3f} repeated 5 times. */
-    for (i = 0; i < 5; i++)
-        memcpy(&tisp_gb_blc_offset[i * 9],
-               tiziano_gib_deirm_blc_ir_linear_oem,
-               9 * sizeof(uint32_t));
-
-    tisp_gb_blc_min_en[0] = 0;
-    tisp_gb_blc_min_en[1] = 0;
-    memset(tisp_gb_blc_min, 0, sizeof(tisp_gb_blc_min));
+    if (p && tuning_bin_loaded) {
+        /* OEM reads dgain arrays from tuning blob at offsets 0x127FC-0x12823 */
+        memcpy(tisp_gb_dgain_shift,   p + GB_TBIN_DGAIN_SHIFT,   0x08);
+        memcpy(tisp_gb_dgain_rgbir_l, p + GB_TBIN_DGAIN_RGBIR_L, 0x10);
+        memcpy(tisp_gb_dgain_rgbir_s, p + GB_TBIN_DGAIN_RGBIR_S, 0x10);
+        /* OEM reads BLC offset channels 4,3,2,1 from tuning blob (REVERSE order).
+         * Channel 0 comes from tisp_gb_blc_ir BSS variable (zero init). */
+        memcpy(&tisp_gb_blc_offset[36], p + GB_TBIN_BLC_OFFSET_BASE,       0x24); /* ch4 */
+        memcpy(&tisp_gb_blc_offset[27], p + GB_TBIN_BLC_OFFSET_BASE + 0x24, 0x24); /* ch3 */
+        memcpy(&tisp_gb_blc_offset[18], p + GB_TBIN_BLC_OFFSET_BASE + 0x48, 0x24); /* ch2 */
+        memcpy(&tisp_gb_blc_offset[9],  p + GB_TBIN_BLC_OFFSET_BASE + 0x6C, 0x24); /* ch1 */
+        memset(&tisp_gb_blc_offset[0], 0, 9 * sizeof(uint32_t)); /* ch0: BSS zero */
+        tisp_gb_blc_min_en[0] = 0;
+        tisp_gb_blc_min_en[1] = 0;
+        memcpy(tisp_gb_blc_min, p + GB_TBIN_BLC_MIN, 0x24);
+    } else {
+        /* Fallback: use hardcoded defaults */
+        tisp_gb_dgain_shift[0] = 0;
+        tisp_gb_dgain_shift[1] = 0;
+        tisp_gb_dgain_rgbir_l[0] = 0x400;
+        tisp_gb_dgain_rgbir_l[1] = 0x400;
+        tisp_gb_dgain_rgbir_l[2] = 0x400;
+        tisp_gb_dgain_rgbir_l[3] = 0x400;
+        tisp_gb_dgain_rgbir_s[0] = 0x400;
+        tisp_gb_dgain_rgbir_s[1] = 0x400;
+        tisp_gb_dgain_rgbir_s[2] = 0x400;
+        tisp_gb_dgain_rgbir_s[3] = 0x400;
+        memset(tisp_gb_blc_offset, 0, sizeof(tisp_gb_blc_offset));
+        tisp_gb_blc_min_en[0] = 0;
+        tisp_gb_blc_min_en[1] = 0;
+        memset(tisp_gb_blc_min, 0, sizeof(tisp_gb_blc_min));
+    }
     return 0;
 }
 
