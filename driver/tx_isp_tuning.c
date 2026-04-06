@@ -601,6 +601,28 @@ static void tiziano_bcsh_build_HMatrix(int32_t out[9])
 
     tiziano_bcsh_Tccm_RGBYUV(tmp, tiziano_MMatrix, active_ccm, tiziano_MinvMatrix);
 
+    /* OEM EXACT: compute OffsetRGB2yuv from OffsetRGB using M matrix.
+     * OEM at 0x2a560: tiziano_bcsh_Toffset_RGB2YUV(&OffsetRGB2yuv, OffsetRGB_now)
+     * This transforms the RGB offset into YUV space for the BCSH registers. */
+    {
+        int32_t rgb_in[3];
+        int32_t yuv_out[3];
+        uint32_t *RGB = bcsh_wdr_enabled ? bcsh_OffsetRGB_wdr : bcsh_OffsetRGB;
+        rgb_in[0] = (int32_t)RGB[0];
+        rgb_in[1] = (int32_t)RGB[1];
+        rgb_in[2] = (int32_t)RGB[2];
+        tiziano_bcsh_Toffset_RGB2YUV(yuv_out, rgb_in);
+        bcsh_OffsetRGB2yuv[0] = (uint32_t)yuv_out[0];
+        bcsh_OffsetRGB2yuv[1] = (uint32_t)yuv_out[1];
+        bcsh_OffsetRGB2yuv[2] = (uint32_t)yuv_out[2];
+    }
+
+    {
+        uint32_t *RGB = bcsh_wdr_enabled ? bcsh_OffsetRGB_wdr : bcsh_OffsetRGB;
+        pr_info("BCSH_DIAG: OffsetRGB=[%u,%u,%u] OffsetRGB2yuv=[%u,%u,%u]\n",
+                RGB[0], RGB[1], RGB[2],
+                bcsh_OffsetRGB2yuv[0], bcsh_OffsetRGB2yuv[1], bcsh_OffsetRGB2yuv[2]);
+    }
     pr_info("BCSH_DIAG: HMatrix=[%d,%d,%d, %d,%d,%d, %d,%d,%d]\n",
             tmp[0], tmp[1], tmp[2], tmp[3], tmp[4], tmp[5],
             tmp[6], tmp[7], tmp[8]);
