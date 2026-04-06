@@ -13137,22 +13137,20 @@ static int Tiziano_awb_set_gain(void *mf_para, uint32_t point_pos, const uint32_
 	}
 
 	if (awb_frz == 0) {
-		/* Revert to original addresses while investigating correct ones.
-		 * 0x1810 confirmed working. 0x183c/0x1840/0x1844 read as 0 but
-		 * may be write-only latched registers that still take effect. */
-		system_reg_write_awb(2, 0x183c, reg_pair[0]);
-		system_reg_write_awb(2, 0x1840, reg_pair[1]);
-		system_reg_write_awb(2, 0x1844, reg_pair[0]);
+		/* OEM EXACT register addresses: vic_mdma_enable(0x17c8)+0x3c/+0x40/+0x44
+		 * = 0x1804, 0x1808, 0x180c. Plus 0x1810. All use awb latch (arg1=2). */
+		system_reg_write_awb(2, 0x1804, reg_pair[0]);
+		system_reg_write_awb(2, 0x1808, reg_pair[1]);
+		system_reg_write_awb(2, 0x180c, reg_pair[0]);
 		system_reg_write_awb(2, 0x1810, reg_pair[1]);
 		tisp_rdns_awb_gain_updata(reg_pair[0] & 0xffff, reg_pair[1] & 0xffff);
 	}
 
 	/* One-time color register dump to compare with OEM */
 	if (awb_gain_diag_count == 10) {
-		pr_info("COLOR_REGS: WB 0x1800=%08x 0x183c=%08x 0x1840=%08x 0x1844=%08x 0x1810=%08x\n",
-			system_reg_read(0x1800), system_reg_read(0x183c),
-			system_reg_read(0x1840), system_reg_read(0x1844),
-			system_reg_read(0x1810));
+		pr_info("COLOR_REGS: WB 0x1804=%08x 0x1808=%08x 0x180c=%08x 0x1810=%08x\n",
+			system_reg_read(0x1804), system_reg_read(0x1808),
+			system_reg_read(0x180c), system_reg_read(0x1810));
 		pr_info("COLOR_REGS: CCM 0x5000=%08x 0x5004=%08x 0x5008=%08x 0x500c=%08x 0x5010=%08x 0x5014=%08x\n",
 			system_reg_read(0x5000), system_reg_read(0x5004),
 			system_reg_read(0x5008), system_reg_read(0x500c),
