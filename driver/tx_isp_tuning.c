@@ -2361,6 +2361,7 @@ int tiziano_hldc_init(void);
 int tiziano_defog_init(uint32_t width, uint32_t height);
 int tiziano_adr_init(uint32_t width, uint32_t height);
 int tiziano_af_init(uint32_t height, uint32_t width);
+void tiziano_af_set_hardware_param(void);
 int tiziano_bcsh_init(void);
 int tiziano_ydns_init(void);
 int tiziano_rdns_init(void);
@@ -9550,13 +9551,83 @@ static int tisp_sdns_param_array_set(int param_id, void *in_buf, int *size_buf)
     return 0;
 }
 
+/* AF parameter storage — OEM exact from tisp_af_param_array_set decompilation */
+static uint8_t stAFParam_Zone[0x90];
+static uint8_t stAFParam_ThresEnable[0x34];
+static uint8_t stAFParam_FIR0_V[0x14];
+static uint8_t stAFParam_FIR0_Ldg[0x20];
+static uint8_t stAFParam_FIR0_Coring[0x10];
+static uint8_t stAFParam_FIR1_V[0x14];
+static uint8_t stAFParam_FIR1_Ldg[0x20];
+static uint8_t stAFParam_FIR1_Coring[0x10];
+static uint8_t stAFParam_IIR0_H[0x28];
+static uint8_t stAFParam_IIR0_Ldg[0x20];
+static uint8_t stAFParam_IIR0_Coring[0x10];
+static uint8_t stAFParam_IIR1_H[0x28];
+static uint8_t stAFParam_IIR1_Ldg[0x20];
+static uint8_t stAFParam_IIR1_Coring[0x10];
+static uint8_t AFParam_PointPos[0x8];
+static uint8_t AFParam_Tilt[0x14];
+static uint8_t AFParam_FvWmean[0x3c];
+static uint8_t AFParam_Fv[0xc];
+static uint8_t AFWeight_Param[0x384];
+
+struct af_param_entry { int id; void *buf; int size; };
+static const struct af_param_entry af_params[] = {
+    { 0x3ad, stAFParam_Zone,         0x90 },
+    { 0x3ae, stAFParam_ThresEnable,  0x34 },
+    { 0x3af, stAFParam_FIR0_V,       0x14 },
+    { 0x3b0, stAFParam_FIR0_Ldg,     0x20 },
+    { 0x3b1, stAFParam_FIR0_Coring,  0x10 },
+    { 0x3b2, stAFParam_FIR1_V,       0x14 },
+    { 0x3b3, stAFParam_FIR1_Ldg,     0x20 },
+    { 0x3b4, stAFParam_FIR1_Coring,  0x10 },
+    { 0x3b5, stAFParam_IIR0_H,       0x28 },
+    { 0x3b6, stAFParam_IIR0_Ldg,     0x20 },
+    { 0x3b7, stAFParam_IIR0_Coring,  0x10 },
+    { 0x3b8, stAFParam_IIR1_H,       0x28 },
+    { 0x3b9, stAFParam_IIR1_Ldg,     0x20 },
+    { 0x3ba, stAFParam_IIR1_Coring,  0x10 },
+    { 0x3bb, AFParam_PointPos,        0x08 },
+    { 0x3bc, AFParam_Tilt,            0x14 },
+    { 0x3bd, AFParam_FvWmean,         0x3c },
+    { 0x3be, AFParam_Fv,              0x0c },
+    { 0x3bf, AFWeight_Param,          0x384 },
+};
+
 int tisp_af_param_array_get(int param_id, void *out_buf, int *size_buf)
 {
-    pr_debug("tisp_af_param_array_get: ID=0x%x (stub)\n", param_id);
-    if (out_buf && size_buf) {
-        *size_buf = 0;
+    int i;
+    for (i = 0; i < ARRAY_SIZE(af_params); i++) {
+        if (af_params[i].id == param_id) {
+            if (out_buf)
+                memcpy(out_buf, af_params[i].buf, af_params[i].size);
+            if (size_buf)
+                *size_buf = af_params[i].size;
+            return 0;
+        }
     }
-    return 0;
+    pr_err("tisp_af_param_array_get: unsupported param id 0x%x\n", param_id);
+    if (size_buf) *size_buf = 0;
+    return -1;
+}
+
+/* OEM EXACT: tisp_af_param_array_set — copies data into AF param buffers,
+ * then calls tiziano_af_set_hardware_param() to program hardware. */
+int tisp_af_param_array_set(int param_id, void *in_buf, int *size_buf)
+{
+    int i;
+    for (i = 0; i < ARRAY_SIZE(af_params); i++) {
+        if (af_params[i].id == param_id) {
+            memcpy(af_params[i].buf, in_buf, af_params[i].size);
+            if (size_buf)
+                *size_buf = af_params[i].size;
+            tiziano_af_set_hardware_param();
+            return 0;
+        }
+    }
+    pr_err("tisp_af_param_array_set: unsupported param id 0x%x\n", param_id);
+    return -1;
 }
 
 int tisp_hldc_param_array_get(int param_id, void *out_buf, int *size_buf)
@@ -22017,6 +22088,14 @@ int tiziano_af_init(uint32_t height, uint32_t width)
     return 0;
 }
 
+/* OEM: tiziano_af_set_hardware_param — writes AF filter/zone params to hardware.
+ * Called after tisp_af_param_array_set updates the param buffers. */
+void tiziano_af_set_hardware_param(void)
+{
+    /* TODO: program AF registers from stAFParam buffers.
+     * GC2053 on Wyze Cam doesn't use AF, so this is safe as a no-op for now. */
+}
+
 /* OEM BCSH tuning blob offsets (tparams base 0x84B10 in OEM binary). */
 #define BCSH_TPARAMS_CCM_D_OFF          0x12220
 #define BCSH_TPARAMS_CCM_T_OFF          0x12244
@@ -23184,6 +23263,209 @@ EXPORT_SYMBOL(tisp_event_cleanup);
 static void *tisp_opmsg = NULL;
 static bool tisp_param_oper_inited = false;
 
+/* Forward declarations */
+extern int tisp_netlink_init(void);
+extern int tisp_netlink_event_set_cb(void *cb);
+extern int netlink_send_msg(const void *data, size_t len);
+
+/* OEM EXACT: tisp_param_operate_process — netlink callback for param_array_get/set.
+ * libimp sends tuning parameters via netlink proto 23.  arg1 layout:
+ *   [0] = msg_type: 0=get, 1=set, 2=set_par_cfg, 3=get_par_cfg
+ *   [1] = param_id
+ *   [2] = size
+ *   [3] = data start (for set)
+ *   [4] = extra
+ * Dispatches to the appropriate param_array_get/set handler by param_id range. */
+static void tisp_param_operate_process(const void *data, size_t len)
+{
+    int *arg1 = (int *)data;
+    int msg_type = arg1[0];
+    int param_id = arg1[1];
+    int *opmsg_p = (int *)tisp_opmsg;
+    int reply_len;
+
+    typedef int (*param_fn_t)(int, void *, int *);
+    param_fn_t handler = NULL;
+
+    if (msg_type == 0) {
+        /* GET: dispatch by param_id range to param_array_get */
+        if (param_id == 0)
+            handler = (param_fn_t)tisp_ae_param_array_get;
+        else if (param_id - 1 < 0x22)
+            handler = (param_fn_t)tisp_ae_param_array_get;
+        else if (param_id - 0x23 < 0x19)
+            handler = (param_fn_t)tisp_awb_param_array_get;
+        else if (param_id - 0x3c < 2)
+            handler = (param_fn_t)tisp_gamma_param_array_get;
+        else if (param_id - 0x3e < 0x16)
+            handler = (param_fn_t)tisp_gib_param_array_get;
+        else if (param_id - 0x54 < 0xb)
+            handler = (param_fn_t)tisp_lsc_param_array_get;
+        else if (param_id - 0x5f < 0x4a)
+            handler = (param_fn_t)tisp_dmsc_param_array_get;
+        else if (param_id - 0xa9 < 0xc)
+            handler = (param_fn_t)tisp_ccm_param_array_get;
+        else if (param_id - 0xb5 < 0x31)
+            handler = (param_fn_t)tisp_sharpen_param_array_get;
+        else if (param_id - 0xe6 < 0x1f)
+            handler = (param_fn_t)tisp_dpc_param_array_get;
+        else if (param_id - 0x105 < 0x7b)
+            handler = (param_fn_t)tisp_sdns_param_array_get;
+        else if (param_id - 0x180 < 0x1d7)
+            handler = (param_fn_t)tisp_mdns_param_array_get;
+        else if (param_id - 0x357 < 3)
+            handler = (param_fn_t)tisp_clm_param_array_get;
+        else if (param_id - 0x35a < 0x26)
+            handler = (param_fn_t)tisp_defog_param_array_get;
+        else if (param_id - 0x380 < 0x2c)
+            handler = (param_fn_t)tisp_adr_param_array_get;
+        else if (param_id == 0x3ac)
+            handler = (param_fn_t)tisp_hldc_param_array_get;
+        else if (param_id - 0x3ad < 0x13)
+            handler = (param_fn_t)tisp_af_param_array_get;
+        else if (param_id - 0x3c0 < 0x26)
+            handler = (param_fn_t)tisp_bcsh_param_array_get;
+        else if (param_id - 0x3e6 < 0xf)
+            handler = (param_fn_t)tisp_ydns_param_array_get;
+        else if (param_id - 0x3f5 < 0xa)
+            handler = (param_fn_t)tisp_gb_param_array_get;
+        else if (param_id - 0x3ff < 0x33)
+            handler = (param_fn_t)tisp_wdr_param_array_get;
+        else if (param_id - 0x432 < 0x15)
+            handler = (param_fn_t)tisp_rdns_param_array_get;
+
+        if (!handler) {
+            pr_err("%s,%d: unsupport msg arraty id\n", __func__, __LINE__);
+            return;
+        }
+        handler(param_id, &opmsg_p[5], &arg1[2]);
+
+        /* Copy header + reply back to opmsg for netlink response */
+        opmsg_p[0] = arg1[0];
+        opmsg_p[1] = arg1[1];
+        opmsg_p[2] = arg1[2];
+        opmsg_p[3] = arg1[3];
+        opmsg_p[4] = arg1[4];
+        reply_len = arg1[2] + 0x18;
+
+    } else if (msg_type == 1) {
+        /* SET: dispatch by param_id range to param_array_set */
+        if (param_id == 0)
+            handler = (param_fn_t)tisp_ae_param_array_set;
+        else if (param_id - 1 < 0x22)
+            handler = (param_fn_t)tisp_ae_param_array_set;
+        else if (param_id - 0x23 < 0x19)
+            handler = (param_fn_t)tisp_awb_param_array_set;
+        else if (param_id - 0x3c < 2)
+            handler = (param_fn_t)tisp_gamma_param_array_set;
+        else if (param_id - 0x3e < 0x16)
+            handler = (param_fn_t)tisp_gib_param_array_set;
+        else if (param_id - 0x54 < 0xb)
+            handler = (param_fn_t)tisp_lsc_param_array_set;
+        else if (param_id - 0x5f < 0x4a)
+            handler = (param_fn_t)tisp_dmsc_param_array_set;
+        else if (param_id - 0xa9 < 0xc)
+            handler = (param_fn_t)tisp_ccm_param_array_set;
+        else if (param_id - 0xb5 < 0x31)
+            handler = (param_fn_t)tisp_sharpen_param_array_set;
+        else if (param_id - 0xe6 < 0x1f)
+            handler = (param_fn_t)tisp_dpc_param_array_set;
+        else if (param_id - 0x105 < 0x7b)
+            handler = (param_fn_t)tisp_sdns_param_array_set;
+        else if (param_id - 0x180 < 0x1d7)
+            handler = (param_fn_t)tisp_mdns_param_array_set;
+        else if (param_id - 0x357 < 3)
+            handler = (param_fn_t)tisp_clm_param_array_set;
+        else if (param_id - 0x35a < 0x26)
+            handler = (param_fn_t)tisp_defog_param_array_set;
+        else if (param_id - 0x380 < 0x2c)
+            handler = (param_fn_t)tisp_adr_param_array_set;
+        else if (param_id == 0x3ac)
+            handler = (param_fn_t)tisp_hldc_param_array_set;
+        else if (param_id - 0x3ad < 0x13)
+            handler = (param_fn_t)tisp_af_param_array_get; /* AF set not implemented, use get as stub */
+        else if (param_id - 0x3c0 < 0x26)
+            handler = (param_fn_t)tisp_bcsh_param_array_set;
+        else if (param_id - 0x3e6 < 0xf)
+            handler = (param_fn_t)tisp_ydns_param_array_set;
+        else if (param_id - 0x3f5 < 0xa)
+            handler = (param_fn_t)tisp_gb_param_array_set;
+        else if (param_id - 0x3ff < 0x33)
+            handler = (param_fn_t)tisp_wdr_param_array_set;
+        else if (param_id - 0x432 < 0x15)
+            handler = (param_fn_t)tisp_rdns_param_array_set;
+
+        if (!handler) {
+            pr_err("%s,%d: unsupport msg arraty id\n", __func__, __LINE__);
+            return;
+        }
+        handler(param_id, &arg1[5], &arg1[2]);
+
+        reply_len = 0x18;
+        opmsg_p = (int *)tisp_opmsg;
+
+    } else if (msg_type == 2) {
+        /* SET_PAR_CFG: dispatch by param_id to set_par_cfg handlers */
+        opmsg_p[0] = msg_type;
+        opmsg_p[1] = param_id;
+        opmsg_p[2] = arg1[2];
+        opmsg_p[3] = arg1[3];
+        opmsg_p[4] = arg1[4];
+        opmsg_p[5] = 0;
+
+        pr_info("tisp_param_operate_process: set_par_cfg type=%d\n", param_id);
+
+        switch (param_id) {
+        case 1:  tisp_blc_set_par_cfg(&arg1[3]); break;
+        case 2:  tisp_lsc_set_par_cfg(arg1[2], &arg1[3]); break;
+        case 3:  tisp_wdr_set_par_cfg(&arg1[3]); break;
+        case 4:  tisp_dpc_set_par_cfg(&arg1[3]); break;
+        case 5:  tisp_gib_set_par_cfg(&arg1[3]); break;
+        case 6:  tisp_rdns_set_par_cfg(&arg1[3]); break;
+        case 7:  tisp_adr_set_par_cfg(&arg1[3]); break;
+        case 8:  tisp_dmsc_set_par_cfg(&arg1[3]); break;
+        case 9:  tisp_ccm_set_par_cfg(&arg1[3]); break;
+        case 0xa: tisp_gamma_set_par_cfg(&arg1[3]); break;
+        case 0xb: tisp_defog_set_par_cfg(&arg1[3]); break;
+        case 0xc: tisp_mdns_set_par_cfg(&arg1[3]); break;
+        case 0xd: tisp_ydns_set_par_cfg(&arg1[3]); break;
+        case 0xe: tisp_bcsh_set_par_cfg(&arg1[3]); break;
+        case 0xf: tisp_clm_set_par_cfg(&arg1[3]); break;
+        case 0x10: tisp_ysp_set_par_cfg(&arg1[3]); break;
+        default:
+            pr_err("%s,%d: unsupport set_par_cfg type %d\n", __func__, __LINE__, param_id);
+            return;
+        }
+        reply_len = 0x18;
+
+    } else if (msg_type == 3) {
+        /* GET_PAR_CFG */
+        opmsg_p[0] = msg_type;
+        opmsg_p[1] = param_id;
+        opmsg_p[2] = arg1[2];
+        opmsg_p[3] = arg1[3];
+        opmsg_p[4] = arg1[4];
+        opmsg_p[5] = 0;
+
+        switch (param_id) {
+        case 1:  tisp_blc_get_par_cfg(&opmsg_p[5], &arg1[2]); break;
+        case 8:  tisp_dmsc_get_par_cfg(&opmsg_p[5], &arg1[2]); break;
+        case 0xc: tisp_mdns_get_par_cfg(&opmsg_p[5], &arg1[2]); break;
+        default:
+            pr_err("%s,%d: unsupport get_par_cfg type %d\n", __func__, __LINE__, param_id);
+            return;
+        }
+        reply_len = arg1[2] + 0x18;
+
+    } else {
+        pr_err("%s,%d: unsupport msg type\n", __func__, __LINE__);
+        return;
+    }
+
+    /* Send reply via netlink */
+    netlink_send_msg(tisp_opmsg, reply_len);
+}
+
 /* forward declaration to avoid implicit declaration */
 int tisp_code_create_tuning_node(void);
 
@@ -23193,17 +23475,25 @@ int tisp_param_operate_init(void)
     pr_info("tisp_param_operate_init: Initializing parameter operations\n");
 
     if (!tisp_param_oper_inited) {
-        /* Allocate small opmsg buffer (BN allocates ~0xd0) */
+        /* OEM allocates 0x10018 via private_kmalloc for netlink reply buffer.
+         * This must be large enough for the largest param_array_get response. */
         if (!tisp_opmsg) {
-            tisp_opmsg = kmalloc(0xd0, GFP_KERNEL);
+            tisp_opmsg = kmalloc(0x10018, GFP_KERNEL);
             if (!tisp_opmsg) {
                 pr_err("tisp_param_operate_init: kmalloc opmsg failed\n");
                 return -ENOMEM;
             }
-            memset(tisp_opmsg, 0, 0xd0);
+            memset(tisp_opmsg, 0, 0x10018);
         }
 
-        /* Minimal alignment with BN: ensure tuning node exists here */
+        /* OEM EXACT ordering: netlink init THEN callback THEN tuning node.
+         * The OEM initializes netlink HERE (inside tisp_init), not during
+         * module probe.  libimp connects to netlink proto 23 only after
+         * the ISP pipeline is running — if the socket is created too early,
+         * the connection doesn't work. */
+        tisp_netlink_init();
+        tisp_netlink_event_set_cb(tisp_param_operate_process);
+
         ret = tisp_code_create_tuning_node();
         if (ret) {
             pr_err("tisp_param_operate_init: tisp_code_create_tuning_node failed: %d\n", ret);

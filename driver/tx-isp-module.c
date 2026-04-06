@@ -5656,12 +5656,9 @@ static int tx_isp_init(void)
 
     pr_info("*** V4L2 VIDEO DEVICES DISABLED - skipping /dev/videoX registration ***\n");
 
-    /* Initialize netlink channel (optional, non-fatal on error) */
-    {
-        int nlret = tisp_netlink_init();
-        if (nlret)
-            pr_warn("tisp netlink init failed: %d\n", nlret);
-    }
+    /* Netlink channel is initialized later in tisp_param_operate_init()
+     * (inside tisp_init) to match OEM timing — libimp connects only after
+     * the ISP pipeline is running. */
 
     pr_info("TX ISP driver ready with new subdevice management system\n");
     return 0;
