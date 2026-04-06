@@ -16363,35 +16363,84 @@ static void tiziano_ct_ccm_interpolation(uint32_t ct_value, uint32_t ct_threshol
     /* (In our layout ccm_parameter IS the persistent buffer) */
 }
 
-/* cm_control - CCM saturation control.
+/* cm_control - OEM EXACT CCM saturation control (decompiled from 0x1f200).
  *
- * OEM does a full 3×3 matrix multiply with saturation-derived coefficients
- * and fix_point_mult2_32.  For the default saturation 0x100 (= 1.0 in Q8.8)
- * the saturation matrix is diagonal {0x10000,0x10000,0x10000} which is an
- * identity pass-through.  We replicate the passthrough exactly for 0x100 and
- * use a simplified linear scale for other values (matches OEM diagonal result).
+ * Builds a 3×3 BT.601 saturation matrix from sat_value (Q8 format, 0x100=unity):
+ *   S[i][j] = delta(i,j) * (sat/256) + luma_coef[j] * (1 - sat/256)
+ * where luma_coef = {0x4c8b, 0x9646, 0x1d2f} (BT.601 R/G/B weights, sum=0x10000).
  *
- * TODO: implement the full OEM off-diagonal saturation matrix when needed.
- */
+ * Then multiplies CCM × S using sign-decomposed fix_point_mult2_32(16, mag<<6, mag2),
+ * with final >>6 shift on each output element. */
 static void cm_control(int32_t *ccm_param, uint32_t sat_value, int32_t *output)
 {
-    int i;
+    /* BT.601 luma coefficients (Q16, sum = 0x10000) */
+    const uint32_t R_COEF = 0x4c8b;  /* 0.299 * 65536 */
+    const uint32_t G_COEF = 0x9646;  /* 0.587 * 65536 */
+    const uint32_t B_COEF = 0x1d2f;  /* 0.114 * 65536 */
 
-    if (sat_value == 0x100) {
-        /* Identity / passthrough — most common case */
-        memcpy(output, ccm_param, 9 * sizeof(int32_t));
-        return;
+    /* OEM saturation matrix S[9] — row-major 3×3 */
+    int32_t S[9];
+    /* Sign-decomposed arrays: [sign, magnitude] pairs for CCM and S */
+    int32_t cm_in[18]; /* 9 pairs: [sign0, mag0, sign1, mag1, ...] */
+    int32_t s_in[18];
+    int row, col, k;
+
+    /* Build saturation matrix: OEM exact formulas from 0x1f214-0x1f2b8 */
+    S[0] = ((sat_value * 0xb375) >> 8) + R_COEF;  /* sat*R_comp + R_coef */
+    S[1] = G_COEF - ((sat_value * G_COEF) >> 8);   /* (1-sat)*G_coef */
+    S[2] = B_COEF - ((sat_value * B_COEF) >> 8);   /* (1-sat)*B_coef */
+    S[3] = R_COEF - ((sat_value * R_COEF) >> 8);   /* (1-sat)*R_coef */
+    S[4] = ((sat_value * 0x69ba) >> 8) + G_COEF;  /* sat*G_comp + G_coef */
+    S[5] = B_COEF - ((sat_value * B_COEF) >> 8);   /* (1-sat)*B_coef */
+    S[6] = R_COEF - ((sat_value * R_COEF) >> 8);   /* (1-sat)*R_coef */
+    S[7] = G_COEF - ((sat_value * G_COEF) >> 8);   /* (1-sat)*G_coef */
+    S[8] = ((sat_value * 0xe2d1) >> 8) + B_COEF;  /* sat*B_comp + B_coef */
+
+    /* Sign-decompose CCM: cm_in[i*2]=sign(±1), cm_in[i*2+1]=|value| */
+    for (k = 0; k < 9; k++) {
+        if (ccm_param[k] < 0) {
+            cm_in[k * 2] = -1;
+            cm_in[k * 2 + 1] = -ccm_param[k];
+        } else {
+            cm_in[k * 2] = 1;
+            cm_in[k * 2 + 1] = ccm_param[k];
+        }
     }
 
-    /* Simplified saturation scaling (diagonal-only approximation) */
-    for (i = 0; i < 9; i++) {
-        int32_t v = ccm_param[i];
-        /* OEM does: sign-decompose, multiply, >>6.
-         * Simplified: scale by sat/256, preserving sign. */
-        if (v >= 0)
-            output[i] = (int32_t)((uint32_t)v * sat_value / 256);
-        else
-            output[i] = -(int32_t)((uint32_t)(-v) * sat_value / 256);
+    /* Sign-decompose saturation matrix */
+    for (k = 0; k < 9; k++) {
+        if (S[k] < 0) {
+            s_in[k * 2] = -1;
+            s_in[k * 2 + 1] = -S[k];
+        } else {
+            s_in[k * 2] = 1;
+            s_in[k * 2 + 1] = S[k];
+        }
+    }
+
+    /* 3×3 matrix multiply: output = CCM × S
+     * Each element: output[row][col] = Σ_k CCM[row][k] * S[k][col]
+     * Using fix_point_mult2_32(16, mag<<6, s_mag) then >>6 */
+    for (row = 0; row < 3; row++) {
+        for (col = 0; col < 3; col++) {
+            int32_t accum = 0;
+            for (k = 0; k < 3; k++) {
+                int cm_idx = row * 3 + k;
+                int s_idx = k * 3 + col;
+                int32_t cm_sign = cm_in[cm_idx * 2];
+                uint32_t cm_mag = cm_in[cm_idx * 2 + 1];
+                int32_t s_sign = s_in[s_idx * 2];
+                uint32_t s_mag = s_in[s_idx * 2 + 1];
+                int32_t sign = cm_sign * s_sign;
+                uint32_t prod = fix_point_mult2_32(16, cm_mag << 6, s_mag);
+                accum += sign * (int32_t)prod;
+            }
+            /* OEM: signed >>6 shift on result */
+            if (accum < 0)
+                output[row * 3 + col] = -((-accum) >> 6);
+            else
+                output[row * 3 + col] = accum >> 6;
+        }
     }
 }
 
