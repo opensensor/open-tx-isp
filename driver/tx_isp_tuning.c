@@ -9782,9 +9782,10 @@ static int tiziano_awb_set_hardware_param(void)
 	        param_word0 = (u32)p[0] | ((u32)p[1] << 8) |
 	            ((u32)p[2] << 16) | ((u32)p[3] << 24);
 	        /* OEM: data_99fb8<<28 | data_99fb4<<16 | param | data_99fb0<<12
-	         * bit16=0 gives raw Bayer stats (R≠G≠B); bit16=1 gives post-WB
-	         * (R=G=B). Previous purple was GIB, not this bit. */
-	        stats_cfg = (AWB_ZONE_COLS << 28) | (0u << 16) |
+	         * OEM data_99fb4=1 → bit16=1 → post-WB stats (hardware applies
+	         * WB gains before accumulating). AWB algorithm expects this.
+	         * bit16=0 gives raw Bayer (R<<G, unusable ratios). */
+	        stats_cfg = (AWB_ZONE_COLS << 28) | (1u << 16) |
 	            (AWB_ZONE_ROWS << 12) | param_word0;
 	        /* OEM uses raw system_reg_write for zone config registers
 	         * (0xb004-0xb024) — no 0xb000 latch here.
