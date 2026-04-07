@@ -18445,6 +18445,22 @@ int tiziano_mdns_init(uint32_t width, uint32_t height)
 	return 0;
 }
 
+/* Called from tx_isp_set_buf after MDNS DMA registers are programmed.
+ * Now safe to enable MDNS since the temporal reference buffers have
+ * valid physical addresses. */
+void tiziano_mdns_enable_after_dma(void)
+{
+	if (mdns_params_received)
+		return; /* already enabled */
+
+	mdns_params_received = 1;
+	tisp_mdns_par_refresh(0x10000, 0x10000);
+	tisp_mdns_bypass(0);
+
+	pr_info("tiziano_mdns_enable_after_dma: MDNS enabled (DMA buffers ready)\n");
+}
+EXPORT_SYMBOL(tiziano_mdns_enable_after_dma);
+
 /*
  * CLM (Color Luminance Mapping) — full OEM-equivalent implementation
  *

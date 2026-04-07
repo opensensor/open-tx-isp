@@ -4797,103 +4797,181 @@ static long tx_isp_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned 
 
         return 0;
     }
-    case 0x800856d5: { // TX_ISP_GET_BUF - Calculate required buffer size
-        struct isp_buf_result {
-            uint32_t addr;   // Physical address (usually 0)
-            uint32_t size;   // Calculated buffer size
-        } buf_result;
-        uint32_t width = 1920;   // Default HD width
-        uint32_t height = 1080;  // Default HD height
-        uint32_t stride_factor;
-        uint32_t main_buf;
-        uint32_t total_main;
-        uint32_t yuv_stride;
-        uint32_t total_size;
+    case 0x800856d5: { /* TX_ISP_GET_BUF — OEM EXACT buffer size calculation for MDNS DMA */
+        struct { uint32_t addr; uint32_t size; } buf_result;
+        uint32_t w, h, h8;
+        uint32_t y_frame, y_1_5;
+        uint32_t stats_w, stats_h, stats_size;
+        uint32_t total;
 
-        pr_info("ISP buffer calculation: width=%d height=%d memopt=%d\n",
-                width, height, isp_memopt);
+        /* Get sensor dimensions */
+        w = ourISPdev ? ourISPdev->vic_dev->width  : 1920;
+        h = ourISPdev ? ourISPdev->vic_dev->height : 1080;
+        h8 = h << 3;
 
-        // CRITICAL FIX: Use correct RAW10 buffer calculation instead of YUV
-        // RAW10 format: 10 bits per pixel = 1.25 bytes per pixel
-        // Formula: width * height * 1.25 (with proper alignment)
+        /* Y frame: stride aligned to 8 bytes × height */
+        y_frame = ((w + 7) >> 3) * h8;
+        y_1_5 = y_frame + (y_frame >> 1);
 
-        pr_info("*** BUFFER FIX: Using RAW10 calculation instead of incorrect YUV calculation ***\n");
+        /* Stats block */
+        stats_w = (((w + 0x1f) >> 5) + 7) >> 3;
+        stats_h = (((h + 0xf) >> 4) + 1) << 3;
+        stats_size = stats_w * stats_h;
 
-        // RAW10: 10 bits per pixel, packed format
-        // Each 4 pixels = 5 bytes (4 * 10 bits = 40 bits = 5 bytes)
-        // So: (width * height * 5) / 4
-        uint32_t raw10_pixels = width * height;
-        uint32_t raw10_bytes = (raw10_pixels * 5) / 4;  // 10 bits per pixel = 1.25 bytes
+        if (isp_memopt) {
+            /* Memory-optimized: Y×1.5 + 1 stats block */
+            total = y_1_5 + stats_size;
+        } else {
+            /* Full mode: Y×1.5 + stats×4 + UV frame + UV ref/2 + UV motion */
+            uint32_t uv_frame = (((w >> 1) + 7) >> 3) * h8;
+            uint32_t uv_motion = (((((w >> 5) + 7) >> 3) * h8) >> 5);
+            total = y_1_5 + (stats_size << 2) + uv_frame + (uv_frame >> 1) + uv_motion;
+        }
 
-        // Add alignment padding (align to 64-byte boundaries for DMA)
-        uint32_t aligned_size = (raw10_bytes + 63) & ~63;
+        pr_info("ISP buffer calc: %ux%u memopt=%d -> %u bytes (0x%x)\n",
+                w, h, isp_memopt, total, total);
 
-        total_size = aligned_size;
-
-        pr_info("*** RAW10 BUFFER: %d pixels -> %d bytes -> %d aligned ***\n",
-                raw10_pixels, raw10_bytes, aligned_size);
-
-        pr_info("ISP calculated buffer size: %d bytes (0x%x)\n", total_size, total_size);
-
-        // Set result: address=0, size=calculated
         buf_result.addr = 0;
-        buf_result.size = total_size;
+        buf_result.size = total;
 
         if (copy_to_user(argp, &buf_result, sizeof(buf_result)))
             return -EFAULT;
 
         return 0;
     }
-    case 0x800856d4: { // TX_ISP_SET_BUF - Set buffer addresses and configure DMA
-        struct isp_buf_setup {
-            uint32_t addr;   // Physical buffer address
-            uint32_t size;   // Buffer size
-        } buf_setup;
-        uint32_t width = 1920;
-        uint32_t height = 1080;
-        uint32_t stride;
-        uint32_t frame_size;
-        uint32_t uv_offset;
-        uint32_t yuv_stride;
-        uint32_t yuv_size;
+    case 0x800856d4: { /* TX_ISP_SET_BUF — OEM EXACT: programs MDNS DMA registers 0x7820-0x786C */
+        struct { uint32_t addr; uint32_t size; } buf;
+        uint32_t width, height;
+        uint32_t y_stride, y_frame, y_ref_off;
+        uint32_t stats_stride, stats_size, stats_off;
+        uint32_t uv_stride, uv_frame, uv_off;
+        uint32_t motion_stride;
+        uint32_t total;
 
-        if (copy_from_user(&buf_setup, argp, sizeof(buf_setup)))
+        if (copy_from_user(&buf, argp, sizeof(buf)))
             return -EFAULT;
 
-        pr_info("ISP set buffer: addr=0x%x size=%d\n", buf_setup.addr, buf_setup.size);
+        /* Get sensor dimensions from ISP device */
+        width  = ourISPdev ? ourISPdev->vic_dev->width  : 1920;
+        height = ourISPdev ? ourISPdev->vic_dev->height : 1080;
 
-        // Calculate stride and buffer offsets like reference
-        stride = ((width + 7) >> 3) << 3;  // Aligned stride
-        frame_size = stride * height;
+        /* Y channel stride & frame size */
+        y_stride = ((width + 7) >> 3) << 3;
+        y_frame  = y_stride * height;
 
-        // Validate buffer size
-        if (buf_setup.size < frame_size) {
-            pr_err("Buffer too small: need %d, got %d\n", frame_size, buf_setup.size);
-            return -EFAULT;
+        /* 0x7820: Y current frame base, 0x7824: Y stride */
+        system_reg_write(0x7820, buf.addr);
+        system_reg_write(0x7824, y_stride);
+
+        if (buf.size < y_frame) {
+            pr_err("tx_isp_set_buf: buf too small (%u < %u)\n", buf.size, y_frame);
+            return -EINVAL;
         }
 
-        // Configure main frame buffers (system registers like reference)
-        // These would be actual register writes in hardware implementation
-        pr_info("Configuring main frame buffer: 0x%x stride=%d\n", buf_setup.addr, stride);
+        /* 0x7828: Y reference frame base (after Y current), 0x782C: stride */
+        y_ref_off = y_frame;
+        system_reg_write(0x7828, buf.addr + y_ref_off);
+        system_reg_write(0x782c, y_stride);
 
-        // UV buffer offset calculation
-        uv_offset = frame_size + (frame_size >> 1);
-        if (buf_setup.size >= uv_offset) {
-            pr_info("Configuring UV buffer: 0x%x\n", buf_setup.addr + frame_size);
+        /* Motion stats offset: Y current + Y ref/2 */
+        stats_off = y_frame + (y_frame >> 1);
+        if (buf.size < stats_off) {
+            pr_err("tx_isp_set_buf: buf too small for stats (%u < %u)\n", buf.size, stats_off);
+            return -EINVAL;
         }
 
-        // YUV420 additional buffer configuration
-        yuv_stride = ((((width + 0x1f) >> 5) + 7) >> 3) << 3;
-        yuv_size = yuv_stride * ((((height + 0xf) >> 4) + 1) << 3);
+        /* Stats stride & size */
+        stats_stride = ((((width + 0x1f) >> 5) + 7) >> 3) << 3;
+        stats_size   = (((height + 0xf) >> 4) + 1) * stats_stride;
 
-        if (!isp_memopt) {
-            // Full buffer mode - configure all planes
-            pr_info("Full buffer mode: YUV stride=%d size=%d\n", yuv_stride, yuv_size);
+        /* 0x7830: motion stats base, 0x7834: stats stride */
+        system_reg_write(0x7830, buf.addr + stats_off);
+        system_reg_write(0x7834, stats_stride);
+
+        /* 0x7840-0x7854: per-block stats buffers */
+        if (isp_memopt) {
+            /* Memory-optimized: all point to stats_off, stride=0 */
+            system_reg_write(0x7840, buf.addr + stats_off);
+            system_reg_write(0x7844, 0);
+            system_reg_write(0x7848, buf.addr + stats_off);
+            system_reg_write(0x784c, 0);
+            system_reg_write(0x7850, buf.addr + stats_off);
+            system_reg_write(0x7854, 0);
+            total = stats_off;
         } else {
-            // Memory optimized mode
-            pr_info("Memory optimized mode\n");
+            /* Full mode: sequential stats buffers */
+            system_reg_write(0x7840, buf.addr + stats_off + stats_size);
+            system_reg_write(0x7844, stats_stride);
+            system_reg_write(0x7848, buf.addr + stats_off + stats_size * 2);
+            system_reg_write(0x784c, stats_stride);
+            system_reg_write(0x7850, buf.addr + stats_off + stats_size * 3);
+            system_reg_write(0x7854, stats_stride);
+            total = stats_off + stats_size * 4;
         }
 
+        /* 0x7838: motion stats mode, 0x783C: motion stats enable */
+        system_reg_write(0x7838, 0);
+        system_reg_write(0x783c, 1);
+
+        if (buf.size < total) {
+            pr_err("tx_isp_set_buf: buf too small for Y+stats (%u < %u)\n", buf.size, total);
+            return -EINVAL;
+        }
+
+        /* UV channel: 0x7858-0x786C */
+        if (!isp_memopt) {
+            uv_stride = (((width >> 1) + 7) >> 3) << 3;
+            uv_frame  = uv_stride * height;
+            uv_off    = total;
+
+            /* 0x7858: UV current, 0x785C: UV stride */
+            system_reg_write(0x7858, buf.addr + uv_off);
+            system_reg_write(0x785c, uv_stride);
+            uv_off += uv_frame;
+
+            if (buf.size < uv_off) {
+                pr_err("tx_isp_set_buf: buf too small for UV\n");
+                return -EINVAL;
+            }
+
+            /* 0x7860: UV reference, 0x7864: UV ref stride */
+            system_reg_write(0x7860, buf.addr + uv_off);
+            system_reg_write(0x7864, uv_stride);
+            uv_off += uv_frame >> 1;
+
+            if (buf.size < uv_off) {
+                pr_err("tx_isp_set_buf: buf too small for UV ref\n");
+                return -EINVAL;
+            }
+
+            /* 0x7868: UV motion stats, 0x786C: UV motion stride */
+            motion_stride = (((width >> 5) + 7) >> 3) << 3;
+            system_reg_write(0x7868, buf.addr + uv_off);
+            system_reg_write(0x786c, motion_stride);
+            total = uv_off + (motion_stride * height >> 5);
+        } else {
+            /* Memory-optimized: UV regs point to buf base, stride=0 */
+            system_reg_write(0x7858, buf.addr);
+            system_reg_write(0x785c, 0);
+            system_reg_write(0x7860, buf.addr);
+            system_reg_write(0x7864, 0);
+            system_reg_write(0x7868, buf.addr);
+            system_reg_write(0x786c, 0);
+        }
+
+        if (buf.size < total) {
+            pr_err("tx_isp_set_buf: buf too small total (%u < %u)\n", buf.size, total);
+            return -EINVAL;
+        }
+
+        pr_info("ISP set buffer: addr=0x%x size=%u MDNS DMA regs 0x7820-0x786C programmed (%ux%u memopt=%d)\n",
+                buf.addr, buf.size, width, height, isp_memopt);
+
+        /* Now that DMA buffers are configured, enable MDNS (was deferred at init) */
+        {
+            extern void tiziano_mdns_enable_after_dma(void);
+            tiziano_mdns_enable_after_dma();
+        }
         return 0;
     }
     case 0x800856d6: { // TX_ISP_WDR_SET_BUF - WDR buffer setup
