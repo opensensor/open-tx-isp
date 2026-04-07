@@ -4909,6 +4909,17 @@ static long tx_isp_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned 
                 system_reg_write(0x786c, 0);
             }
 
+            /* Zero the MDNS DMA buffer so reference frames start clean.
+             * Without this, MDNS temporal blending uses garbage UV data
+             * from uninitialized rmem, causing pink/magenta tint. */
+            {
+                void __iomem *vaddr = ioremap(buf.addr, buf.size);
+                if (vaddr) {
+                    memset(vaddr, 0, buf.size);
+                    iounmap(vaddr);
+                }
+            }
+
             pr_info("ISP set buffer: addr=0x%x size=%u MDNS DMA programmed (%ux%u memopt=%d)\n",
                     buf.addr, buf.size, width, height, isp_memopt);
 

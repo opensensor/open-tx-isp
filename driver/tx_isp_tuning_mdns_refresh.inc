@@ -1,471 +1,501 @@
-MDNS_REFRESH_ENTRY(mdns_y_filter_en_array, 4)
-MDNS_REFRESH_ENTRY(mdns_y_sf_cur_en_array, 4)
-MDNS_REFRESH_ENTRY(mdns_y_sf_ref_en_array, 4)
-MDNS_REFRESH_ENTRY(mdns_y_debug_array, 4)
-MDNS_REFRESH_ENTRY(mdns_uv_filter_en_array, 4)
-MDNS_REFRESH_ENTRY(mdns_uv_sf_cur_en_array, 4)
-MDNS_REFRESH_ENTRY(mdns_uv_sf_ref_en_array, 4)
-MDNS_REFRESH_ENTRY(mdns_uv_debug_array, 4)
-MDNS_REFRESH_ENTRY(mdns_ass_enable_array, 4)
-MDNS_REFRESH_ENTRY(mdns_sta_inter_en_array, 4)
-MDNS_REFRESH_ENTRY(mdns_sta_group_num_array, 4)
-MDNS_REFRESH_ENTRY(mdns_sta_max_num_array, 4)
-MDNS_REFRESH_ENTRY(mdns_bgm_enable_array, 4)
-MDNS_REFRESH_ENTRY(mdns_bgm_inter_en_array, 4)
-MDNS_REFRESH_ENTRY(mdns_psn_enable_array, 4)
-MDNS_REFRESH_ENTRY(mdns_psn_max_num_array, 4)
-MDNS_REFRESH_ENTRY(mdns_ref_wei_byps_array, 4)
-MDNS_REFRESH_ENTRY(mdns_y_sad_win_opt_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_sad_ave_thres_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_sad_ave_slope_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_sad_dtb_thres_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_sad_ass_thres_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_sta_blk_size_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_sta_win_opt_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_sta_ave_thres_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_sta_dtb_thres_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_sta_ass_thres_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_sta_motion_thres_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_ref_wei_sta_array, 0x40)
-MDNS_REFRESH_ENTRY(mdns_y_ref_wei_psn_array, 0x40)
-MDNS_REFRESH_ENTRY(mdns_y_ref_wei_mv_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_ref_wei_fake_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_ref_wei_sta_fs_opt_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_ref_wei_psn_fs_opt_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_ref_wei_f_max_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_ref_wei_f_min_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_ref_wei_b_max_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_ref_wei_b_min_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_ref_wei_r_max_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_ref_wei_r_min_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_ref_wei_increase_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_corner_length_t_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_corner_length_b_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_corner_length_l_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_corner_length_r_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_edge_win_opt_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_edge_div_opt_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_edge_type_opt_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_luma_win_opt_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_dtb_div_opt_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_dtb_squ_en_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_dtb_squ_div_opt_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_ass_win_opt_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_ass_div_opt_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_hist_sad_en_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_hist_sta_en_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_hist_num_thres_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_hist_cmp_thres0_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_hist_cmp_thres1_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_hist_cmp_thres2_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_hist_cmp_thres3_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_hist_thres0_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_hist_thres1_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_hist_thres2_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_hist_thres3_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_edge_thr_adj_seg_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_luma_thr_adj_seg_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_dtb_thr_adj_seg_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_ass_thr_adj_seg_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_corner_thr_adj_value_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_edge_thr_adj_value0_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_edge_thr_adj_value1_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_edge_thr_adj_value2_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_edge_thr_adj_value3_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_edge_thr_adj_value4_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_edge_thr_adj_value5_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_luma_thr_adj_value0_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_luma_thr_adj_value1_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_luma_thr_adj_value2_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_luma_thr_adj_value3_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_luma_thr_adj_value4_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_luma_thr_adj_value5_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_dtb_thr_adj_value0_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_dtb_thr_adj_value1_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_dtb_thr_adj_value2_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_dtb_thr_adj_value3_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_dtb_thr_adj_value4_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_dtb_thr_adj_value5_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_ass_thr_adj_value0_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_ass_thr_adj_value1_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_ass_thr_adj_value2_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_ass_thr_adj_value3_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_ass_thr_adj_value4_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_ass_thr_adj_value5_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_edge_wei_adj_seg_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_luma_wei_adj_seg_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_dtb_wei_adj_seg_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_ass_wei_adj_seg_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_sad_wei_adj_seg_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_corner_wei_adj_value_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_edge_wei_adj_value0_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_edge_wei_adj_value1_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_edge_wei_adj_value2_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_edge_wei_adj_value3_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_edge_wei_adj_value4_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_edge_wei_adj_value5_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_luma_wei_adj_value0_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_luma_wei_adj_value1_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_luma_wei_adj_value2_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_luma_wei_adj_value3_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_luma_wei_adj_value4_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_luma_wei_adj_value5_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_dtb_wei_adj_value0_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_dtb_wei_adj_value1_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_dtb_wei_adj_value2_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_dtb_wei_adj_value3_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_dtb_wei_adj_value4_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_dtb_wei_adj_value5_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_ass_wei_adj_value0_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_ass_wei_adj_value1_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_ass_wei_adj_value2_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_ass_wei_adj_value3_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_ass_wei_adj_value4_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_ass_wei_adj_value5_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_sad_wei_adj_value0_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_sad_wei_adj_value1_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_sad_wei_adj_value2_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_sad_wei_adj_value3_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_sad_wei_adj_value4_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_sad_wei_adj_value5_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_sad_ave_thres_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_sad_ass_thres_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_sta_ave_thres_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_sta_ass_thres_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_sta_motion_thres_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_ref_wei_b_max_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_ref_wei_b_min_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_pspa_cur_median_win_opt_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_pspa_cur_bi_thres_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_pspa_cur_bi_wei_seg_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_pspa_cur_bi_wei0_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_pspa_cur_bi_wei1_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_pspa_cur_bi_wei2_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_pspa_cur_bi_wei3_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_pspa_cur_bi_wei4_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_pspa_cur_lmt_op_en_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_pspa_cur_lmt_wei_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_pspa_ref_median_win_opt_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_pspa_ref_bi_thres_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_pspa_ref_bi_wei_seg_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_pspa_ref_bi_wei0_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_pspa_ref_bi_wei1_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_pspa_ref_bi_wei2_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_pspa_ref_bi_wei3_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_pspa_ref_bi_wei4_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_pspa_ref_lmt_op_en_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_pspa_ref_lmt_wei_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_piir_edge_thres0_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_piir_edge_thres1_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_piir_edge_thres2_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_piir_edge_wei0_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_piir_edge_wei1_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_piir_edge_wei2_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_piir_edge_wei3_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_piir_cur_fs_wei_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_piir_ref_fs_wei_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_pspa_fnl_fus_thres_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_pspa_fnl_fus_swei_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_pspa_fnl_fus_dwei_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_seg_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_0_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_16_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_32_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_48_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_64_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_80_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_96_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_112_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_128_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_144_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_160_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_176_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_192_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_208_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_224_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_240_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_seg_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_0_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_16_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_32_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_48_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_64_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_80_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_96_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_112_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_128_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_144_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_160_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_176_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_192_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_208_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_224_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_240_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fiir_edge_thres0_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fiir_edge_thres1_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fiir_edge_thres2_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fiir_edge_wei0_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fiir_edge_wei1_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fiir_edge_wei2_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fiir_edge_wei3_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fiir_cur_fs_wei_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fiir_ref_fs_wei_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fiir_fus_seg_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fiir_fus_swei_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fiir_fus_dwei_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fiir_fus_wei_0_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fiir_fus_wei_16_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fiir_fus_wei_32_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fiir_fus_wei_48_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fiir_fus_wei_64_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_con_thres_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_con_stren_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_pspa_cur_median_win_opt_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_pspa_cur_bi_thres_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_pspa_cur_bi_wei0_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_pspa_ref_median_win_opt_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_pspa_ref_bi_thres_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_pspa_ref_bi_wei0_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_piir_cur_fs_wei_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_piir_ref_fs_wei_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_144_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_160_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_176_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_192_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_208_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_224_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_240_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_144_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_160_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_176_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_192_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_208_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_224_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_240_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fiir_fus_wei0_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fiir_fus_wei1_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fiir_fus_wei2_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fiir_fus_wei3_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fiir_fus_wei4_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fiir_fus_wei5_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fiir_fus_wei6_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fiir_fus_wei7_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_y_fiir_fus_wei8_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_sad_win_opt_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_sad_ave_thres_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_sad_ave_slope_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_sad_dtb_thres_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_sad_ass_thres_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_ref_wei_mv_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_ref_wei_fake_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_ref_wei_f_max_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_ref_wei_f_min_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_ref_wei_b_max_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_ref_wei_b_min_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_ref_wei_r_max_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_ref_wei_r_min_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_ref_wei_increase_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_edge_thr_adj_seg_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_luma_thr_adj_seg_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_dtb_thr_adj_seg_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_ass_thr_adj_seg_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_corner_thr_adj_value_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_edge_thr_adj_value0_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_edge_thr_adj_value1_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_edge_thr_adj_value2_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_edge_thr_adj_value3_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_edge_thr_adj_value4_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_edge_thr_adj_value5_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_luma_thr_adj_value0_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_luma_thr_adj_value1_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_luma_thr_adj_value2_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_luma_thr_adj_value3_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_luma_thr_adj_value4_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_luma_thr_adj_value5_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_dtb_thr_adj_value0_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_dtb_thr_adj_value1_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_dtb_thr_adj_value2_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_dtb_thr_adj_value3_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_dtb_thr_adj_value4_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_dtb_thr_adj_value5_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_ass_thr_adj_value0_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_ass_thr_adj_value1_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_ass_thr_adj_value2_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_ass_thr_adj_value3_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_ass_thr_adj_value4_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_ass_thr_adj_value5_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_edge_wei_adj_seg_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_luma_wei_adj_seg_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_dtb_wei_adj_seg_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_ass_wei_adj_seg_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_sad_wei_adj_seg_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_corner_wei_adj_value_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_edge_wei_adj_value0_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_edge_wei_adj_value1_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_edge_wei_adj_value2_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_edge_wei_adj_value3_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_edge_wei_adj_value4_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_edge_wei_adj_value5_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_luma_wei_adj_value0_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_luma_wei_adj_value1_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_luma_wei_adj_value2_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_luma_wei_adj_value3_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_luma_wei_adj_value4_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_luma_wei_adj_value5_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_dtb_wei_adj_value0_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_dtb_wei_adj_value1_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_dtb_wei_adj_value2_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_dtb_wei_adj_value3_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_dtb_wei_adj_value4_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_dtb_wei_adj_value5_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_ass_wei_adj_value0_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_ass_wei_adj_value1_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_ass_wei_adj_value2_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_ass_wei_adj_value3_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_ass_wei_adj_value4_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_ass_wei_adj_value5_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_sad_wei_adj_value0_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_sad_wei_adj_value1_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_sad_wei_adj_value2_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_sad_wei_adj_value3_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_sad_wei_adj_value4_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_sad_wei_adj_value5_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_sad_ave_thres_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_sad_ass_thres_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_ref_wei_b_max_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_ref_wei_b_min_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_median_smj_thres_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_median_edg_thres_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_median_cur_lmt_op_en_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_median_cur_lmt_wei_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_median_cur_ss_wei_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_median_cur_se_wei_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_median_cur_ms_wei_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_median_cur_me_wei_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_median_ref_lmt_op_en_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_median_ref_lmt_wei_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_median_ref_ss_wei_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_median_ref_se_wei_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_median_ref_ms_wei_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_median_ref_me_wei_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_bgm_win_opt_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_bgm_cur_src_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_bgm_ref_src_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_bgm_false_thres_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_bgm_false_step_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_piir_edge_thres0_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_piir_edge_thres1_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_piir_edge_thres2_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_piir_edge_wei0_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_piir_edge_wei1_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_piir_edge_wei2_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_piir_edge_wei3_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_piir_cur_fs_wei_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_piir_ref_fs_wei_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_seg_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_0_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_16_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_32_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_48_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_64_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_80_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_96_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_112_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_128_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_144_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_160_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_176_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_192_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_208_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_224_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_240_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_seg_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_0_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_16_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_32_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_48_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_64_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_80_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_96_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_112_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_128_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_144_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_160_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_176_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_192_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_208_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_224_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_240_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fiir_edge_thres0_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fiir_edge_thres1_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fiir_edge_thres2_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fiir_edge_wei0_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fiir_edge_wei1_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fiir_edge_wei2_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fiir_edge_wei3_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fiir_fus_seg_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fiir_fus_wei0_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fiir_fus_wei1_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fiir_fus_wei2_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fiir_fus_wei3_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fiir_fus_wei4_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fiir_fus_wei5_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fiir_fus_wei6_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fiir_fus_wei7_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fiir_fus_wei8_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_false_smj_thres_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_false_edg_thres0_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_false_edg_thres1_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_false_edg_thres2_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_false_thres_s0_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_false_thres_s1_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_false_thres_s2_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_false_thres_s3_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_false_step_s0_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_false_step_s1_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_false_step_s2_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_false_step_s3_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_false_thres_m0_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_false_thres_m1_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_false_thres_m2_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_false_thres_m3_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_false_step_m0_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_false_step_m1_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_false_step_m2_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_false_step_m3_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_sat_lmt_thres_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_sat_lmt_stren_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_median_cur_ss_wei_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_median_cur_se_wei_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_median_cur_ms_wei_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_median_cur_me_wei_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_median_ref_ss_wei_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_median_ref_se_wei_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_median_ref_ms_wei_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_median_ref_me_wei_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_piir_cur_fs_wei_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_piir_ref_fs_wei_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_144_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_160_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_176_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_192_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_208_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_224_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_240_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_144_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_160_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_176_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_192_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_208_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_224_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_240_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fiir_fus_wei0_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fiir_fus_wei1_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fiir_fus_wei2_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fiir_fus_wei3_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fiir_fus_wei4_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fiir_fus_wei5_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fiir_fus_wei6_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fiir_fus_wei7_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_fiir_fus_wei8_wdr_array, 0x24)
-MDNS_REFRESH_ENTRY(mdns_c_sat_nml_stren_array, 0x24)
+/* MDNS parameter refresh table
+ *
+ * Auto-generated from OEM tiziano_mdns_params_refresh() decompilation.
+ * Each MDNS_REFRESH_ENTRY(var, size) expands to:
+ *   memcpy(&(var), cursor, (size));
+ *   cursor += (size);
+ *
+ * Entries are in the sequential order the OEM function reads them.
+ * OEM addresses in comments are the global variable locations in the
+ * OEM binary (blob starts at 0x90640, total size 0x4054 bytes).
+ *
+ * Total entries: 471
+ * Total blob size: 0x4054 (16468) bytes
+ */
+
+/* --- Y channel --- */
+MDNS_REFRESH_ENTRY(mdns_y_filter_en_array, 4) /* 0x90640 */
+MDNS_REFRESH_ENTRY(mdns_y_sf_cur_en_array, 4) /* 0x90644 */
+MDNS_REFRESH_ENTRY(mdns_y_sf_ref_en_array, 4) /* 0x90648 */
+MDNS_REFRESH_ENTRY(mdns_y_debug_array, 4) /* 0x9064c */
+
+/* --- UV common --- */
+MDNS_REFRESH_ENTRY(mdns_uv_filter_en_array, 4) /* 0x90650 */
+MDNS_REFRESH_ENTRY(mdns_uv_sf_cur_en_array, 4) /* 0x90654 */
+MDNS_REFRESH_ENTRY(mdns_uv_sf_ref_en_array, 4) /* 0x90658 */
+MDNS_REFRESH_ENTRY(mdns_uv_debug_array, 4) /* 0x9065c */
+
+/* --- Common controls --- */
+MDNS_REFRESH_ENTRY(mdns_ass_enable_array, 4) /* 0x90660 */
+MDNS_REFRESH_ENTRY(mdns_sta_inter_en_array, 4) /* 0x90664 */
+MDNS_REFRESH_ENTRY(mdns_sta_group_num_array, 4) /* 0x90668 */
+MDNS_REFRESH_ENTRY(mdns_sta_max_num_array, 4) /* 0x9066c */
+MDNS_REFRESH_ENTRY(mdns_bgm_enable_array, 4) /* 0x90670 */
+MDNS_REFRESH_ENTRY(mdns_bgm_inter_en_array, 4) /* 0x90674 */
+MDNS_REFRESH_ENTRY(mdns_psn_enable_array, 4) /* 0x90678 */
+MDNS_REFRESH_ENTRY(mdns_psn_max_num_array, 4) /* 0x9067c */
+MDNS_REFRESH_ENTRY(mdns_ref_wei_byps_array, 4) /* 0x90680 */
+
+/* --- Y channel --- */
+MDNS_REFRESH_ENTRY(mdns_y_sad_win_opt_array, 0x24) /* 0x90684 */
+MDNS_REFRESH_ENTRY(mdns_y_sad_ave_thres_array, 0x24) /* 0x906a8 */
+MDNS_REFRESH_ENTRY(mdns_y_sad_ave_slope_array, 0x24) /* 0x906cc */
+MDNS_REFRESH_ENTRY(mdns_y_sad_dtb_thres_array, 0x24) /* 0x906f0 */
+MDNS_REFRESH_ENTRY(mdns_y_sad_ass_thres_array, 0x24) /* 0x90714 */
+MDNS_REFRESH_ENTRY(mdns_y_sta_blk_size_array, 0x24) /* 0x90738 */
+MDNS_REFRESH_ENTRY(mdns_y_sta_win_opt_array, 0x24) /* 0x9075c */
+MDNS_REFRESH_ENTRY(mdns_y_sta_ave_thres_array, 0x24) /* 0x90780 */
+MDNS_REFRESH_ENTRY(mdns_y_sta_dtb_thres_array, 0x24) /* 0x907a4 */
+MDNS_REFRESH_ENTRY(mdns_y_sta_ass_thres_array, 0x24) /* 0x907c8 */
+MDNS_REFRESH_ENTRY(mdns_y_sta_motion_thres_array, 0x24) /* 0x907ec */
+MDNS_REFRESH_ENTRY(mdns_y_ref_wei_sta_array, 0x40) /* 0x90810 */
+MDNS_REFRESH_ENTRY(mdns_y_ref_wei_psn_array, 0x40) /* 0x90850 */
+MDNS_REFRESH_ENTRY(mdns_y_ref_wei_mv_array, 0x24) /* 0x90890 */
+MDNS_REFRESH_ENTRY(mdns_y_ref_wei_fake_array, 0x24) /* 0x908b4 */
+MDNS_REFRESH_ENTRY(mdns_y_ref_wei_sta_fs_opt_array, 0x24) /* 0x908d8 */
+MDNS_REFRESH_ENTRY(mdns_y_ref_wei_psn_fs_opt_array, 0x24) /* 0x908fc */
+MDNS_REFRESH_ENTRY(mdns_y_ref_wei_f_max_array, 0x24) /* 0x90920 */
+MDNS_REFRESH_ENTRY(mdns_y_ref_wei_f_min_array, 0x24) /* 0x90944 */
+MDNS_REFRESH_ENTRY(mdns_y_ref_wei_b_max_array, 0x24) /* 0x90968 */
+MDNS_REFRESH_ENTRY(mdns_y_ref_wei_b_min_array, 0x24) /* 0x9098c */
+MDNS_REFRESH_ENTRY(mdns_y_ref_wei_r_max_array, 0x24) /* 0x909b0 */
+MDNS_REFRESH_ENTRY(mdns_y_ref_wei_r_min_array, 0x24) /* 0x909d4 */
+MDNS_REFRESH_ENTRY(mdns_y_ref_wei_increase_array, 0x24) /* 0x909f8 */
+MDNS_REFRESH_ENTRY(mdns_y_corner_length_t_array, 0x24) /* 0x90a1c */
+MDNS_REFRESH_ENTRY(mdns_y_corner_length_b_array, 0x24) /* 0x90a40 */
+MDNS_REFRESH_ENTRY(mdns_y_corner_length_l_array, 0x24) /* 0x90a64 */
+MDNS_REFRESH_ENTRY(mdns_y_corner_length_r_array, 0x24) /* 0x90a88 */
+MDNS_REFRESH_ENTRY(mdns_y_edge_win_opt_array, 0x24) /* 0x90aac */
+MDNS_REFRESH_ENTRY(mdns_y_edge_div_opt_array, 0x24) /* 0x90ad0 */
+MDNS_REFRESH_ENTRY(mdns_y_edge_type_opt_array, 0x24) /* 0x90af4 */
+MDNS_REFRESH_ENTRY(mdns_y_luma_win_opt_array, 0x24) /* 0x90b18 */
+MDNS_REFRESH_ENTRY(mdns_y_dtb_div_opt_array, 0x24) /* 0x90b3c */
+MDNS_REFRESH_ENTRY(mdns_y_dtb_squ_en_array, 0x24) /* 0x90b60 */
+MDNS_REFRESH_ENTRY(mdns_y_dtb_squ_div_opt_array, 0x24) /* 0x90b84 */
+MDNS_REFRESH_ENTRY(mdns_y_ass_win_opt_array, 0x24) /* 0x90ba8 */
+MDNS_REFRESH_ENTRY(mdns_y_ass_div_opt_array, 0x24) /* 0x90bcc */
+MDNS_REFRESH_ENTRY(mdns_y_hist_sad_en_array, 0x24) /* 0x90bf0 */
+MDNS_REFRESH_ENTRY(mdns_y_hist_sta_en_array, 0x24) /* 0x90c14 */
+MDNS_REFRESH_ENTRY(mdns_y_hist_num_thres_array, 0x24) /* 0x90c38 */
+MDNS_REFRESH_ENTRY(mdns_y_hist_cmp_thres0_array, 0x24) /* 0x90c5c */
+MDNS_REFRESH_ENTRY(mdns_y_hist_cmp_thres1_array, 0x24) /* 0x90c80 */
+MDNS_REFRESH_ENTRY(mdns_y_hist_cmp_thres2_array, 0x24) /* 0x90ca4 */
+MDNS_REFRESH_ENTRY(mdns_y_hist_cmp_thres3_array, 0x24) /* 0x90cc8 */
+MDNS_REFRESH_ENTRY(mdns_y_hist_thres0_array, 0x24) /* 0x90cec */
+MDNS_REFRESH_ENTRY(mdns_y_hist_thres1_array, 0x24) /* 0x90d10 */
+MDNS_REFRESH_ENTRY(mdns_y_hist_thres2_array, 0x24) /* 0x90d34 */
+MDNS_REFRESH_ENTRY(mdns_y_hist_thres3_array, 0x24) /* 0x90d58 */
+MDNS_REFRESH_ENTRY(mdns_y_edge_thr_adj_seg_array, 0x24) /* 0x90d7c */
+MDNS_REFRESH_ENTRY(mdns_y_luma_thr_adj_seg_array, 0x24) /* 0x90da0 */
+MDNS_REFRESH_ENTRY(mdns_y_dtb_thr_adj_seg_array, 0x24) /* 0x90dc4 */
+MDNS_REFRESH_ENTRY(mdns_y_ass_thr_adj_seg_array, 0x24) /* 0x90de8 */
+MDNS_REFRESH_ENTRY(mdns_y_corner_thr_adj_value_array, 0x24) /* 0x90e0c */
+MDNS_REFRESH_ENTRY(mdns_y_edge_thr_adj_value0_array, 0x24) /* 0x90e30 */
+MDNS_REFRESH_ENTRY(mdns_y_edge_thr_adj_value1_array, 0x24) /* 0x90e54 */
+MDNS_REFRESH_ENTRY(mdns_y_edge_thr_adj_value2_array, 0x24) /* 0x90e78 */
+MDNS_REFRESH_ENTRY(mdns_y_edge_thr_adj_value3_array, 0x24) /* 0x90e9c */
+MDNS_REFRESH_ENTRY(mdns_y_edge_thr_adj_value4_array, 0x24) /* 0x90ec0 */
+MDNS_REFRESH_ENTRY(mdns_y_edge_thr_adj_value5_array, 0x24) /* 0x90ee4 */
+MDNS_REFRESH_ENTRY(mdns_y_luma_thr_adj_value0_array, 0x24) /* 0x90f08 */
+MDNS_REFRESH_ENTRY(mdns_y_luma_thr_adj_value1_array, 0x24) /* 0x90f2c */
+MDNS_REFRESH_ENTRY(mdns_y_luma_thr_adj_value2_array, 0x24) /* 0x90f50 */
+MDNS_REFRESH_ENTRY(mdns_y_luma_thr_adj_value3_array, 0x24) /* 0x90f74 */
+MDNS_REFRESH_ENTRY(mdns_y_luma_thr_adj_value4_array, 0x24) /* 0x90f98 */
+MDNS_REFRESH_ENTRY(mdns_y_luma_thr_adj_value5_array, 0x24) /* 0x90fbc */
+MDNS_REFRESH_ENTRY(mdns_y_dtb_thr_adj_value0_array, 0x24) /* 0x90fe0 */
+MDNS_REFRESH_ENTRY(mdns_y_dtb_thr_adj_value1_array, 0x24) /* 0x91004 */
+MDNS_REFRESH_ENTRY(mdns_y_dtb_thr_adj_value2_array, 0x24) /* 0x91028 */
+MDNS_REFRESH_ENTRY(mdns_y_dtb_thr_adj_value3_array, 0x24) /* 0x9104c */
+MDNS_REFRESH_ENTRY(mdns_y_dtb_thr_adj_value4_array, 0x24) /* 0x91070 */
+MDNS_REFRESH_ENTRY(mdns_y_dtb_thr_adj_value5_array, 0x24) /* 0x91094 */
+MDNS_REFRESH_ENTRY(mdns_y_ass_thr_adj_value0_array, 0x24) /* 0x910b8 */
+MDNS_REFRESH_ENTRY(mdns_y_ass_thr_adj_value1_array, 0x24) /* 0x910dc */
+MDNS_REFRESH_ENTRY(mdns_y_ass_thr_adj_value2_array, 0x24) /* 0x91100 */
+MDNS_REFRESH_ENTRY(mdns_y_ass_thr_adj_value3_array, 0x24) /* 0x91124 */
+MDNS_REFRESH_ENTRY(mdns_y_ass_thr_adj_value4_array, 0x24) /* 0x91148 */
+MDNS_REFRESH_ENTRY(mdns_y_ass_thr_adj_value5_array, 0x24) /* 0x9116c */
+MDNS_REFRESH_ENTRY(mdns_y_edge_wei_adj_seg_array, 0x24) /* 0x91190 */
+MDNS_REFRESH_ENTRY(mdns_y_luma_wei_adj_seg_array, 0x24) /* 0x911b4 */
+MDNS_REFRESH_ENTRY(mdns_y_dtb_wei_adj_seg_array, 0x24) /* 0x911d8 */
+MDNS_REFRESH_ENTRY(mdns_y_ass_wei_adj_seg_array, 0x24) /* 0x911fc */
+MDNS_REFRESH_ENTRY(mdns_y_sad_wei_adj_seg_array, 0x24) /* 0x91220 */
+MDNS_REFRESH_ENTRY(mdns_y_corner_wei_adj_value_array, 0x24) /* 0x91244 */
+MDNS_REFRESH_ENTRY(mdns_y_edge_wei_adj_value0_array, 0x24) /* 0x91268 */
+MDNS_REFRESH_ENTRY(mdns_y_edge_wei_adj_value1_array, 0x24) /* 0x9128c */
+MDNS_REFRESH_ENTRY(mdns_y_edge_wei_adj_value2_array, 0x24) /* 0x912b0 */
+MDNS_REFRESH_ENTRY(mdns_y_edge_wei_adj_value3_array, 0x24) /* 0x912d4 */
+MDNS_REFRESH_ENTRY(mdns_y_edge_wei_adj_value4_array, 0x24) /* 0x912f8 */
+MDNS_REFRESH_ENTRY(mdns_y_edge_wei_adj_value5_array, 0x24) /* 0x9131c */
+MDNS_REFRESH_ENTRY(mdns_y_luma_wei_adj_value0_array, 0x24) /* 0x91340 */
+MDNS_REFRESH_ENTRY(mdns_y_luma_wei_adj_value1_array, 0x24) /* 0x91364 */
+MDNS_REFRESH_ENTRY(mdns_y_luma_wei_adj_value2_array, 0x24) /* 0x91388 */
+MDNS_REFRESH_ENTRY(mdns_y_luma_wei_adj_value3_array, 0x24) /* 0x913ac */
+MDNS_REFRESH_ENTRY(mdns_y_luma_wei_adj_value4_array, 0x24) /* 0x913d0 */
+MDNS_REFRESH_ENTRY(mdns_y_luma_wei_adj_value5_array, 0x24) /* 0x913f4 */
+MDNS_REFRESH_ENTRY(mdns_y_dtb_wei_adj_value0_array, 0x24) /* 0x91418 */
+MDNS_REFRESH_ENTRY(mdns_y_dtb_wei_adj_value1_array, 0x24) /* 0x9143c */
+MDNS_REFRESH_ENTRY(mdns_y_dtb_wei_adj_value2_array, 0x24) /* 0x91460 */
+MDNS_REFRESH_ENTRY(mdns_y_dtb_wei_adj_value3_array, 0x24) /* 0x91484 */
+MDNS_REFRESH_ENTRY(mdns_y_dtb_wei_adj_value4_array, 0x24) /* 0x914a8 */
+MDNS_REFRESH_ENTRY(mdns_y_dtb_wei_adj_value5_array, 0x24) /* 0x914cc */
+MDNS_REFRESH_ENTRY(mdns_y_ass_wei_adj_value0_array, 0x24) /* 0x914f0 */
+MDNS_REFRESH_ENTRY(mdns_y_ass_wei_adj_value1_array, 0x24) /* 0x91514 */
+MDNS_REFRESH_ENTRY(mdns_y_ass_wei_adj_value2_array, 0x24) /* 0x91538 */
+MDNS_REFRESH_ENTRY(mdns_y_ass_wei_adj_value3_array, 0x24) /* 0x9155c */
+MDNS_REFRESH_ENTRY(mdns_y_ass_wei_adj_value4_array, 0x24) /* 0x91580 */
+MDNS_REFRESH_ENTRY(mdns_y_ass_wei_adj_value5_array, 0x24) /* 0x915a4 */
+MDNS_REFRESH_ENTRY(mdns_y_sad_wei_adj_value0_array, 0x24) /* 0x915c8 */
+MDNS_REFRESH_ENTRY(mdns_y_sad_wei_adj_value1_array, 0x24) /* 0x915ec */
+MDNS_REFRESH_ENTRY(mdns_y_sad_wei_adj_value2_array, 0x24) /* 0x91610 */
+MDNS_REFRESH_ENTRY(mdns_y_sad_wei_adj_value3_array, 0x24) /* 0x91634 */
+MDNS_REFRESH_ENTRY(mdns_y_sad_wei_adj_value4_array, 0x24) /* 0x91658 */
+MDNS_REFRESH_ENTRY(mdns_y_sad_wei_adj_value5_array, 0x24) /* 0x9167c */
+MDNS_REFRESH_ENTRY(mdns_y_pspa_cur_median_win_opt_array, 0x24) /* 0x9179c */
+MDNS_REFRESH_ENTRY(mdns_y_pspa_cur_bi_thres_array, 0x24) /* 0x917c0 */
+MDNS_REFRESH_ENTRY(mdns_y_pspa_cur_bi_wei_seg_array, 0x24) /* 0x917e4 */
+MDNS_REFRESH_ENTRY(mdns_y_pspa_cur_bi_wei0_array, 0x24) /* 0x91808 */
+MDNS_REFRESH_ENTRY(mdns_y_pspa_cur_bi_wei1_array, 0x24) /* 0x9182c */
+MDNS_REFRESH_ENTRY(mdns_y_pspa_cur_bi_wei2_array, 0x24) /* 0x91850 */
+MDNS_REFRESH_ENTRY(mdns_y_pspa_cur_bi_wei3_array, 0x24) /* 0x91874 */
+MDNS_REFRESH_ENTRY(mdns_y_pspa_cur_bi_wei4_array, 0x24) /* 0x91898 */
+MDNS_REFRESH_ENTRY(mdns_y_pspa_cur_lmt_op_en_array, 0x24) /* 0x918bc */
+MDNS_REFRESH_ENTRY(mdns_y_pspa_cur_lmt_wei_array, 0x24) /* 0x918e0 */
+MDNS_REFRESH_ENTRY(mdns_y_pspa_ref_median_win_opt_array, 0x24) /* 0x91904 */
+MDNS_REFRESH_ENTRY(mdns_y_pspa_ref_bi_thres_array, 0x24) /* 0x91928 */
+MDNS_REFRESH_ENTRY(mdns_y_pspa_ref_bi_wei_seg_array, 0x24) /* 0x9194c */
+MDNS_REFRESH_ENTRY(mdns_y_pspa_ref_bi_wei0_array, 0x24) /* 0x91970 */
+MDNS_REFRESH_ENTRY(mdns_y_pspa_ref_bi_wei1_array, 0x24) /* 0x91994 */
+MDNS_REFRESH_ENTRY(mdns_y_pspa_ref_bi_wei2_array, 0x24) /* 0x919b8 */
+MDNS_REFRESH_ENTRY(mdns_y_pspa_ref_bi_wei3_array, 0x24) /* 0x919dc */
+MDNS_REFRESH_ENTRY(mdns_y_pspa_ref_bi_wei4_array, 0x24) /* 0x91a00 */
+MDNS_REFRESH_ENTRY(mdns_y_pspa_ref_lmt_op_en_array, 0x24) /* 0x91a24 */
+MDNS_REFRESH_ENTRY(mdns_y_pspa_ref_lmt_wei_array, 0x24) /* 0x91a48 */
+MDNS_REFRESH_ENTRY(mdns_y_piir_edge_thres0_array, 0x24) /* 0x91a6c */
+MDNS_REFRESH_ENTRY(mdns_y_piir_edge_thres1_array, 0x24) /* 0x91a90 */
+MDNS_REFRESH_ENTRY(mdns_y_piir_edge_thres2_array, 0x24) /* 0x91ab4 */
+MDNS_REFRESH_ENTRY(mdns_y_piir_edge_wei0_array, 0x24) /* 0x91ad8 */
+MDNS_REFRESH_ENTRY(mdns_y_piir_edge_wei1_array, 0x24) /* 0x91afc */
+MDNS_REFRESH_ENTRY(mdns_y_piir_edge_wei2_array, 0x24) /* 0x91b20 */
+MDNS_REFRESH_ENTRY(mdns_y_piir_edge_wei3_array, 0x24) /* 0x91b44 */
+MDNS_REFRESH_ENTRY(mdns_y_piir_cur_fs_wei_array, 0x24) /* 0x91b68 */
+MDNS_REFRESH_ENTRY(mdns_y_piir_ref_fs_wei_array, 0x24) /* 0x91b8c */
+MDNS_REFRESH_ENTRY(mdns_y_pspa_fnl_fus_thres_array, 0x24) /* 0x91bb0 */
+MDNS_REFRESH_ENTRY(mdns_y_pspa_fnl_fus_swei_array, 0x24) /* 0x91bd4 */
+MDNS_REFRESH_ENTRY(mdns_y_pspa_fnl_fus_dwei_array, 0x24) /* 0x91bf8 */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_seg_array, 0x24) /* 0x91c1c */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_0_array, 0x24) /* 0x91c40 */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_16_array, 0x24) /* 0x91c64 */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_32_array, 0x24) /* 0x91c88 */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_48_array, 0x24) /* 0x91cac */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_64_array, 0x24) /* 0x91cd0 */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_80_array, 0x24) /* 0x91cf4 */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_96_array, 0x24) /* 0x91d18 */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_112_array, 0x24) /* 0x91d3c */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_128_array, 0x24) /* 0x91d60 */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_144_array, 0x24) /* 0x91d84 */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_160_array, 0x24) /* 0x91da8 */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_176_array, 0x24) /* 0x91dcc */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_192_array, 0x24) /* 0x91df0 */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_208_array, 0x24) /* 0x91e14 */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_224_array, 0x24) /* 0x91e38 */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_240_array, 0x24) /* 0x91e5c */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_seg_array, 0x24) /* 0x91e80 */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_0_array, 0x24) /* 0x91ea4 */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_16_array, 0x24) /* 0x91ec8 */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_32_array, 0x24) /* 0x91eec */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_48_array, 0x24) /* 0x91f10 */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_64_array, 0x24) /* 0x91f34 */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_80_array, 0x24) /* 0x91f58 */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_96_array, 0x24) /* 0x91f7c */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_112_array, 0x24) /* 0x91fa0 */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_128_array, 0x24) /* 0x91fc4 */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_144_array, 0x24) /* 0x91fe8 */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_160_array, 0x24) /* 0x9200c */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_176_array, 0x24) /* 0x92030 */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_192_array, 0x24) /* 0x92054 */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_208_array, 0x24) /* 0x92078 */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_224_array, 0x24) /* 0x9209c */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_240_array, 0x24) /* 0x920c0 */
+MDNS_REFRESH_ENTRY(mdns_y_fiir_edge_thres0_array, 0x24) /* 0x920e4 */
+MDNS_REFRESH_ENTRY(mdns_y_fiir_edge_thres1_array, 0x24) /* 0x92108 */
+MDNS_REFRESH_ENTRY(mdns_y_fiir_edge_thres2_array, 0x24) /* 0x9212c */
+MDNS_REFRESH_ENTRY(mdns_y_fiir_edge_wei0_array, 0x24) /* 0x92150 */
+MDNS_REFRESH_ENTRY(mdns_y_fiir_edge_wei1_array, 0x24) /* 0x92174 */
+MDNS_REFRESH_ENTRY(mdns_y_fiir_edge_wei2_array, 0x24) /* 0x92198 */
+MDNS_REFRESH_ENTRY(mdns_y_fiir_edge_wei3_array, 0x24) /* 0x921bc */
+MDNS_REFRESH_ENTRY(mdns_y_fiir_fus_seg_array, 0x24) /* 0x921e0 */
+MDNS_REFRESH_ENTRY(mdns_y_fiir_fus_wei_0_array, 0x24) /* 0x92204 */
+MDNS_REFRESH_ENTRY(mdns_y_fiir_fus_wei_16_array, 0x24) /* 0x92228 */
+MDNS_REFRESH_ENTRY(mdns_y_fiir_fus_wei_32_array, 0x24) /* 0x9224c */
+MDNS_REFRESH_ENTRY(mdns_y_fiir_fus_wei_48_array, 0x24) /* 0x92270 */
+MDNS_REFRESH_ENTRY(mdns_y_fiir_fus_wei_64_array, 0x24) /* 0x92294 */
+MDNS_REFRESH_ENTRY(mdns_y_fiir_fus_wei_80_array, 0x24) /* 0x922b8 */
+MDNS_REFRESH_ENTRY(mdns_y_fiir_fus_wei_96_array, 0x24) /* 0x922dc */
+MDNS_REFRESH_ENTRY(mdns_y_fiir_fus_wei_112_array, 0x24) /* 0x92300 */
+MDNS_REFRESH_ENTRY(mdns_y_fiir_fus_wei_128_array, 0x24) /* 0x92324 */
+MDNS_REFRESH_ENTRY(mdns_y_con_thres_array, 0x24) /* 0x92348 */
+MDNS_REFRESH_ENTRY(mdns_y_con_stren_array, 0x24) /* 0x9236c */
+
+/* --- C channel --- */
+MDNS_REFRESH_ENTRY(mdns_c_sad_win_opt_array, 0x24) /* 0x927ec */
+MDNS_REFRESH_ENTRY(mdns_c_sad_ave_thres_array, 0x24) /* 0x92810 */
+MDNS_REFRESH_ENTRY(mdns_c_sad_ave_slope_array, 0x24) /* 0x92834 */
+MDNS_REFRESH_ENTRY(mdns_c_sad_dtb_thres_array, 0x24) /* 0x92858 */
+MDNS_REFRESH_ENTRY(mdns_c_sad_ass_thres_array, 0x24) /* 0x9287c */
+MDNS_REFRESH_ENTRY(mdns_c_ref_wei_mv_array, 0x24) /* 0x928a0 */
+MDNS_REFRESH_ENTRY(mdns_c_ref_wei_fake_array, 0x24) /* 0x928c4 */
+MDNS_REFRESH_ENTRY(mdns_c_ref_wei_f_max_array, 0x24) /* 0x928e8 */
+MDNS_REFRESH_ENTRY(mdns_c_ref_wei_f_min_array, 0x24) /* 0x9290c */
+MDNS_REFRESH_ENTRY(mdns_c_ref_wei_b_max_array, 0x24) /* 0x92930 */
+MDNS_REFRESH_ENTRY(mdns_c_ref_wei_b_min_array, 0x24) /* 0x92954 */
+MDNS_REFRESH_ENTRY(mdns_c_ref_wei_r_max_array, 0x24) /* 0x92978 */
+MDNS_REFRESH_ENTRY(mdns_c_ref_wei_r_min_array, 0x24) /* 0x9299c */
+MDNS_REFRESH_ENTRY(mdns_c_ref_wei_increase_array, 0x24) /* 0x929c0 */
+MDNS_REFRESH_ENTRY(mdns_c_edge_thr_adj_seg_array, 0x24) /* 0x929e4 */
+MDNS_REFRESH_ENTRY(mdns_c_luma_thr_adj_seg_array, 0x24) /* 0x92a08 */
+MDNS_REFRESH_ENTRY(mdns_c_dtb_thr_adj_seg_array, 0x24) /* 0x92a2c */
+MDNS_REFRESH_ENTRY(mdns_c_ass_thr_adj_seg_array, 0x24) /* 0x92a50 */
+MDNS_REFRESH_ENTRY(mdns_c_corner_thr_adj_value_array, 0x24) /* 0x92a74 */
+MDNS_REFRESH_ENTRY(mdns_c_edge_thr_adj_value0_array, 0x24) /* 0x92a98 */
+MDNS_REFRESH_ENTRY(mdns_c_edge_thr_adj_value1_array, 0x24) /* 0x92abc */
+MDNS_REFRESH_ENTRY(mdns_c_edge_thr_adj_value2_array, 0x24) /* 0x92ae0 */
+MDNS_REFRESH_ENTRY(mdns_c_edge_thr_adj_value3_array, 0x24) /* 0x92b04 */
+MDNS_REFRESH_ENTRY(mdns_c_edge_thr_adj_value4_array, 0x24) /* 0x92b28 */
+MDNS_REFRESH_ENTRY(mdns_c_edge_thr_adj_value5_array, 0x24) /* 0x92b4c */
+MDNS_REFRESH_ENTRY(mdns_c_luma_thr_adj_value0_array, 0x24) /* 0x92b70 */
+MDNS_REFRESH_ENTRY(mdns_c_luma_thr_adj_value1_array, 0x24) /* 0x92b94 */
+MDNS_REFRESH_ENTRY(mdns_c_luma_thr_adj_value2_array, 0x24) /* 0x92bb8 */
+MDNS_REFRESH_ENTRY(mdns_c_luma_thr_adj_value3_array, 0x24) /* 0x92bdc */
+MDNS_REFRESH_ENTRY(mdns_c_luma_thr_adj_value4_array, 0x24) /* 0x92c00 */
+MDNS_REFRESH_ENTRY(mdns_c_luma_thr_adj_value5_array, 0x24) /* 0x92c24 */
+MDNS_REFRESH_ENTRY(mdns_c_dtb_thr_adj_value0_array, 0x24) /* 0x92c48 */
+MDNS_REFRESH_ENTRY(mdns_c_dtb_thr_adj_value1_array, 0x24) /* 0x92c6c */
+MDNS_REFRESH_ENTRY(mdns_c_dtb_thr_adj_value2_array, 0x24) /* 0x92c90 */
+MDNS_REFRESH_ENTRY(mdns_c_dtb_thr_adj_value3_array, 0x24) /* 0x92cb4 */
+MDNS_REFRESH_ENTRY(mdns_c_dtb_thr_adj_value4_array, 0x24) /* 0x92cd8 */
+MDNS_REFRESH_ENTRY(mdns_c_dtb_thr_adj_value5_array, 0x24) /* 0x92cfc */
+MDNS_REFRESH_ENTRY(mdns_c_ass_thr_adj_value0_array, 0x24) /* 0x92d20 */
+MDNS_REFRESH_ENTRY(mdns_c_ass_thr_adj_value1_array, 0x24) /* 0x92d44 */
+MDNS_REFRESH_ENTRY(mdns_c_ass_thr_adj_value2_array, 0x24) /* 0x92d68 */
+MDNS_REFRESH_ENTRY(mdns_c_ass_thr_adj_value3_array, 0x24) /* 0x92d8c */
+MDNS_REFRESH_ENTRY(mdns_c_ass_thr_adj_value4_array, 0x24) /* 0x92db0 */
+MDNS_REFRESH_ENTRY(mdns_c_ass_thr_adj_value5_array, 0x24) /* 0x92dd4 */
+MDNS_REFRESH_ENTRY(mdns_c_edge_wei_adj_seg_array, 0x24) /* 0x92df8 */
+MDNS_REFRESH_ENTRY(mdns_c_luma_wei_adj_seg_array, 0x24) /* 0x92e1c */
+MDNS_REFRESH_ENTRY(mdns_c_dtb_wei_adj_seg_array, 0x24) /* 0x92e40 */
+MDNS_REFRESH_ENTRY(mdns_c_ass_wei_adj_seg_array, 0x24) /* 0x92e64 */
+MDNS_REFRESH_ENTRY(mdns_c_sad_wei_adj_seg_array, 0x24) /* 0x92e88 */
+MDNS_REFRESH_ENTRY(mdns_c_corner_wei_adj_value_array, 0x24) /* 0x92eac */
+MDNS_REFRESH_ENTRY(mdns_c_edge_wei_adj_value0_array, 0x24) /* 0x92ed0 */
+MDNS_REFRESH_ENTRY(mdns_c_edge_wei_adj_value1_array, 0x24) /* 0x92ef4 */
+MDNS_REFRESH_ENTRY(mdns_c_edge_wei_adj_value2_array, 0x24) /* 0x92f18 */
+MDNS_REFRESH_ENTRY(mdns_c_edge_wei_adj_value3_array, 0x24) /* 0x92f3c */
+MDNS_REFRESH_ENTRY(mdns_c_edge_wei_adj_value4_array, 0x24) /* 0x92f60 */
+MDNS_REFRESH_ENTRY(mdns_c_edge_wei_adj_value5_array, 0x24) /* 0x92f84 */
+MDNS_REFRESH_ENTRY(mdns_c_luma_wei_adj_value0_array, 0x24) /* 0x92fa8 */
+MDNS_REFRESH_ENTRY(mdns_c_luma_wei_adj_value1_array, 0x24) /* 0x92fcc */
+MDNS_REFRESH_ENTRY(mdns_c_luma_wei_adj_value2_array, 0x24) /* 0x92ff0 */
+MDNS_REFRESH_ENTRY(mdns_c_luma_wei_adj_value3_array, 0x24) /* 0x93014 */
+MDNS_REFRESH_ENTRY(mdns_c_luma_wei_adj_value4_array, 0x24) /* 0x93038 */
+MDNS_REFRESH_ENTRY(mdns_c_luma_wei_adj_value5_array, 0x24) /* 0x9305c */
+MDNS_REFRESH_ENTRY(mdns_c_dtb_wei_adj_value0_array, 0x24) /* 0x93080 */
+MDNS_REFRESH_ENTRY(mdns_c_dtb_wei_adj_value1_array, 0x24) /* 0x930a4 */
+MDNS_REFRESH_ENTRY(mdns_c_dtb_wei_adj_value2_array, 0x24) /* 0x930c8 */
+MDNS_REFRESH_ENTRY(mdns_c_dtb_wei_adj_value3_array, 0x24) /* 0x930ec */
+MDNS_REFRESH_ENTRY(mdns_c_dtb_wei_adj_value4_array, 0x24) /* 0x93110 */
+MDNS_REFRESH_ENTRY(mdns_c_dtb_wei_adj_value5_array, 0x24) /* 0x93134 */
+MDNS_REFRESH_ENTRY(mdns_c_ass_wei_adj_value0_array, 0x24) /* 0x93158 */
+MDNS_REFRESH_ENTRY(mdns_c_ass_wei_adj_value1_array, 0x24) /* 0x9317c */
+MDNS_REFRESH_ENTRY(mdns_c_ass_wei_adj_value2_array, 0x24) /* 0x931a0 */
+MDNS_REFRESH_ENTRY(mdns_c_ass_wei_adj_value3_array, 0x24) /* 0x931c4 */
+MDNS_REFRESH_ENTRY(mdns_c_ass_wei_adj_value4_array, 0x24) /* 0x931e8 */
+MDNS_REFRESH_ENTRY(mdns_c_ass_wei_adj_value5_array, 0x24) /* 0x9320c */
+MDNS_REFRESH_ENTRY(mdns_c_sad_wei_adj_value0_array, 0x24) /* 0x93230 */
+MDNS_REFRESH_ENTRY(mdns_c_sad_wei_adj_value1_array, 0x24) /* 0x93254 */
+MDNS_REFRESH_ENTRY(mdns_c_sad_wei_adj_value2_array, 0x24) /* 0x93278 */
+MDNS_REFRESH_ENTRY(mdns_c_sad_wei_adj_value3_array, 0x24) /* 0x9329c */
+MDNS_REFRESH_ENTRY(mdns_c_sad_wei_adj_value4_array, 0x24) /* 0x932c0 */
+MDNS_REFRESH_ENTRY(mdns_c_sad_wei_adj_value5_array, 0x24) /* 0x932e4 */
+MDNS_REFRESH_ENTRY(mdns_c_median_smj_thres_array, 0x24) /* 0x93398 */
+MDNS_REFRESH_ENTRY(mdns_c_median_edg_thres_array, 0x24) /* 0x933bc */
+MDNS_REFRESH_ENTRY(mdns_c_median_cur_lmt_op_en_array, 0x24) /* 0x933e0 */
+MDNS_REFRESH_ENTRY(mdns_c_median_cur_lmt_wei_array, 0x24) /* 0x93404 */
+MDNS_REFRESH_ENTRY(mdns_c_median_cur_ss_wei_array, 0x24) /* 0x93428 */
+MDNS_REFRESH_ENTRY(mdns_c_median_cur_se_wei_array, 0x24) /* 0x9344c */
+MDNS_REFRESH_ENTRY(mdns_c_median_cur_ms_wei_array, 0x24) /* 0x93470 */
+MDNS_REFRESH_ENTRY(mdns_c_median_cur_me_wei_array, 0x24) /* 0x93494 */
+MDNS_REFRESH_ENTRY(mdns_c_median_ref_lmt_op_en_array, 0x24) /* 0x934b8 */
+MDNS_REFRESH_ENTRY(mdns_c_median_ref_lmt_wei_array, 0x24) /* 0x934dc */
+MDNS_REFRESH_ENTRY(mdns_c_median_ref_ss_wei_array, 0x24) /* 0x93500 */
+MDNS_REFRESH_ENTRY(mdns_c_median_ref_se_wei_array, 0x24) /* 0x93524 */
+MDNS_REFRESH_ENTRY(mdns_c_median_ref_ms_wei_array, 0x24) /* 0x93548 */
+MDNS_REFRESH_ENTRY(mdns_c_median_ref_me_wei_array, 0x24) /* 0x9356c */
+MDNS_REFRESH_ENTRY(mdns_c_bgm_win_opt_array, 0x24) /* 0x93590 */
+MDNS_REFRESH_ENTRY(mdns_c_bgm_cur_src_array, 0x24) /* 0x935b4 */
+MDNS_REFRESH_ENTRY(mdns_c_bgm_ref_src_array, 0x24) /* 0x935d8 */
+MDNS_REFRESH_ENTRY(mdns_c_bgm_false_thres_array, 0x24) /* 0x935fc */
+MDNS_REFRESH_ENTRY(mdns_c_bgm_false_step_array, 0x24) /* 0x93620 */
+MDNS_REFRESH_ENTRY(mdns_c_piir_edge_thres0_array, 0x24) /* 0x93644 */
+MDNS_REFRESH_ENTRY(mdns_c_piir_edge_thres1_array, 0x24) /* 0x93668 */
+MDNS_REFRESH_ENTRY(mdns_c_piir_edge_thres2_array, 0x24) /* 0x9368c */
+MDNS_REFRESH_ENTRY(mdns_c_piir_edge_wei0_array, 0x24) /* 0x936b0 */
+MDNS_REFRESH_ENTRY(mdns_c_piir_edge_wei1_array, 0x24) /* 0x936d4 */
+MDNS_REFRESH_ENTRY(mdns_c_piir_edge_wei2_array, 0x24) /* 0x936f8 */
+MDNS_REFRESH_ENTRY(mdns_c_piir_edge_wei3_array, 0x24) /* 0x9371c */
+MDNS_REFRESH_ENTRY(mdns_c_piir_cur_fs_wei_array, 0x24) /* 0x93740 */
+MDNS_REFRESH_ENTRY(mdns_c_piir_ref_fs_wei_array, 0x24) /* 0x93764 */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_seg_array, 0x24) /* 0x93788 */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_0_array, 0x24) /* 0x937ac */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_16_array, 0x24) /* 0x937d0 */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_32_array, 0x24) /* 0x937f4 */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_48_array, 0x24) /* 0x93818 */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_64_array, 0x24) /* 0x9383c */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_80_array, 0x24) /* 0x93860 */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_96_array, 0x24) /* 0x93884 */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_112_array, 0x24) /* 0x938a8 */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_128_array, 0x24) /* 0x938cc */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_144_array, 0x24) /* 0x938f0 */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_160_array, 0x24) /* 0x93914 */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_176_array, 0x24) /* 0x93938 */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_192_array, 0x24) /* 0x9395c */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_208_array, 0x24) /* 0x93980 */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_224_array, 0x24) /* 0x939a4 */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_240_array, 0x24) /* 0x939c8 */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_seg_array, 0x24) /* 0x939ec */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_0_array, 0x24) /* 0x93a10 */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_16_array, 0x24) /* 0x93a34 */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_32_array, 0x24) /* 0x93a58 */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_48_array, 0x24) /* 0x93a7c */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_64_array, 0x24) /* 0x93aa0 */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_80_array, 0x24) /* 0x93ac4 */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_96_array, 0x24) /* 0x93ae8 */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_112_array, 0x24) /* 0x93b0c */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_128_array, 0x24) /* 0x93b30 */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_144_array, 0x24) /* 0x93b54 */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_160_array, 0x24) /* 0x93b78 */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_176_array, 0x24) /* 0x93b9c */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_192_array, 0x24) /* 0x93bc0 */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_208_array, 0x24) /* 0x93be4 */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_224_array, 0x24) /* 0x93c08 */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_240_array, 0x24) /* 0x93c2c */
+MDNS_REFRESH_ENTRY(mdns_c_fiir_edge_thres0_array, 0x24) /* 0x93c50 */
+MDNS_REFRESH_ENTRY(mdns_c_fiir_edge_thres1_array, 0x24) /* 0x93c74 */
+MDNS_REFRESH_ENTRY(mdns_c_fiir_edge_thres2_array, 0x24) /* 0x93c98 */
+MDNS_REFRESH_ENTRY(mdns_c_fiir_edge_wei0_array, 0x24) /* 0x93cbc */
+MDNS_REFRESH_ENTRY(mdns_c_fiir_edge_wei1_array, 0x24) /* 0x93ce0 */
+MDNS_REFRESH_ENTRY(mdns_c_fiir_edge_wei2_array, 0x24) /* 0x93d04 */
+MDNS_REFRESH_ENTRY(mdns_c_fiir_edge_wei3_array, 0x24) /* 0x93d28 */
+MDNS_REFRESH_ENTRY(mdns_c_fiir_fus_seg_array, 0x24) /* 0x93d4c */
+MDNS_REFRESH_ENTRY(mdns_c_fiir_fus_wei0_array, 0x24) /* 0x93d70 */
+MDNS_REFRESH_ENTRY(mdns_c_fiir_fus_wei1_array, 0x24) /* 0x93d94 */
+MDNS_REFRESH_ENTRY(mdns_c_fiir_fus_wei2_array, 0x24) /* 0x93db8 */
+MDNS_REFRESH_ENTRY(mdns_c_fiir_fus_wei3_array, 0x24) /* 0x93ddc */
+MDNS_REFRESH_ENTRY(mdns_c_fiir_fus_wei4_array, 0x24) /* 0x93e00 */
+MDNS_REFRESH_ENTRY(mdns_c_fiir_fus_wei5_array, 0x24) /* 0x93e24 */
+MDNS_REFRESH_ENTRY(mdns_c_fiir_fus_wei6_array, 0x24) /* 0x93e48 */
+MDNS_REFRESH_ENTRY(mdns_c_fiir_fus_wei7_array, 0x24) /* 0x93e6c */
+MDNS_REFRESH_ENTRY(mdns_c_fiir_fus_wei8_array, 0x24) /* 0x93e90 */
+MDNS_REFRESH_ENTRY(mdns_c_false_smj_thres_array, 0x24) /* 0x93eb4 */
+MDNS_REFRESH_ENTRY(mdns_c_false_edg_thres0_array, 0x24) /* 0x93ed8 */
+MDNS_REFRESH_ENTRY(mdns_c_false_edg_thres1_array, 0x24) /* 0x93efc */
+MDNS_REFRESH_ENTRY(mdns_c_false_edg_thres2_array, 0x24) /* 0x93f20 */
+MDNS_REFRESH_ENTRY(mdns_c_false_thres_s0_array, 0x24) /* 0x93f44 */
+MDNS_REFRESH_ENTRY(mdns_c_false_thres_s1_array, 0x24) /* 0x93f68 */
+MDNS_REFRESH_ENTRY(mdns_c_false_thres_s2_array, 0x24) /* 0x93f8c */
+MDNS_REFRESH_ENTRY(mdns_c_false_thres_s3_array, 0x24) /* 0x93fb0 */
+MDNS_REFRESH_ENTRY(mdns_c_false_step_s0_array, 0x24) /* 0x93fd4 */
+MDNS_REFRESH_ENTRY(mdns_c_false_step_s1_array, 0x24) /* 0x93ff8 */
+MDNS_REFRESH_ENTRY(mdns_c_false_step_s2_array, 0x24) /* 0x9401c */
+MDNS_REFRESH_ENTRY(mdns_c_false_step_s3_array, 0x24) /* 0x94040 */
+MDNS_REFRESH_ENTRY(mdns_c_false_thres_m0_array, 0x24) /* 0x94064 */
+MDNS_REFRESH_ENTRY(mdns_c_false_thres_m1_array, 0x24) /* 0x94088 */
+MDNS_REFRESH_ENTRY(mdns_c_false_thres_m2_array, 0x24) /* 0x940ac */
+MDNS_REFRESH_ENTRY(mdns_c_false_thres_m3_array, 0x24) /* 0x940d0 */
+MDNS_REFRESH_ENTRY(mdns_c_false_step_m0_array, 0x24) /* 0x940f4 */
+MDNS_REFRESH_ENTRY(mdns_c_false_step_m1_array, 0x24) /* 0x94118 */
+MDNS_REFRESH_ENTRY(mdns_c_false_step_m2_array, 0x24) /* 0x9413c */
+MDNS_REFRESH_ENTRY(mdns_c_false_step_m3_array, 0x24) /* 0x94160 */
+MDNS_REFRESH_ENTRY(mdns_c_sat_lmt_thres_array, 0x24) /* 0x94184 */
+MDNS_REFRESH_ENTRY(mdns_c_sat_lmt_stren_array, 0x24) /* 0x941a8 */
+
+/* --- Y channel WDR --- */
+MDNS_REFRESH_ENTRY(mdns_y_sad_ave_thres_wdr_array, 0x24) /* 0x916a0 */
+MDNS_REFRESH_ENTRY(mdns_y_sad_ass_thres_wdr_array, 0x24) /* 0x916c4 */
+MDNS_REFRESH_ENTRY(mdns_y_sta_ave_thres_wdr_array, 0x24) /* 0x916e8 */
+MDNS_REFRESH_ENTRY(mdns_y_sta_ass_thres_wdr_array, 0x24) /* 0x9170c */
+MDNS_REFRESH_ENTRY(mdns_y_sta_motion_thres_wdr_array, 0x24) /* 0x91730 */
+MDNS_REFRESH_ENTRY(mdns_y_ref_wei_b_max_wdr_array, 0x24) /* 0x91754 */
+MDNS_REFRESH_ENTRY(mdns_y_ref_wei_b_min_wdr_array, 0x24) /* 0x91778 */
+MDNS_REFRESH_ENTRY(mdns_y_pspa_cur_median_win_opt_wdr_array, 0x24) /* 0x9179c */
+MDNS_REFRESH_ENTRY(mdns_y_pspa_cur_bi_thres_wdr_array, 0x24) /* 0x923b4 */
+MDNS_REFRESH_ENTRY(mdns_y_pspa_cur_bi_wei0_wdr_array, 0x24) /* 0x923d8 */
+MDNS_REFRESH_ENTRY(mdns_y_pspa_ref_median_win_opt_wdr_array, 0x24) /* 0x923fc */
+MDNS_REFRESH_ENTRY(mdns_y_pspa_ref_bi_thres_wdr_array, 0x24) /* 0x92420 */
+MDNS_REFRESH_ENTRY(mdns_y_pspa_ref_bi_wei0_wdr_array, 0x24) /* 0x92444 */
+MDNS_REFRESH_ENTRY(mdns_y_piir_cur_fs_wei_wdr_array, 0x24) /* 0x92468 */
+MDNS_REFRESH_ENTRY(mdns_y_piir_ref_fs_wei_wdr_array, 0x24) /* 0x9248c */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_144_wdr_array, 0x24) /* 0x924b0 */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_160_wdr_array, 0x24) /* 0x924d4 */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_176_wdr_array, 0x24) /* 0x924f8 */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_192_wdr_array, 0x24) /* 0x9251c */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_208_wdr_array, 0x24) /* 0x92540 */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_224_wdr_array, 0x24) /* 0x92564 */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_cur_fus_wei_240_wdr_array, 0x24) /* 0x92588 */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_144_wdr_array, 0x24) /* 0x925ac */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_160_wdr_array, 0x24) /* 0x925d0 */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_176_wdr_array, 0x24) /* 0x925f4 */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_192_wdr_array, 0x24) /* 0x92618 */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_208_wdr_array, 0x24) /* 0x9263c */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_224_wdr_array, 0x24) /* 0x92660 */
+MDNS_REFRESH_ENTRY(mdns_y_fspa_ref_fus_wei_240_wdr_array, 0x24) /* 0x92684 */
+MDNS_REFRESH_ENTRY(mdns_y_fiir_fus_wei0_wdr_array, 0x24) /* 0x926a8 */
+MDNS_REFRESH_ENTRY(mdns_y_fiir_fus_wei1_wdr_array, 0x24) /* 0x926cc */
+MDNS_REFRESH_ENTRY(mdns_y_fiir_fus_wei2_wdr_array, 0x24) /* 0x926f0 */
+MDNS_REFRESH_ENTRY(mdns_y_fiir_fus_wei3_wdr_array, 0x24) /* 0x92714 */
+MDNS_REFRESH_ENTRY(mdns_y_fiir_fus_wei4_wdr_array, 0x24) /* 0x92738 */
+MDNS_REFRESH_ENTRY(mdns_y_fiir_fus_wei5_wdr_array, 0x24) /* 0x9275c */
+MDNS_REFRESH_ENTRY(mdns_y_fiir_fus_wei6_wdr_array, 0x24) /* 0x92780 */
+MDNS_REFRESH_ENTRY(mdns_y_fiir_fus_wei7_wdr_array, 0x24) /* 0x927a4 */
+MDNS_REFRESH_ENTRY(mdns_y_fiir_fus_wei8_wdr_array, 0x24) /* 0x927c8 */
+
+/* --- C channel WDR --- */
+MDNS_REFRESH_ENTRY(mdns_c_sad_ave_thres_wdr_array, 0x24) /* 0x93308 */
+MDNS_REFRESH_ENTRY(mdns_c_sad_ass_thres_wdr_array, 0x24) /* 0x9332c */
+MDNS_REFRESH_ENTRY(mdns_c_ref_wei_b_max_wdr_array, 0x24) /* 0x93350 */
+MDNS_REFRESH_ENTRY(mdns_c_ref_wei_b_min_wdr_array, 0x24) /* 0x93374 */
+MDNS_REFRESH_ENTRY(mdns_c_median_cur_ss_wei_wdr_array, 0x24) /* 0x93398 */
+MDNS_REFRESH_ENTRY(mdns_c_median_cur_se_wei_wdr_array, 0x24) /* 0x941f0 */
+MDNS_REFRESH_ENTRY(mdns_c_median_cur_ms_wei_wdr_array, 0x24) /* 0x94214 */
+MDNS_REFRESH_ENTRY(mdns_c_median_cur_me_wei_wdr_array, 0x24) /* 0x94238 */
+MDNS_REFRESH_ENTRY(mdns_c_median_ref_ss_wei_wdr_array, 0x24) /* 0x9425c */
+MDNS_REFRESH_ENTRY(mdns_c_median_ref_se_wei_wdr_array, 0x24) /* 0x94280 */
+MDNS_REFRESH_ENTRY(mdns_c_median_ref_ms_wei_wdr_array, 0x24) /* 0x942a4 */
+MDNS_REFRESH_ENTRY(mdns_c_median_ref_me_wei_wdr_array, 0x24) /* 0x942c8 */
+MDNS_REFRESH_ENTRY(mdns_c_piir_cur_fs_wei_wdr_array, 0x24) /* 0x942ec */
+MDNS_REFRESH_ENTRY(mdns_c_piir_ref_fs_wei_wdr_array, 0x24) /* 0x94310 */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_144_wdr_array, 0x24) /* 0x94334 */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_160_wdr_array, 0x24) /* 0x94358 */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_176_wdr_array, 0x24) /* 0x9437c */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_192_wdr_array, 0x24) /* 0x943a0 */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_208_wdr_array, 0x24) /* 0x943c4 */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_224_wdr_array, 0x24) /* 0x943e8 */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_cur_fus_wei_240_wdr_array, 0x24) /* 0x9440c */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_144_wdr_array, 0x24) /* 0x94430 */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_160_wdr_array, 0x24) /* 0x94454 */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_176_wdr_array, 0x24) /* 0x94478 */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_192_wdr_array, 0x24) /* 0x9449c */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_208_wdr_array, 0x24) /* 0x944c0 */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_224_wdr_array, 0x24) /* 0x944e4 */
+MDNS_REFRESH_ENTRY(mdns_c_fspa_ref_fus_wei_240_wdr_array, 0x24) /* 0x94508 */
+MDNS_REFRESH_ENTRY(mdns_c_fiir_fus_wei0_wdr_array, 0x24) /* 0x9452c */
+MDNS_REFRESH_ENTRY(mdns_c_fiir_fus_wei1_wdr_array, 0x24) /* 0x94550 */
+MDNS_REFRESH_ENTRY(mdns_c_fiir_fus_wei2_wdr_array, 0x24) /* 0x94574 */
+MDNS_REFRESH_ENTRY(mdns_c_fiir_fus_wei3_wdr_array, 0x24) /* 0x94598 */
+MDNS_REFRESH_ENTRY(mdns_c_fiir_fus_wei4_wdr_array, 0x24) /* 0x945bc */
+MDNS_REFRESH_ENTRY(mdns_c_fiir_fus_wei5_wdr_array, 0x24) /* 0x945e0 */
+MDNS_REFRESH_ENTRY(mdns_c_fiir_fus_wei6_wdr_array, 0x24) /* 0x94604 */
+MDNS_REFRESH_ENTRY(mdns_c_fiir_fus_wei7_wdr_array, 0x24) /* 0x94628 */
+MDNS_REFRESH_ENTRY(mdns_c_fiir_fus_wei8_wdr_array, 0x24) /* 0x9464c */
+
+/* --- C channel --- */
+MDNS_REFRESH_ENTRY(mdns_c_sat_nml_stren_array, 0x24) /* 0x94670 */

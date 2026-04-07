@@ -2237,6 +2237,15 @@ static uint32_t mdns_y_fiir_fus_wei_192_array[0x24/4] = {0};  /* 0x263 */
 static uint32_t mdns_y_fiir_fus_wei_208_array[0x24/4] = {0};  /* 0x264 */
 static uint32_t mdns_y_fiir_fus_wei_224_array[0x24/4] = {0};  /* 0x265 */
 static uint32_t mdns_y_fiir_fus_wei_240_array[0x24/4] = {0};  /* 0x266 */
+static uint32_t mdns_y_fiir_fus_wei0_array[0x24/4] = {0};
+static uint32_t mdns_y_fiir_fus_wei1_array[0x24/4] = {0};
+static uint32_t mdns_y_fiir_fus_wei2_array[0x24/4] = {0};
+static uint32_t mdns_y_fiir_fus_wei3_array[0x24/4] = {0};
+static uint32_t mdns_y_fiir_fus_wei4_array[0x24/4] = {0};
+static uint32_t mdns_y_fiir_fus_wei5_array[0x24/4] = {0};
+static uint32_t mdns_y_fiir_fus_wei6_array[0x24/4] = {0};
+static uint32_t mdns_y_fiir_fus_wei7_array[0x24/4] = {0};
+static uint32_t mdns_y_fiir_fus_wei8_array[0x24/4] = {0};
 static uint32_t mdns_y_con_thres_array[0x24/4] = {0};                         /* 0x25c */
 static uint32_t mdns_y_con_stren_array[0x24/4] = {0};                         /* 0x25d */
 static uint32_t mdns_y_pspa_cur_median_win_opt_wdr_array[0x24/4] = {0};       /* 0x25e */
@@ -2352,6 +2361,7 @@ int tisp_s_adr_str_internal(int strength);
 int tiziano_sharpen_init(void);
 int tiziano_sdns_init(void);
 int tiziano_mdns_init(uint32_t width, uint32_t height);
+void tiziano_mdns_dn_params_refresh(void);
 int tiziano_clm_init(void);
 static int tiziano_set_parameter_clm(void);
 int tiziano_clm_dn_params_refresh(void);
@@ -3432,16 +3442,31 @@ static int tisp_ae1_get_hist(void *buffer)
 
 static int tisp_ae0_ctrls_update(void)
 {
-    /* AE0 controls update - updates AE0 control registers */
-    extern struct tx_isp_dev *ourISPdev;
-    if (!ourISPdev || !ourISPdev->core_regs) {
-        return -ENODEV;
-    }
+    /* OEM tisp_ae0_ctrls_update at 0x522f8:
+     * After AE computes new gain/exposure, push events to update
+     * all gain-dependent ISP blocks (MDNS, sharpen, SDNS, etc.).
+     *
+     * Events pushed by OEM:
+     *   7 (ev_update) — with exposure/EV value
+     *   4 (tgain_update) — with log2(total_gain) when gain changes
+     *   5 (again_update) — with log2(analog_gain) when again changes
+     *
+     * Our AE algorithm stubs don't compute real gain values, but
+     * libimp runs its own AE and sets gain on the sensor directly.
+     * We push event 4 unconditionally with a default gain of 0x10000
+     * (gain_hi=1, gain_lo=0 → selects array[1]) so tisp_tgain_update
+     * runs and initializes all ISP blocks at least once.
+     * tisp_mdns_par_refresh and friends have their own internal
+     * threshold checks and won't redundantly re-write registers. */
+    struct tisp_event_record ev = {0};
 
-    /* Update AE0 control registers based on current parameters */
-    writel(0x1, ourISPdev->core_regs + 0xa000);  /* Enable AE0 */
+    /* Push event 4 (tgain_update) — kicks all gain-dependent blocks.
+     * OEM value: tisp_log2_fixed_to_fixed(total_gain << 6, 0x10, 0x10).
+     * 0x10000 = log2 gain index 1 (1x–2x range), safe default. */
+    ev.event_id = 4;
+    ev.args[0] = 0x10000;
+    tisp_event_push(&ev);
 
-    pr_debug("AE0 controls updated\n");
     return 0;
 }
 
@@ -4217,13 +4242,19 @@ static int tisp_day_or_night_s_ctrl(uint32_t mode)
 	pr_info("%s: applying %s mode, top_bypass=0x%08x wdr=%u\n",
 		__func__, active_mode ? "night" : "day", bypass_val, !!data_b2e74);
 
-	/* OEM DN order mapped onto the local apply hooks available in this tree. */
+	/* OEM DN order: call _dn_params_refresh variants where available.
+	 * OEM HLIL (0x62490-0x62570) calls _dn_params_refresh for each block,
+	 * NOT _init.  Using _init for MDNS is wrong: it resets mdns_params_received
+	 * and forces bypass, disabling MDNS until the next SET_BUF ioctl. */
 	tiziano_defog_init(width, height);
 	tiziano_ae_init(height, width, fps);
 	tiziano_awb_init(height, width);
 	tiziano_dmsc_init();
 	tiziano_sharpen_init();
-	tiziano_mdns_init(width, height);
+	if (mdns_params_received)
+		tiziano_mdns_dn_params_refresh();
+	else
+		tiziano_mdns_init(width, height);
 	tiziano_sdns_init();
 	tiziano_gib_init();
 	tiziano_lsc_init();
@@ -18374,26 +18405,545 @@ static void tisp_mdns_select_now_tables(int wdr_enable)
     }
 }
 
-/* tiziano_mdns_params_refresh - OEM-style bulk MDNS parameter load */
+/* tiziano_mdns_params_refresh - OEM EXACT bulk MDNS parameter load.
+ * OEM uses absolute addresses into the tparams blob.
+ * OEM tparams base = 0x84B10, so offset = OEM_addr - 0x84B10. */
 static int tiziano_mdns_params_refresh(void)
 {
-	const u8 *params = (const u8 *)(tparams_active ? tparams_active : tparams_day);
-	const u8 *cursor;
+	const u8 *p = (const u8 *)(tparams_active ? tparams_active : tparams_day);
 
-	if (!params || !tuning_bin_loaded) {
-		pr_debug("tiziano_mdns_params_refresh: no tuning bin, keeping current MDNS defaults\n");
+	if (!p || !tuning_bin_loaded) {
+		pr_debug("tiziano_mdns_params_refresh: no tuning bin\n");
 		return 0;
 	}
 
-	cursor = params + MDNS_TPARAMS_OFFSET;
+/* OEM base 0x84B10. Macro: OEM addr -> offset from tparams base */
+#define TP(addr) (p + ((addr) - 0x84B10))
 
-#define MDNS_REFRESH_ENTRY(_name, _size) \
-	do { \
-		memcpy(&(_name), cursor, (_size)); \
-		cursor += (_size); \
-	} while (0);
-#include "tx_isp_tuning_mdns_refresh.inc"
-#undef MDNS_REFRESH_ENTRY
+	/* Control flags (0x180-0x190, all 4 bytes) */
+	memcpy(&mdns_y_filter_en_array,    TP(0x90640), 4);
+	memcpy(&mdns_y_sf_cur_en_array,    TP(0x90644), 4);
+	memcpy(&mdns_y_sf_ref_en_array,    TP(0x90648), 4);
+	memcpy(&mdns_y_debug_array,        TP(0x9064c), 4);
+	memcpy(&mdns_uv_filter_en_array,   TP(0x90650), 4);
+	memcpy(&mdns_uv_sf_cur_en_array,   TP(0x90654), 4);
+	memcpy(&mdns_uv_sf_ref_en_array,   TP(0x90658), 4);
+	memcpy(&mdns_uv_debug_array,       TP(0x9065c), 4);
+	memcpy(&mdns_ass_enable_array,     TP(0x90660), 4);
+	memcpy(&mdns_sta_inter_en_array,   TP(0x90664), 4);
+	memcpy(&mdns_sta_group_num_array,  TP(0x90668), 4);
+	memcpy(&mdns_sta_max_num_array,    TP(0x9066c), 4);
+	memcpy(&mdns_bgm_enable_array,     TP(0x90670), 4);
+	memcpy(&mdns_bgm_inter_en_array,   TP(0x90674), 4);
+	memcpy(&mdns_psn_enable_array,     TP(0x90678), 4);
+	memcpy(&mdns_psn_max_num_array,    TP(0x9067c), 4);
+	memcpy(&mdns_ref_wei_byps_array,   TP(0x90680), 4);
+
+	/* Y SAD/STA arrays (0x24 bytes each) */
+	memcpy(&mdns_y_sad_win_opt_array,         TP(0x90684), 0x24);
+	memcpy(&mdns_y_sad_ave_thres_array,       TP(0x906a8), 0x24);
+	memcpy(&mdns_y_sad_ave_slope_array,       TP(0x906cc), 0x24);
+	memcpy(&mdns_y_sad_dtb_thres_array,       TP(0x906f0), 0x24);
+	memcpy(&mdns_y_sad_ass_thres_array,       TP(0x90714), 0x24);
+	memcpy(&mdns_y_sta_blk_size_array,        TP(0x90738), 0x24);
+	memcpy(&mdns_y_sta_win_opt_array,         TP(0x9075c), 0x24);
+	memcpy(&mdns_y_sta_ave_thres_array,       TP(0x90780), 0x24);
+	memcpy(&mdns_y_sta_dtb_thres_array,       TP(0x907a4), 0x24);
+	memcpy(&mdns_y_sta_ass_thres_array,       TP(0x907c8), 0x24);
+	memcpy(&mdns_y_sta_motion_thres_array,    TP(0x907ec), 0x24);
+
+	/* Y ref weight arrays (0x40 and 0x24 bytes) */
+	memcpy(&mdns_y_ref_wei_sta_array,         TP(0x90810), 0x40);
+	memcpy(&mdns_y_ref_wei_psn_array,         TP(0x90850), 0x40);
+	memcpy(&mdns_y_ref_wei_mv_array,          TP(0x90890), 0x24);
+	memcpy(&mdns_y_ref_wei_fake_array,        TP(0x908b4), 0x24);
+	memcpy(&mdns_y_ref_wei_sta_fs_opt_array,  TP(0x908d8), 0x24);
+	memcpy(&mdns_y_ref_wei_psn_fs_opt_array,  TP(0x908fc), 0x24);
+	memcpy(&mdns_y_ref_wei_f_max_array,       TP(0x90920), 0x24);
+	memcpy(&mdns_y_ref_wei_f_min_array,       TP(0x90944), 0x24);
+	memcpy(&mdns_y_ref_wei_b_max_array,       TP(0x90968), 0x24);
+	memcpy(&mdns_y_ref_wei_b_min_array,       TP(0x9098c), 0x24);
+	memcpy(&mdns_y_ref_wei_r_max_array,       TP(0x909b0), 0x24);
+	memcpy(&mdns_y_ref_wei_r_min_array,       TP(0x909d4), 0x24);
+	memcpy(&mdns_y_ref_wei_increase_array,    TP(0x909f8), 0x24);
+
+	/* Y corner/edge/luma arrays */
+	memcpy(&mdns_y_corner_length_t_array,     TP(0x90a1c), 0x24);
+	memcpy(&mdns_y_corner_length_b_array,     TP(0x90a40), 0x24);
+	memcpy(&mdns_y_corner_length_l_array,     TP(0x90a64), 0x24);
+	memcpy(&mdns_y_corner_length_r_array,     TP(0x90a88), 0x24);
+	memcpy(&mdns_y_edge_win_opt_array,        TP(0x90aac), 0x24);
+	memcpy(&mdns_y_edge_div_opt_array,        TP(0x90ad0), 0x24);
+	memcpy(&mdns_y_edge_type_opt_array,       TP(0x90af4), 0x24);
+	memcpy(&mdns_y_luma_win_opt_array,        TP(0x90b18), 0x24);
+	memcpy(&mdns_y_dtb_div_opt_array,         TP(0x90b3c), 0x24);
+	memcpy(&mdns_y_dtb_squ_en_array,          TP(0x90b60), 0x24);
+	memcpy(&mdns_y_dtb_squ_div_opt_array,     TP(0x90b84), 0x24);
+	memcpy(&mdns_y_ass_win_opt_array,         TP(0x90ba8), 0x24);
+	memcpy(&mdns_y_ass_div_opt_array,         TP(0x90bcc), 0x24);
+
+	/* Y histogram arrays */
+	memcpy(&mdns_y_hist_sad_en_array,         TP(0x90bf0), 0x24);
+	memcpy(&mdns_y_hist_sta_en_array,         TP(0x90c14), 0x24);
+	memcpy(&mdns_y_hist_num_thres_array,      TP(0x90c38), 0x24);
+	memcpy(&mdns_y_hist_cmp_thres0_array,     TP(0x90c5c), 0x24);
+	memcpy(&mdns_y_hist_cmp_thres1_array,     TP(0x90c80), 0x24);
+	memcpy(&mdns_y_hist_cmp_thres2_array,     TP(0x90ca4), 0x24);
+	memcpy(&mdns_y_hist_cmp_thres3_array,     TP(0x90cc8), 0x24);
+	memcpy(&mdns_y_hist_thres0_array,         TP(0x90cec), 0x24);
+	memcpy(&mdns_y_hist_thres1_array,         TP(0x90d10), 0x24);
+	memcpy(&mdns_y_hist_thres2_array,         TP(0x90d34), 0x24);
+	memcpy(&mdns_y_hist_thres3_array,         TP(0x90d58), 0x24);
+
+	/* Y threshold adjustment arrays */
+	memcpy(&mdns_y_edge_thr_adj_seg_array,    TP(0x90d7c), 0x24);
+	memcpy(&mdns_y_luma_thr_adj_seg_array,    TP(0x90da0), 0x24);
+	memcpy(&mdns_y_dtb_thr_adj_seg_array,     TP(0x90dc4), 0x24);
+	memcpy(&mdns_y_ass_thr_adj_seg_array,     TP(0x90de8), 0x24);
+	memcpy(&mdns_y_corner_thr_adj_value_array, TP(0x90e0c), 0x24);
+	memcpy(&mdns_y_edge_thr_adj_value0_array, TP(0x90e30), 0x24);
+	memcpy(&mdns_y_edge_thr_adj_value1_array, TP(0x90e54), 0x24);
+	memcpy(&mdns_y_edge_thr_adj_value2_array, TP(0x90e78), 0x24);
+	memcpy(&mdns_y_edge_thr_adj_value3_array, TP(0x90e9c), 0x24);
+	memcpy(&mdns_y_edge_thr_adj_value4_array, TP(0x90ec0), 0x24);
+	memcpy(&mdns_y_edge_thr_adj_value5_array, TP(0x90ee4), 0x24);
+	memcpy(&mdns_y_luma_thr_adj_value0_array, TP(0x90f08), 0x24);
+	memcpy(&mdns_y_luma_thr_adj_value1_array, TP(0x90f2c), 0x24);
+	memcpy(&mdns_y_luma_thr_adj_value2_array, TP(0x90f50), 0x24);
+	memcpy(&mdns_y_luma_thr_adj_value3_array, TP(0x90f74), 0x24);
+	memcpy(&mdns_y_luma_thr_adj_value4_array, TP(0x90f98), 0x24);
+	memcpy(&mdns_y_luma_thr_adj_value5_array, TP(0x90fbc), 0x24);
+	memcpy(&mdns_y_dtb_thr_adj_value0_array,  TP(0x90fe0), 0x24);
+	memcpy(&mdns_y_dtb_thr_adj_value1_array,  TP(0x91004), 0x24);
+	memcpy(&mdns_y_dtb_thr_adj_value2_array,  TP(0x91028), 0x24);
+	memcpy(&mdns_y_dtb_thr_adj_value3_array,  TP(0x9104c), 0x24);
+	memcpy(&mdns_y_dtb_thr_adj_value4_array,  TP(0x91070), 0x24);
+	memcpy(&mdns_y_dtb_thr_adj_value5_array,  TP(0x91094), 0x24);
+	memcpy(&mdns_y_ass_thr_adj_value0_array,  TP(0x910b8), 0x24);
+	memcpy(&mdns_y_ass_thr_adj_value1_array,  TP(0x910dc), 0x24);
+	memcpy(&mdns_y_ass_thr_adj_value2_array,  TP(0x91100), 0x24);
+	memcpy(&mdns_y_ass_thr_adj_value3_array,  TP(0x91124), 0x24);
+	memcpy(&mdns_y_ass_thr_adj_value4_array,  TP(0x91148), 0x24);
+	memcpy(&mdns_y_ass_thr_adj_value5_array,  TP(0x9116c), 0x24);
+
+	/* Y weight adjustment arrays */
+	memcpy(&mdns_y_edge_wei_adj_seg_array,    TP(0x91190), 0x24);
+	memcpy(&mdns_y_luma_wei_adj_seg_array,    TP(0x911b4), 0x24);
+	memcpy(&mdns_y_dtb_wei_adj_seg_array,     TP(0x911d8), 0x24);
+	memcpy(&mdns_y_ass_wei_adj_seg_array,     TP(0x911fc), 0x24);
+	memcpy(&mdns_y_sad_wei_adj_seg_array,     TP(0x91220), 0x24);
+	memcpy(&mdns_y_corner_wei_adj_value_array, TP(0x91244), 0x24);
+	memcpy(&mdns_y_edge_wei_adj_value0_array, TP(0x91268), 0x24);
+	memcpy(&mdns_y_edge_wei_adj_value1_array, TP(0x9128c), 0x24);
+	memcpy(&mdns_y_edge_wei_adj_value2_array, TP(0x912b0), 0x24);
+	memcpy(&mdns_y_edge_wei_adj_value3_array, TP(0x912d4), 0x24);
+	memcpy(&mdns_y_edge_wei_adj_value4_array, TP(0x912f8), 0x24);
+	memcpy(&mdns_y_edge_wei_adj_value5_array, TP(0x9131c), 0x24);
+	memcpy(&mdns_y_luma_wei_adj_value0_array, TP(0x91340), 0x24);
+	memcpy(&mdns_y_luma_wei_adj_value1_array, TP(0x91364), 0x24);
+	memcpy(&mdns_y_luma_wei_adj_value2_array, TP(0x91388), 0x24);
+	memcpy(&mdns_y_luma_wei_adj_value3_array, TP(0x913ac), 0x24);
+	memcpy(&mdns_y_luma_wei_adj_value4_array, TP(0x913d0), 0x24);
+	memcpy(&mdns_y_luma_wei_adj_value5_array, TP(0x913f4), 0x24);
+	memcpy(&mdns_y_dtb_wei_adj_value0_array,  TP(0x91418), 0x24);
+	memcpy(&mdns_y_dtb_wei_adj_value1_array,  TP(0x9143c), 0x24);
+	memcpy(&mdns_y_dtb_wei_adj_value2_array,  TP(0x91460), 0x24);
+	memcpy(&mdns_y_dtb_wei_adj_value3_array,  TP(0x91484), 0x24);
+	memcpy(&mdns_y_dtb_wei_adj_value4_array,  TP(0x914a8), 0x24);
+	memcpy(&mdns_y_dtb_wei_adj_value5_array,  TP(0x914cc), 0x24);
+	memcpy(&mdns_y_ass_wei_adj_value0_array,  TP(0x914f0), 0x24);
+	memcpy(&mdns_y_ass_wei_adj_value1_array,  TP(0x91514), 0x24);
+	memcpy(&mdns_y_ass_wei_adj_value2_array,  TP(0x91538), 0x24);
+	memcpy(&mdns_y_ass_wei_adj_value3_array,  TP(0x9155c), 0x24);
+	memcpy(&mdns_y_ass_wei_adj_value4_array,  TP(0x91580), 0x24);
+	memcpy(&mdns_y_ass_wei_adj_value5_array,  TP(0x915a4), 0x24);
+	memcpy(&mdns_y_sad_wei_adj_value0_array,  TP(0x915c8), 0x24);
+	memcpy(&mdns_y_sad_wei_adj_value1_array,  TP(0x915ec), 0x24);
+	memcpy(&mdns_y_sad_wei_adj_value2_array,  TP(0x91610), 0x24);
+	memcpy(&mdns_y_sad_wei_adj_value3_array,  TP(0x91634), 0x24);
+	memcpy(&mdns_y_sad_wei_adj_value4_array,  TP(0x91658), 0x24);
+	memcpy(&mdns_y_sad_wei_adj_value5_array,  TP(0x9167c), 0x24);
+
+	/* Y spatial filter arrays */
+	memcpy(&mdns_y_pspa_cur_median_win_opt_array, TP(0x9179c), 0x24);
+	memcpy(&mdns_y_pspa_cur_bi_thres_array,       TP(0x917c0), 0x24);
+	memcpy(&mdns_y_pspa_cur_bi_wei_seg_array,     TP(0x917e4), 0x24);
+	memcpy(&mdns_y_pspa_cur_bi_wei0_array,        TP(0x91808), 0x24);
+	memcpy(&mdns_y_pspa_cur_bi_wei1_array,        TP(0x9182c), 0x24);
+	memcpy(&mdns_y_pspa_cur_bi_wei2_array,        TP(0x91850), 0x24);
+	memcpy(&mdns_y_pspa_cur_bi_wei3_array,        TP(0x91874), 0x24);
+	memcpy(&mdns_y_pspa_cur_bi_wei4_array,        TP(0x91898), 0x24);
+	memcpy(&mdns_y_pspa_cur_lmt_op_en_array,      TP(0x918bc), 0x24);
+	memcpy(&mdns_y_pspa_cur_lmt_wei_array,        TP(0x918e0), 0x24);
+	memcpy(&mdns_y_pspa_ref_median_win_opt_array, TP(0x91904), 0x24);
+	memcpy(&mdns_y_pspa_ref_bi_thres_array,       TP(0x91928), 0x24);
+	memcpy(&mdns_y_pspa_ref_bi_wei_seg_array,     TP(0x9194c), 0x24);
+	memcpy(&mdns_y_pspa_ref_bi_wei0_array,        TP(0x91970), 0x24);
+	memcpy(&mdns_y_pspa_ref_bi_wei1_array,        TP(0x91994), 0x24);
+	memcpy(&mdns_y_pspa_ref_bi_wei2_array,        TP(0x919b8), 0x24);
+	memcpy(&mdns_y_pspa_ref_bi_wei3_array,        TP(0x919dc), 0x24);
+	memcpy(&mdns_y_pspa_ref_bi_wei4_array,        TP(0x91a00), 0x24);
+	memcpy(&mdns_y_pspa_ref_lmt_op_en_array,      TP(0x91a24), 0x24);
+	memcpy(&mdns_y_pspa_ref_lmt_wei_array,        TP(0x91a48), 0x24);
+
+	/* Y PIIR arrays */
+	memcpy(&mdns_y_piir_edge_thres0_array,    TP(0x91a6c), 0x24);
+	memcpy(&mdns_y_piir_edge_thres1_array,    TP(0x91a90), 0x24);
+	memcpy(&mdns_y_piir_edge_thres2_array,    TP(0x91ab4), 0x24);
+	memcpy(&mdns_y_piir_edge_wei0_array,      TP(0x91ad8), 0x24);
+	memcpy(&mdns_y_piir_edge_wei1_array,      TP(0x91afc), 0x24);
+	memcpy(&mdns_y_piir_edge_wei2_array,      TP(0x91b20), 0x24);
+	memcpy(&mdns_y_piir_edge_wei3_array,      TP(0x91b44), 0x24);
+	memcpy(&mdns_y_piir_cur_fs_wei_array,     TP(0x91b68), 0x24);
+	memcpy(&mdns_y_piir_ref_fs_wei_array,     TP(0x91b8c), 0x24);
+
+	/* Y PSPA final fusion */
+	memcpy(&mdns_y_pspa_fnl_fus_thres_array,  TP(0x91bb0), 0x24);
+	memcpy(&mdns_y_pspa_fnl_fus_swei_array,   TP(0x91bd4), 0x24);
+	memcpy(&mdns_y_pspa_fnl_fus_dwei_array,   TP(0x91bf8), 0x24);
+
+	/* Y FSPA cur fusion weight arrays */
+	memcpy(&mdns_y_fspa_cur_fus_seg_array,    TP(0x91c1c), 0x24);
+	memcpy(&mdns_y_fspa_cur_fus_wei_0_array,  TP(0x91c40), 0x24);
+	memcpy(&mdns_y_fspa_cur_fus_wei_16_array, TP(0x91c64), 0x24);
+	memcpy(&mdns_y_fspa_cur_fus_wei_32_array, TP(0x91c88), 0x24);
+	memcpy(&mdns_y_fspa_cur_fus_wei_48_array, TP(0x91cac), 0x24);
+	memcpy(&mdns_y_fspa_cur_fus_wei_64_array, TP(0x91cd0), 0x24);
+	memcpy(&mdns_y_fspa_cur_fus_wei_80_array, TP(0x91cf4), 0x24);
+	memcpy(&mdns_y_fspa_cur_fus_wei_96_array, TP(0x91d18), 0x24);
+	memcpy(&mdns_y_fspa_cur_fus_wei_112_array, TP(0x91d3c), 0x24);
+	memcpy(&mdns_y_fspa_cur_fus_wei_128_array, TP(0x91d60), 0x24);
+	memcpy(&mdns_y_fspa_cur_fus_wei_144_array, TP(0x91d84), 0x24);
+	memcpy(&mdns_y_fspa_cur_fus_wei_160_array, TP(0x91da8), 0x24);
+	memcpy(&mdns_y_fspa_cur_fus_wei_176_array, TP(0x91dcc), 0x24);
+	memcpy(&mdns_y_fspa_cur_fus_wei_192_array, TP(0x91df0), 0x24);
+	memcpy(&mdns_y_fspa_cur_fus_wei_208_array, TP(0x91e14), 0x24);
+	memcpy(&mdns_y_fspa_cur_fus_wei_224_array, TP(0x91e38), 0x24);
+	memcpy(&mdns_y_fspa_cur_fus_wei_240_array, TP(0x91e5c), 0x24);
+
+	/* Y FSPA ref fusion weight arrays */
+	memcpy(&mdns_y_fspa_ref_fus_seg_array,    TP(0x91e80), 0x24);
+	memcpy(&mdns_y_fspa_ref_fus_wei_0_array,  TP(0x91ea4), 0x24);
+	memcpy(&mdns_y_fspa_ref_fus_wei_16_array, TP(0x91ec8), 0x24);
+	memcpy(&mdns_y_fspa_ref_fus_wei_32_array, TP(0x91eec), 0x24);
+	memcpy(&mdns_y_fspa_ref_fus_wei_48_array, TP(0x91f10), 0x24);
+	memcpy(&mdns_y_fspa_ref_fus_wei_64_array, TP(0x91f34), 0x24);
+	memcpy(&mdns_y_fspa_ref_fus_wei_80_array, TP(0x91f58), 0x24);
+	memcpy(&mdns_y_fspa_ref_fus_wei_96_array, TP(0x91f7c), 0x24);
+	memcpy(&mdns_y_fspa_ref_fus_wei_112_array, TP(0x91fa0), 0x24);
+	memcpy(&mdns_y_fspa_ref_fus_wei_128_array, TP(0x91fc4), 0x24);
+	memcpy(&mdns_y_fspa_ref_fus_wei_144_array, TP(0x91fe8), 0x24);
+	memcpy(&mdns_y_fspa_ref_fus_wei_160_array, TP(0x9200c), 0x24);
+	memcpy(&mdns_y_fspa_ref_fus_wei_176_array, TP(0x92030), 0x24);
+	memcpy(&mdns_y_fspa_ref_fus_wei_192_array, TP(0x92054), 0x24);
+	memcpy(&mdns_y_fspa_ref_fus_wei_208_array, TP(0x92078), 0x24);
+	memcpy(&mdns_y_fspa_ref_fus_wei_224_array, TP(0x9209c), 0x24);
+	memcpy(&mdns_y_fspa_ref_fus_wei_240_array, TP(0x920c0), 0x24);
+
+	/* Y FIIR arrays */
+	memcpy(&mdns_y_fiir_edge_thres0_array,    TP(0x920e4), 0x24);
+	memcpy(&mdns_y_fiir_edge_thres1_array,    TP(0x92108), 0x24);
+	memcpy(&mdns_y_fiir_edge_thres2_array,    TP(0x9212c), 0x24);
+	memcpy(&mdns_y_fiir_edge_wei0_array,      TP(0x92150), 0x24);
+	memcpy(&mdns_y_fiir_edge_wei1_array,      TP(0x92174), 0x24);
+	memcpy(&mdns_y_fiir_edge_wei2_array,      TP(0x92198), 0x24);
+	memcpy(&mdns_y_fiir_edge_wei3_array,      TP(0x921bc), 0x24);
+	memcpy(&mdns_y_fiir_fus_seg_array,        TP(0x921e0), 0x24);
+	memcpy(&mdns_y_fiir_fus_wei0_array,       TP(0x92204), 0x24);
+	memcpy(&mdns_y_fiir_fus_wei1_array,       TP(0x92228), 0x24);
+	memcpy(&mdns_y_fiir_fus_wei2_array,       TP(0x9224c), 0x24);
+	memcpy(&mdns_y_fiir_fus_wei3_array,       TP(0x92270), 0x24);
+	memcpy(&mdns_y_fiir_fus_wei4_array,       TP(0x92294), 0x24);
+	memcpy(&mdns_y_fiir_fus_wei5_array,       TP(0x922b8), 0x24);
+	memcpy(&mdns_y_fiir_fus_wei6_array,       TP(0x922dc), 0x24);
+	memcpy(&mdns_y_fiir_fus_wei7_array,       TP(0x92300), 0x24);
+	memcpy(&mdns_y_fiir_fus_wei8_array,       TP(0x92324), 0x24);
+
+	/* Y contrast arrays */
+	memcpy(&mdns_y_con_thres_array,           TP(0x92348), 0x24);
+	memcpy(&mdns_y_con_stren_array,           TP(0x9236c), 0x24);
+
+	/* C SAD arrays */
+	memcpy(&mdns_c_sad_win_opt_array,         TP(0x927ec), 0x24);
+	memcpy(&mdns_c_sad_ave_thres_array,       TP(0x92810), 0x24);
+	memcpy(&mdns_c_sad_ave_slope_array,       TP(0x92834), 0x24);
+	memcpy(&mdns_c_sad_dtb_thres_array,       TP(0x92858), 0x24);
+	memcpy(&mdns_c_sad_ass_thres_array,       TP(0x9287c), 0x24);
+
+	/* C ref weight arrays */
+	memcpy(&mdns_c_ref_wei_mv_array,          TP(0x928a0), 0x24);
+	memcpy(&mdns_c_ref_wei_fake_array,        TP(0x928c4), 0x24);
+	memcpy(&mdns_c_ref_wei_f_max_array,       TP(0x928e8), 0x24);
+	memcpy(&mdns_c_ref_wei_f_min_array,       TP(0x9290c), 0x24);
+	memcpy(&mdns_c_ref_wei_b_max_array,       TP(0x92930), 0x24);
+	memcpy(&mdns_c_ref_wei_b_min_array,       TP(0x92954), 0x24);
+	memcpy(&mdns_c_ref_wei_r_max_array,       TP(0x92978), 0x24);
+	memcpy(&mdns_c_ref_wei_r_min_array,       TP(0x9299c), 0x24);
+	memcpy(&mdns_c_ref_wei_increase_array,    TP(0x929c0), 0x24);
+
+	/* C threshold/weight adjustment arrays */
+	memcpy(&mdns_c_edge_thr_adj_seg_array,    TP(0x929e4), 0x24);
+	memcpy(&mdns_c_luma_thr_adj_seg_array,    TP(0x92a08), 0x24);
+	memcpy(&mdns_c_dtb_thr_adj_seg_array,     TP(0x92a2c), 0x24);
+	memcpy(&mdns_c_ass_thr_adj_seg_array,     TP(0x92a50), 0x24);
+	memcpy(&mdns_c_corner_thr_adj_value_array, TP(0x92a74), 0x24);
+	memcpy(&mdns_c_edge_thr_adj_value0_array, TP(0x92a98), 0x24);
+	memcpy(&mdns_c_edge_thr_adj_value1_array, TP(0x92abc), 0x24);
+	memcpy(&mdns_c_edge_thr_adj_value2_array, TP(0x92ae0), 0x24);
+	memcpy(&mdns_c_edge_thr_adj_value3_array, TP(0x92b04), 0x24);
+	memcpy(&mdns_c_edge_thr_adj_value4_array, TP(0x92b28), 0x24);
+	memcpy(&mdns_c_edge_thr_adj_value5_array, TP(0x92b4c), 0x24);
+	memcpy(&mdns_c_luma_thr_adj_value0_array, TP(0x92b70), 0x24);
+	memcpy(&mdns_c_luma_thr_adj_value1_array, TP(0x92b94), 0x24);
+	memcpy(&mdns_c_luma_thr_adj_value2_array, TP(0x92bb8), 0x24);
+	memcpy(&mdns_c_luma_thr_adj_value3_array, TP(0x92bdc), 0x24);
+	memcpy(&mdns_c_luma_thr_adj_value4_array, TP(0x92c00), 0x24);
+	memcpy(&mdns_c_luma_thr_adj_value5_array, TP(0x92c24), 0x24);
+	memcpy(&mdns_c_dtb_thr_adj_value0_array,  TP(0x92c48), 0x24);
+	memcpy(&mdns_c_dtb_thr_adj_value1_array,  TP(0x92c6c), 0x24);
+	memcpy(&mdns_c_dtb_thr_adj_value2_array,  TP(0x92c90), 0x24);
+	memcpy(&mdns_c_dtb_thr_adj_value3_array,  TP(0x92cb4), 0x24);
+	memcpy(&mdns_c_dtb_thr_adj_value4_array,  TP(0x92cd8), 0x24);
+	memcpy(&mdns_c_dtb_thr_adj_value5_array,  TP(0x92cfc), 0x24);
+	memcpy(&mdns_c_ass_thr_adj_value0_array,  TP(0x92d20), 0x24);
+	memcpy(&mdns_c_ass_thr_adj_value1_array,  TP(0x92d44), 0x24);
+	memcpy(&mdns_c_ass_thr_adj_value2_array,  TP(0x92d68), 0x24);
+	memcpy(&mdns_c_ass_thr_adj_value3_array,  TP(0x92d8c), 0x24);
+	memcpy(&mdns_c_ass_thr_adj_value4_array,  TP(0x92db0), 0x24);
+	memcpy(&mdns_c_ass_thr_adj_value5_array,  TP(0x92dd4), 0x24);
+	memcpy(&mdns_c_edge_wei_adj_seg_array,    TP(0x92df8), 0x24);
+	memcpy(&mdns_c_luma_wei_adj_seg_array,    TP(0x92e1c), 0x24);
+	memcpy(&mdns_c_dtb_wei_adj_seg_array,     TP(0x92e40), 0x24);
+	memcpy(&mdns_c_ass_wei_adj_seg_array,     TP(0x92e64), 0x24);
+	memcpy(&mdns_c_sad_wei_adj_seg_array,     TP(0x92e88), 0x24);
+	memcpy(&mdns_c_corner_wei_adj_value_array, TP(0x92eac), 0x24);
+	memcpy(&mdns_c_edge_wei_adj_value0_array, TP(0x92ed0), 0x24);
+	memcpy(&mdns_c_edge_wei_adj_value1_array, TP(0x92ef4), 0x24);
+	memcpy(&mdns_c_edge_wei_adj_value2_array, TP(0x92f18), 0x24);
+	memcpy(&mdns_c_edge_wei_adj_value3_array, TP(0x92f3c), 0x24);
+	memcpy(&mdns_c_edge_wei_adj_value4_array, TP(0x92f60), 0x24);
+	memcpy(&mdns_c_edge_wei_adj_value5_array, TP(0x92f84), 0x24);
+	memcpy(&mdns_c_luma_wei_adj_value0_array, TP(0x92fa8), 0x24);
+	memcpy(&mdns_c_luma_wei_adj_value1_array, TP(0x92fcc), 0x24);
+	memcpy(&mdns_c_luma_wei_adj_value2_array, TP(0x92ff0), 0x24);
+	memcpy(&mdns_c_luma_wei_adj_value3_array, TP(0x93014), 0x24);
+	memcpy(&mdns_c_luma_wei_adj_value4_array, TP(0x93038), 0x24);
+	memcpy(&mdns_c_luma_wei_adj_value5_array, TP(0x9305c), 0x24);
+	memcpy(&mdns_c_dtb_wei_adj_value0_array,  TP(0x93080), 0x24);
+	memcpy(&mdns_c_dtb_wei_adj_value1_array,  TP(0x930a4), 0x24);
+	memcpy(&mdns_c_dtb_wei_adj_value2_array,  TP(0x930c8), 0x24);
+	memcpy(&mdns_c_dtb_wei_adj_value3_array,  TP(0x930ec), 0x24);
+	memcpy(&mdns_c_dtb_wei_adj_value4_array,  TP(0x93110), 0x24);
+	memcpy(&mdns_c_dtb_wei_adj_value5_array,  TP(0x93134), 0x24);
+	memcpy(&mdns_c_ass_wei_adj_value0_array,  TP(0x93158), 0x24);
+	memcpy(&mdns_c_ass_wei_adj_value1_array,  TP(0x9317c), 0x24);
+	memcpy(&mdns_c_ass_wei_adj_value2_array,  TP(0x931a0), 0x24);
+	memcpy(&mdns_c_ass_wei_adj_value3_array,  TP(0x931c4), 0x24);
+	memcpy(&mdns_c_ass_wei_adj_value4_array,  TP(0x931e8), 0x24);
+	memcpy(&mdns_c_ass_wei_adj_value5_array,  TP(0x9320c), 0x24);
+	memcpy(&mdns_c_sad_wei_adj_value0_array,  TP(0x93230), 0x24);
+	memcpy(&mdns_c_sad_wei_adj_value1_array,  TP(0x93254), 0x24);
+	memcpy(&mdns_c_sad_wei_adj_value2_array,  TP(0x93278), 0x24);
+	memcpy(&mdns_c_sad_wei_adj_value3_array,  TP(0x9329c), 0x24);
+	memcpy(&mdns_c_sad_wei_adj_value4_array,  TP(0x932c0), 0x24);
+	memcpy(&mdns_c_sad_wei_adj_value5_array,  TP(0x932e4), 0x24);
+
+	/* C median/BGM arrays */
+	memcpy(&mdns_c_median_smj_thres_array,    TP(0x93398), 0x24);
+	memcpy(&mdns_c_median_edg_thres_array,    TP(0x933bc), 0x24);
+	memcpy(&mdns_c_median_cur_lmt_op_en_array, TP(0x933e0), 0x24);
+	memcpy(&mdns_c_median_cur_lmt_wei_array,  TP(0x93404), 0x24);
+	memcpy(&mdns_c_median_cur_ss_wei_array,   TP(0x93428), 0x24);
+	memcpy(&mdns_c_median_cur_se_wei_array,   TP(0x9344c), 0x24);
+	memcpy(&mdns_c_median_cur_ms_wei_array,   TP(0x93470), 0x24);
+	memcpy(&mdns_c_median_cur_me_wei_array,   TP(0x93494), 0x24);
+	memcpy(&mdns_c_median_ref_lmt_op_en_array, TP(0x934b8), 0x24);
+	memcpy(&mdns_c_median_ref_lmt_wei_array,  TP(0x934dc), 0x24);
+	memcpy(&mdns_c_median_ref_ss_wei_array,   TP(0x93500), 0x24);
+	memcpy(&mdns_c_median_ref_se_wei_array,   TP(0x93524), 0x24);
+	memcpy(&mdns_c_median_ref_ms_wei_array,   TP(0x93548), 0x24);
+	memcpy(&mdns_c_median_ref_me_wei_array,   TP(0x9356c), 0x24);
+	memcpy(&mdns_c_bgm_win_opt_array,        TP(0x93590), 0x24);
+	memcpy(&mdns_c_bgm_cur_src_array,        TP(0x935b4), 0x24);
+	memcpy(&mdns_c_bgm_ref_src_array,        TP(0x935d8), 0x24);
+	memcpy(&mdns_c_bgm_false_thres_array,    TP(0x935fc), 0x24);
+	memcpy(&mdns_c_bgm_false_step_array,     TP(0x93620), 0x24);
+
+	/* C PIIR arrays */
+	memcpy(&mdns_c_piir_edge_thres0_array,    TP(0x93644), 0x24);
+	memcpy(&mdns_c_piir_edge_thres1_array,    TP(0x93668), 0x24);
+	memcpy(&mdns_c_piir_edge_thres2_array,    TP(0x9368c), 0x24);
+	memcpy(&mdns_c_piir_edge_wei0_array,      TP(0x936b0), 0x24);
+	memcpy(&mdns_c_piir_edge_wei1_array,      TP(0x936d4), 0x24);
+	memcpy(&mdns_c_piir_edge_wei2_array,      TP(0x936f8), 0x24);
+	memcpy(&mdns_c_piir_edge_wei3_array,      TP(0x9371c), 0x24);
+	memcpy(&mdns_c_piir_cur_fs_wei_array,     TP(0x93740), 0x24);
+	memcpy(&mdns_c_piir_ref_fs_wei_array,     TP(0x93764), 0x24);
+
+	/* C FSPA cur fusion weight arrays */
+	memcpy(&mdns_c_fspa_cur_fus_seg_array,    TP(0x93788), 0x24);
+	memcpy(&mdns_c_fspa_cur_fus_wei_0_array,  TP(0x937ac), 0x24);
+	memcpy(&mdns_c_fspa_cur_fus_wei_16_array, TP(0x937d0), 0x24);
+	memcpy(&mdns_c_fspa_cur_fus_wei_32_array, TP(0x937f4), 0x24);
+	memcpy(&mdns_c_fspa_cur_fus_wei_48_array, TP(0x93818), 0x24);
+	memcpy(&mdns_c_fspa_cur_fus_wei_64_array, TP(0x9383c), 0x24);
+	memcpy(&mdns_c_fspa_cur_fus_wei_80_array, TP(0x93860), 0x24);
+	memcpy(&mdns_c_fspa_cur_fus_wei_96_array, TP(0x93884), 0x24);
+	memcpy(&mdns_c_fspa_cur_fus_wei_112_array, TP(0x938a8), 0x24);
+	memcpy(&mdns_c_fspa_cur_fus_wei_128_array, TP(0x938cc), 0x24);
+	memcpy(&mdns_c_fspa_cur_fus_wei_144_array, TP(0x938f0), 0x24);
+	memcpy(&mdns_c_fspa_cur_fus_wei_160_array, TP(0x93914), 0x24);
+	memcpy(&mdns_c_fspa_cur_fus_wei_176_array, TP(0x93938), 0x24);
+	memcpy(&mdns_c_fspa_cur_fus_wei_192_array, TP(0x9395c), 0x24);
+	memcpy(&mdns_c_fspa_cur_fus_wei_208_array, TP(0x93980), 0x24);
+	memcpy(&mdns_c_fspa_cur_fus_wei_224_array, TP(0x939a4), 0x24);
+	memcpy(&mdns_c_fspa_cur_fus_wei_240_array, TP(0x939c8), 0x24);
+
+	/* C FSPA ref fusion weight arrays */
+	memcpy(&mdns_c_fspa_ref_fus_seg_array,    TP(0x939ec), 0x24);
+	memcpy(&mdns_c_fspa_ref_fus_wei_0_array,  TP(0x93a10), 0x24);
+	memcpy(&mdns_c_fspa_ref_fus_wei_16_array, TP(0x93a34), 0x24);
+	memcpy(&mdns_c_fspa_ref_fus_wei_32_array, TP(0x93a58), 0x24);
+	memcpy(&mdns_c_fspa_ref_fus_wei_48_array, TP(0x93a7c), 0x24);
+	memcpy(&mdns_c_fspa_ref_fus_wei_64_array, TP(0x93aa0), 0x24);
+	memcpy(&mdns_c_fspa_ref_fus_wei_80_array, TP(0x93ac4), 0x24);
+	memcpy(&mdns_c_fspa_ref_fus_wei_96_array, TP(0x93ae8), 0x24);
+	memcpy(&mdns_c_fspa_ref_fus_wei_112_array, TP(0x93b0c), 0x24);
+	memcpy(&mdns_c_fspa_ref_fus_wei_128_array, TP(0x93b30), 0x24);
+	memcpy(&mdns_c_fspa_ref_fus_wei_144_array, TP(0x93b54), 0x24);
+	memcpy(&mdns_c_fspa_ref_fus_wei_160_array, TP(0x93b78), 0x24);
+	memcpy(&mdns_c_fspa_ref_fus_wei_176_array, TP(0x93b9c), 0x24);
+	memcpy(&mdns_c_fspa_ref_fus_wei_192_array, TP(0x93bc0), 0x24);
+	memcpy(&mdns_c_fspa_ref_fus_wei_208_array, TP(0x93be4), 0x24);
+	memcpy(&mdns_c_fspa_ref_fus_wei_224_array, TP(0x93c08), 0x24);
+	memcpy(&mdns_c_fspa_ref_fus_wei_240_array, TP(0x93c2c), 0x24);
+
+	/* C FIIR arrays */
+	memcpy(&mdns_c_fiir_edge_thres0_array,    TP(0x93c50), 0x24);
+	memcpy(&mdns_c_fiir_edge_thres1_array,    TP(0x93c74), 0x24);
+	memcpy(&mdns_c_fiir_edge_thres2_array,    TP(0x93c98), 0x24);
+	memcpy(&mdns_c_fiir_edge_wei0_array,      TP(0x93cbc), 0x24);
+	memcpy(&mdns_c_fiir_edge_wei1_array,      TP(0x93ce0), 0x24);
+	memcpy(&mdns_c_fiir_edge_wei2_array,      TP(0x93d04), 0x24);
+	memcpy(&mdns_c_fiir_edge_wei3_array,      TP(0x93d28), 0x24);
+	memcpy(&mdns_c_fiir_fus_seg_array,        TP(0x93d4c), 0x24);
+	memcpy(&mdns_c_fiir_fus_wei0_array,       TP(0x93d70), 0x24);
+	memcpy(&mdns_c_fiir_fus_wei1_array,       TP(0x93d94), 0x24);
+	memcpy(&mdns_c_fiir_fus_wei2_array,       TP(0x93db8), 0x24);
+	memcpy(&mdns_c_fiir_fus_wei3_array,       TP(0x93ddc), 0x24);
+	memcpy(&mdns_c_fiir_fus_wei4_array,       TP(0x93e00), 0x24);
+	memcpy(&mdns_c_fiir_fus_wei5_array,       TP(0x93e24), 0x24);
+	memcpy(&mdns_c_fiir_fus_wei6_array,       TP(0x93e48), 0x24);
+	memcpy(&mdns_c_fiir_fus_wei7_array,       TP(0x93e6c), 0x24);
+	memcpy(&mdns_c_fiir_fus_wei8_array,       TP(0x93e90), 0x24);
+
+	/* C false color arrays */
+	memcpy(&mdns_c_false_smj_thres_array,     TP(0x93eb4), 0x24);
+	memcpy(&mdns_c_false_edg_thres0_array,    TP(0x93ed8), 0x24);
+	memcpy(&mdns_c_false_edg_thres1_array,    TP(0x93efc), 0x24);
+	memcpy(&mdns_c_false_edg_thres2_array,    TP(0x93f20), 0x24);
+	memcpy(&mdns_c_false_thres_s0_array,      TP(0x93f44), 0x24);
+	memcpy(&mdns_c_false_thres_s1_array,      TP(0x93f68), 0x24);
+	memcpy(&mdns_c_false_thres_s2_array,      TP(0x93f8c), 0x24);
+	memcpy(&mdns_c_false_thres_s3_array,      TP(0x93fb0), 0x24);
+	memcpy(&mdns_c_false_step_s0_array,       TP(0x93fd4), 0x24);
+	memcpy(&mdns_c_false_step_s1_array,       TP(0x93ff8), 0x24);
+	memcpy(&mdns_c_false_step_s2_array,       TP(0x9401c), 0x24);
+	memcpy(&mdns_c_false_step_s3_array,       TP(0x94040), 0x24);
+	memcpy(&mdns_c_false_thres_m0_array,      TP(0x94064), 0x24);
+	memcpy(&mdns_c_false_thres_m1_array,      TP(0x94088), 0x24);
+	memcpy(&mdns_c_false_thres_m2_array,      TP(0x940ac), 0x24);
+	memcpy(&mdns_c_false_thres_m3_array,      TP(0x940d0), 0x24);
+	memcpy(&mdns_c_false_step_m0_array,       TP(0x940f4), 0x24);
+	memcpy(&mdns_c_false_step_m1_array,       TP(0x94118), 0x24);
+	memcpy(&mdns_c_false_step_m2_array,       TP(0x9413c), 0x24);
+	memcpy(&mdns_c_false_step_m3_array,       TP(0x94160), 0x24);
+	memcpy(&mdns_c_sat_lmt_thres_array,       TP(0x94184), 0x24);
+	memcpy(&mdns_c_sat_lmt_stren_array,       TP(0x941a8), 0x24);
+
+	/* Y WDR arrays */
+	memcpy(&mdns_y_sad_ave_thres_wdr_array,   TP(0x916a0), 0x24);
+	memcpy(&mdns_y_sad_ass_thres_wdr_array,   TP(0x916c4), 0x24);
+	memcpy(&mdns_y_sta_ave_thres_wdr_array,   TP(0x916e8), 0x24);
+	memcpy(&mdns_y_sta_ass_thres_wdr_array,   TP(0x9170c), 0x24);
+	memcpy(&mdns_y_sta_motion_thres_wdr_array, TP(0x91730), 0x24);
+	memcpy(&mdns_y_ref_wei_b_max_wdr_array,   TP(0x91754), 0x24);
+	memcpy(&mdns_y_ref_wei_b_min_wdr_array,   TP(0x91778), 0x24);
+	memcpy(&mdns_y_pspa_cur_median_win_opt_wdr_array, TP(0x92390), 0x24);
+	memcpy(&mdns_y_pspa_cur_bi_thres_wdr_array,      TP(0x923b4), 0x24);
+	memcpy(&mdns_y_pspa_cur_bi_wei0_wdr_array,       TP(0x923d8), 0x24);
+	memcpy(&mdns_y_pspa_ref_median_win_opt_wdr_array, TP(0x923fc), 0x24);
+	memcpy(&mdns_y_pspa_ref_bi_thres_wdr_array,      TP(0x92420), 0x24);
+	memcpy(&mdns_y_pspa_ref_bi_wei0_wdr_array,       TP(0x92444), 0x24);
+	memcpy(&mdns_y_piir_cur_fs_wei_wdr_array, TP(0x92468), 0x24);
+	memcpy(&mdns_y_piir_ref_fs_wei_wdr_array, TP(0x9248c), 0x24);
+	memcpy(&mdns_y_fspa_cur_fus_wei_144_wdr_array, TP(0x924b0), 0x24);
+	memcpy(&mdns_y_fspa_cur_fus_wei_160_wdr_array, TP(0x924d4), 0x24);
+	memcpy(&mdns_y_fspa_cur_fus_wei_176_wdr_array, TP(0x924f8), 0x24);
+	memcpy(&mdns_y_fspa_cur_fus_wei_192_wdr_array, TP(0x9251c), 0x24);
+	memcpy(&mdns_y_fspa_cur_fus_wei_208_wdr_array, TP(0x92540), 0x24);
+	memcpy(&mdns_y_fspa_cur_fus_wei_224_wdr_array, TP(0x92564), 0x24);
+	memcpy(&mdns_y_fspa_cur_fus_wei_240_wdr_array, TP(0x92588), 0x24);
+	memcpy(&mdns_y_fspa_ref_fus_wei_144_wdr_array, TP(0x925ac), 0x24);
+	memcpy(&mdns_y_fspa_ref_fus_wei_160_wdr_array, TP(0x925d0), 0x24);
+	memcpy(&mdns_y_fspa_ref_fus_wei_176_wdr_array, TP(0x925f4), 0x24);
+	memcpy(&mdns_y_fspa_ref_fus_wei_192_wdr_array, TP(0x92618), 0x24);
+	memcpy(&mdns_y_fspa_ref_fus_wei_208_wdr_array, TP(0x9263c), 0x24);
+	memcpy(&mdns_y_fspa_ref_fus_wei_224_wdr_array, TP(0x92660), 0x24);
+	memcpy(&mdns_y_fspa_ref_fus_wei_240_wdr_array, TP(0x92684), 0x24);
+	memcpy(&mdns_y_fiir_fus_wei0_wdr_array,   TP(0x926a8), 0x24);
+	memcpy(&mdns_y_fiir_fus_wei1_wdr_array,   TP(0x926cc), 0x24);
+	memcpy(&mdns_y_fiir_fus_wei2_wdr_array,   TP(0x926f0), 0x24);
+	memcpy(&mdns_y_fiir_fus_wei3_wdr_array,   TP(0x92714), 0x24);
+	memcpy(&mdns_y_fiir_fus_wei4_wdr_array,   TP(0x92738), 0x24);
+	memcpy(&mdns_y_fiir_fus_wei5_wdr_array,   TP(0x9275c), 0x24);
+	memcpy(&mdns_y_fiir_fus_wei6_wdr_array,   TP(0x92780), 0x24);
+	memcpy(&mdns_y_fiir_fus_wei7_wdr_array,   TP(0x927a4), 0x24);
+	memcpy(&mdns_y_fiir_fus_wei8_wdr_array,   TP(0x927c8), 0x24);
+
+	/* C WDR arrays */
+	memcpy(&mdns_c_sad_ave_thres_wdr_array,   TP(0x93308), 0x24);
+	memcpy(&mdns_c_sad_ass_thres_wdr_array,   TP(0x9332c), 0x24);
+	memcpy(&mdns_c_ref_wei_b_max_wdr_array,   TP(0x93350), 0x24);
+	memcpy(&mdns_c_ref_wei_b_min_wdr_array,   TP(0x93374), 0x24);
+	memcpy(&mdns_c_median_cur_ss_wei_wdr_array, TP(0x941cc), 0x24);
+	memcpy(&mdns_c_median_cur_se_wei_wdr_array, TP(0x941f0), 0x24);
+	memcpy(&mdns_c_median_cur_ms_wei_wdr_array, TP(0x94214), 0x24);
+	memcpy(&mdns_c_median_cur_me_wei_wdr_array, TP(0x94238), 0x24);
+	memcpy(&mdns_c_median_ref_ss_wei_wdr_array, TP(0x9425c), 0x24);
+	memcpy(&mdns_c_median_ref_se_wei_wdr_array, TP(0x94280), 0x24);
+	memcpy(&mdns_c_median_ref_ms_wei_wdr_array, TP(0x942a4), 0x24);
+	memcpy(&mdns_c_median_ref_me_wei_wdr_array, TP(0x942c8), 0x24);
+	memcpy(&mdns_c_piir_cur_fs_wei_wdr_array, TP(0x942ec), 0x24);
+	memcpy(&mdns_c_piir_ref_fs_wei_wdr_array, TP(0x94310), 0x24);
+	memcpy(&mdns_c_fspa_cur_fus_wei_144_wdr_array, TP(0x94334), 0x24);
+	memcpy(&mdns_c_fspa_cur_fus_wei_160_wdr_array, TP(0x94358), 0x24);
+	memcpy(&mdns_c_fspa_cur_fus_wei_176_wdr_array, TP(0x9437c), 0x24);
+	memcpy(&mdns_c_fspa_cur_fus_wei_192_wdr_array, TP(0x943a0), 0x24);
+	memcpy(&mdns_c_fspa_cur_fus_wei_208_wdr_array, TP(0x943c4), 0x24);
+	memcpy(&mdns_c_fspa_cur_fus_wei_224_wdr_array, TP(0x943e8), 0x24);
+	memcpy(&mdns_c_fspa_cur_fus_wei_240_wdr_array, TP(0x9440c), 0x24);
+	memcpy(&mdns_c_fspa_ref_fus_wei_144_wdr_array, TP(0x94430), 0x24);
+	memcpy(&mdns_c_fspa_ref_fus_wei_160_wdr_array, TP(0x94454), 0x24);
+	memcpy(&mdns_c_fspa_ref_fus_wei_176_wdr_array, TP(0x94478), 0x24);
+	memcpy(&mdns_c_fspa_ref_fus_wei_192_wdr_array, TP(0x9449c), 0x24);
+	memcpy(&mdns_c_fspa_ref_fus_wei_208_wdr_array, TP(0x944c0), 0x24);
+	memcpy(&mdns_c_fspa_ref_fus_wei_224_wdr_array, TP(0x944e4), 0x24);
+	memcpy(&mdns_c_fspa_ref_fus_wei_240_wdr_array, TP(0x94508), 0x24);
+	memcpy(&mdns_c_fiir_fus_wei0_wdr_array,   TP(0x9452c), 0x24);
+	memcpy(&mdns_c_fiir_fus_wei1_wdr_array,   TP(0x94550), 0x24);
+	memcpy(&mdns_c_fiir_fus_wei2_wdr_array,   TP(0x94574), 0x24);
+	memcpy(&mdns_c_fiir_fus_wei3_wdr_array,   TP(0x94598), 0x24);
+	memcpy(&mdns_c_fiir_fus_wei4_wdr_array,   TP(0x945bc), 0x24);
+	memcpy(&mdns_c_fiir_fus_wei5_wdr_array,   TP(0x945e0), 0x24);
+	memcpy(&mdns_c_fiir_fus_wei6_wdr_array,   TP(0x94604), 0x24);
+	memcpy(&mdns_c_fiir_fus_wei7_wdr_array,   TP(0x94628), 0x24);
+	memcpy(&mdns_c_fiir_fus_wei8_wdr_array,   TP(0x9464c), 0x24);
+
+	/* C saturation normal strength */
+	memcpy(&mdns_c_sat_nml_stren_array,       TP(0x94670), 0x24);
+
+#undef TP
 
 	if (data_9ab00 != 0x80)
 		return tisp_s_mdns_ratio(data_9ab00);
@@ -18479,8 +19029,33 @@ void tiziano_mdns_enable_after_dma(void)
 	system_reg_write(0xc, bypass);
 
 	pr_info("tiziano_mdns_enable_after_dma: MDNS enabled (bypass=0x%08x)\n", bypass);
+	pr_info("MDNS_DIAG: y_en=[%u,%u,%u] uv_en=[%u,%u,%u] reg0x7810=0x%08x reg0x7814=0x%08x reg0x7808=0x%08x\n",
+		mdns_y_filter_en_array, mdns_y_sf_cur_en_array, mdns_y_sf_ref_en_array,
+		mdns_uv_filter_en_array, mdns_uv_sf_cur_en_array, mdns_uv_sf_ref_en_array,
+		system_reg_read(0x7810), system_reg_read(0x7814), system_reg_read(0x7808));
 }
 EXPORT_SYMBOL(tiziano_mdns_enable_after_dma);
+
+/* OEM EXACT: tiziano_mdns_dn_params_refresh — Day/Night transition handler.
+ * Called during day/night mode switch to reload MDNS params from the new
+ * tparams_active blob and force a full HW register refresh.
+ *
+ * OEM sequence (HLIL 0x3f9d4):
+ *   1. Bump mdns_last_refresh_key by 0x200 (forces diff >= threshold on next par_refresh)
+ *   2. Reload all params from tbin via tiziano_mdns_params_refresh()
+ *   3. Full register refresh + trigger via tisp_mdns_all_reg_refresh + top_func_refresh + trigger
+ *
+ * Unlike tiziano_mdns_init, this does NOT reset mdns_params_received or
+ * re-bypass MDNS — it assumes MDNS is already enabled and just reloads params. */
+void tiziano_mdns_dn_params_refresh(void)
+{
+	mdns_last_refresh_key += 0x200;
+	tiziano_mdns_params_refresh();
+	tisp_mdns_all_reg_refresh(mdns_last_refresh_key);
+	tisp_mdns_top_func_refresh();
+	tisp_mdns_reg_trigger();
+}
+EXPORT_SYMBOL(tiziano_mdns_dn_params_refresh);
 
 /*
  * CLM (Color Luminance Mapping) — full OEM-equivalent implementation
@@ -23633,6 +24208,8 @@ static int tisp_gb_blc_again_interp(uint32_t gain, int channel)
 
 /* OEM EXACT: tisp_tgain_update — refreshes ALL gain-dependent ISP blocks.
  * Decompiled from OEM at 0x14ba8. */
+static int mdns_diag_frame_count;
+
 int tisp_tgain_update(uint32_t gain)
 {
     extern struct tx_isp_dev *ourISPdev;
@@ -23658,6 +24235,20 @@ int tisp_tgain_update(uint32_t gain)
     tisp_rdns_par_refresh(gain, 0x100, 1);
     if (mdns_params_received)
         tisp_mdns_par_refresh(gain, 0x100);
+
+    /* One-shot MDNS register diagnostic after frames are flowing.
+     * Shadow registers should have latched by frame 10. */
+    if (mdns_params_received && mdns_diag_frame_count < 10) {
+        mdns_diag_frame_count++;
+        if (mdns_diag_frame_count == 10) {
+            pr_info("MDNS_VERIFY(frame10): gain=0x%x 0x7810=0x%08x 0x7814=0x%08x 0x7808=0x%08x 0x7804=0x%08x bypass=0x%08x\n",
+                gain,
+                system_reg_read(0x7810), system_reg_read(0x7814),
+                system_reg_read(0x7808), system_reg_read(0x7804),
+                system_reg_read(0xc));
+        }
+    }
+
     return 0;
 }
 
@@ -24932,7 +25523,11 @@ static int tisp_mdns_top_func_cfg(int enable)
     }
 
     /* OEM tisp_mdns_top_func_cfg writes 0x7810, 0x7814, 0x7808. */
+    pr_info("MDNS_TOP_CFG: en=%d y_sf_cur=%u y_sf_ref=%u y_filt=%u uv_sf_cur=%u uv_sf_ref=%u uv_filt=%u ctrl=0x%08x\n",
+        enable, mdns_y_sf_cur_en_array, mdns_y_sf_ref_en_array, mdns_y_filter_en_array,
+        mdns_uv_sf_cur_en_array, mdns_uv_sf_ref_en_array, mdns_uv_filter_en_array, ctrl);
     system_reg_write(0x7810, ctrl);
+    pr_info("MDNS_TOP_CFG: wrote 0x7810=0x%08x, readback=0x%08x\n", ctrl, system_reg_read(0x7810));
 
     top1 = y_con_thres |
            (mdns_bgm_enable_array << 4) |
