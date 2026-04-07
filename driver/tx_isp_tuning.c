@@ -18446,18 +18446,39 @@ int tiziano_mdns_init(uint32_t width, uint32_t height)
 }
 
 /* Called from tx_isp_set_buf after MDNS DMA registers are programmed.
- * Now safe to enable MDNS since the temporal reference buffers have
- * valid physical addresses. */
+ * Executes the OEM-exact MDNS enable sequence that tiziano_mdns_init
+ * deferred because DMA buffers weren't allocated yet:
+ *   1. tisp_mdns_par_refresh(0x10000, 0x10000) — writes all MDNS filter
+ *      registers via tisp_mdns_all_reg_refresh + trigger
+ *   2. tisp_mdns_bypass(0) — enables MDNS top-function config + trigger
+ *   3. Clear ISP top-level bypass bit 16 in register 0xc
+ * The _now table pointers are guaranteed set by tisp_mdns_select_now_tables
+ * which ran during tiziano_mdns_init before this function is called. */
 void tiziano_mdns_enable_after_dma(void)
 {
+	u32 bypass;
+
 	if (mdns_params_received)
 		return; /* already enabled */
 
+	/* Verify _now pointers are set (safety check) */
+	if (!mdns_y_sad_ave_thres_array_now) {
+		pr_warn("tiziano_mdns_enable_after_dma: _now tables not set, skipping\n");
+		return;
+	}
+
 	mdns_params_received = 1;
+
+	/* OEM EXACT sequence from tiziano_mdns_init lines 33887-33888 */
 	tisp_mdns_par_refresh(0x10000, 0x10000);
 	tisp_mdns_bypass(0);
 
-	pr_info("tiziano_mdns_enable_after_dma: MDNS enabled (DMA buffers ready)\n");
+	/* Clear ISP top-level MDNS bypass bit 16 */
+	bypass = system_reg_read(0xc);
+	bypass &= ~0x10000;
+	system_reg_write(0xc, bypass);
+
+	pr_info("tiziano_mdns_enable_after_dma: MDNS enabled (bypass=0x%08x)\n", bypass);
 }
 EXPORT_SYMBOL(tiziano_mdns_enable_after_dma);
 
