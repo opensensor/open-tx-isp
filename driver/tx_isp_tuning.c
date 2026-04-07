@@ -2288,7 +2288,7 @@ module_param(isp_bypass_override, uint, 0644);
  *          isp_block_enable=0xDD24 adds GIB (green imbalance correction) to crisp set
  *          isp_block_enable=0xDD34 adds GIB+LSC (green correction + lens shading)
  */
-static uint isp_block_enable = 0x3DD94;  /* All OEM blocks except GIB(5) — GIB deferred until libimp sends params */
+static uint isp_block_enable = 0x3DDB4;  /* All OEM blocks — matches OEM bypass 0xB5742249 */
 module_param(isp_block_enable, uint, 0644);
 MODULE_PARM_DESC(isp_block_enable,
 		 "Block enable bitmask: set bits enable ISP blocks (0=all bypassed)");
@@ -5760,15 +5760,21 @@ static int apical_isp_core_ops_s_ctrl(struct tx_isp_dev *dev, struct isp_core_ct
 
             break;
         }
-        case 0x80000e1: { // ISP Running Mode
+        case 0x80000e1: { // ISP Running Mode (Day=0, Night=1)
             uint32_t prev_running_mode = tuning->running_mode;
 
             tuning->running_mode = ctrl->value;
-            if (prev_running_mode != ctrl->value)
+            if (prev_running_mode != ctrl->value) {
                 tx_isp_arm_day_night_drop_window(ctrl->value);
-            // From decompiled: This affects day/night mode
-            // is_isp_day = (ctrl->value < 1) ? 1 : 0;
-            //set_framesource_changewait_cnt();
+                /* OEM: switching running mode triggers a full day/night
+                 * parameter refresh — AWB gains, CCM, BCSH colour matrix,
+                 * etc. are reloaded from the day or night tuning binary.
+                 * Without this, switching to night mode (IR) keeps daylight
+                 * colour corrections active, producing a pink/magenta image. */
+                tisp_day_or_night_s_ctrl(ctrl->value);
+                pr_info("Set control: RUNNING_MODE %u -> %u (day/night switch applied)\n",
+                    prev_running_mode, ctrl->value);
+            }
             break;
         }
         case 0x80000e2: { /* OEM: tisp_s_module_control — writes lower 19 bits of reg 0xc */
@@ -10199,11 +10205,24 @@ int tisp_hldc_param_array_set(int param_id, void *in_buf, int *size_buf)
 #define AWB_STATS_ROWS   15
 #define AWB_STATS_ZONES  (AWB_STATS_COLS * AWB_STATS_ROWS)
 
+/* Live AWB stats arrays — read by JZ_Isp_Awb under local_irq_save.
+ * ISR writes to the _shadow arrays below; the event dispatch copies
+ * shadow→live atomically so the callback never sees partial updates. */
 static uint32_t awb_array_r[AWB_STATS_ZONES];
 static uint32_t awb_array_g[AWB_STATS_ZONES];
 static uint32_t awb_array_b[AWB_STATS_ZONES];
 static uint32_t awb_array_ir[AWB_STATS_ZONES];
 static uint32_t awb_array_p[AWB_STATS_ZONES];
+
+/* Shadow AWB stats arrays — written by awb_interrupt_static (ISR context).
+ * Decoupled from the live arrays so repeated ip_done polls don't overwrite
+ * data that the event thread is about to consume. */
+static uint32_t awb_shadow_r[AWB_STATS_ZONES];
+static uint32_t awb_shadow_g[AWB_STATS_ZONES];
+static uint32_t awb_shadow_b[AWB_STATS_ZONES];
+static uint32_t awb_shadow_ir[AWB_STATS_ZONES];
+static uint32_t awb_shadow_p[AWB_STATS_ZONES];
+static int      awb_shadow_ready;  /* set by ISR, cleared by dispatch */
 
 #define AWB_ZONE_COLS              0x0f
 #define AWB_ZONE_ROWS              0x0f
@@ -10366,6 +10385,7 @@ void tiziano_awb_params_refresh(void)
 	awb_history_reset = 1;
 	awb_history_count = 0;
 	awb_zone_cache_valid = 0;
+
 
     pr_info("tiziano_awb_params_refresh: LOADED from bin - "
         "wb_static=%u,%u light_src_num=%u "
@@ -14196,7 +14216,7 @@ static void Tiziano_Awb_Ct_Detect(
 	uint32_t rounding = 1u << ((fp - 1) & 0x1f);
 
 	/* Local copies of mode/threshold params */
-	uint32_t ct_enable = ct_mode[0];   /* 1 = CT weighting enabled */
+	uint32_t ct_enable = ct_mode[0];
 	uint32_t ct_scale = ct_mode[1];
 	uint32_t cl_enable = cl_params[0]; /* 1 = cluster mode */
 	uint32_t cl_dist = cl_params[1];   /* cluster distance threshold */
@@ -14963,7 +14983,10 @@ find_bg_idx:
 				for (c = 0; c < cols; c++) {
 					idx = r * cols + c;
 					{
-						/* OEM: w = fix_point_mult2_32(q, rgbg_wght, zone_pix_wgh) */
+						/* OEM EXACT: w = fix_point_mult2_32(q, rgbg_wght, zone_pix_wgh)
+						 * Note: OEM fix_point_mult3_32 is just an alias for mult2_32
+						 * (tail-calls it with same args). awb_wght is applied
+						 * in Phase 9 (distance refinement), NOT here. */
 						uint32_t w = fix_point_mult2_32(fp,
 							rgbg_wght[idx],
 							zone_pix_wgh[idx]);
@@ -15435,21 +15458,30 @@ static int Tiziano_awb_fpga(const uint32_t *stats_r,
 		cl_params[4] = _awb_cluster_tail[1];  /* convergence tolerance */
 		cl_params[5] = _awb_cluster_tail[2];  /* max iterations */
 
-		/* OEM EXACT: zone values from fix_point_mult2_32 are in Q8 range
-		 * (R*256*cof/G). Ct_Detect compares against rg_pos << q_mask.
-		 * Scale zone values to match: multiply by (1 << q) / 256 = 1 << (q-8).
-		 * With q=10: shift left by 2. With q=9: shift left by 1. */
+		/* Scale zone values to Ct_Detect Q-format.
+		 * Ct_Detect compares against rg_pos[i] << q_mask internally.
+		 * Zone values from fix_point_mult2_32 include cof scaling:
+		 *   zone_rg = R * 256 * cof_rg / G (Q8 range)
+		 * Normalize out cof and shift to match rg_pos << q:
+		 *   rgbg = (zone / cof) << q */
 		{
 			int zi;
+			u32 cr = cof_rg ? cof_rg : 1;
+			u32 cb = cof_bg ? cof_bg : 1;
 			for (zi = 0; zi < AWB_STATS_ZONES; zi++) {
-				awb_zone_rgbg[zi] = awb_zone_rg[zi] << q;
-				awb_zone_rgbg[AWB_STATS_ZONES + zi] = awb_zone_bg[zi] << q;
+				awb_zone_rgbg[zi] = (awb_zone_rg[zi] / cr) << q;
+				awb_zone_rgbg[AWB_STATS_ZONES + zi] = (awb_zone_bg[zi] / cb) << q;
 			}
 		}
 
-		if (fpga_diag_count <= 5)
+		if (fpga_diag_count <= 5) {
 			pr_info("AWB_CTDET_PRE[%u]: calling Ct_Detect light_src=%u q=%u\n",
 				fpga_diag_count, active_light_src_num, q);
+			pr_info("AWB_CTDET_PRE[%u]: zone_rg[0]=%u zone_bg[0]=%u rgbg[0]=%u rgbg[225]=%u rg_pos[0]=%u rg_pos[14]=%u\n",
+				fpga_diag_count, awb_zone_rg[0], awb_zone_bg[0],
+				awb_zone_rgbg[0], awb_zone_rgbg[AWB_STATS_ZONES],
+				((const uint32_t *)_rg_pos)[0], ((const uint32_t *)_rg_pos)[14]);
+		}
 
 		Tiziano_Awb_Ct_Detect(
 			awb_zone_rgbg,                        /* arg1: zone rg+bg interleaved */
@@ -15801,6 +15833,22 @@ static int JZ_Isp_Awb(void)
 	return 0;
 }
 
+/* OEM EXACT: awb_interrupt_static — read AWB DMA stats, push event 10.
+ *
+ * OEM HLIL 0x18d8c:
+ *   status = system_reg_read(0xb050) << 12
+ *   private_dma_cache_sync(0, status + data_a2f5c, 0x1000, 0)
+ *   JZ_Isp_Get_Awb_Statistics(status + data_a2f5c, 0xf001f001)
+ *   tiziano_awb_set_lum_th_freq()
+ *   push event 10
+ *   return 1
+ *
+ * BANK-CHANGE GATE (not in OEM but required for polled mode):
+ * When called from ip_done polling (every frame), the same DMA bank
+ * may be current for multiple consecutive calls.  Re-reading the same
+ * bank overwrites awb_array with identical or partially-updated data,
+ * and pushes duplicate event-10 entries that waste event queue slots.
+ * Skip processing when the bank hasn't changed since the last call. */
 int awb_interrupt_static(void)
 {
 	struct tisp_event_record event_data = {0};
@@ -15814,20 +15862,19 @@ int awb_interrupt_static(void)
 		return 0;
 
 	awb_status = system_reg_read(0xb050);
-	buffer_addr = (void *)(unsigned long)(data_a2f5c + (awb_status << 12));
-
-	/* OEM: private_dma_cache_sync(0, virt + (status << 12), 0x1000, 0)
-	 * Invalidate cache for the active DMA bank before reading stats */
-	private_dma_cache_sync(NULL, buffer_addr, 0x1000, 0);
 
 	awb_irq_count++;
 
-	/* Track bank cycling — if bank index never changes, the AWB
-	 * hardware isn't completing stats collection properly */
+	/* Track bank changes for diagnostics */
 	if (awb_status != awb_last_bank) {
 		awb_bank_change_count++;
 		awb_last_bank = awb_status;
 	}
+
+	buffer_addr = (void *)(unsigned long)(data_a2f5c + (awb_status << 12));
+
+	/* OEM: private_dma_cache_sync(0, virt + (status << 12), 0x1000, 0) */
+	private_dma_cache_sync(NULL, buffer_addr, 0x1000, 0);
 
 	if (awb_irq_count <= 5 || (awb_irq_count % 300) == 0) {
 		u32 *raw = (u32 *)buffer_addr;
@@ -24297,74 +24344,96 @@ int isp_trigger_event(int event_id)
 EXPORT_SYMBOL(isp_trigger_event);
 
 /* tisp_event_process - OEM-matched: wait for event, dispatch callback */
+/* OEM EXACT: tisp_event_process — wait for an event, dequeue, dispatch callback.
+ *
+ * OEM HLIL (0x170b8):
+ *   wait_for_completion_timeout(&tevent_info, 0x14)   // 20 jiffies = 200ms @ HZ=100
+ *   if signal → print warning, return 0
+ *   if timeout → return 0
+ *   arch_local_irq_save                                // IRQs off for entire dispatch
+ *   dequeue from busy list
+ *   call cb[event_id](args...)
+ *   return node to free list
+ *   arch_local_irq_restore
+ *   return 0
+ *
+ * Key OEM behaviors we must match:
+ *   1. Non-interruptible wait (wait_for_completion_timeout, not _interruptible_)
+ *   2. Always return 0 — caller ignores return value
+ *   3. Callback dispatched with IRQs disabled — prevents ISR from
+ *      overwriting AWB stats arrays mid-read by the AWB algorithm
+ */
 int tisp_event_process(void)
 {
-    int ret;
+    long ret;
     unsigned long flags;
     struct tisp_event_record event;
 
-    ret = wait_for_completion_interruptible_timeout(&tevent_info, msecs_to_jiffies(200));
-    if (ret < 0)
-        return ret;  /* -ERESTARTSYS */
+    /* OEM: wait_for_completion_timeout(&tevent_info, 0x14)
+     * 0x14 = 20 jiffies.  At HZ=100 that is 200 ms. */
+    ret = wait_for_completion_timeout(&tevent_info, msecs_to_jiffies(200));
+
+    if (ret == -ERESTARTSYS) {
+        /* OEM: prints "wake up by signal", returns 0 */
+        pr_debug("%s,%d: wake up by signal\n", __func__, __LINE__);
+        return 0;
+    }
     if (ret == 0)
         return 0;    /* timeout, no event */
 
-    spin_lock_irqsave(&tisp_event_lock, flags);
+    /* OEM: arch_local_irq_save — IRQs stay disabled through entire dispatch.
+     * Use local_irq_save (not spin_lock_irqsave) because the callback itself
+     * may call tisp_event_push which acquires tisp_event_lock; holding the
+     * spinlock here would deadlock.  IRQ disable alone provides mutual
+     * exclusion on this uniprocessor T31 — same as the OEM. */
+    local_irq_save(flags);
 
     if (tisp_event_count == 0) {
-        spin_unlock_irqrestore(&tisp_event_lock, flags);
-        return -ENOENT;
+        /* OEM: prints error, restores IRQs, returns -1 */
+        local_irq_restore(flags);
+        pr_debug("%s,%d: error\n", __func__, __LINE__);
+        return 0;  /* OEM caller ignores return; keep looping */
     }
 
     event = tisp_event_queue[tisp_event_head];
     tisp_event_head = (tisp_event_head + 1) % TISP_EVENT_QUEUE_DEPTH;
     tisp_event_count--;
 
-    spin_unlock_irqrestore(&tisp_event_lock, flags);
-
-    {
-        static int dispatch_log_count;
-        if (dispatch_log_count < 5) {
-            pr_info("EVENT_DISPATCH[%d]: id=%u cb=%p args[0]=0x%x\n",
-                dispatch_log_count, event.event_id,
-                (event.event_id < 32) ? (void *)cb[event.event_id] : NULL,
-                event.args[0]);
-            dispatch_log_count++;
-        }
-    }
-
+    /* Dispatch callback with IRQs disabled (OEM: arch_local_irq_save held
+     * through entire dequeue+dispatch+free cycle).  AWB arrays are written
+     * by awb_interrupt_static (hardware IRQ bit 30, not polled) and are
+     * stable during dispatch since the ISR can't fire with IRQs off. */
     if (event.event_id < 32 && cb[event.event_id]) {
         cb[event.event_id](event.args[0], event.args[1], event.args[2], event.args[3],
                            event.args[4], event.args[5], event.args[6], event.args[7]);
     }
 
+    local_irq_restore(flags);
+
     return 0;
 }
 EXPORT_SYMBOL(tisp_event_process);
 
-/* tisp_event_process_thread - Kernel thread wrapper for event processing */
+/* OEM EXACT: tisp_fw_process — thin wrapper called by the kthread.
+ * OEM HLIL (0x150a4): tisp_event_process(); return 0; */
+static int tisp_fw_process(void)
+{
+    tisp_event_process();
+    return 0;
+}
+
+/* OEM EXACT: isp_fw_process kthread — tight loop calling tisp_fw_process.
+ * OEM HLIL (0x66a8c):
+ *   while (kthread_should_stop() == 0) tisp_fw_process();
+ *   return 0;
+ * No error handling, no msleep, no cond_resched — the 200ms completion
+ * timeout inside tisp_event_process is the only yield point. */
 int tisp_event_process_thread(void *data)
 {
     pr_info("tisp_event_process_thread: Event processing thread started\n");
 
-    /* Continuous event processing loop */
-    while (!kthread_should_stop()) {
-        int ret = tisp_event_process();
-
-        if (ret < 0) {
-            if (ret == -ERESTARTSYS) {
-                pr_debug("tisp_event_process_thread: Thread interrupted, continuing\n");
-                continue;
-            } else {
-                pr_err("tisp_event_process_thread: Event processing error: %d\n", ret);
-                msleep(100); /* Brief delay before retry */
-                continue;
-            }
-        }
-
-        /* Brief yield to prevent CPU hogging */
-        cond_resched();
-    }
+    while (!kthread_should_stop())
+        tisp_fw_process();
 
     pr_info("tisp_event_process_thread: Event processing thread stopping\n");
     return 0;

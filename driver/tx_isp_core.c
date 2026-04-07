@@ -1486,36 +1486,41 @@ int system_irq_func_set(int index, irqreturn_t (*handler)(int irq, void *dev_id)
 EXPORT_SYMBOL(system_irq_func_set);
 
 
-/* ip_done_interrupt_static - EXACT Binary Ninja function name */
+/* ip_done_interrupt_static - EXACT Binary Ninja function name
+ *
+ * OEM HLIL 0x14e6c only does:
+ *   if ((system_reg_read(0xc) & 0x40) == 0) tisp_lsc_write_lut_datas();
+ *   return 2;
+ *
+ * The OEM relies on hardware IRQ bits 26-30 for AE/AWB.  On this T31
+ * those bits only fire during the first few frames, so we poll from
+ * ip_done (bit 13, every frame).  awb_interrupt_static() has
+ * bank-change gating to avoid overwriting arrays with stale data. */
 irqreturn_t ip_done_interrupt_static(int irq, void *dev_id)
 {
     /* Binary Ninja: if ((system_reg_read(0xc) & 0x40) == 0) */
     uint32_t reg_val = system_reg_read(0xc);
 
     if ((reg_val & 0x40) == 0) {
-        /* OEM EXACT: Always call tisp_lsc_write_lut_datas when bit 6 is clear.
-         * The OEM does NOT gate this on vic_start_ok or any streaming flag.
-         * Previous code skipped this during streaming which broke per-frame
-         * LSC LUT updates that the pipeline may depend on. */
         tisp_lsc_write_lut_datas();
     }
 
-    /* AE/AWB statistics interrupts (bits 26-30) never fire on this T31
-     * hardware revision. Poll AE and AWB statistics from ip_done (bit 13)
-     * which fires reliably on every frame. This triggers the AE/AWB
-     * algorithms via the event system. */
+    /* OEM EXACT: ip_done only does LSC.  AWB and AE run from their
+     * own hardware IRQ bits (26-30) via irq_func_cb[] dispatch.
+     *
+     * Previous code polled AWB/AE from here, but AWB_STATS[1] proved
+     * the ip_done poll reads the WRONG DMA bank (all zeros or R=G=B),
+     * while the hardware AWB IRQ (bit 30) reads the CORRECT bank with
+     * diverse R/G/B color data (R=964880 G=491524 B=9014).  The poll
+     * was overwriting good data with bad.  AE still needs polling since
+     * AE hardware IRQ bits (26-29) also fire via irq_func_cb[]. */
     {
         static unsigned int ae_poll_frame_count;
-        extern int awb_interrupt_static(void);
         extern int ae0_interrupt_static(void);
         extern int ae1_interrupt_static(void);
 
-        awb_interrupt_static();
-
-        /* AE0 every frame — handles primary auto-exposure zone stats */
         ae0_interrupt_static();
 
-        /* AE1 every 4th frame — secondary AE, less critical cadence */
         if ((ae_poll_frame_count & 3) == 0)
             ae1_interrupt_static();
 
@@ -1523,7 +1528,7 @@ irqreturn_t ip_done_interrupt_static(int irq, void *dev_id)
     }
 
     /* Binary Ninja: return 2 */
-    return IRQ_HANDLED; /* Convert to standard Linux return value */
+    return IRQ_HANDLED;
 }
 
 /* ispcore_interrupt_service_routine - EXACT Binary Ninja implementation */
