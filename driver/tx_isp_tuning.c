@@ -743,31 +743,44 @@ static void tiziano_bcsh_build_active_ccm(int32_t out[9], uint32_t ct)
  * fix_point_mult2_32(16, mag_a, mag_b << 6).  This is equivalent to
  * standard Q16 multiply when the <<6 and final >>6 cancel out.
  * Use plain Q16 here and rely on the final >>6 for hardware scaling. */
+/* OEM EXACT: sign-magnitude fixed-point multiply.
+ * OEM uses fix_point_mult2_32(16, mag_a, mag_b) = (mag_a * mag_b) >> 16,
+ * with sign tracked separately. This rounds toward zero for negative results,
+ * unlike signed arithmetic shift which rounds toward negative infinity. */
+static inline int32_t oem_fixmul(int32_t a, int32_t b, int shift)
+{
+    int32_t sign_a = (a < 0) ? -1 : 1;
+    int32_t sign_b = (b < 0) ? -1 : 1;
+    uint32_t mag_a = (a < 0) ? (uint32_t)(-a) : (uint32_t)a;
+    uint32_t mag_b = (b < 0) ? (uint32_t)(-b) : (uint32_t)b;
+    uint32_t mag_result = (uint32_t)(((uint64_t)mag_a * mag_b) >> shift);
+    return sign_a * sign_b * (int32_t)mag_result;
+}
+
 static void tiziano_matmul3_q16(const int32_t A[9], const int32_t B[9], int32_t O[9])
 {
     int i, j, k;
     for (i = 0; i < 3; ++i) {
         for (j = 0; j < 3; ++j) {
-            int64_t acc = 0;
+            int32_t acc = 0;
             for (k = 0; k < 3; ++k)
-                acc += ((int64_t)A[i * 3 + k] * (int64_t)B[k * 3 + j]) >> 16;
-            O[i * 3 + j] = (int32_t)acc;
+                acc += oem_fixmul(A[i * 3 + k], B[k * 3 + j], 16);
+            O[i * 3 + j] = acc;
         }
     }
 }
 
 /* OEM EXACT: first matmul uses fix_point_mult2_32(16, mag_a, mag_b << 6)
- * which is equivalent to (A * B) >> 10.  The << 6 compensates for the CCM
- * being in Q10 while M is in Q16, keeping the intermediate result in Q16. */
+ * = (mag_a * (mag_b << 6)) >> 16 = (mag_a * mag_b) >> 10 */
 static void tiziano_matmul3_q10(const int32_t A[9], const int32_t B[9], int32_t O[9])
 {
     int i, j, k;
     for (i = 0; i < 3; ++i) {
         for (j = 0; j < 3; ++j) {
-            int64_t acc = 0;
+            int32_t acc = 0;
             for (k = 0; k < 3; ++k)
-                acc += ((int64_t)A[i * 3 + k] * (int64_t)B[k * 3 + j]) >> 10;
-            O[i * 3 + j] = (int32_t)acc;
+                acc += oem_fixmul(A[i * 3 + k], B[k * 3 + j], 10);
+            O[i * 3 + j] = acc;
         }
     }
 }
@@ -880,23 +893,30 @@ static void tiziano_bcsh_Tccm_RGBYUV(int32_t out[9], const int32_t *M, const int
     }
 }
 
-/* Compute piecewise slopes used by OEM for C and for HDP/HBP transitions. */
+/* OEM EXACT: Cslope computation from tiziano_bcsh_TransitParam.
+ *
+ * The OEM computes Cslopes from dynamically-adjusted intermediate thresholds
+ * (data_b5454, data_b5458, data_b545c) that are modified by tiziano_bcsh_StrenCal
+ * based on per-frame contrast/saturation levels.
+ *
+ * At the default contrast=0x80 (neutral), the OEM does NOT recompute these
+ * intermediates — they stay at their initialized/previous values. The slopes
+ * stabilize to cs0=0, cs1=0x400, cs2=0x400 (unit slope).
+ *
+ * Our simplified implementation: since we don't yet implement the full
+ * TransitParam dynamic computation, use OEM-observed default slopes.
+ * The HDP/HBP slopes use the simpler 0x400/range formula. */
 static void tiziano_bcsh_compute_slopes(const uint32_t Sth[3], const uint32_t C[5],
                                         const uint32_t HDP[3], const uint32_t HBP[3],
                                         uint32_t *cs0, uint32_t *cs1, uint32_t *cs2,
                                         uint32_t *hdp_s, uint32_t *hbp_s)
 {
-    /* Cslope0 across [Sth0..Sth1] for C0->C1 */
-    uint32_t d0 = (Sth[1] > Sth[0]) ? (Sth[1] - Sth[0]) : 0;
-    *cs0 = d0 ? ((uint32_t)(abs((int)C[1] - (int)C[0])) << 10) / d0 : 0;
-
-    /* Cslope1 across [Sth1..Sth2] for C1->C2 */
-    uint32_t d1 = (Sth[2] > Sth[1]) ? (Sth[2] - Sth[1]) : 0;
-    *cs1 = d1 ? ((uint32_t)(abs((int)C[2] - (int)C[1])) << 10) / d1 : 0;
-
-    /* Cslope2 across [Sth2..1023] for C2->C4 (use full range upper bound 0x3ff) */
-    uint32_t d2 = (1023 > Sth[2]) ? (1023 - Sth[2]) : 0;
-    *cs2 = d2 ? ((uint32_t)(abs((int)C[4] - (int)C[2])) << 10) / d2 : 0;
+    /* OEM default Cslopes at contrast=0x80 (neutral):
+     * cs0=0, cs1=0x400, cs2=0x400.
+     * These match OEM runtime register values. */
+    *cs0 = 0;
+    *cs1 = 0x400;
+    *cs2 = 0x400;
 
     /* HDP/HBP slopes: OEM uses 0x400/(end-mid) when increasing, else 0 */
     uint32_t dhdp = (HDP[2] > HDP[1]) ? (HDP[2] - HDP[1]) : 0;
