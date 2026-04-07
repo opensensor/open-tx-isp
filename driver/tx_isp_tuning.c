@@ -18427,20 +18427,21 @@ int tiziano_mdns_init(uint32_t width, uint32_t height)
 	tiziano_mdns_params_refresh();
 	mdns_bulk_loading = prev_bulk_loading;
 
-	/* Deferred init: do NOT call tisp_mdns_par_refresh or tisp_mdns_bypass here.
-	 * Force MDNS bypass bit 16 SET so the unconfigured block doesn't process
-	 * frames (active MDNS with zero config = solid green output).
-	 * tisp_mdns_set_par_cfg will clear bit 16 when real params arrive. */
+	/* OEM calls tisp_mdns_par_refresh + tisp_mdns_bypass(0) here, but
+	 * that requires MDNS DMA buffers to be ready.  Enabling MDNS before
+	 * the temporal reference buffer is allocated causes a hardware hang.
+	 * Keep deferred until DMA is confirmed ready (set_par_cfg or first
+	 * frame IRQ with valid MDNS buffer). */
 	mdns_params_received = 0;
 	{
 		u32 bypass_reg = system_reg_read(0xc);
 		if (!(bypass_reg & 0x10000)) {
 			system_reg_write(0xc, bypass_reg | 0x10000);
-			pr_info("tiziano_mdns_init: forced MDNS bypass bit 16 until params arrive\n");
+			pr_info("tiziano_mdns_init: forced MDNS bypass bit 16 until DMA ready\n");
 		}
 	}
 
-	pr_info("tiziano_mdns_init: tables loaded, HW deferred until tuning params arrive\n");
+	pr_info("tiziano_mdns_init: tables loaded, HW deferred until DMA ready\n");
 	return 0;
 }
 
