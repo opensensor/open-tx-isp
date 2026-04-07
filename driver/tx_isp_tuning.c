@@ -15435,17 +15435,15 @@ static int Tiziano_awb_fpga(const uint32_t *stats_r,
 		cl_params[4] = _awb_cluster_tail[1];  /* convergence tolerance */
 		cl_params[5] = _awb_cluster_tail[2];  /* max iterations */
 
-		/* Zone data must be in Q-shifted 0x100 scale for Ct_Detect:
-		 * rg_pos/bg_pos grid values get compared as (pos << q) inside
-		 * Ct_Detect, so zone data must also be in (ratio << q) format.
-		 * Divide out cof calibration factor first, then Q-shift. */
+		/* OEM EXACT: zone values from fix_point_mult2_32 are in Q8 range
+		 * (R*256*cof/G). Ct_Detect compares against rg_pos << q_mask.
+		 * Scale zone values to match: multiply by (1 << q) / 256 = 1 << (q-8).
+		 * With q=10: shift left by 2. With q=9: shift left by 1. */
 		{
 			int zi;
-			u32 cr = cof_rg ? cof_rg : 1;
-			u32 cb = cof_bg ? cof_bg : 1;
 			for (zi = 0; zi < AWB_STATS_ZONES; zi++) {
-				awb_zone_rgbg[zi] = (awb_zone_rg[zi] / cr) << q;
-				awb_zone_rgbg[AWB_STATS_ZONES + zi] = (awb_zone_bg[zi] / cb) << q;
+				awb_zone_rgbg[zi] = awb_zone_rg[zi] << q;
+				awb_zone_rgbg[AWB_STATS_ZONES + zi] = awb_zone_bg[zi] << q;
 			}
 		}
 
