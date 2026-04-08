@@ -4117,14 +4117,22 @@ int ae0_interrupt_static(void)
     /* OEM: tisp_ae0_get_statistics parses the DMA buffer — each zone occupies
      * 4 words, and the first word's lower 21 bits is the Y luminance sum.
      * arg2 = 0xf001f001 → 15 cols (>>28) × 15 rows ((>>12)&0xf) = 225 zones.
-     * Parse Y values and bridge to ae_zone_data for libimp's AE algorithm. */
+     *
+     * HARDWARE OBSERVATION: On T31/GC2053, the AE DMA buffer has word[0] of
+     * each 4-word zone consistently zero, with actual Y luminance data in
+     * word[1].  This may be because the ISP prepends a 4-byte header to the
+     * DMA region or because the hardware version uses a slightly different
+     * per-zone layout.  We read word[1] and fall back to word[0] if word[1]
+     * looks empty (to stay compatible if firmware changes). */
     {
         extern int tisp_ae_update_zone_data(uint32_t *new_zone_data, size_t data_size);
         uint32_t zones[225];
         uint32_t *dma = (uint32_t *)buffer_addr;
         int i;
         for (i = 0; i < 225; i++) {
-            zones[i] = dma[i * 4] & 0x1fffff;  /* 21-bit Y luminance per zone */
+            uint32_t w0 = dma[i * 4] & 0x1fffff;
+            uint32_t w1 = dma[i * 4 + 1] & 0x1fffff;
+            zones[i] = w0 ? w0 : w1;  /* Use word[0] if non-zero, else word[1] */
         }
         tisp_ae_update_zone_data(zones, sizeof(zones));
     }
