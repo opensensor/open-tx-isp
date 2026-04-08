@@ -601,28 +601,7 @@ static void tiziano_bcsh_build_HMatrix(int32_t out[9])
 
     tiziano_bcsh_Tccm_RGBYUV(tmp, tiziano_MMatrix, active_ccm, tiziano_MinvMatrix);
 
-    /* OEM EXACT: compute OffsetRGB2yuv from OffsetRGB using M matrix.
-     * OEM at 0x2a560: tiziano_bcsh_Toffset_RGB2YUV(&OffsetRGB2yuv, OffsetRGB_now)
-     * This transforms the RGB offset into YUV space for the BCSH registers. */
-    {
-        int32_t rgb_in[3];
-        int32_t yuv_out[3];
-        uint32_t *RGB = bcsh_wdr_enabled ? bcsh_OffsetRGB_wdr : bcsh_OffsetRGB;
-        rgb_in[0] = (int32_t)RGB[0];
-        rgb_in[1] = (int32_t)RGB[1];
-        rgb_in[2] = (int32_t)RGB[2];
-        tiziano_bcsh_Toffset_RGB2YUV(yuv_out, rgb_in);
-        bcsh_OffsetRGB2yuv[0] = (uint32_t)yuv_out[0];
-        bcsh_OffsetRGB2yuv[1] = (uint32_t)yuv_out[1];
-        bcsh_OffsetRGB2yuv[2] = (uint32_t)yuv_out[2];
-    }
-
-    {
-        uint32_t *RGB = bcsh_wdr_enabled ? bcsh_OffsetRGB_wdr : bcsh_OffsetRGB;
-        pr_info("BCSH_DIAG: OffsetRGB=[%u,%u,%u] OffsetRGB2yuv=[%u,%u,%u]\n",
-                RGB[0], RGB[1], RGB[2],
-                bcsh_OffsetRGB2yuv[0], bcsh_OffsetRGB2yuv[1], bcsh_OffsetRGB2yuv[2]);
-    }
+    /* CT bias removed — A-matrix CCM boosts green, counterproductive */
     pr_info("BCSH_DIAG: HMatrix=[%d,%d,%d, %d,%d,%d, %d,%d,%d]\n",
             tmp[0], tmp[1], tmp[2], tmp[3], tmp[4], tmp[5],
             tmp[6], tmp[7], tmp[8]);
@@ -743,44 +722,30 @@ static void tiziano_bcsh_build_active_ccm(int32_t out[9], uint32_t ct)
  * fix_point_mult2_32(16, mag_a, mag_b << 6).  This is equivalent to
  * standard Q16 multiply when the <<6 and final >>6 cancel out.
  * Use plain Q16 here and rely on the final >>6 for hardware scaling. */
-/* OEM EXACT: sign-magnitude fixed-point multiply.
- * OEM uses fix_point_mult2_32(16, mag_a, mag_b) = (mag_a * mag_b) >> 16,
- * with sign tracked separately. This rounds toward zero for negative results,
- * unlike signed arithmetic shift which rounds toward negative infinity. */
-static inline int32_t oem_fixmul(int32_t a, int32_t b, int shift)
-{
-    int32_t sign_a = (a < 0) ? -1 : 1;
-    int32_t sign_b = (b < 0) ? -1 : 1;
-    uint32_t mag_a = (a < 0) ? (uint32_t)(-a) : (uint32_t)a;
-    uint32_t mag_b = (b < 0) ? (uint32_t)(-b) : (uint32_t)b;
-    uint32_t mag_result = (uint32_t)(((uint64_t)mag_a * mag_b) >> shift);
-    return sign_a * sign_b * (int32_t)mag_result;
-}
-
 static void tiziano_matmul3_q16(const int32_t A[9], const int32_t B[9], int32_t O[9])
 {
     int i, j, k;
     for (i = 0; i < 3; ++i) {
         for (j = 0; j < 3; ++j) {
-            int32_t acc = 0;
+            int64_t acc = 0;
             for (k = 0; k < 3; ++k)
-                acc += oem_fixmul(A[i * 3 + k], B[k * 3 + j], 16);
-            O[i * 3 + j] = acc;
+                acc += ((int64_t)A[i * 3 + k] * (int64_t)B[k * 3 + j]) >> 16;
+            O[i * 3 + j] = (int32_t)acc;
         }
     }
 }
 
-/* OEM EXACT: first matmul uses fix_point_mult2_32(16, mag_a, mag_b << 6)
- * = (mag_a * (mag_b << 6)) >> 16 = (mag_a * mag_b) >> 10 */
+/* Q10 matmul: (A * B) >> 10.  The << 6 compensates for the CCM
+ * being in Q10 while M is in Q16, keeping the intermediate result in Q16. */
 static void tiziano_matmul3_q10(const int32_t A[9], const int32_t B[9], int32_t O[9])
 {
     int i, j, k;
     for (i = 0; i < 3; ++i) {
         for (j = 0; j < 3; ++j) {
-            int32_t acc = 0;
+            int64_t acc = 0;
             for (k = 0; k < 3; ++k)
-                acc += oem_fixmul(A[i * 3 + k], B[k * 3 + j], 10);
-            O[i * 3 + j] = acc;
+                acc += ((int64_t)A[i * 3 + k] * (int64_t)B[k * 3 + j]) >> 10;
+            O[i * 3 + j] = (int32_t)acc;
         }
     }
 }
@@ -988,7 +953,7 @@ static void tiziano_bcsh_compute_S_vectors(const struct isp_tuning_data *tuning,
      * then apply StrenCal with two controls (data_9a91d, data_9a91f)
      * exactly as: first pass (c1) with 0/0x80 or 0x80/0x100 endpoints based on sign,
      * second pass (c2) with (0,0x80, 0, current) when c2 signed >= 0. */
-    uint32_t ev_shifted, ev_low, ev_high, range, dist;
+    uint32_t ev_shifted, ev_low, ev_high, range, dist, w8;
     uint32_t sminS_now = 0, smaxS_now = 0, sminM_now = 0, smaxM_now = 0;
     uint32_t base0[4], base1[4], base2[4], base3[4];
     uint32_t arr0[4], arr1[4], arr2[4], arr3[4];
@@ -1009,16 +974,14 @@ static void tiziano_bcsh_compute_S_vectors(const struct isp_tuning_data *tuning,
     } else {
         for (i = 0; i < 8; ++i) {
             ev_low = EvList[i]; ev_high = EvList[i+1];
-            if (ev_shifted >= ev_low && ev_high >= ev_shifted) {
-                dist  = (ev_low <= ev_shifted) ?
-                        (ev_shifted - ev_low) : (ev_low - ev_shifted);
-                range = (ev_low <= ev_high) ?
-                        (ev_high - ev_low) : (ev_low - ev_high);
-                if (range == 0) range = 1;
-                sminS_now = oem_interp_u32(SminS[i], SminS[i+1], dist, range);
-                smaxS_now = oem_interp_u32(SmaxS[i], SmaxS[i+1], dist, range);
-                sminM_now = oem_interp_u32(SminM[i], SminM[i+1], dist, range);
-                smaxM_now = oem_interp_u32(SmaxM[i], SmaxM[i+1], dist, range);
+            if (ev_shifted >= ev_low && ev_shifted < ev_high) {
+                range = ev_high - ev_low;
+                dist  = ev_shifted - ev_low;
+                w8    = range ? (dist << 8) / range : 0; /* 8.8 weight */
+                sminS_now = SminS[i] + (((SminS[i+1] - SminS[i]) * w8) >> 8);
+                smaxS_now = SmaxS[i] + (((SmaxS[i+1] - SmaxS[i]) * w8) >> 8);
+                sminM_now = SminM[i] + (((SminM[i+1] - SminM[i]) * w8) >> 8);
+                smaxM_now = SmaxM[i] + (((SmaxM[i+1] - SmaxM[i]) * w8) >> 8);
                 break;
             }
         }
@@ -1070,18 +1033,9 @@ static void tiziano_bcsh_compute_S_vectors(const struct isp_tuning_data *tuning,
         }
     }
 
-    /* OEM S-vector (arg11 to tiziano_bcsh_lut_parameter):
-     * [SminS, SmaxS, SminM, SmaxM] — four DIFFERENT interpolated values,
-     * NOT the same value replicated.  The OEM stores these as contiguous
-     * scalars (tisp_BCSH_ai32Svalue, data_b5444, data_b5448, data_b544c)
-     * which get packed into registers 0x806c-0x8070 and drive the Sstep
-     * saturation-transition slope computation at 0x8064. */
-    out1[0] = (uint16_t)(arr0[0] & 0xFFFF);  /* SminS after StrenCal */
-    out1[1] = (uint16_t)(arr1[0] & 0xFFFF);  /* SmaxS after StrenCal */
-    out1[2] = (uint16_t)(arr2[0] & 0xFFFF);  /* SminM after StrenCal */
-    out1[3] = (uint16_t)(arr3[0] & 0xFFFF);  /* SmaxM after StrenCal */
-    /* out2/out3: diagnostic only (not written to hardware) */
+    /* Provide first three arrays as arg1..arg3 to lut_parameter. */
     for (i = 0; i < 4; ++i) {
+        out1[i] = (uint16_t)(arr0[i] & 0xFFFF);
         out2[i] = (uint16_t)(arr1[i] & 0xFFFF);
         out3[i] = (uint16_t)(arr2[i] & 0xFFFF);
     }
@@ -1769,15 +1723,13 @@ static void tiziano_bcsh_reg_apply(struct isp_tuning_data *tuning)
     {
         u32 ev10 = tuning->bcsh_ev >> 10; /* matches data_9a614 >> 10 */
         u32 *EvList = bcsh_wdr_enabled ? bcsh_EvList_wdr : bcsh_EvList;
-        /* OEM: data_b53d4 = clip0[1], data_b53dc = clip0[3], clamped to [1..9] */
-        u32 idxA = bcsh_clip0[1];
-        u32 idxB = bcsh_clip0[3];
+        /* Clamp indices as per BN: [1..9] */
+        u32 idxA = 1; /* default for data_c53e4 */
+        u32 idxB = 9; /* default for data_c53ec */
         if (idxA < 1) idxA = 1; if (idxA > 9) idxA = 9;
         if (idxB < 1) idxB = 1; if (idxB > 9) idxB = 9;
 
-        /* OEM: s1_3 defaults to HLSP[2]<<16 | HLSP[1] when neither
-         * clip0 branch is taken (clip0[0]!=1 && clip0[2]!=1). */
-        u32 s1_3 = (HLSP[2] << 16) | (HLSP[1] & 0xFFFF);
+        u32 s1_3 = 0;
         if (bcsh_clip0[0] == 1) {
             u32 a0_48 = EvList[idxA - 1];
             if (ev10 < a0_48) {
@@ -1794,8 +1746,8 @@ static void tiziano_bcsh_reg_apply(struct isp_tuning_data *tuning)
                 if (clip0_2) hi = (a2_11 * HLSP[2]) / clip0_2;
                 s1_3 = (hi << 16) | (lo & 0xFFFF);
             }
-        } else if (bcsh_clip0[2] == 1) {
-            /* OEM: only enter this branch when clip0[2] (data_b53d8) == 1 */
+        } else {
+            /* BN alt branch when data_c53e8 == 1: approximate enable */
             u32 v1_8 = EvList[8]; /* EvList[8] */
             if (ev10 < v1_8) {
                 u32 a0_50 = EvList[idxB - 1];
@@ -2299,7 +2251,7 @@ module_param(isp_bypass_override, uint, 0644);
  *          isp_block_enable=0xDD24 adds GIB (green imbalance correction) to crisp set
  *          isp_block_enable=0xDD34 adds GIB+LSC (green correction + lens shading)
  */
-static uint isp_block_enable = 0x3DDB4;  /* All OEM blocks — matches OEM bypass 0xB5742249 */
+static uint isp_block_enable = 0x3DD94;  /* All OEM blocks except GIB(5) — ADR(7) now enabled */
 module_param(isp_block_enable, uint, 0644);
 MODULE_PARM_DESC(isp_block_enable,
 		 "Block enable bitmask: set bits enable ISP blocks (0=all bypassed)");
@@ -3957,11 +3909,16 @@ static int tisp_ae1_get_hist(void *buffer)
 
 static int tisp_ae0_ctrls_update(void)
 {
-    /* OEM tisp_ae0_ctrls_update at 0x522f8 is a ~5000-line function that
-     * computes gain from AE algorithm output and pushes events 4/5/7.
-     * Our AE algorithm is a stub (libimp runs its own AE).  Event 4 is
-     * now pushed directly from ae0_interrupt_static() which runs every
-     * frame via the frame-done handler in tx_isp_core.c. */
+    /* AE0 controls update - updates AE0 control registers */
+    extern struct tx_isp_dev *ourISPdev;
+    if (!ourISPdev || !ourISPdev->core_regs) {
+        return -ENODEV;
+    }
+
+    /* Update AE0 control registers based on current parameters */
+    writel(0x1, ourISPdev->core_regs + 0xa000);  /* Enable AE0 */
+
+    pr_debug("AE0 controls updated\n");
     return 0;
 }
 
@@ -4184,26 +4141,7 @@ int ae0_interrupt_static(void)
         }
     }
 
-    /* OEM: ae0_interrupt_hist (bit 27) pushes event 1 → tisp_ae0_process →
-     * tisp_ae0_ctrls_update → pushes events 4/5/7 for per-frame ISP tuning.
-     * Our ISP never fires bit 27, so push event 4 (tgain_update) directly
-     * here.  This kicks tisp_tgain_update which refreshes ALL gain-dependent
-     * ISP blocks: MDNS, sharpen, SDNS, DPC, LSC, YDNS, RDNS.
-     * Without this, the entire per-frame tuning pipeline is dead. */
-    {
-        static int ae0_ev4_push_count;
-        struct tisp_event_record ev = {0};
-        int push_ret;
-        ev.event_id = 4;
-        ev.args[0] = 0x10000; /* log2 gain index 1 — safe default */
-        push_ret = tisp_event_push(&ev);
-        if (ae0_ev4_push_count < 3) {
-            pr_info("AE0_EV4_PUSH[%d]: push_ret=%d event_count=%u\n",
-                ae0_ev4_push_count, push_ret, tisp_event_count);
-            ae0_ev4_push_count++;
-        }
-    }
-
+    pr_debug("ae0_interrupt_static: AE0 static interrupt processed\n");
     return 1;
 }
 EXPORT_SYMBOL(ae0_interrupt_static);
@@ -4647,9 +4585,6 @@ static int32_t fix_point_div_64(int32_t shift_bits, int32_t scale,
     if (den == 0)
         return 0;
 
-    /* OEM shifts numerator left by shift_bits to maintain Q-format precision */
-    num <<= (shift_bits & 0x1f);
-
     return (int32_t)div64_u64(num, den);
 }
 
@@ -4765,10 +4700,7 @@ static int tisp_day_or_night_s_ctrl(uint32_t mode)
 	tiziano_awb_init(height, width);
 	tiziano_dmsc_init();
 	tiziano_sharpen_init();
-	if (mdns_params_received)
-		tiziano_mdns_dn_params_refresh();
-	else
-		tiziano_mdns_init(width, height);
+	tiziano_mdns_init(width, height);
 	tiziano_sdns_init();
 	tiziano_gib_init();
 	tiziano_lsc_init();
@@ -4975,32 +4907,37 @@ static int tiziano_bcsh_update(struct isp_tuning_data *tuning)
         return 0;
     }
 
-    /* OEM EXACT: find interpolation interval and use direct unsigned
-     * abs-diff division — avoids uint32 wraparound when v2 < v1
-     * and matches OEM precision (no Q8 quantization). */
+    // Find interpolation interval
     for (i = 0; i < 8; i++) {
         uint32_t ev_low = tuning->bcsh_au32EvList_now[i];
         uint32_t ev_high = tuning->bcsh_au32EvList_now[i + 1];
 
-        if (ev_shifted >= ev_low && ev_high >= ev_shifted) {
-            uint32_t dist = (ev_low <= ev_shifted) ?
-                            (ev_shifted - ev_low) : (ev_low - ev_shifted);
-            uint32_t range = (ev_low <= ev_high) ?
-                             (ev_high - ev_low) : (ev_low - ev_high);
-            if (range == 0) range = 1;
+        if (ev_shifted >= ev_low && ev_shifted < ev_high) {
+            // Linear interpolation between points
+            uint32_t range = ev_high - ev_low;
+            uint32_t dist = ev_shifted - ev_low;
+            uint32_t weight = range ? (dist << 8) / range : 0;  // Fixed point 8.8
 
-            tuning->bcsh_saturation_value = oem_interp_u32(
-                tuning->bcsh_au32SminListS_now[i],
-                tuning->bcsh_au32SminListS_now[i + 1], dist, range);
-            tuning->bcsh_saturation_max = oem_interp_u32(
-                tuning->bcsh_au32SmaxListS_now[i],
-                tuning->bcsh_au32SmaxListS_now[i + 1], dist, range);
-            tuning->bcsh_saturation_min = oem_interp_u32(
-                tuning->bcsh_au32SminListM_now[i],
-                tuning->bcsh_au32SminListM_now[i + 1], dist, range);
-            tuning->bcsh_saturation_mult = oem_interp_u32(
-                tuning->bcsh_au32SmaxListM_now[i],
-                tuning->bcsh_au32SmaxListM_now[i + 1], dist, range);
+            // Interpolate SminListS
+            uint32_t v1 = tuning->bcsh_au32SminListS_now[i];
+            uint32_t v2 = tuning->bcsh_au32SminListS_now[i + 1];
+            tuning->bcsh_saturation_value = v1 + (((v2 - v1) * weight) >> 8);
+
+            // Interpolate SmaxListS
+            v1 = tuning->bcsh_au32SmaxListS_now[i];
+            v2 = tuning->bcsh_au32SmaxListS_now[i + 1];
+            tuning->bcsh_saturation_max = v1 + (((v2 - v1) * weight) >> 8);
+
+            // Interpolate SminListM
+            v1 = tuning->bcsh_au32SminListM_now[i];
+            v2 = tuning->bcsh_au32SminListM_now[i + 1];
+            tuning->bcsh_saturation_min = v1 + (((v2 - v1) * weight) >> 8);
+
+            // Interpolate SmaxListM
+            v1 = tuning->bcsh_au32SmaxListM_now[i];
+            v2 = tuning->bcsh_au32SmaxListM_now[i + 1];
+            tuning->bcsh_saturation_mult = v1 + (((v2 - v1) * weight) >> 8);
+
             break;
         }
     }
@@ -13825,12 +13762,9 @@ static int Tiziano_awb_set_gain(void *mf_para, uint32_t point_pos, const uint32_
 	}
 
 	if (awb_frz == 0) {
-		/* OEM EXACT register addresses: 0x1804/0x1808/0x180c/0x1810.
-		 * Confirmed via AWB_HW_LIVE readback that 0x183c are separate
-		 * registers that don't drive the WB output path. */
-		system_reg_write_awb(2, 0x1804, reg_pair[0]);
-		system_reg_write_awb(2, 0x1808, reg_pair[1]);
-		system_reg_write_awb(2, 0x180c, reg_pair[0]);
+		system_reg_write_awb(2, 0x183c, reg_pair[0]);
+		system_reg_write_awb(2, 0x1840, reg_pair[1]);
+		system_reg_write_awb(2, 0x1844, reg_pair[0]);
 		system_reg_write_awb(2, 0x1810, reg_pair[1]);
 		tisp_rdns_awb_gain_updata(reg_pair[0] & 0xffff, reg_pair[1] & 0xffff);
 	}
@@ -15217,23 +15151,22 @@ find_bg_idx:
 						bg_bi = 15;
 				}
 
-				/* Interpolate CT from the CT mesh (arg7), NOT the weight mesh (arg12) */
 				if (rg_bi == 15 && bg_bi == 15) {
 					/* Both at max — use corner value */
-					interp_val = ct_mesh[14 * 15 + 14] << q_mask;
+					interp_val = ct_wght_mesh[14 * 15 + 14] << q_mask;
 				} else if (rg_bi == 15) {
 					/* rg at max — interpolate along bg axis in last column */
 					uint32_t off = bg_bi * 15;
-					uint32_t v0 = ct_mesh[off - 1];
-					uint32_t v1 = ct_mesh[off - 1 + 15];
+					uint32_t v0 = ct_wght_mesh[off - 1];
+					uint32_t v1 = ct_wght_mesh[off - 1 + 15];
 					interp_val = ISPAWBInterpolation1(fp,
 						final_bg, bg_pos[bg_bi - 1], bg_pos[bg_bi],
 						v0, v1);
 				} else if (bg_bi == 15) {
 					/* bg at max — interpolate along rg axis in last row */
 					uint32_t off = 14 * 15 + rg_bi;
-					uint32_t v0 = ct_mesh[off - 1];
-					uint32_t v1 = ct_mesh[off];
+					uint32_t v0 = ct_wght_mesh[off - 1];
+					uint32_t v1 = ct_wght_mesh[off];
 					interp_val = ISPAWBInterpolation1(fp,
 						final_rg, rg_pos[rg_bi - 1], rg_pos[rg_bi],
 						v0, v1);
@@ -15242,10 +15175,10 @@ find_bg_idx:
 					uint32_t off = (bg_bi - 1) * 15 + (rg_bi - 1);
 					uint32_t r0 = ISPAWBInterpolation1(fp,
 						final_rg, rg_pos[rg_bi - 1], rg_pos[rg_bi],
-						ct_mesh[off], ct_mesh[off + 1]);
+						ct_wght_mesh[off], ct_wght_mesh[off + 1]);
 					uint32_t r1 = ISPAWBInterpolation1(fp,
 						final_rg, rg_pos[rg_bi - 1], rg_pos[rg_bi],
-						ct_mesh[off + 15], ct_mesh[off + 16]);
+						ct_wght_mesh[off + 15], ct_wght_mesh[off + 16]);
 					interp_val = ISPAWBInterpolation2(fp,
 						final_bg, bg_pos[bg_bi - 1], bg_pos[bg_bi],
 						r0, r1);
@@ -15481,21 +15414,11 @@ static int Tiziano_awb_fpga(const uint32_t *stats_r,
 		cl_params[4] = _awb_cluster_tail[1];  /* convergence tolerance */
 		cl_params[5] = _awb_cluster_tail[2];  /* max iterations */
 
-		/* Scale zone values to Ct_Detect Q-format.
-		 * Ct_Detect compares against rg_pos[i] << q_mask internally.
-		 * Zone values from fix_point_mult2_32 include cof scaling:
-		 *   zone_rg = R * 256 * cof_rg / G (Q8 range)
-		 * Normalize out cof and shift to match rg_pos << q:
-		 *   rgbg = (zone / cof) << q */
-		{
-			int zi;
-			u32 cr = cof_rg ? cof_rg : 1;
-			u32 cb = cof_bg ? cof_bg : 1;
-			for (zi = 0; zi < AWB_STATS_ZONES; zi++) {
-				awb_zone_rgbg[zi] = (awb_zone_rg[zi] / cr) << q;
-				awb_zone_rgbg[AWB_STATS_ZONES + zi] = (awb_zone_bg[zi] / cb) << q;
-			}
-		}
+		/* Build combined rg+bg array matching OEM zone_rgbg layout */
+		memcpy(awb_zone_rgbg, awb_zone_rg,
+		       AWB_STATS_ZONES * sizeof(uint32_t));
+		memcpy(awb_zone_rgbg + AWB_STATS_ZONES, awb_zone_bg,
+		       AWB_STATS_ZONES * sizeof(uint32_t));
 
 		if (fpga_diag_count <= 5) {
 			pr_info("AWB_CTDET_PRE[%u]: calling Ct_Detect light_src=%u q=%u\n",
@@ -16469,13 +16392,16 @@ int tiziano_gib_init(void)
                           tiziano_gib_deir_g_m,
                           tiziano_gib_deir_b_m);
 
-    /* Deferred init: GIB stays bypassed until libimp sends real DEIR params
-     * via tisp_gib_set_par_cfg. Same pattern as MDNS/DPC. */
-    gib_params_received = 0;
+    tisp_gb_params_refresh();
+    tisp_gb_init_reg();
 
-    pr_info("tiziano_gib_init: GIB initialized, deferred until params arrive "
-            "(deir_en=%d, day_night=%d, DEIR_EN=%d)\n",
+    pr_err("tiziano_gib_init: GIB initialized (deir_en=%d, day_night=%d, DEIR_EN=%d)\n",
             deir_en, ourISPdev->day_night, GIB_CFG_DEIR_EN);
+    pr_err("gib_init: deir_r_m[0..3]={%u,%u,%u,%u} deir_g_m[0..3]={%u,%u,%u,%u}\n",
+            tiziano_gib_deir_r_m[0], tiziano_gib_deir_r_m[1],
+            tiziano_gib_deir_r_m[2], tiziano_gib_deir_r_m[3],
+            tiziano_gib_deir_g_m[0], tiziano_gib_deir_g_m[1],
+            tiziano_gib_deir_g_m[2], tiziano_gib_deir_g_m[3]);
     return 0;
 }
 
