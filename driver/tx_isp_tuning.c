@@ -3181,12 +3181,19 @@ struct nodes_num {
  * These replace the previous all-zero defaults that caused AE to malfunction.
  */
 static struct ae_parameter _ae_parameter = { .data = {
-	0x01, 0x01, 0x00, 0x01, 0x01, 0x0f, 0x01, 0x0f,
-	0x40, 0x40, 0x40, 0x40, 0x40, 0x40, 0x40, 0x40,
-	0x40, 0x40, 0x40, 0x40, 0x40, 0x40, 0x40, 0x24,
-	0x24, 0x24, 0x24, 0x24, 0x24, 0x24, 0x24, 0x24,
-	0x24, 0x24, 0x24, 0x24, 0x24, 0x24, 0x1e, 0xe6,
-	0x01, 0x01
+	/* OEM BSS dump at 0xa0d38 — matches tuning binary for GC2053 (1920x1080)
+	 * [0]=1  [1]=0xf(cols) [2]=1  [3]=0xf(rows)
+	 * [4..18] = 0x40 (col spacing = 960/15 = 64)
+	 * [19..33] = 0x24 (row spacing = 540/15 = 36)
+	 * [34]=0x1e [35]=0xe6 [36]=1 [37]=1
+	 * [38..41] are threshold/config values */
+	0x01, 0x0f, 0x01, 0x0f,                         /* zone grid: 15x15 */
+	0x40, 0x40, 0x40, 0x40, 0x40, 0x40, 0x40, 0x40, /* col spacing [4..11] */
+	0x40, 0x40, 0x40, 0x40, 0x40, 0x40, 0x40,       /* col spacing [12..18] */
+	0x24, 0x24, 0x24, 0x24, 0x24, 0x24, 0x24, 0x24, /* row spacing [19..26] */
+	0x24, 0x24, 0x24, 0x24, 0x24, 0x24, 0x24,       /* row spacing [27..33] */
+	0x1e, 0xe6, 0x01, 0x01,                          /* thresholds [34..37] */
+	0x400, 0xfff, 0x400, 0x000                       /* config [38..41] */
 }};
 static struct ae_exp_th ae_exp_th = { .data = {
 	0x400, 0x000, 0x000, 0x000, 0x542, 0x3d49, 0x400, 0xfff,
@@ -4494,7 +4501,10 @@ int tisp_init(void *sensor_info_arg, char *param_name)
      * system_reg_write_awb(1,...) re-latches 0xb000=1 on the first frame.
      * We do it explicitly here for determinism. */
     system_reg_write(0xb000, 1);
-    pr_info("tisp_init: AE zone/weight registers programmed via tiziano_ae_set_hardware_param\n");
+    pr_info("tisp_init: AE zone config: ae_param[0..3]=%u,%u,%u,%u => 0xa004=%08x (expect f001f001)\n",
+            _ae_parameter.data[0], _ae_parameter.data[1],
+            _ae_parameter.data[2], _ae_parameter.data[3],
+            system_reg_read(0xa004));
     pr_info("tisp_init: Stats DMA enable check: 0xa000=%08x 0xa04c=%08x 0xa050=%08x 0xb000=%08x 0xb04c=%08x 0xb050=%08x\n",
             system_reg_read(0xa000), system_reg_read(0xa04c), system_reg_read(0xa050),
             system_reg_read(0xb000), system_reg_read(0xb04c), system_reg_read(0xb050));
@@ -13499,11 +13509,11 @@ int tiziano_ae_init(uint32_t height, uint32_t width, uint32_t fps)
     /* Binary Ninja EXACT: *data_d04c4 = arg3 (height parameter) */
     *data_d04c4 = height;
 
-    /* Binary Ninja EXACT: tiziano_ae_set_hardware_param(0, data_d4678, 0) */
-    tiziano_ae_set_hardware_param(0, (uint32_t*)&data_d04bc[0], 0);
-
-    /* Binary Ninja EXACT: tiziano_ae_set_hardware_param(1, dmsc_alias_stren_intp, 0) */
-    tiziano_ae_set_hardware_param(1, (uint32_t*)&dmsc_sp_d_w_stren_wdr_array_ae, 0);
+    /* OEM EXACT (HLIL 0x542b4/0x542c8): Both AE0 and AE1 use &_ae_parameter.
+     * data_c4668 and data_c4620 are set to &_ae_parameter by tiziano_ae_para_addr().
+     * Previous code incorrectly passed data_d04bc (a 6-element unrelated array). */
+    tiziano_ae_set_hardware_param(0, _ae_parameter.data, 0);
+    tiziano_ae_set_hardware_param(1, _ae_parameter.data, 0);
 
     /* Binary Ninja EXACT: uint32_t ta_custom_en_1 = ta_custom_en */
     uint32_t ta_custom_en_1 = ta_custom_en;
@@ -27439,106 +27449,140 @@ int tiziano_deflicker_expt(uint32_t flicker_t, uint32_t param2, uint32_t param3,
 }
 EXPORT_SYMBOL(tiziano_deflicker_expt);
 
-/* tiziano_ae_params_refresh - Binary Ninja EXACT implementation */
+/* tiziano_ae_params_refresh - OEM EXACT: load AE params from tuning binary.
+ *
+ * OEM HLIL (0x52b3c): Copies all AE parameter structures from the tuning
+ * binary (tparams_active) at known offsets, then computes zone column/row
+ * spacing from sensor dimensions divided by the grid size stored in
+ * _ae_parameter[3] (columns) and _ae_parameter[1] (rows).
+ *
+ * Tuning binary offsets (relative to tparams base 0x84b10):
+ *   _ae_parameter:      +0x0080  0xa8 bytes (42 uint32)
+ *   ae_exp_th:          +0x0128  0x50 bytes (20 uint32)
+ *   _AePointPos:        +0x0178  0x08 bytes (2 uint32)
+ *   _exp_parameter:     +0x0180  0x2c bytes (11 uint32)
+ *   ae_ev_step:         +0x01ac  0x14 bytes (5 uint32)
+ *   ae_stable_tol:      +0x01c0  0x10 bytes (4 uint32)
+ *   ae0_ev_list:        +0x01d0  0x28 bytes (10 uint32)
+ *   _lum_list:          +0x01f8  0x28 bytes (10 uint32)
+ *   _deflicker_para:    +0x0248  0x0c bytes (3 uint32)
+ *   _flicker_t:         +0x0254  0x18 bytes (6 uint32)
+ *   _scene_para:        +0x026c  0x2c bytes (11 uint32)
+ *   ae_scene_mode_th:   +0x0298  0x10 bytes (4 uint32)
+ *   _log2_lut:          +0x02a8  0x50 bytes (20 uint32)
+ *   _weight_lut:        +0x02f8  0x50 bytes (20 uint32)
+ *   _ae_zone_weight:    +0x0348  0x384 bytes (225 uint32)
+ *   _scene_roui_weight: +0x06cc  0x384 bytes (225 uint32)
+ *   _scene_roi_weight:  +0x0a50  0x384 bytes (225 uint32)
+ *   ae_comp_param:      +0x0e3c  0x18 bytes (6 uint32)
+ *   ae_comp_ev_list:    +0x0e54  0x28 bytes (10 uint32)
+ *   ae_extra_at_list:   +0x0ea4  0x28 bytes (10 uint32)
+ *   _ae_result:         +0x0dd4  0x18 bytes (6 uint32)  [conditional]
+ *   _ae_stat:           +0x0dec  0x14 bytes (5 uint32)  [conditional]
+ *   _ae_wm_q:           +0x0e00  0x3c bytes (15 uint32) [conditional]
+ *   ae1_ev_list:        +0x0ecc  0x28 bytes (10 uint32)
+ *   ae1_comp_ev_list:   +0x0fe8  0x28 bytes (10 uint32)
+ */
 int tiziano_ae_params_refresh(void)
 {
-    pr_debug("tiziano_ae_params_refresh: Refreshing AE parameters\n");
+    const u8 *p = (const u8 *)(tparams_active ? tparams_active : tparams_day);
 
-    /* Binary Ninja: Copy parameter structures from data section */
-    /* These addresses are from the Binary Ninja decompilation */
+    pr_debug("tiziano_ae_params_refresh: Refreshing AE parameters (tparams=%p)\n", p);
 
-    /* Binary Ninja: memcpy(&_ae_parameter, 0x94ba0, 0xa8) */
-    /* In our implementation, we'll initialize with default values */
-    memset(&_ae_parameter, 0, sizeof(_ae_parameter));
+    /* OEM EXACT: Copy all AE parameter structures from tuning binary.
+     * If tuning binary is not loaded yet (p == NULL), or the data at the
+     * _ae_parameter offset is all zeros (tuning bin not populated), fall
+     * back to static defaults from the _ae_parameter initializer.
+     * Check: _ae_parameter.data[1] (num_rows) must be non-zero. */
+    if (p && *(const u32 *)(p + 0x0080 + 4) != 0) {
+        memcpy(&_ae_parameter,      p + 0x0080, 0xa8);
+        memcpy(&ae_exp_th,          p + 0x0128, 0x50);
+        memcpy(&_AePointPos,        p + 0x0178, 0x08);
+        memcpy(&_exp_parameter,     p + 0x0180, 0x2c);
+        memcpy(&ae_ev_step,         p + 0x01ac, 0x14);
+        memcpy(&ae_stable_tol,      p + 0x01c0, 0x10);
+        memcpy(&ae0_ev_list,        p + 0x01d0, 0x28);
+        memcpy(&_lum_list,          p + 0x01f8, 0x28);
+        memcpy(&_deflicker_para,    p + 0x0248, 0x0c);
+        memcpy(&_flicker_t,         p + 0x0254, 0x18);
+        memcpy(&_scene_para,        p + 0x026c, 0x2c);
+        memcpy(&ae_scene_mode_th,   p + 0x0298, 0x10);
+        memcpy(&_log2_lut,          p + 0x02a8, 0x50);
+        memcpy(&_weight_lut,        p + 0x02f8, 0x50);
+        memcpy(&_ae_zone_weight,    p + 0x0348, 0x384);
+        memcpy(&_scene_roui_weight, p + 0x06cc, 0x384);
+        memcpy(&_scene_roi_weight,  p + 0x0a50, 0x384);
+        memcpy(&ae_comp_param,      p + 0x0e3c, 0x18);
+        memcpy(&ae_comp_ev_list,    p + 0x0e54, 0x28);
+        memcpy(&ae_extra_at_list,   p + 0x0ea4, 0x28);
 
-    /* Binary Ninja: memcpy(&ae_exp_th, 0x94c48, 0x50) */
-    memset(&ae_exp_th, 0, sizeof(ae_exp_th));
+        /* OEM EXACT: conditional copy of result/stat structures */
+        if (data_b0df8 == 0) {
+            memcpy(&_ae_result, p + 0x0dd4, 0x18);
+            memcpy(&_ae_stat,  p + 0x0dec, 0x14);
+            memcpy(&_ae_wm_q,  p + 0x0e00, 0x3c);
+        }
 
-    /* Binary Ninja: memcpy(&_AePointPos, 0x94c98, 8) */
-    memset(&_AePointPos, 0, sizeof(_AePointPos));
+        memcpy(&ae1_ev_list,        p + 0x0ecc, 0x28);
+        memcpy(&ae1_comp_ev_list,   p + 0x0fe8, 0x28);
 
-    /* Binary Ninja: memcpy(&_exp_parameter, 0x94ca0, 0x2c) */
-    memset(&_exp_parameter, 0, sizeof(_exp_parameter));
-
-    /* Binary Ninja: memcpy(&ae_ev_step, 0x94ccc, 0x14) */
-    memset(&ae_ev_step, 0, sizeof(ae_ev_step));
-
-    /* Binary Ninja: memcpy(&ae_stable_tol, 0x94ce0, 0x10) */
-    memset(&ae_stable_tol, 0, sizeof(ae_stable_tol));
-
-    /* Binary Ninja: memcpy(&ae0_ev_list, 0x94cf0, 0x28) */
-    memset(&ae0_ev_list, 0, sizeof(ae0_ev_list));
-
-    /* Binary Ninja: memcpy(&_lum_list, 0x94d18, 0x28) */
-    memset(&_lum_list, 0, sizeof(_lum_list));
-
-    /* Binary Ninja: memcpy(&_deflicker_para, 0x94d68, 0xc) */
-    memset(&_deflicker_para, 0, sizeof(_deflicker_para));
-
-    /* Binary Ninja: memcpy(&_flicker_t, 0x94d74, 0x18) */
-    memset(&_flicker_t, 0, sizeof(_flicker_t));
-
-    /* Binary Ninja: memcpy(&_scene_para, 0x94d8c, 0x2c) */
-    memset(&_scene_para, 0, sizeof(_scene_para));
-
-    /* Binary Ninja: memcpy(&ae_scene_mode_th, 0x94db8, 0x10) */
-    memset(&ae_scene_mode_th, 0, sizeof(ae_scene_mode_th));
-
-    /* Binary Ninja: memcpy(&_log2_lut, 0x94dc8, 0x50) */
-    memset(&_log2_lut, 0, sizeof(_log2_lut));
-
-    /* Binary Ninja: memcpy(&_weight_lut, 0x94e18, 0x50) */
-    memset(&_weight_lut, 0, sizeof(_weight_lut));
-
-    /* Binary Ninja: memcpy(&_ae_zone_weight, 0x94e68, 0x384) */
-    memset(&_ae_zone_weight, 0, sizeof(_ae_zone_weight));
-
-    /* Binary Ninja: memcpy(&_scene_roui_weight, 0x951ec, 0x384) */
-    memset(&_scene_roui_weight, 0, sizeof(_scene_roui_weight));
-
-    /* Binary Ninja: memcpy(&_scene_roi_weight, 0x95570, 0x384) */
-    memset(&_scene_roi_weight, 0, sizeof(_scene_roi_weight));
-
-    /* Binary Ninja: memcpy(&ae_comp_param, &data_9595c, 0x18) */
-    memset(&ae_comp_param, 0, sizeof(ae_comp_param));
-
-    /* Binary Ninja: memcpy(&ae_comp_ev_list, 0x95974, 0x28) */
-    memset(&ae_comp_ev_list, 0, sizeof(ae_comp_ev_list));
-
-    /* Binary Ninja: memcpy(&ae_extra_at_list, 0x959c4, 0x28) */
-    memset(&ae_extra_at_list, 0, sizeof(ae_extra_at_list));
-
-    /* Binary Ninja: Initialize result structures if not already done */
-    if (data_b0df8 == 0) {
-        memset(&_ae_result, 0, sizeof(_ae_result));
-        memset(&_ae_stat, 0, sizeof(_ae_stat));
-        memset(&_ae_wm_q, 0, sizeof(_ae_wm_q));
+        pr_info("tiziano_ae_params_refresh: Loaded from tuning binary: "
+                "ae_param[0..3]=%u,%u,%u,%u (grid=%ux%u)\n",
+                _ae_parameter.data[0], _ae_parameter.data[1],
+                _ae_parameter.data[2], _ae_parameter.data[3],
+                _ae_parameter.data[3], _ae_parameter.data[1]);
+    } else {
+        pr_warn("tiziano_ae_params_refresh: No tuning binary loaded, using static defaults\n");
+        /* Static defaults already set in _ae_parameter initializer */
     }
 
-    /* Binary Ninja: Copy AE1 parameters */
-    memset(&ae1_ev_list, 0, sizeof(ae1_ev_list));
-    memset(&ae1_comp_ev_list, 0, sizeof(ae1_comp_ev_list));
+    /* OEM EXACT (HLIL 0x52e00-0x52e78): Compute per-zone column and row
+     * spacing from sensor dimensions.
+     *   num_cols = _ae_parameter.data[3]   (OEM: data_a0d44)
+     *   num_rows = _ae_parameter.data[1]   (OEM: data_a0d3c)
+     *   col_spacing = (sensor_width / 2) / num_cols   -> [4 .. 4+num_cols-1]
+     *   row_spacing = (sensor_height / 2) / num_rows  -> [19 .. 19+num_rows-1] (OEM offset 0x48 = 18 uint32)
+     * Note: OEM uses offset +0xc from _ae_parameter[0] for cols = byte offset 0x10 = uint32 index 4,
+     *       and offset +0x48 from _ae_parameter[0] for rows = byte offset 0x4c = uint32 index 19.
+     */
+    uint32_t sensor_width_half = tisp_si_width(&sensor_info) / 2;
+    uint32_t sensor_height_half = tisp_si_height(&sensor_info) / 2;
+    uint32_t num_cols = _ae_parameter.data[3];
+    uint32_t num_rows = _ae_parameter.data[1];
+    int i;
 
-    /* Binary Ninja: Calculate sensor divisors */
-    uint32_t sensor_width_div = tisp_si_width(&sensor_info) / 2;
-    uint32_t sensor_height_div = tisp_si_height(&sensor_info) / 2;
-
-    /* Binary Ninja: Update parameter arrays with calculated values */
-    for (int i = 0; i < data_b0d54 && i < (sizeof(_ae_parameter) / sizeof(uint32_t)); i++) {
-        _ae_parameter.data[i + 4] = sensor_width_div / data_b0d54;
+    if (num_cols > 0 && num_cols <= 15) {
+        for (i = 0; i < (int)num_cols; i++)
+            _ae_parameter.data[4 + i] = sensor_width_half / num_cols;
     }
 
-    for (int i = 0; i < data_b0d4c && i < (sizeof(_ae_parameter) / sizeof(uint32_t)); i++) {
-        _ae_parameter.data[i + 18] = sensor_height_div / data_b0d4c;
+    if (num_rows > 0 && num_rows <= 15) {
+        for (i = 0; i < (int)num_rows; i++)
+            _ae_parameter.data[19 + i] = sensor_height_half / num_rows;
     }
 
-    /* Binary Ninja: Copy WDR parameters */
-    memset(&ae0_ev_list_wdr, 0, sizeof(ae0_ev_list_wdr));
-    memset(&_lum_list_wdr, 0, sizeof(_lum_list_wdr));
-    memset(&_scene_para_wdr, 0, sizeof(_scene_para_wdr));
-    memset(&ae_scene_mode_th_wdr, 0, sizeof(ae_scene_mode_th_wdr));
-    memset(&ae_comp_param_wdr, 0, sizeof(ae_comp_param_wdr));
-    memset(&ae_extra_at_list_wdr, 0, sizeof(ae_extra_at_list_wdr));
+    pr_info("tiziano_ae_params_refresh: zone spacing: col=%u row=%u (sensor %ux%u, grid %ux%u)\n",
+            num_cols > 0 ? sensor_width_half / num_cols : 0,
+            num_rows > 0 ? sensor_height_half / num_rows : 0,
+            tisp_si_width(&sensor_info), tisp_si_height(&sensor_info),
+            num_cols, num_rows);
+
+    /* OEM EXACT: Copy WDR parameters from tuning binary */
+    if (p) {
+        memcpy(&ae0_ev_list_wdr,        p + 0x0ef4, 0x28);
+        memcpy(&_lum_list_wdr,          p + 0x0f1c, 0x28);
+        memcpy(&_scene_para_wdr,        p + 0x0f6c, 0x2c);
+        memcpy(&ae_scene_mode_th_wdr,   p + 0x0f98, 0x10);
+        memcpy(&ae_comp_param_wdr,      p + 0x0fa8, 0x18);
+        memcpy(&ae_extra_at_list_wdr,   p + 0x0fc0, 0x28);
+    } else {
+        memset(&ae0_ev_list_wdr, 0, sizeof(ae0_ev_list_wdr));
+        memset(&_lum_list_wdr, 0, sizeof(_lum_list_wdr));
+        memset(&_scene_para_wdr, 0, sizeof(_scene_para_wdr));
+        memset(&ae_scene_mode_th_wdr, 0, sizeof(ae_scene_mode_th_wdr));
+        memset(&ae_comp_param_wdr, 0, sizeof(ae_comp_param_wdr));
+        memset(&ae_extra_at_list_wdr, 0, sizeof(ae_extra_at_list_wdr));
+    }
 
     data_b0df8 = 0;  /* Mark as initialized */
 
