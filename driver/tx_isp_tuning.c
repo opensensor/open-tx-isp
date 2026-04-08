@@ -13842,14 +13842,14 @@ static int Tiziano_awb_set_gain(void *mf_para, uint32_t point_pos, const uint32_
 	}
 
 	if (awb_frz == 0) {
-		/* TODO: OEM uses 0x1804/0x1808/0x180c/0x1810 but our gain computation
-		 * differs from OEM's full Tiziano_awb_set_gain (fixed-point wb_mode_gain
-		 * from _wb_static * cof, mode handling, etc). Using 0x1804-0x180c with
-		 * our gain values causes pink tint. Keep 0x183c/0x1840 (no-ops) +
-		 * 0x1844/0x1810 until full OEM gain computation is reimplemented. */
-		system_reg_write_awb(2, 0x183c, reg_pair[0]);
-		system_reg_write_awb(2, 0x1840, reg_pair[1]);
-		system_reg_write_awb(2, 0x1844, reg_pair[0]);
+		/* OEM Tiziano_awb_set_gain (0x1a0e8): writes gain_gr to 0x1804
+		 * and 0x180c, gain_gb to 0x1808 and 0x1810.  Format is
+		 * 0x04000000 | (gain & 0x3fff).  Previous code wrote to
+		 * 0x183c/0x1840/0x1844 (no-ops) causing green tint because
+		 * R channel stayed at 1.0x default. */
+		system_reg_write_awb(2, 0x1804, reg_pair[0]);
+		system_reg_write_awb(2, 0x1808, reg_pair[1]);
+		system_reg_write_awb(2, 0x180c, reg_pair[0]);
 		system_reg_write_awb(2, 0x1810, reg_pair[1]);
 		tisp_rdns_awb_gain_updata(reg_pair[0] & 0xffff, reg_pair[1] & 0xffff);
 	}
