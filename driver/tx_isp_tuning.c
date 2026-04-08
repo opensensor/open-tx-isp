@@ -4486,10 +4486,18 @@ int tisp_init(void *sensor_info_arg, char *param_name)
      * shortcut=0 writes all 10 registers; system_reg_write_ae() latches via 0xa000/0xa800. */
     tiziano_ae_set_hardware_param(0, _ae_parameter.data, 0);
     tiziano_ae_set_hardware_param(1, _ae_parameter.data, 0);
-    /* OEM does NOT write 0xb000 here — system_reg_write_awb() handles
-     * the 0xb000 latch internally when threshold registers are written.
-     * Spurious 0xb000 writes can disrupt AWB stats collection. */
+    /* AWB stats enable: 0xb000=1 was written during tiziano_awb_init BEFORE
+     * the ISP engine started (0x800=1).  The hardware ignores 0xb000 writes
+     * when the engine is off, so the latch didn't take.  Re-write it now
+     * that the engine is running.  The OEM recovers from this same ordering
+     * because awb_interrupt_static → tiziano_awb_set_lum_th_freq →
+     * system_reg_write_awb(1,...) re-latches 0xb000=1 on the first frame.
+     * We do it explicitly here for determinism. */
+    system_reg_write(0xb000, 1);
     pr_info("tisp_init: AE zone/weight registers programmed via tiziano_ae_set_hardware_param\n");
+    pr_info("tisp_init: Stats DMA enable check: 0xa000=%08x 0xa04c=%08x 0xa050=%08x 0xb000=%08x 0xb04c=%08x 0xb050=%08x\n",
+            system_reg_read(0xa000), system_reg_read(0xa04c), system_reg_read(0xa050),
+            system_reg_read(0xb000), system_reg_read(0xb04c), system_reg_read(0xb050));
 
     /* Seed BCSH with a neutral daylight CT (5000 K) so frames produced before
      * AWB converges do not carry the cold-green default (~9984 K). */

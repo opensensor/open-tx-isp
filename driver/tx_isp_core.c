@@ -1498,6 +1498,10 @@ EXPORT_SYMBOL(system_irq_func_set);
  * bank-change gating to avoid overwriting arrays with stale data. */
 irqreturn_t ip_done_interrupt_static(int irq, void *dev_id)
 {
+    static unsigned int ae_poll_frame_count;
+    extern int ae0_interrupt_static(void);
+    extern int ae1_interrupt_static(void);
+
     /* Binary Ninja: if ((system_reg_read(0xc) & 0x40) == 0) */
     uint32_t reg_val = system_reg_read(0xc);
 
@@ -1505,27 +1509,34 @@ irqreturn_t ip_done_interrupt_static(int irq, void *dev_id)
         tisp_lsc_write_lut_datas();
     }
 
-    /* OEM EXACT: ip_done only does LSC.  AWB and AE run from their
-     * own hardware IRQ bits (26-30) via irq_func_cb[] dispatch.
-     *
-     * Previous code polled AWB/AE from here, but AWB_STATS[1] proved
-     * the ip_done poll reads the WRONG DMA bank (all zeros or R=G=B),
-     * while the hardware AWB IRQ (bit 30) reads the CORRECT bank with
-     * diverse R/G/B color data (R=964880 G=491524 B=9014).  The poll
-     * was overwriting good data with bad.  AE still needs polling since
-     * AE hardware IRQ bits (26-29) also fire via irq_func_cb[]. */
-    {
-        static unsigned int ae_poll_frame_count;
-        extern int ae0_interrupt_static(void);
-        extern int ae1_interrupt_static(void);
-
-        ae0_interrupt_static();
-
-        if ((ae_poll_frame_count & 3) == 0)
-            ae1_interrupt_static();
-
-        ae_poll_frame_count++;
+    /* Re-latch AE/AWB stats enable on first frames.  The ISP hardware
+     * requires 0xa000=1 (AE enable) and 0xb000=1 (AWB enable) to be
+     * written while the ISP engine (0x800=1) is running AND pixel data
+     * is flowing through the pipeline.  Writes during init (before first
+     * frame) are silently dropped.  The OEM recovers because AWB bit 30
+     * fires on the first frame and awb_interrupt_static → set_lum_th_freq
+     * → system_reg_write_awb(1,...) re-latches 0xb000=1.  On our driver
+     * the AWB hardware IRQ may not fire initially (chicken-and-egg), so
+     * we re-latch explicitly here for the first 8 frames. */
+    if (ae_poll_frame_count < 8) {
+        system_reg_write(0xb000, 1);  /* AWB stats enable */
+        system_reg_write(0xa000, 1);  /* AE0 stats enable */
+        system_reg_write(0xa800, 1);  /* AE1 stats enable */
+        if (ae_poll_frame_count == 7) {
+            pr_info("ip_done: Stats re-latch done. 0xa050=%08x 0xb050=%08x 0xb000=%08x\n",
+                    system_reg_read(0xa050), system_reg_read(0xb050),
+                    system_reg_read(0xb000));
+        }
     }
+
+    /* OEM EXACT: ae0_interrupt_static every frame, ae1 every 4th frame.
+     * Called from ip_done (bit 13) as a poll — OEM does the same. */
+    ae0_interrupt_static();
+
+    if ((ae_poll_frame_count & 3) == 0)
+        ae1_interrupt_static();
+
+    ae_poll_frame_count++;
 
     /* Binary Ninja: return 2 */
     return IRQ_HANDLED;
