@@ -4117,9 +4117,17 @@ int ae0_interrupt_static(void)
      * We call private_dma_cache_sync for safety on systems with cached DMA. */
     private_dma_cache_sync(NULL, dma, 0x1000, 0);
 
-    /* OEM EXACT: Extract Y luminance from each 4-word zone entry.
-     * Loop reads word[0] of each zone, masks lower 21 bits.
-     * 225 zones (15x15 grid), each zone = 4 words (16 bytes). */
+    /* Extract Y luminance from each 4-word zone entry.
+     *
+     * OEM decompilation shows: *src & 0x1fffff (word[0]).
+     * However, with our explicit 15x15 grid config (0xa004=0xf001f001),
+     * the AE DMA engine puts Y luminance in word[1], not word[0].
+     * Diagnostic scan confirms: nz_w0=129 nz_w1=207 (word[1] has
+     * Y data for 92% of zones, word[0] only 57%).
+     * The OEM ends up with 0xa004=0 (zeroed _ae_parameter) which may
+     * use a different DMA output format.
+     *
+     * Read from word[1] until register config is matched to OEM. */
     {
         extern int tisp_ae_update_zone_data(uint32_t *new_zone_data, size_t data_size);
         uint32_t zones[225];
@@ -4127,19 +4135,41 @@ int ae0_interrupt_static(void)
         int i;
 
         for (i = 0; i < 225; i++) {
-            zones[i] = *src & 0x1fffff;
+            zones[i] = src[1] & 0x1fffff;
             src += 4;  /* Advance 4 words (16 bytes) to next zone */
         }
 
         {
             static int ae_zone_log;
-            if (ae_zone_log < 10) {
-                pr_info("AE0_ZONE[%d]: status=0x%x bank=%u "
-                        "raw[0]=%08x z[0]=%u z[1]=%u z[112]=%u z[224]=%u "
-                        "raw4[0]=%08x,%08x,%08x,%08x\n",
+            if (ae_zone_log < 5) {
+                /* Scan all 225 zones across all 4 words to find where data lives */
+                int nz_w0 = 0, nz_w1 = 0, nz_w2 = 0, nz_w3 = 0;
+                int first_nz_w0 = -1, first_nz_w1 = -1;
+                for (i = 0; i < 225; i++) {
+                    if (dma[i*4+0] & 0x1fffff) { nz_w0++; if (first_nz_w0 < 0) first_nz_w0 = i; }
+                    if (dma[i*4+1] & 0x1fffff) { nz_w1++; if (first_nz_w1 < 0) first_nz_w1 = i; }
+                    if (dma[i*4+2]) nz_w2++;
+                    if (dma[i*4+3]) nz_w3++;
+                }
+                pr_info("AE0_SCAN[%d]: status=0x%x bank=%u nz_w0=%d nz_w1=%d nz_w2=%d nz_w3=%d "
+                        "1st_nz_w0=%d 1st_nz_w1=%d\n",
                         ae_zone_log, ae0_status, bank_offset >> 12,
-                        dma[0], zones[0], zones[1], zones[112], zones[224],
-                        dma[0], dma[1], dma[2], dma[3]);
+                        nz_w0, nz_w1, nz_w2, nz_w3, first_nz_w0, first_nz_w1);
+                /* Dump zone 0 all 4 words, plus zone 1, 112, 224 word[0..1] */
+                pr_info("AE0_RAW[%d]: z0=[%08x %08x %08x %08x] z1=[%08x %08x] "
+                        "z112=[%08x %08x] z224=[%08x %08x]\n",
+                        ae_zone_log,
+                        dma[0], dma[1], dma[2], dma[3],
+                        dma[4], dma[5],
+                        dma[448], dma[449],
+                        dma[896], dma[897]);
+                /* Also check if data might start at a word offset */
+                pr_info("AE0_OFF[%d]: dma[-1..3]=%08x %08x %08x %08x %08x "
+                        "w1_z0=%u w1_z1=%u w1_z224=%u\n",
+                        ae_zone_log,
+                        (bank_offset >= 4) ? *(dma-1) : 0xDEAD,
+                        dma[0], dma[1], dma[2], dma[3],
+                        dma[1] & 0x1fffff, dma[5] & 0x1fffff, dma[897] & 0x1fffff);
                 ae_zone_log++;
             }
         }
@@ -4528,7 +4558,7 @@ int tisp_init(void *sensor_info_arg, char *param_name)
      * system_reg_write_awb(1,...) re-latches 0xb000=1 on the first frame.
      * We do it explicitly here for determinism. */
     system_reg_write(0xb000, 1);
-    pr_info("tisp_init: AE zone config: ae_param[0..3]=%u,%u,%u,%u => 0xa004=%08x (expect f001f001)\n",
+    pr_info("tisp_init: AE zone config: ae_param[0..3]=%u,%u,%u,%u => 0xa004=%08x (OEM=0x0)\n",
             _ae_parameter.data[0], _ae_parameter.data[1],
             _ae_parameter.data[2], _ae_parameter.data[3],
             system_reg_read(0xa004));
@@ -27512,104 +27542,64 @@ EXPORT_SYMBOL(tiziano_deflicker_expt);
  */
 int tiziano_ae_params_refresh(void)
 {
-    const u8 *p = (const u8 *)(tparams_active ? tparams_active : tparams_day);
+    pr_debug("tiziano_ae_params_refresh: Refreshing AE parameters\n");
 
-    pr_debug("tiziano_ae_params_refresh: Refreshing AE parameters (tparams=%p)\n", p);
+    /* OEM EXACT (0x153b4): Zero all AE parameter structures.
+     * The OEM does NOT load from the tuning binary here — it just zeros
+     * everything.  Tuning binary AE params are sent later by libimp
+     * via ioctl.  Previous code incorrectly loaded from tuning binary,
+     * which gave _ae_parameter non-zero grid dims → 0xa004=0xf001f001
+     * instead of the OEM's 0xa004=0, changing the DMA output format. */
+    memset(&_ae_parameter, 0, 0xa8);
+    memset(&ae_exp_th, 0, 0x50);
+    memset(&_exp_parameter, 0, 0x2c);
+    memset(&ae_ev_step, 0, 0x14);
+    memset(&ae_stable_tol, 0, 0x10);
+    memset(&ae0_ev_list, 0, 0x28);
+    memset(&_lum_list, 0, 0x28);
+    memset(&_deflicker_para, 0, 0x0c);
+    memset(&_flicker_t, 0, 0x18);
+    memset(&_scene_para, 0, 0x2c);
+    memset(&ae_scene_mode_th, 0, 0x10);
+    memset(&_log2_lut, 0, 0x50);
+    memset(&_weight_lut, 0, 0x50);
+    memset(&_ae_zone_weight, 0, 0x384);
+    memset(&_scene_roui_weight, 0, 0x384);
+    memset(&_scene_roi_weight, 0, 0x384);
+    memset(&ae_comp_ev_list, 0, 0x28);
+    memset(&ae_extra_at_list, 0, 0x28);
 
-    /* OEM EXACT: Copy all AE parameter structures from tuning binary.
-     * If tuning binary is not loaded yet (p == NULL), or the data at the
-     * _ae_parameter offset is all zeros (tuning bin not populated), fall
-     * back to static defaults from the _ae_parameter initializer.
-     * Check: _ae_parameter.data[1] (num_rows) must be non-zero. */
-    if (p && *(const u32 *)(p + 0x0080 + 4) != 0) {
-        memcpy(&_ae_parameter,      p + 0x0080, 0xa8);
-        memcpy(&ae_exp_th,          p + 0x0128, 0x50);
-        memcpy(&_AePointPos,        p + 0x0178, 0x08);
-        memcpy(&_exp_parameter,     p + 0x0180, 0x2c);
-        memcpy(&ae_ev_step,         p + 0x01ac, 0x14);
-        memcpy(&ae_stable_tol,      p + 0x01c0, 0x10);
-        memcpy(&ae0_ev_list,        p + 0x01d0, 0x28);
-        memcpy(&_lum_list,          p + 0x01f8, 0x28);
-        memcpy(&_deflicker_para,    p + 0x0248, 0x0c);
-        memcpy(&_flicker_t,         p + 0x0254, 0x18);
-        memcpy(&_scene_para,        p + 0x026c, 0x2c);
-        memcpy(&ae_scene_mode_th,   p + 0x0298, 0x10);
-        memcpy(&_log2_lut,          p + 0x02a8, 0x50);
-        memcpy(&_weight_lut,        p + 0x02f8, 0x50);
-        memcpy(&_ae_zone_weight,    p + 0x0348, 0x384);
-        memcpy(&_scene_roui_weight, p + 0x06cc, 0x384);
-        memcpy(&_scene_roi_weight,  p + 0x0a50, 0x384);
-        memcpy(&ae_comp_param,      p + 0x0e3c, 0x18);
-        memcpy(&ae_comp_ev_list,    p + 0x0e54, 0x28);
-        memcpy(&ae_extra_at_list,   p + 0x0ea4, 0x28);
-
-        /* OEM EXACT: conditional copy of result/stat structures */
-        if (data_b0df8 == 0) {
-            memcpy(&_ae_result, p + 0x0dd4, 0x18);
-            memcpy(&_ae_stat,  p + 0x0dec, 0x14);
-            memcpy(&_ae_wm_q,  p + 0x0e00, 0x3c);
-        }
-
-        memcpy(&ae1_ev_list,        p + 0x0ecc, 0x28);
-        memcpy(&ae1_comp_ev_list,   p + 0x0fe8, 0x28);
-
-        pr_info("tiziano_ae_params_refresh: Loaded from tuning binary: "
-                "ae_param[0..3]=%u,%u,%u,%u (grid=%ux%u)\n",
-                _ae_parameter.data[0], _ae_parameter.data[1],
-                _ae_parameter.data[2], _ae_parameter.data[3],
-                _ae_parameter.data[3], _ae_parameter.data[1]);
-    } else {
-        pr_warn("tiziano_ae_params_refresh: No tuning binary loaded, using static defaults\n");
-        /* Static defaults already set in _ae_parameter initializer */
+    /* OEM EXACT: conditional zero of result/stat structures */
+    if (data_b0df8 == 0) {
+        memset(&_ae_result, 0, 0x18);
+        memset(&_ae_stat, 0, 0x14);
+        memset(&_ae_wm_q, 0, 0x3c);
     }
 
-    /* OEM EXACT (HLIL 0x52e00-0x52e78): Compute per-zone column and row
-     * spacing from sensor dimensions.
-     *   num_cols = _ae_parameter.data[3]   (OEM: data_a0d44)
-     *   num_rows = _ae_parameter.data[1]   (OEM: data_a0d3c)
-     *   col_spacing = (sensor_width / 2) / num_cols   -> [4 .. 4+num_cols-1]
-     *   row_spacing = (sensor_height / 2) / num_rows  -> [19 .. 19+num_rows-1] (OEM offset 0x48 = 18 uint32)
-     * Note: OEM uses offset +0xc from _ae_parameter[0] for cols = byte offset 0x10 = uint32 index 4,
-     *       and offset +0x48 from _ae_parameter[0] for rows = byte offset 0x4c = uint32 index 19.
-     */
-    uint32_t sensor_width_half = tisp_si_width(&sensor_info) / 2;
-    uint32_t sensor_height_half = tisp_si_height(&sensor_info) / 2;
-    uint32_t num_cols = _ae_parameter.data[3];
-    uint32_t num_rows = _ae_parameter.data[1];
-    int i;
+    memset(&ae1_ev_list, 0, 0x28);
+    memset(&ae1_comp_ev_list, 0, 0x28);
 
-    if (num_cols > 0 && num_cols <= 15) {
-        for (i = 0; i < (int)num_cols; i++)
-            _ae_parameter.data[4 + i] = sensor_width_half / num_cols;
+    /* OEM EXACT (0x154b4): Compute default zone spacing from sensor dims.
+     * These go to separate variables in the OEM (data_8064c etc), not into
+     * _ae_parameter.  The column/row spacing within _ae_parameter stays 0
+     * until libimp sends proper AE config.
+     * sensor_info >> 3 gives a default zone size for the spacing variables. */
+    {
+        uint32_t col_space = tisp_si_width(&sensor_info) >> 3;
+        uint32_t row_space = tisp_si_height(&sensor_info) >> 3;
+        /* OEM writes to data_8064c..data_80658 (4 consecutive uint32).
+         * In our code, these are separate from _ae_parameter. */
+        pr_info("tiziano_ae_params_refresh: OEM-exact zero (col_space=%u row_space=%u)\n",
+                col_space, row_space);
     }
 
-    if (num_rows > 0 && num_rows <= 15) {
-        for (i = 0; i < (int)num_rows; i++)
-            _ae_parameter.data[19 + i] = sensor_height_half / num_rows;
-    }
-
-    pr_info("tiziano_ae_params_refresh: zone spacing: col=%u row=%u (sensor %ux%u, grid %ux%u)\n",
-            num_cols > 0 ? sensor_width_half / num_cols : 0,
-            num_rows > 0 ? sensor_height_half / num_rows : 0,
-            tisp_si_width(&sensor_info), tisp_si_height(&sensor_info),
-            num_cols, num_rows);
-
-    /* OEM EXACT: Copy WDR parameters from tuning binary */
-    if (p) {
-        memcpy(&ae0_ev_list_wdr,        p + 0x0ef4, 0x28);
-        memcpy(&_lum_list_wdr,          p + 0x0f1c, 0x28);
-        memcpy(&_scene_para_wdr,        p + 0x0f6c, 0x2c);
-        memcpy(&ae_scene_mode_th_wdr,   p + 0x0f98, 0x10);
-        memcpy(&ae_comp_param_wdr,      p + 0x0fa8, 0x18);
-        memcpy(&ae_extra_at_list_wdr,   p + 0x0fc0, 0x28);
-    } else {
-        memset(&ae0_ev_list_wdr, 0, sizeof(ae0_ev_list_wdr));
-        memset(&_lum_list_wdr, 0, sizeof(_lum_list_wdr));
-        memset(&_scene_para_wdr, 0, sizeof(_scene_para_wdr));
-        memset(&ae_scene_mode_th_wdr, 0, sizeof(ae_scene_mode_th_wdr));
-        memset(&ae_comp_param_wdr, 0, sizeof(ae_comp_param_wdr));
-        memset(&ae_extra_at_list_wdr, 0, sizeof(ae_extra_at_list_wdr));
-    }
+    /* OEM EXACT: Zero WDR parameters */
+    memset(&ae0_ev_list_wdr, 0, sizeof(ae0_ev_list_wdr));
+    memset(&_lum_list_wdr, 0, sizeof(_lum_list_wdr));
+    memset(&_scene_para_wdr, 0, sizeof(_scene_para_wdr));
+    memset(&ae_scene_mode_th_wdr, 0, sizeof(ae_scene_mode_th_wdr));
+    memset(&ae_comp_param_wdr, 0, sizeof(ae_comp_param_wdr));
+    memset(&ae_extra_at_list_wdr, 0, sizeof(ae_extra_at_list_wdr));
 
     data_b0df8 = 0;  /* Mark as initialized */
 
