@@ -10485,6 +10485,17 @@ static int tiziano_awb_set_hardware_param(void)
             system_reg_write(0x0b024, val);
             pr_info("AWB: zone cfg=0x%x w[0]=%u h[0]=%u written to 0xb004-0xb024\n",
                     stats_cfg, wp[4], wp[19]);
+            pr_info("AWB_HW_DIAG: param_word0=0x%x (bits0-11=0x%x) post_wb=%d cols=%d rows=%d\n",
+                    param_word0, param_word0 & 0xfff,
+                    (stats_cfg >> 16) & 1,
+                    (stats_cfg >> 28) & 0xf,
+                    (stats_cfg >> 12) & 0xf);
+            pr_info("AWB_HW_DIAG: 0xb004=0x%08x 0xb008=0x%08x 0xb03c=0x%08x 0xb04c=0x%08x\n",
+                    system_reg_read(0xb004), system_reg_read(0xb008),
+                    system_reg_read(0xb03c), system_reg_read(0xb04c));
+            pr_info("AWB_HW_DIAG: WB 0x1804=0x%08x 0x1808=0x%08x CFA 0x4800=0x%08x bypass=0x%08x\n",
+                    system_reg_read(0x1804), system_reg_read(0x1808),
+                    system_reg_read(0x4800), system_reg_read(0xc));
         }
     }
 
@@ -15876,7 +15887,20 @@ int awb_interrupt_static(void)
 	/* OEM: private_dma_cache_sync(0, virt + (status << 12), 0x1000, 0) */
 	private_dma_cache_sync(NULL, buffer_addr, 0x1000, 0);
 
-	if (awb_irq_count <= 5 || (awb_irq_count % 300) == 0) {
+	if (awb_irq_count == 1) {
+		pr_info("AWB_HW_LIVE: 0xb000=0x%08x 0xb004=0x%08x 0xb050=0x%08x\n",
+			system_reg_read(0xb000), system_reg_read(0xb004),
+			system_reg_read(0xb050));
+		pr_info("AWB_HW_LIVE: WB 0x1804=0x%08x 0x1808=0x%08x 0x180c=0x%08x 0x1810=0x%08x\n",
+			system_reg_read(0x1804), system_reg_read(0x1808),
+			system_reg_read(0x180c), system_reg_read(0x1810));
+		pr_info("AWB_HW_LIVE: DMA 0xb03c=0x%08x 0xb040=0x%08x 0xb044=0x%08x 0xb048=0x%08x 0xb04c=0x%08x\n",
+			system_reg_read(0xb03c), system_reg_read(0xb040),
+			system_reg_read(0xb044), system_reg_read(0xb048),
+			system_reg_read(0xb04c));
+	}
+
+	if (awb_irq_count <= 10 || (awb_irq_count % 30) == 0) {
 		u32 *raw = (u32 *)buffer_addr;
 		pr_info("AWB_BANK[%u]: bank=%u changes=%u/%u "
 			"raw[0..3]=%08x %08x %08x %08x\n",
@@ -15887,7 +15911,7 @@ int awb_interrupt_static(void)
 
 	JZ_Isp_Get_Awb_Statistics(buffer_addr, 0xf001f001);
 
-	if (awb_irq_count <= 5) {
+	if (awb_irq_count <= 10 || (awb_irq_count % 30) == 0) {
 		pr_info("AWB_STATS[%u]: R[0]=%u G[0]=%u B[0]=%u "
 			"P[0]=%u | R[112]=%u G[112]=%u B[112]=%u P[112]=%u\n",
 			awb_irq_count,
@@ -17256,74 +17280,78 @@ int jz_isp_ccm(void)
     uint32_t ev_value = data_9a454 >> 10;  /* Current EV shifted */
     data_c52f8 = 0x64;  /* OEM: reset CT threshold each call */
 
-    /* Step 1: sign-extend raw CCM arrays (critical side-effect) */
+    /* Step 1: OEM EV-based saturation interpolation — GATED, not early-return.
+     * OEM only updates saturation when EV changed enough (or forced).
+     * The rest of the function always runs regardless of EV. */
+    {
+        int do_sat = (ccm_real == 1);
+        if (!do_sat) {
+            uint32_t ev_diff = (data_c52ec >= ev_value) ?
+                              (data_c52ec - ev_value) : (ev_value - data_c52ec);
+            if (data_c52f0 < ev_diff)
+                do_sat = 1;
+        }
+
+        if (do_sat) {
+            uint32_t sat_result;
+            int i, found = 0;
+
+            for (i = 0; i < 9; i++) {
+                uint32_t ev_hi = cm_ev_list_now[i];
+
+                if (ev_hi >= ev_value) {
+                    if (i != 0) {
+                        uint32_t ev_lo = cm_ev_list_now[i - 1];
+                        uint32_t sat_lo = cm_sat_list_now[i - 1];
+                        uint32_t sat_hi = cm_sat_list_now[i];
+
+                        if (ev_hi != ev_lo) {
+                            uint32_t num = (ev_lo <= ev_value) ?
+                                           (ev_value - ev_lo) : (ev_lo - ev_value);
+                            uint32_t den = (ev_lo <= ev_hi) ?
+                                           (ev_hi - ev_lo) : (ev_lo - ev_hi);
+                            if (sat_hi >= sat_lo)
+                                sat_result = num * (sat_hi - sat_lo) / den + sat_lo;
+                            else
+                                sat_result = sat_lo - num * (sat_lo - sat_hi) / den;
+                        } else {
+                            sat_result = sat_hi;
+                        }
+                    } else {
+                        sat_result = cm_sat_list_now[0];
+                    }
+                    found = 1;
+                    break;
+                }
+            }
+
+            if (!found)
+                sat_result = cm_sat_list_now[8];
+
+            data_c52fc = sat_result;
+        }
+    }
+
+    /* Step 2: sign-extend raw CCM arrays — OEM calls this AFTER saturation */
     int32_t ct_value = jz_isp_ccm_parameter_convert();
 
     pr_debug("jz_isp_ccm: EV=%u, CT=%d, ccm_real=%u\n", ev_value, ct_value, ccm_real);
 
-    /* Check if CCM update is needed based on EV change */
-    if (ccm_real != 1) {
-        uint32_t ev_diff = (data_c52ec >= ev_value) ?
-                          (data_c52ec - ev_value) : (ev_value - data_c52ec);
-
-        if (data_c52f0 >= ev_diff) {
-            /* No significant EV change - skip update */
-            return 0;
-        }
-    }
-
-    /* Step 2: OEM EV-based saturation interpolation (handles unsigned abs-diff) */
+    /* Step 3: CT-based CCM interpolation — gated on CT change, not early-return */
     {
-        uint32_t sat_result;
-        int i, found = 0;
+        if (ccm_real == 1) {
+            tiziano_ct_ccm_interpolation(ct_value, data_c52f8);
+        } else {
+            uint32_t ct_diff = (data_c52f4 >= (uint32_t)ct_value) ?
+                              (data_c52f4 - ct_value) : (ct_value - data_c52f4);
 
-        for (i = 0; i < 9; i++) {
-            uint32_t ev_hi = cm_ev_list_now[i];
-
-            if (ev_hi >= ev_value) {
-                if (i != 0) {
-                    uint32_t ev_lo = cm_ev_list_now[i - 1];
-                    uint32_t sat_lo = cm_sat_list_now[i - 1];
-                    uint32_t sat_hi = cm_sat_list_now[i];
-
-                    if (ev_hi != ev_lo) {
-                        /* OEM abs-diff interpolation */
-                        uint32_t num = (ev_lo <= ev_value) ?
-                                       (ev_value - ev_lo) : (ev_lo - ev_value);
-                        uint32_t den = (ev_lo <= ev_hi) ?
-                                       (ev_hi - ev_lo) : (ev_lo - ev_hi);
-                        if (sat_hi >= sat_lo)
-                            sat_result = num * (sat_hi - sat_lo) / den + sat_lo;
-                        else
-                            sat_result = sat_lo - num * (sat_lo - sat_hi) / den;
-                    } else {
-                        sat_result = sat_hi;
-                    }
-                } else {
-                    sat_result = cm_sat_list_now[0];
-                }
-                found = 1;
-                break;
+            if (data_c52f8 < ct_diff) {
+                tiziano_ct_ccm_interpolation(ct_value, data_c52f8);
             }
         }
-
-        if (!found)
-            sat_result = cm_sat_list_now[8];
-
-        data_c52fc = sat_result;
     }
 
-    /* Step 3: CT-based CCM interpolation */
-    {
-        uint32_t ct_diff = (data_c52f4 >= (uint32_t)ct_value) ?
-                          (data_c52f4 - ct_value) : (ct_value - data_c52f4);
-
-        if (ccm_real == 1 || data_c52f8 < ct_diff) {
-            tiziano_ct_ccm_interpolation(ct_value, data_c52f8);
-        }
-    }
-
-    /* Step 4: apply saturation control → signed final matrix */
+    /* Step 4: apply saturation control → signed final matrix (always runs) */
     int32_t final_matrix[9];
     cm_control(ccm_parameter, data_c52fc, final_matrix);
 
