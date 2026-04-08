@@ -13763,12 +13763,11 @@ static int Tiziano_awb_set_gain(void *mf_para, uint32_t point_pos, const uint32_
 	}
 
 	if (awb_frz == 0) {
-		/* WB gain registers: 0x183c/0x1840 + 0x1844/0x1810.
-		 * The OEM writes to 0x1804/0x1808/0x180c/0x1810 but our gain
-		 * computation differs (missing CT offsets), causing pink tint
-		 * when applied at 0x1804-0x180c. The 0x183c/0x1840 registers
-		 * appear to be no-ops, leaving only 0x1844/0x1810 effective,
-		 * which produces correct colors with our gain values. */
+		/* TODO: OEM uses 0x1804/0x1808/0x180c/0x1810 but our gain computation
+		 * differs from OEM's full Tiziano_awb_set_gain (fixed-point wb_mode_gain
+		 * from _wb_static * cof, mode handling, etc). Using 0x1804-0x180c with
+		 * our gain values causes pink tint. Keep 0x183c/0x1840 (no-ops) +
+		 * 0x1844/0x1810 until full OEM gain computation is reimplemented. */
 		system_reg_write_awb(2, 0x183c, reg_pair[0]);
 		system_reg_write_awb(2, 0x1840, reg_pair[1]);
 		system_reg_write_awb(2, 0x1844, reg_pair[0]);
