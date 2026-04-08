@@ -10471,6 +10471,10 @@ static int tiziano_awb_set_hardware_param(void)
         }
     }
 
+    /* Ensure AWB stats enable latch persists after all config writes.
+     * OEM trace shows 0xb000=1 persisting between frames. */
+    system_reg_write(0xb000, 1);
+
     return 0;
 }
 
@@ -15863,6 +15867,12 @@ int awb_interrupt_static(void)
 	}
 
 	tiziano_awb_set_lum_th_freq();
+
+	/* OEM EXACT: awb_interrupt_static ends with 0xb000=1 persisting
+	 * (set by system_reg_write_awb(1,...) inside tiziano_awb_set_lum_th_freq).
+	 * Explicitly ensure 0xb000=1 here as the AWB stats enable latch.
+	 * Without this, AWB hardware doesn't collect pixel statistics. */
+	system_reg_write(0xb000, 1);
 
 	event_data.event_id = 0xa;
 	tisp_event_push(&event_data);
