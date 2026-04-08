@@ -4661,6 +4661,12 @@ static int32_t fix_point_div_64(int32_t shift_bits, int32_t scale,
     if (den == 0)
         return 0;
 
+    /* OEM (0x2b7d8): __ashldi3(num, shift_bits & 0x1f) then div64_u64.
+     * The left-shift preserves Q-format precision in the quotient.
+     * Without it, the division loses q bits of fractional precision,
+     * producing results 2^q too small (e.g., i_18=236 instead of 242K). */
+    num <<= (shift_bits & 0x1f);
+
     return (int32_t)div64_u64(num, den);
 }
 
