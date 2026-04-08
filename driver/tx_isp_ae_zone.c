@@ -24,127 +24,76 @@ static struct {
     .initialized = false,
 };
 
-/* MCP Logging Helper */
-static void mcp_log_info(const char *method_name, const char *description, void *data)
-{
-    pr_info("MCP_LOG: %s: %s, data=%p\n", method_name, description, data);
-}
-
-/* tisp_ae_get_y_zone - Binary Ninja EXACT Implementation */
+/* tisp_ae_get_y_zone - OEM EXACT Implementation (0x54594)
+ *
+ * Copies 225 uint32_t zone luminance values from the internal buffer
+ * to the caller's buffer.  Called per-frame by tisp_ae_mean_update
+ * and by libimp via ioctl. */
 int tisp_ae_get_y_zone(void *arg1)
 {
     unsigned long flags;
-    
-    mcp_log_info("tisp_ae_get_y_zone", "entry with argument", arg1);
-    
-    if (!arg1) {
-        pr_err("tisp_ae_get_y_zone: Invalid argument\n");
-        mcp_log_info("tisp_ae_get_y_zone", "error - null argument", NULL);
+
+    if (!arg1)
         return -EINVAL;
-    }
-    
-    /* Initialize AE zone data if not already done */
+
+    /* Initialize AE zone data on first access */
     if (!ae_zone_data.initialized) {
         spin_lock_init(&ae_zone_data.lock);
         memset(ae_zone_data.zone_data, 0, sizeof(ae_zone_data.zone_data));
-        ae_zone_data.zone_status = 1; /* Default active status */
+        ae_zone_data.zone_status = 1;
         ae_zone_data.initialized = true;
-        mcp_log_info("tisp_ae_get_y_zone", "initialized AE zone data", &ae_zone_data);
     }
-    
-    /* Binary Ninja: __private_spin_lock_irqsave(0, &var_18) */
+
     spin_lock_irqsave(&ae_zone_data.lock, flags);
-    mcp_log_info("tisp_ae_get_y_zone", "acquired spinlock", &ae_zone_data.lock);
-    
-    /* Binary Ninja: memcpy(arg1, 0xd3b24, 0x384) - copy ONLY zone_data array */
     memcpy(arg1, ae_zone_data.zone_data, AE_ZONE_DATA_SIZE);
-    mcp_log_info("tisp_ae_get_y_zone", "copied AE zone data", &ae_zone_data);
-    
-    /* Binary Ninja: private_spin_unlock_irqrestore(0, var_18) */
     spin_unlock_irqrestore(&ae_zone_data.lock, flags);
-    mcp_log_info("tisp_ae_get_y_zone", "released spinlock", &ae_zone_data.lock);
-    
-    mcp_log_info("tisp_ae_get_y_zone", "exit success", NULL);
-    /* Binary Ninja: return 0 */
+
     return 0;
 }
 EXPORT_SYMBOL(tisp_ae_get_y_zone);
 
-/* tisp_g_ae_zone - Binary Ninja EXACT Implementation */
+/* tisp_g_ae_zone - OEM EXACT: ioctl handler to copy AE zone data to userspace */
 int tisp_g_ae_zone(struct tx_isp_dev *dev, struct isp_core_ctrl *ctrl)
 {
     struct ae_zone_info zones;
     int ret;
 
-    mcp_log_info("tisp_g_ae_zone", "entry with device and control", dev);
-
-    if (!dev || !ctrl) {
-        pr_err("tisp_g_ae_zone: Invalid device or control pointer\n");
-        mcp_log_info("tisp_g_ae_zone", "error - invalid parameters", NULL);
+    if (!dev || !ctrl || !ctrl->value)
         return -EINVAL;
-    }
 
-    if (!ctrl->value) {
-        pr_err("tisp_g_ae_zone: No data pointer for AE zone\n");
-        mcp_log_info("tisp_g_ae_zone", "error - no data pointer", NULL);
-        return -EINVAL;
-    }
-
-    /* Clear structure first */
     memset(&zones, 0, sizeof(zones));
-    mcp_log_info("tisp_g_ae_zone", "cleared zones structure", &zones);
 
-    /* Get latest zone data using reference method */
     ret = tisp_ae_get_y_zone(&zones);
-    if (ret) {
-        pr_err("tisp_g_ae_zone: Failed to get AE zone data: %d\n", ret);
-        mcp_log_info("tisp_g_ae_zone", "error getting zone data", &ret);
+    if (ret)
         return ret;
-    }
 
-    mcp_log_info("tisp_g_ae_zone", "got AE zone data successfully", &zones);
-
-    /* Copy zone data to user-provided buffer - Fixed: correct size */
-    if (copy_to_user((void __user *)ctrl->value, &zones, sizeof(zones))) {
-        pr_err("tisp_g_ae_zone: Failed to copy data to user\n");
-        mcp_log_info("tisp_g_ae_zone", "error copying to user", NULL);
+    if (copy_to_user((void __user *)ctrl->value, &zones, sizeof(zones)))
         return -EFAULT;
-    }
 
-    /* Binary Ninja: just return 0, don't modify ctrl->value */
-    mcp_log_info("tisp_g_ae_zone", "exit success", NULL);
-    /* Binary Ninja reference: return 0 */
     return 0;
 }
 EXPORT_SYMBOL(tisp_g_ae_zone);
 
-/* Update AE zone data - called by ISP hardware interrupt */
+/* Update AE zone data - called from ae0_interrupt_static every frame */
 int tisp_ae_update_zone_data(uint32_t *new_zone_data, size_t data_size)
 {
     unsigned long flags;
-    
-    mcp_log_info("tisp_ae_update_zone_data", "entry with new data", new_zone_data);
-    
-    if (!new_zone_data || data_size != sizeof(ae_zone_data.zone_data)) {
-        pr_err("tisp_ae_update_zone_data: Invalid parameters\n");
-        mcp_log_info("tisp_ae_update_zone_data", "error - invalid parameters", NULL);
+
+    if (!new_zone_data || data_size != sizeof(ae_zone_data.zone_data))
         return -EINVAL;
-    }
-    
+
     /* Initialize if needed */
     if (!ae_zone_data.initialized) {
         spin_lock_init(&ae_zone_data.lock);
         ae_zone_data.zone_status = 1;
         ae_zone_data.initialized = true;
-        mcp_log_info("tisp_ae_update_zone_data", "initialized on first update", &ae_zone_data);
     }
-    
+
     spin_lock_irqsave(&ae_zone_data.lock, flags);
     memcpy(ae_zone_data.zone_data, new_zone_data, data_size);
-    ae_zone_data.zone_status = 1; /* Mark as updated */
+    ae_zone_data.zone_status = 1;
     spin_unlock_irqrestore(&ae_zone_data.lock, flags);
-    
-    mcp_log_info("tisp_ae_update_zone_data", "updated zone data successfully", &ae_zone_data);
+
     return 0;
 }
 EXPORT_SYMBOL(tisp_ae_update_zone_data);
