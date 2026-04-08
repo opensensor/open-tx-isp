@@ -15499,11 +15499,20 @@ static int Tiziano_awb_fpga(const uint32_t *stats_r,
 		cl_params[4] = _awb_cluster_tail[1];  /* convergence tolerance */
 		cl_params[5] = _awb_cluster_tail[2];  /* max iterations */
 
-		/* Build combined rg+bg array matching OEM zone_rgbg layout */
-		memcpy(awb_zone_rgbg, awb_zone_rg,
-		       AWB_STATS_ZONES * sizeof(uint32_t));
-		memcpy(awb_zone_rgbg + AWB_STATS_ZONES, awb_zone_bg,
-		       AWB_STATS_ZONES * sizeof(uint32_t));
+		/* OEM (Tiziano_awb_fpga): zone_rgbg[i] = (zone_rg[i] / cof_rg) << q
+		 * This converts from Q8 (R/G * 256 * cof) to Q(q+8) format so
+		 * Ct_Detect comparisons against rg_pos[j] << q are in the same scale.
+		 * Previous code did a raw memcpy (no /cof, no <<q), causing zone
+		 * values to land in the wrong CT mesh bracket → target_rg=169
+		 * instead of ~311. */
+		{
+			u32 safe_cof_rg = cof_rg ? cof_rg : 1;
+			u32 safe_cof_bg = cof_bg ? cof_bg : 1;
+			for (idx = 0; idx < AWB_STATS_ZONES; idx++) {
+				awb_zone_rgbg[idx] = (awb_zone_rg[idx] / safe_cof_rg) << q;
+				awb_zone_rgbg[idx + AWB_STATS_ZONES] = (awb_zone_bg[idx] / safe_cof_bg) << q;
+			}
+		}
 
 		if (fpga_diag_count <= 5) {
 			pr_info("AWB_CTDET_PRE[%u]: calling Ct_Detect light_src=%u q=%u\n",
@@ -27544,13 +27553,17 @@ int tiziano_ae_params_refresh(void)
 {
     pr_debug("tiziano_ae_params_refresh: Refreshing AE parameters\n");
 
-    /* OEM EXACT (0x153b4): Zero all AE parameter structures.
-     * The OEM does NOT load from the tuning binary here — it just zeros
-     * everything.  Tuning binary AE params are sent later by libimp
-     * via ioctl.  Previous code incorrectly loaded from tuning binary,
-     * which gave _ae_parameter non-zero grid dims → 0xa004=0xf001f001
-     * instead of the OEM's 0xa004=0, changing the DMA output format. */
-    memset(&_ae_parameter, 0, 0xa8);
+    /* OEM zeros _ae_parameter then programs hardware with data_d04bc first,
+     * followed by zeroed _ae_parameter at the end of tisp_init.  The zero
+     * write doesn't disable the engine because the prior data_d04bc config
+     * persists in the hardware shadow registers.
+     *
+     * We don't implement the data_d04bc path, so we MUST keep _ae_parameter's
+     * static initializer (15x15 grid, 0xa004=0xf001f001) to ensure the AE
+     * stats DMA engine produces data.  With 0xa004=0, all DMA zones are zero.
+     * The tradeoff: our DMA format puts Y in word[1] instead of word[0],
+     * which ae0_interrupt_static handles by reading src[1]. */
+    /* Do NOT zero _ae_parameter — keep static grid config for AE DMA */
     memset(&ae_exp_th, 0, 0x50);
     memset(&_exp_parameter, 0, 0x2c);
     memset(&ae_ev_step, 0, 0x14);
