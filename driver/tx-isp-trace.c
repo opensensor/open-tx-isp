@@ -10,396 +10,286 @@
 #include <linux/uaccess.h>
 #include <linux/mutex.h>
 
-#define ISP_MONITOR_VERSION "1.3"
-#define TRACE_FILE_PATH "/opt/trace.txt"
+#define ISP_MONITOR_VERSION "2.0"
+#define TRACE_FILE_PATH "/opt/isp-trace.txt"
 
-// File logging support
-static struct file *trace_file = NULL;
+/* ISP core base: 0x13300000 (isp-m0), size 0x100000.
+ * All ISP registers (0x0000-0xFFFF) live within this region.
+ * The trace module reads these registers periodically and logs
+ * any changes to /opt/isp-trace.txt for OEM vs open-source comparison. */
+
+static void __iomem *isp_base;
 static DEFINE_MUTEX(trace_file_mutex);
+static struct file *trace_file;
+static struct delayed_work trace_work;
+static bool tracing_active;
 
-// Region types for classification
-enum region_type {
-    REG_TYPE_CONTROL,    // Control/status registers
-    REG_TYPE_DATA,       // Data/configuration blocks
-    REG_TYPE_VIC,        // VIC-specific registers
-    REG_TYPE_TUNING,     // Tuning parameters and tables
-    REG_TYPE_UNKNOWN
+/* Snapshot storage for change detection */
+static u32 *reg_snapshot;
+static int snapshot_count;
+
+/* Register groups we care about for tuning comparison.
+ * Each entry: { start_offset, end_offset, "label" }
+ * Offsets are relative to ISP core base 0x13300000. */
+struct trace_range {
+	u32 start;
+	u32 end;
+	const char *label;
 };
 
-// Structure to track sequential writes
-struct seq_write_info {
-    u32 start_offset;
-    u32 count;
-    u32 last_value;
-    bool in_progress;
+static const struct trace_range trace_ranges[] = {
+	/* White Balance gains — the critical path for color */
+	{ 0x1800, 0x1850, "WB" },
+
+	/* Color Correction Matrix */
+	{ 0x5000, 0x5018, "CCM" },
+
+	/* BCSH (Brightness/Contrast/Saturation/Hue) */
+	{ 0x8000, 0x8078, "BCSH" },
+
+	/* AWB stats config + DMA */
+	{ 0xb000, 0xb054, "AWB_HW" },
+
+	/* AE0 zone config + DMA */
+	{ 0xa000, 0xa054, "AE0" },
+
+	/* AE1 zone config + DMA */
+	{ 0xa800, 0xa854, "AE1" },
+
+	/* Gamma */
+	{ 0x2000, 0x2028, "GAMMA" },
+
+	/* ISP top control + bypass */
+	{ 0x0000, 0x0030, "TOP" },
+
+	/* ISP pipeline control */
+	{ 0x0800, 0x0810, "PIPE" },
+
+	/* ISP interrupt status */
+	{ 0x00b0, 0x00bc, "IRQ" },
+
+	/* Digital gain (GB block) */
+	{ 0x1000, 0x1018, "GB_DGAIN" },
+
+	/* DPC control */
+	{ 0x5b80, 0x5b94, "DPC" },
+
+	/* LSC (Lens Shading Correction) */
+	{ 0x2800, 0x2830, "LSC" },
+
+	/* SDNS (Spatial Denoise) */
+	{ 0x6800, 0x6830, "SDNS" },
+
+	/* MDNS top config */
+	{ 0x7808, 0x7818, "MDNS_TOP" },
+
+	/* Sharpen */
+	{ 0x6000, 0x6030, "SHARP" },
+
+	/* CFA (demosaic) */
+	{ 0x4800, 0x4810, "CFA" },
+
+	/* RDNS AWB gain */
+	{ 0x3000, 0x3008, "RDNS_WB" },
+
+	/* Defog / ADR */
+	{ 0x4490, 0x44a8, "ADR" },
+
+	/* MSCA (scaler) channel 0 */
+	{ 0x9800, 0x9810, "MSCA_CTL" },
+	{ 0x9900, 0x9910, "MSCA_CH0" },
+	{ 0x9968, 0x9988, "MSCA_FIFO" },
 };
 
-struct isp_region {
-    phys_addr_t phys_addr;
-    void __iomem *virt_addr;
-    u32 *last_values;
-    unsigned long *last_change_time;
-    size_t size;
-    const char *name;
-    struct delayed_work monitor_work;
-    bool monitoring;
-    struct seq_write_info seq_write;
-};
+#define NUM_TRACE_RANGES ARRAY_SIZE(trace_ranges)
 
-// Register ranges to classify regions
-struct reg_range {
-    u32 start;
-    u32 end;
-    enum region_type type;
-    const char *description;
-};
+/* Count total registers across all ranges */
+static int count_total_regs(void)
+{
+	int i, total = 0;
+	for (i = 0; i < NUM_TRACE_RANGES; i++)
+		total += (trace_ranges[i].end - trace_ranges[i].start) / 4 + 1;
+	return total;
+}
 
-// Known register ranges and their types
-static const struct reg_range isp_ranges[] = {
-    // Keep control ranges for tracing
-    {0x9800, 0x98FF, REG_TYPE_CONTROL, "ISP Control"},
-    {0x9A00, 0x9AFF, REG_TYPE_VIC, "VIC Control"},
-    {0xB000, 0xB0FF, REG_TYPE_CONTROL, "Core Control"},
+/* Map range index + offset to flat snapshot index */
+static int reg_to_snapshot_idx(int range_idx, u32 offset)
+{
+	int i, idx = 0;
+	for (i = 0; i < range_idx; i++)
+		idx += (trace_ranges[i].end - trace_ranges[i].start) / 4 + 1;
+	idx += (offset - trace_ranges[range_idx].start) / 4;
+	return idx;
+}
 
-    // Add CSI PHY control ranges
-    {0x0000, 0x00FF, REG_TYPE_CONTROL, "CSI PHY Control"},  // Basic PHY control
-    {0x0100, 0x01FF, REG_TYPE_CONTROL, "CSI PHY Config"},   // PHY configuration
-    {0x0200, 0x02FF, REG_TYPE_CONTROL, "CSI Lane Config"},  // Lane configuration
-
-    // Mark tuning parameter ranges to be filtered
-    {0x51000, 0x51FFF, REG_TYPE_TUNING, "Tuning Parameters"},
-    {0x49000, 0x49FFF, REG_TYPE_TUNING, "Tuning Tables"},
-
-    // Data regions that need monitoring
-    {0x48000, 0x48FFF, REG_TYPE_DATA, "Active Configuration"}
-};
-
-#define NUM_RANGES ARRAY_SIZE(isp_ranges)
-
-// File logging functions
 static int open_trace_file(void)
 {
-    int ret;
+	if (trace_file)
+		return 0;
 
-    if (trace_file)
-        return 0;
-
-    trace_file = filp_open(TRACE_FILE_PATH, O_WRONLY | O_CREAT | O_APPEND, 0644);
-    if (IS_ERR(trace_file)) {
-        ret = PTR_ERR(trace_file);
-        pr_err("Failed to open trace file %s: %d\n", TRACE_FILE_PATH, ret);
-        trace_file = NULL;
-        return ret;
-    }
-    return 0;
+	trace_file = filp_open(TRACE_FILE_PATH, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+	if (IS_ERR(trace_file)) {
+		int ret = PTR_ERR(trace_file);
+		pr_err("isp-trace: failed to open %s: %d\n", TRACE_FILE_PATH, ret);
+		trace_file = NULL;
+		return ret;
+	}
+	return 0;
 }
 
 static void close_trace_file(void)
 {
-    if (trace_file && !IS_ERR(trace_file)) {
-        filp_close(trace_file, NULL);
-        trace_file = NULL;
-    }
+	if (trace_file && !IS_ERR(trace_file)) {
+		filp_close(trace_file, NULL);
+		trace_file = NULL;
+	}
 }
 
-static void write_to_trace_file(const char *fmt, ...)
+static void trace_write(const char *fmt, ...)
 {
-    va_list args;
-    char buffer[512];
-    int len;
-    mm_segment_t old_fs;
+	va_list args;
+	char buf[256];
+	int len;
+	mm_segment_t old_fs;
 
-    if (!trace_file)
-        return;
+	if (!trace_file)
+		return;
 
-    va_start(args, fmt);
-    len = vsnprintf(buffer, sizeof(buffer), fmt, args);
-    va_end(args);
+	va_start(args, fmt);
+	len = vsnprintf(buf, sizeof(buf), fmt, args);
+	va_end(args);
 
-    if (len > 0 && len < sizeof(buffer)) {
-        mutex_lock(&trace_file_mutex);
-        if (trace_file && !IS_ERR(trace_file)) {
-            old_fs = get_fs();
-            set_fs(KERNEL_DS);
-            vfs_write(trace_file, buffer, len, &trace_file->f_pos);
-            set_fs(old_fs);
-        }
-        mutex_unlock(&trace_file_mutex);
-    }
+	if (len > 0 && len < sizeof(buf)) {
+		mutex_lock(&trace_file_mutex);
+		if (trace_file && !IS_ERR(trace_file)) {
+			old_fs = get_fs();
+			set_fs(KERNEL_DS);
+			vfs_write(trace_file, buf, len, &trace_file->f_pos);
+			set_fs(old_fs);
+		}
+		mutex_unlock(&trace_file_mutex);
+	}
 }
 
-// Restored original addresses - trace module was working correctly
-static struct isp_region isp_regions[] = {
-    {
-        .phys_addr = 0x10023000,
-        .size = 0x1000,
-        .name = "isp-w01"
-    },
-    {
-        .phys_addr = 0x13300000,
-        .size = 0x100000,
-        .name = "isp-m0"
-    },
-    {
-        .phys_addr = 0x133e0000,
-        .size = 0x10000,
-        .name = "isp-w02"
-    },
-    {
-        .phys_addr = 0x10022000,  // CSI PHY base address
-        .size = 0x1000,
-        .name = "isp-csi"
-    }
-};
-
-#define NUM_REGIONS ARRAY_SIZE(isp_regions)
-
-// Get register type based on offset
-static enum region_type get_reg_type(u32 offset, const char **desc)
+/* Dump full snapshot of all tracked registers (called once at start) */
+static void dump_full_snapshot(const char *tag)
 {
-    int i;
+	int i;
+	u32 off;
 
-    for (i = 0; i < NUM_RANGES; i++) {
-        if (offset >= isp_ranges[i].start && offset <= isp_ranges[i].end) {
-            if (desc)
-                *desc = isp_ranges[i].description;
-            return isp_ranges[i].type;
-        }
-    }
+	trace_write("=== %s SNAPSHOT (jiffies=%lu) ===\n", tag, jiffies);
 
-    if (desc)
-        *desc = "Unknown";
-    return REG_TYPE_UNKNOWN;
+	for (i = 0; i < NUM_TRACE_RANGES; i++) {
+		trace_write("[%s] 0x%04x-0x%04x:\n",
+			    trace_ranges[i].label,
+			    trace_ranges[i].start,
+			    trace_ranges[i].end);
+		for (off = trace_ranges[i].start;
+		     off <= trace_ranges[i].end; off += 4) {
+			u32 val = readl(isp_base + off);
+			int idx = reg_to_snapshot_idx(i, off);
+			reg_snapshot[idx] = val;
+			trace_write("  0x%04x = 0x%08x\n", off, val);
+		}
+	}
+	trace_write("=== END %s ===\n\n", tag);
 }
 
-// Check if a write continues a sequence
-static bool is_sequential_write(struct seq_write_info *seq, u32 offset, u32 value)
+/* Periodic check: log only changes */
+static void trace_check_changes(struct work_struct *work)
 {
-    if (!seq->in_progress)
-        return false;
+	int i;
+	u32 off;
+	int changes = 0;
 
-    if (offset == seq->start_offset + (seq->count * 4)) {
-        // Look for patterns in sequential values
-        if (value == seq->last_value + 1 ||
-            value == seq->last_value + 0x100 ||
-            (value & 0xFFFF0000) == (seq->last_value & 0xFFFF0000)) {
-            return true;
-        }
-    }
+	for (i = 0; i < NUM_TRACE_RANGES; i++) {
+		for (off = trace_ranges[i].start;
+		     off <= trace_ranges[i].end; off += 4) {
+			int idx = reg_to_snapshot_idx(i, off);
+			u32 val = readl(isp_base + off);
 
-    return false;
+			if (val != reg_snapshot[idx]) {
+				if (changes == 0)
+					trace_write("--- CHANGES (jiffies=%lu) ---\n",
+						    jiffies);
+				trace_write("[%s] 0x%04x: 0x%08x -> 0x%08x\n",
+					    trace_ranges[i].label,
+					    off, reg_snapshot[idx], val);
+				reg_snapshot[idx] = val;
+				changes++;
+			}
+		}
+	}
+
+	if (changes > 0)
+		trace_write("--- %d register(s) changed ---\n\n", changes);
+
+	if (tracing_active)
+		schedule_delayed_work(&trace_work, HZ / 10); /* 100ms */
 }
 
-// Start tracking a new sequence
-static void start_sequence(struct seq_write_info *seq, u32 offset, u32 value)
+static int __init isp_trace_init(void)
 {
-    seq->start_offset = offset;
-    seq->count = 1;
-    seq->last_value = value;
-    seq->in_progress = true;
+	int ret;
+
+	pr_info("ISP Tuning Trace v%s initializing\n", ISP_MONITOR_VERSION);
+
+	isp_base = ioremap(0x13300000, 0x100000);
+	if (!isp_base) {
+		pr_err("isp-trace: failed to map ISP core\n");
+		return -ENOMEM;
+	}
+
+	snapshot_count = count_total_regs();
+	reg_snapshot = kzalloc(snapshot_count * sizeof(u32), GFP_KERNEL);
+	if (!reg_snapshot) {
+		iounmap(isp_base);
+		return -ENOMEM;
+	}
+
+	ret = open_trace_file();
+	if (ret) {
+		pr_warn("isp-trace: no trace file, using pr_info only\n");
+	}
+
+	trace_write("ISP Tuning Trace v%s — %d registers across %d ranges\n",
+		    ISP_MONITOR_VERSION, snapshot_count,
+		    (int)NUM_TRACE_RANGES);
+
+	/* Initial full dump */
+	dump_full_snapshot("INITIAL");
+
+	/* Start periodic change detection */
+	INIT_DELAYED_WORK(&trace_work, trace_check_changes);
+	tracing_active = true;
+	schedule_delayed_work(&trace_work, HZ); /* first check after 1s */
+
+	pr_info("isp-trace: monitoring %d regs, output to %s\n",
+		snapshot_count, TRACE_FILE_PATH);
+	return 0;
 }
 
-// End and report a sequence
-static void end_sequence(struct seq_write_info *seq, const char *region_name)
+static void __exit isp_trace_exit(void)
 {
-    if (seq->count > 4) {
-        pr_info("ISP %s: Sequential write at 0x%x: %d registers from 0x%x\n",
-                region_name, seq->start_offset, seq->count, seq->last_value);
-        write_to_trace_file("ISP %s: Sequential write at 0x%x: %d registers from 0x%x\n",
-                region_name, seq->start_offset, seq->count, seq->last_value);
-    }
-    seq->in_progress = false;
+	tracing_active = false;
+	cancel_delayed_work_sync(&trace_work);
+
+	/* Final snapshot for comparison */
+	if (isp_base && reg_snapshot)
+		dump_full_snapshot("FINAL");
+
+	close_trace_file();
+	kfree(reg_snapshot);
+	if (isp_base)
+		iounmap(isp_base);
+
+	pr_info("isp-trace: unloaded\n");
 }
 
-static void check_region_changes(struct work_struct *work)
-{
-    struct isp_region *region = container_of(to_delayed_work(work),
-                                           struct isp_region,
-                                           monitor_work);
-    u32 current_val;
-    size_t i;
-    size_t num_regs = region->size / sizeof(u32);
-    unsigned long now = jiffies;
-    const char *reg_desc;
-
-    // Check each register in the region
-    for (i = 0; i < num_regs; i++) {
-        u32 offset = i * sizeof(u32);
-        current_val = readl(region->virt_addr + offset);
-
-        if (current_val != region->last_values[i]) {
-            enum region_type type = get_reg_type(offset, &reg_desc);
-            unsigned long delta_jiffies = 0;
-
-            if (region->last_change_time[i])
-                delta_jiffies = now - region->last_change_time[i];
-
-            // Filter out tuning parameter loads and unknown regions
-            if (type == REG_TYPE_TUNING || type == REG_TYPE_UNKNOWN) {
-                continue;
-            }
-
-            // Handle sequential writes for data and VIC
-            if (type == REG_TYPE_DATA) {
-                if (is_sequential_write(&region->seq_write, offset, current_val)) {
-                    region->seq_write.count++;
-                    region->seq_write.last_value = current_val;
-                } else {
-                    if (region->seq_write.in_progress)
-                        end_sequence(&region->seq_write, region->name);
-                    start_sequence(&region->seq_write, offset, current_val);
-                }
-            } else {
-                // End any ongoing sequence
-                if (region->seq_write.in_progress)
-                    end_sequence(&region->seq_write, region->name);
-
-                // Log control and VIC register writes with timing
-                pr_info("ISP %s: [%s] write at offset 0x%x: 0x%x -> 0x%x (delta: %lu.%03lu ms)\n",
-                       region->name, reg_desc, offset,
-                       region->last_values[i], current_val,
-                       jiffies_to_msecs(delta_jiffies),
-                       jiffies_to_usecs(delta_jiffies) % 1000);
-                write_to_trace_file("ISP %s: [%s] write at offset 0x%x: 0x%x -> 0x%x (delta: %lu.%03lu ms)\n",
-                       region->name, reg_desc, offset,
-                       region->last_values[i], current_val,
-                       jiffies_to_msecs(delta_jiffies),
-                       jiffies_to_usecs(delta_jiffies) % 1000);
-            }
-
-            region->last_values[i] = current_val;
-            region->last_change_time[i] = now;
-        }
-    }
-
-    // End any ongoing sequence
-    if (region->seq_write.in_progress)
-        end_sequence(&region->seq_write, region->name);
-
-    // Reschedule if still monitoring
-    if (region->monitoring) {
-        schedule_delayed_work(&region->monitor_work, HZ/100); // 10ms interval to catch rapid changes
-    }
-}
-
-static int init_region(struct isp_region *region)
-{
-    size_t num_regs, i;
-
-    // Map the region
-    region->virt_addr = ioremap(region->phys_addr, region->size);
-    if (!region->virt_addr) {
-        pr_err("Failed to map ISP region %s at 0x%pap\n",
-               region->name, &region->phys_addr);
-        return -ENOMEM;
-    }
-
-    // Allocate storage for last known values and timestamps
-    num_regs = region->size / sizeof(u32);
-    region->last_values = kzalloc(num_regs * sizeof(u32), GFP_KERNEL);
-    region->last_change_time = kzalloc(num_regs * sizeof(unsigned long), GFP_KERNEL);
-    if (!region->last_values || !region->last_change_time) {
-        if (region->last_values)
-            kfree(region->last_values);
-        if (region->last_change_time)
-            kfree(region->last_change_time);
-        iounmap(region->virt_addr);
-        return -ENOMEM;
-    }
-
-    // Initialize sequential write tracking
-    memset(&region->seq_write, 0, sizeof(region->seq_write));
-
-    // Initialize work for monitoring
-    INIT_DELAYED_WORK(&region->monitor_work, check_region_changes);
-
-    // Take initial snapshot of values
-    for (i = 0; i < num_regs; i++) {
-        region->last_values[i] = readl(region->virt_addr + (i * sizeof(u32)));
-        region->last_change_time[i] = 0;
-    }
-
-    region->monitoring = true;
-    schedule_delayed_work(&region->monitor_work, HZ/100); // Start with 10ms interval
-
-    pr_info("ISP Monitor: initialized region %s at phys 0x%pap size 0x%zx\n",
-            region->name, &region->phys_addr, region->size);
-    write_to_trace_file("ISP Monitor: initialized region %s at phys 0x%pap size 0x%zx\n",
-            region->name, &region->phys_addr, region->size);
-
-    return 0;
-}
-
-static void cleanup_region(struct isp_region *region)
-{
-    if (!region)
-        return;
-
-    region->monitoring = false;
-    cancel_delayed_work_sync(&region->monitor_work);
-
-    if (region->last_values) {
-        kfree(region->last_values);
-        region->last_values = NULL;
-    }
-
-    if (region->last_change_time) {
-        kfree(region->last_change_time);
-        region->last_change_time = NULL;
-    }
-
-    if (region->virt_addr) {
-        iounmap(region->virt_addr);
-        region->virt_addr = NULL;
-    }
-}
-
-static int __init isp_monitor_init(void)
-{
-    int i, ret;
-
-    pr_info("ISP Register Monitor v%s initializing\n", ISP_MONITOR_VERSION);
-
-    // Open trace file
-    ret = open_trace_file();
-    if (ret) {
-        pr_warn("Failed to open trace file, continuing with pr_info only\n");
-    } else {
-        write_to_trace_file("ISP Register Monitor v%s initializing\n", ISP_MONITOR_VERSION);
-    }
-
-    for (i = 0; i < NUM_REGIONS; i++) {
-        ret = init_region(&isp_regions[i]);
-        if (ret) {
-            // Cleanup any regions we managed to initialize
-            while (--i >= 0)
-                cleanup_region(&isp_regions[i]);
-            close_trace_file();
-            return ret;
-        }
-    }
-
-    return 0;
-}
-
-static void __exit isp_monitor_exit(void)
-{
-    int i;
-
-    for (i = 0; i < NUM_REGIONS; i++)
-        cleanup_region(&isp_regions[i]);
-
-    pr_info("ISP Register Monitor unloaded\n");
-    write_to_trace_file("ISP Register Monitor unloaded\n");
-
-    // Close trace file
-    close_trace_file();
-}
-
-module_init(isp_monitor_init);
-module_exit(isp_monitor_exit);
+module_init(isp_trace_init);
+module_exit(isp_trace_exit);
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Your Name");
-MODULE_DESCRIPTION("Monitors ISP and VIC register changes with smart filtering");
+MODULE_AUTHOR("ISP Driver Team");
+MODULE_DESCRIPTION("ISP tuning register tracer — logs WB/CCM/BCSH/AWB/AE changes to /opt/isp-trace.txt");
 MODULE_VERSION(ISP_MONITOR_VERSION);
