@@ -3909,31 +3909,20 @@ static int tisp_ae1_get_hist(void *buffer)
 
 static int tisp_ae0_ctrls_update(void)
 {
-    /* AE0 controls update - updates AE0 control registers */
-    extern struct tx_isp_dev *ourISPdev;
-    if (!ourISPdev || !ourISPdev->core_regs) {
-        return -ENODEV;
-    }
-
-    /* Update AE0 control registers based on current parameters */
-    writel(0x1, ourISPdev->core_regs + 0xa000);  /* Enable AE0 */
-
-    pr_debug("AE0 controls updated\n");
+    /* OEM tisp_ae0_ctrls_update (0x522f8) only clamps in-memory AE control
+     * variables (exposure/gain limits) — NO hardware register writes.
+     * Previously we wrote 0x1 to 0xa000 here, which re-latched the AE zone
+     * config every frame, destroying the setup from tiziano_ae_set_hardware_param. */
     return 0;
 }
 
 static int tisp_ae0_process_impl(void)
 {
-    /* AE0 processing implementation - performs AE0 algorithm processing */
-    extern struct tx_isp_dev *ourISPdev;
-    if (!ourISPdev || !ourISPdev->core_regs) {
-        return -ENODEV;
-    }
-
-    /* Trigger AE0 processing */
-    writel(0x1, ourISPdev->core_regs + 0xa004);  /* Trigger AE0 processing */
-
-    pr_debug("AE0 processing completed\n");
+    /* OEM tisp_ae0_process_impl (0x54e8c) runs the full AE algorithm:
+     * Tiziano_ae0_fpga(), sensor integration time, analog/digital gain.
+     * Previously we wrote 0x1 to 0xa004 here, which CLOBBERED the first
+     * AE zone/weight config register, making all AE zones read as 0x80.
+     * Stub for now — libimp runs its own AE via sensor driver ioctls. */
     return 0;
 }
 
@@ -4103,8 +4092,9 @@ int ae0_interrupt_static(void)
     uint32_t ae0_status = system_reg_read(0xa050);
     void *buffer_addr = (void *)((ae0_status << 8) & 0x3000) + data_b2f3c;
 
-    /* Binary Ninja: DMA cache sync */
-    tisp_dma_cache_sync_helper(0, buffer_addr, 0x1000, 0);
+    /* OEM: private_dma_cache_sync(0, buffer_addr, 0x1000, 0)
+     * Invalidate CPU cache before reading DMA-written AE stats */
+    private_dma_cache_sync(NULL, buffer_addr, 0x1000, 0);
 
     {
         static int ae_dma_log;
@@ -4141,7 +4131,17 @@ int ae0_interrupt_static(void)
         }
     }
 
-    pr_debug("ae0_interrupt_static: AE0 static interrupt processed\n");
+    /* OEM pushes event 4 (total gain update) from ae0_interrupt path.
+     * This triggers tisp_tgain_update which refreshes all gain-dependent
+     * ISP blocks: MDNS, sharpen, SDNS, DPC, LSC, YDNS, RDNS.
+     * Without this, per-frame ISP tuning is completely dead. */
+    {
+        struct tisp_event_record ev = {0};
+        ev.event_id = 4;
+        ev.args[0] = 0x10000; /* log2 gain index — safe default */
+        tisp_event_push(&ev);
+    }
+
     return 1;
 }
 EXPORT_SYMBOL(ae0_interrupt_static);
@@ -4265,8 +4265,9 @@ int tisp_init(void *sensor_info_arg, char *param_name)
     /* Binary Ninja OEM ORDER: Allocate ALL DMA buffers FIRST, then init sub-modules */
     pr_info("*** tisp_init: ALLOCATING ISP PROCESSING BUFFERS ***\n");
 
-    /* Binary Ninja: AE0 buffer allocation (0x6000 bytes) */
-    void *ae0_buffer = kmalloc(0x6000, GFP_KERNEL);
+    /* OEM uses __get_free_pages for page-aligned DMA buffers.
+     * AE0: order 3 = 8 pages = 32KB (0x8000), we use 0x6000 of it. */
+    void *ae0_buffer = (void *)__get_free_pages(GFP_KERNEL, 3);
     if (ae0_buffer != NULL) {
         dma_addr_t ae0_phys = virt_to_phys(ae0_buffer);
         data_b2f3c = (uint32_t)(unsigned long)ae0_buffer;
@@ -4283,8 +4284,8 @@ int tisp_init(void *sensor_info_arg, char *param_name)
         pr_info("*** tisp_init: AE0 buffer allocated at 0x%08x ***\n", (uint32_t)ae0_phys);
     }
 
-    /* Binary Ninja: AE1 buffer allocation (0x6000 bytes) */
-    void *ae1_buffer = kmalloc(0x6000, GFP_KERNEL);
+    /* AE1: order 3 = 8 pages = 32KB */
+    void *ae1_buffer = (void *)__get_free_pages(GFP_KERNEL, 3);
     if (ae1_buffer != NULL) {
         dma_addr_t ae1_phys = virt_to_phys(ae1_buffer);
         data_b2f54 = (uint32_t)(unsigned long)ae1_buffer;
@@ -4301,8 +4302,8 @@ int tisp_init(void *sensor_info_arg, char *param_name)
         pr_info("*** tisp_init: AE1 buffer allocated at 0x%08x ***\n", (uint32_t)ae1_phys);
     }
 
-    /* Binary Ninja: AWB statistics buffer (0x4000 bytes) → regs 0xb03c-0xb04c */
-    void *awb_buffer = kmalloc(0x4000, GFP_KERNEL);
+    /* AWB: order 2 = 4 pages = 16KB */
+    void *awb_buffer = (void *)__get_free_pages(GFP_KERNEL, 2);
     if (awb_buffer != NULL) {
         dma_addr_t awb_phys = virt_to_phys(awb_buffer);
         data_a2f58 = 4;
@@ -4319,7 +4320,7 @@ int tisp_init(void *sensor_info_arg, char *param_name)
 
     /* Binary Ninja: ADR statistics DMA buffer (0x4000 bytes) → regs 0x4494-0x44a0
      * OEM: data_a2f68 = virt, data_a2f6c = phys, written to ADR stat registers */
-    void *adr_buffer = kmalloc(0x4000, GFP_KERNEL);
+    void *adr_buffer = (void *)__get_free_pages(GFP_KERNEL, 2);
     if (adr_buffer != NULL) {
         dma_addr_t adr_phys_addr = virt_to_phys(adr_buffer);
         system_reg_write(0x4494, adr_phys_addr);
@@ -4334,8 +4335,8 @@ int tisp_init(void *sensor_info_arg, char *param_name)
                 adr_buffer, (uint32_t)adr_phys_addr);
     }
 
-    /* Binary Ninja: DPC buffer (0x4000 bytes) → regs 0x5b80-0x5b90 */
-    void *dpc_buffer = kmalloc(0x4000, GFP_KERNEL);
+    /* DPC/Defog: order 2 = 4 pages = 16KB */
+    void *dpc_buffer = (void *)__get_free_pages(GFP_KERNEL, 2);
     if (dpc_buffer != NULL) {
         dma_addr_t dpc_phys = virt_to_phys(dpc_buffer);
         system_reg_write(0x5b84, dpc_phys);
@@ -4350,8 +4351,8 @@ int tisp_init(void *sensor_info_arg, char *param_name)
                 dpc_buffer, (uint32_t)dpc_phys);
     }
 
-    /* Binary Ninja: Buffer 6 (0x4000 bytes) → regs 0xb8a8-0xb8b8 */
-    void *buf6 = kmalloc(0x4000, GFP_KERNEL);
+    /* Buffer 6: order 2 = 4 pages = 16KB */
+    void *buf6 = (void *)__get_free_pages(GFP_KERNEL, 2);
     if (buf6 != NULL) {
         dma_addr_t buf6_phys = virt_to_phys(buf6);
         system_reg_write(0xb8a8, buf6_phys);
