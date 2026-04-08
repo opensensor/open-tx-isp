@@ -911,12 +911,23 @@ static void tiziano_bcsh_compute_slopes(const uint32_t Sth[3], const uint32_t C[
                                         uint32_t *cs0, uint32_t *cs1, uint32_t *cs2,
                                         uint32_t *hdp_s, uint32_t *hbp_s)
 {
-    /* OEM default Cslopes at contrast=0x80 (neutral):
-     * cs0=0, cs1=0x400, cs2=0x400.
-     * These match OEM runtime register values. */
-    *cs0 = 0;
-    *cs1 = 0x400;
-    *cs2 = 0x400;
+    /* Cslope0 across [Sth0..Sth1] for C0->C1 */
+    {
+        uint32_t d0 = (Sth[1] > Sth[0]) ? (Sth[1] - Sth[0]) : 0;
+        *cs0 = d0 ? ((uint32_t)(abs((int)C[1] - (int)C[0])) << 10) / d0 : 0;
+    }
+
+    /* Cslope1 across [Sth1..Sth2] for C1->C2 */
+    {
+        uint32_t d1 = (Sth[2] > Sth[1]) ? (Sth[2] - Sth[1]) : 0;
+        *cs1 = d1 ? ((uint32_t)(abs((int)C[2] - (int)C[1])) << 10) / d1 : 0;
+    }
+
+    /* Cslope2 across [Sth2..1023] for C2->C4 */
+    {
+        uint32_t d2 = (1023 > Sth[2]) ? (1023 - Sth[2]) : 0;
+        *cs2 = d2 ? ((uint32_t)(abs((int)C[4] - (int)C[2])) << 10) / d2 : 0;
+    }
 
     /* HDP/HBP slopes: OEM uses 0x400/(end-mid) when increasing, else 0 */
     uint32_t dhdp = (HDP[2] > HDP[1]) ? (HDP[2] - HDP[1]) : 0;
@@ -13814,8 +13825,9 @@ static int Tiziano_awb_set_gain(void *mf_para, uint32_t point_pos, const uint32_
 	}
 
 	if (awb_frz == 0) {
-		/* OEM EXACT register addresses: vic_mdma_enable(0x17c8)+0x3c/+0x40/+0x44
-		 * = 0x1804, 0x1808, 0x180c. Plus 0x1810. All use awb latch (arg1=2). */
+		/* OEM EXACT register addresses: 0x1804/0x1808/0x180c/0x1810.
+		 * Confirmed via AWB_HW_LIVE readback that 0x183c are separate
+		 * registers that don't drive the WB output path. */
 		system_reg_write_awb(2, 0x1804, reg_pair[0]);
 		system_reg_write_awb(2, 0x1808, reg_pair[1]);
 		system_reg_write_awb(2, 0x180c, reg_pair[0]);

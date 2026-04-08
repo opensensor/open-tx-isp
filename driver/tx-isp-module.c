@@ -1919,10 +1919,6 @@ static int vic_sensor_ops_ioctl(struct tx_isp_subdev *sd, unsigned int cmd, void
 /* VIC core s_stream - EXACT Binary Ninja implementation */
 int vic_core_s_stream(struct tx_isp_subdev *sd, int enable);
 
-/* VIC continuous frame generation work queue */
-static struct delayed_work vic_frame_work;
-static void vic_frame_work_function(struct work_struct *work);
-
 // ISP Tuning IOCTLs from reference (0x20007400 series)
 #define ISP_TUNING_GET_PARAM    0x20007400
 #define ISP_TUNING_SET_PARAM    0x20007401
@@ -5336,10 +5332,6 @@ static int tx_isp_init(void)
     ourISPdev->is_open = false;
     ourISPdev->active_link = -1;
 
-    /* Initialize frame generation work queue */
-    INIT_DELAYED_WORK(&vic_frame_work, vic_frame_work_function);
-    pr_info("*** Frame generation work queue initialized ***\n");
-
     /* Create VIC device structure only if not already created elsewhere */
     if (!ourISPdev->vic_dev) {
         pr_info("*** CREATING VIC DEVICE STRUCTURE AND LINKING TO ISP CORE ***\n");
@@ -5720,10 +5712,6 @@ static void tx_isp_exit(void)
     int i;
 
     pr_info("TX ISP driver exiting...\n");
-
-    /* Cancel frame generation work */
-    cancel_delayed_work_sync(&vic_frame_work);
-    pr_info("*** Frame generation work cancelled ***\n");
 
     if (ourISPdev) {
         /* Clean up subdevice graph */
@@ -6811,12 +6799,6 @@ void tx_isp_wakeup_frame_channels(void)
             pr_debug("*** Poked channel %d waiters ***\n", i);
         }
     }
-}
-
-/* VIC frame generation work function */
-static void vic_frame_work_function(struct work_struct *work)
-{
-    pr_debug("vic_frame_work_function: synthetic frame generation disabled\n");
 }
 
 
