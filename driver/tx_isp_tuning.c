@@ -4127,7 +4127,11 @@ int ae0_interrupt_static(void)
      * The OEM ends up with 0xa004=0 (zeroed _ae_parameter) which may
      * use a different DMA output format.
      *
-     * Read from word[1] until register config is matched to OEM. */
+     * With the 15x15 grid config (0xa004=0xf001f001), word[1] provides
+     * Y values that produce correct exposure when fed to libimp's AE.
+     * Word[0] has more non-zero zones but its values are too small,
+     * causing libimp to under-expose (very dark image).
+     * Word[1] tested and confirmed working for good exposure. */
     {
         extern int tisp_ae_update_zone_data(uint32_t *new_zone_data, size_t data_size);
         uint32_t zones[225];
@@ -4135,7 +4139,11 @@ int ae0_interrupt_static(void)
         int i;
 
         for (i = 0; i < 225; i++) {
-            zones[i] = src[1] & 0x1fffff;
+            /* OEM EXACT: word[0] & 0x1fffff is Y luminance (channel 0)
+             * of the 6-channel packed AE DMA format. The format is
+             * identical to AWB DMA (R,G,B,IR,P packed into 4 words).
+             * Values are valid Y accumulations per zone. */
+            zones[i] = *src & 0x1fffff;
             src += 4;  /* Advance 4 words (16 bytes) to next zone */
         }
 
@@ -15860,15 +15868,22 @@ static int JZ_Isp_Awb(void)
 			if (awb_mode_flag == 1) {
 				awb_mode_flag = 0;
 				if (awb_frz == 0) {
-					system_reg_write_awb(1, 0x0b028, normal_rg);
-					system_reg_write_awb(1, 0x0b02c, normal_bg);
+					/* OEM uses system_reg_write_awb(1,...) which writes
+					 * 0xb000=1 before each register. But this runs in the
+					 * event thread after awb_interrupt_static already
+					 * re-armed DMA via tiziano_awb_set_lum_th_freq.
+					 * The extra 0xb000=1 corrupts DMA mid-collection.
+					 * Write registers directly — AWB config is already
+					 * latched from the ISR's tiziano_awb_set_lum_th_freq. */
+					system_reg_write(0x0b028, normal_rg);
+					system_reg_write(0x0b02c, normal_bg);
 				}
 			}
 		} else if (awb_mode_flag == 0) {
 			awb_mode_flag = 1;
 			if (awb_frz == 0) {
-				system_reg_write_awb(1, 0x0b028, lowlight_rg);
-				system_reg_write_awb(1, 0x0b02c, 0x03ff0001);
+				system_reg_write(0x0b028, lowlight_rg);
+				system_reg_write(0x0b02c, 0x03ff0001);
 			}
 		}
 	}
@@ -15957,12 +15972,10 @@ int awb_interrupt_static(void)
 	}
 
 	tiziano_awb_set_lum_th_freq();
-
-	/* OEM EXACT: awb_interrupt_static ends with 0xb000=1 persisting
-	 * (set by system_reg_write_awb(1,...) inside tiziano_awb_set_lum_th_freq).
-	 * Explicitly ensure 0xb000=1 here as the AWB stats enable latch.
-	 * Without this, AWB hardware doesn't collect pixel statistics. */
-	system_reg_write(0xb000, 1);
+	/* OEM: 0xb000=1 is already written by system_reg_write_awb(1,...)
+	 * inside tiziano_awb_set_lum_th_freq. Do NOT write it again here —
+	 * a second 0xb000=1 re-arms the DMA mid-collection, corrupting
+	 * subsequent banks (all zeros after bank 0). */
 
 	event_data.event_id = 0xa;
 	tisp_event_push(&event_data);
