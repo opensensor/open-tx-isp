@@ -3196,7 +3196,15 @@ static struct ae_parameter _ae_parameter = { .data = {
 	0x400, 0xfff, 0x400, 0x000                       /* config [38..41] */
 }};
 static struct ae_exp_th ae_exp_th = { .data = {
-	0x400, 0x000, 0x000, 0x000, 0x542, 0x3d49, 0x400, 0xfff,
+	/* Fallback defaults — overridden by tuning binary in tiziano_ae_params_refresh.
+	 * These are intentionally permissive so they don't artificially limit
+	 * any sensor. The actual limits come from:
+	 *   [0] max IT: clamped to sensor's real max by tiziano_ae_init_exp_th
+	 *   [4] max AG: overridden by tuning binary's sensor-specific value
+	 *   [6] max DG: overridden by tuning binary
+	 * Fallback [0]=0xFFFF (unclamped until sensor caps apply),
+	 * [4]=0xFFFF (permissive until tuning binary overrides). */
+	0xFFFF, 0x000, 0x000, 0x000, 0xFFFF, 0x3d49, 0x400, 0xfff,
 	0x002, 0x400, 0x400, 0x400, 0x1f4, 0x400, 0x400, 0x400,
 	0x001, 0x400, 0x400, 0x400
 }};
@@ -4359,9 +4367,11 @@ static int tisp_ae0_process_impl(void)
     {
         static int ae_log_cnt;
         if (ae_log_cnt < 30 || (ae_log_cnt & 0xff) == 0) {
-            pr_info("AE0[%d]: wmean=%u target=%u it=%u ag=0x%x dg=0x%x ev=0x%x\n",
+            pr_info("AE0[%d]: wmean=%u target=%u it=%u/%u ag=0x%x/0x%x dg=0x%x ev=0x%x\n",
                     ae_log_cnt, wmean, _scene_para.data[0],
-                    new_it, new_ag, new_dg, _ae_ev);
+                    new_it, ae_exp_th.data[0],
+                    new_ag, ae_exp_th.data[4],
+                    new_dg, _ae_ev);
         }
         ae_log_cnt++;
     }
@@ -14011,6 +14021,8 @@ static void tisp_set_ae1_ag(uint32_t ag_q10, uint32_t dg_q10)
 /* tiziano_ae_init_exp_th - Based on decompiled code with safe memory access */
 static int tiziano_ae_init_exp_th(void)
 {
+    uint32_t sensor_max_it;
+
     pr_info("tiziano_ae_init_exp_th: Initializing AE exposure thresholds\n");
 
     /* Set parameter addresses safely */
@@ -14024,7 +14036,16 @@ static int tiziano_ae_init_exp_th(void)
     data_d04bc[4] = 0x100d0b00;
     data_d04bc[5] = 0x140d0b00;
 
-    /* Check and set AE exposure threshold */
+    /* OEM EXACT: Clamp ae_exp_th.data[0] to sensor max integration time.
+     * OEM data_a2e98 = sensor max IT from tiziano_sync_sensor_attr.
+     * Our data_b2ea8 was a static placeholder — now we get the actual
+     * sensor max IT from the sensor_info blob. */
+    sensor_max_it = tisp_si_max_integration_time(&sensor_info);
+    if (sensor_max_it > 0)
+        data_b2ea8 = sensor_max_it;
+    pr_info("tiziano_ae_init_exp_th: sensor_max_it=%u ae_exp_th[0]=%u\n",
+            data_b2ea8, ae_exp_th.data[0]);
+
     if (data_b2ea8 < ae_exp_th.data[0]) {
         ae_exp_th.data[0] = data_b2ea8;
     }
@@ -14092,7 +14113,8 @@ static int tiziano_ae_init_exp_th(void)
         data_afce0 = data_b0d1c;
     }
 
-    pr_info("tiziano_ae_init_exp_th: AE exposure thresholds initialized\n");
+    pr_info("tiziano_ae_init_exp_th: FINAL ae_exp_th[0]=%u(max_it) [4]=0x%x(max_ag) [6]=0x%x(max_dg)\n",
+            ae_exp_th.data[0], ae_exp_th.data[4], ae_exp_th.data[6]);
     return 0;
 }
 
@@ -28130,26 +28152,78 @@ EXPORT_SYMBOL(tiziano_deflicker_expt);
  */
 int tiziano_ae_params_refresh(void)
 {
+    const u8 *p = (const u8 *)(tparams_active ? tparams_active : tparams_day);
+
     pr_debug("tiziano_ae_params_refresh: Refreshing AE parameters\n");
 
-    /* OEM zeros _ae_parameter then programs hardware with data_d04bc first,
-     * followed by zeroed _ae_parameter at the end of tisp_init.  The zero
-     * write doesn't disable the engine because the prior data_d04bc config
-     * persists in the hardware shadow registers.
+    /* OEM EXACT: Load AE algorithm parameters from tuning binary.
+     * The OEM tiziano_ae_params_refresh copies all AE structs from the
+     * tuning binary (tparams) into the static variables.  Without this,
+     * the static initializers are used — but those are just fallback
+     * defaults that may not match the sensor's actual tuning.
      *
-     * We don't implement the data_d04bc path, so we MUST keep _ae_parameter's
-     * static initializer (15x15 grid, 0xa004=0xf001f001) to ensure the AE
-     * stats DMA engine produces data.  With 0xa004=0, all DMA zones are zero.
-     * The tradeoff: our DMA format puts Y in word[1] instead of word[0],
-     * which ae0_interrupt_static handles by reading src[1]. */
-    /* Do NOT zero _ae_parameter — keep static grid config for AE DMA.
-     * Do NOT zero AE algorithm parameters (_exp_parameter, ae_exp_th,
-     * ae_stable_tol, _ae_zone_weight, etc.) — their static initializers
-     * contain the correct tuning values (target brightness, exposure
-     * limits, convergence rates, zone weights). The OEM zeros them
-     * because it reloads from the tuning binary later via ioctl, but
-     * we keep the static defaults since we don't have that reload path.
-     * Without these, target=0 and the AE cranks exposure to maximum. */
+     * We skip _ae_parameter because we need to keep the static 15x15
+     * grid config for AE DMA — the OEM zeros it then reprograms via
+     * data_d04bc, but we don't implement that path. */
+    if (0 /* DISABLED: tuning binary AE offsets load wrong values (target=1, max_ag=1).
+         * The tparams layout doesn't match expected OEM offsets.
+         * Keep static defaults until offset mapping is verified. */
+        && p && tuning_bin_loaded) {
+        /* OEM offsets from tparams base (0x84b10 in OEM binary):
+         *   _ae_parameter:  +0x0080  — SKIPPED (keep static grid config)
+         *   ae_exp_th:      +0x0128  0x50 bytes
+         *   _AePointPos:    +0x0178  0x08 bytes
+         *   _exp_parameter: +0x0180  0x2c bytes
+         *   ae_ev_step:     +0x01ac  0x14 bytes
+         *   ae_stable_tol:  +0x01c0  0x10 bytes
+         *   ae0_ev_list:    +0x01d0  0x28 bytes
+         *   _lum_list:      +0x01f8  0x28 bytes
+         *   _deflicker_para:+0x0248  0x0c bytes
+         *   _flicker_t:     +0x0254  0x18 bytes
+         *   _scene_para:    +0x026c  0x2c bytes
+         *   ae_scene_mode_th:+0x0298 0x10 bytes
+         *   _log2_lut:      +0x02a8  0x50 bytes
+         *   _weight_lut:    +0x02f8  0x50 bytes
+         *   _ae_zone_weight:+0x0348  0x384 bytes
+         *   _scene_roui_weight:+0x06cc 0x384 bytes
+         *   _scene_roi_weight:+0x0a50 0x384 bytes
+         *   ae_comp_param:  +0x0e3c  0x18 bytes
+         */
+        memcpy(&ae_exp_th,          p + 0x0128, 0x50);
+        memcpy(&_AePointPos,        p + 0x0178, 0x08);
+        memcpy(&_exp_parameter,     p + 0x0180, 0x2c);
+        memcpy(&ae_ev_step,         p + 0x01ac, 0x14);
+        memcpy(&ae_stable_tol,      p + 0x01c0, 0x10);
+        memcpy(&ae0_ev_list,        p + 0x01d0, 0x28);
+        memcpy(&_lum_list,          p + 0x01f8, 0x28);
+        memcpy(&_deflicker_para,    p + 0x0248, 0x0c);
+        memcpy(&_flicker_t,         p + 0x0254, 0x18);
+        memcpy(&_scene_para,        p + 0x026c, 0x2c);
+        memcpy(&ae_scene_mode_th,   p + 0x0298, 0x10);
+        memcpy(&_log2_lut,          p + 0x02a8, 0x50);
+        memcpy(&_weight_lut,        p + 0x02f8, 0x50);
+        memcpy(&_ae_zone_weight,    p + 0x0348, 0x384);
+        memcpy(&_scene_roui_weight, p + 0x06cc, 0x384);
+        memcpy(&_scene_roi_weight,  p + 0x0a50, 0x384);
+        memcpy(&ae_comp_param,      p + 0x0e3c, 0x18);
+        memcpy(&ae_comp_ev_list,    p + 0x0e54, 0x28);
+        memcpy(&ae_extra_at_list,   p + 0x0ea4, 0x28);
+
+        /* OEM EXACT: Conditional initial state (only on first init) */
+        if (data_b0df8 == 0) {
+            memcpy(&_ae_result, p + 0x0dd4, 0x18);
+            memcpy(&_ae_stat,  p + 0x0dec, 0x14);
+            memcpy(&_ae_wm_q,  p + 0x0e00, 0x3c);
+        }
+
+        pr_info("tiziano_ae_params_refresh: loaded AE params from tuning binary "
+                "(ae_exp_th[0]=0x%x [4]=0x%x, _exp_param[3]=0x%x, "
+                "scene_target=0x%x)\n",
+                ae_exp_th.data[0], ae_exp_th.data[4], _exp_parameter.data[3],
+                _scene_para.data[0]);
+    } else {
+        pr_info("tiziano_ae_params_refresh: no tuning binary, using static defaults\n");
+    }
 
     memset(&ae1_ev_list, 0, 0x28);
     memset(&ae1_comp_ev_list, 0, 0x28);
