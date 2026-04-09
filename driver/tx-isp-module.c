@@ -181,7 +181,6 @@ DEFINE_MUTEX(sensor_list_mutex);
 int sensor_count = 0;
 static int current_sensor_index = -1;
 extern int isp_memopt; /* defined in tx_isp_core.c, exposed as module_param */
-extern void tiziano_mdns_enable_after_dma(void); /* defined in tx_isp_tuning.c */
 
 /* CRITICAL: VIC interrupt control flag - Binary Ninja reference */
 /* This is now declared as extern - the actual definition is in tx_isp_vic.c */
