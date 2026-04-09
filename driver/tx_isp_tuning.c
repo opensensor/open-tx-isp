@@ -3385,6 +3385,73 @@ static uint32_t data_c4648 = 0;
 static uint32_t data_c464c = 0;
 static uint32_t data_c4650 = 0;
 
+/* === AE0 internal algorithm state (OEM globals from tisp_ae0_process_impl) === */
+
+/* Effect frame delay pipeline — OEM uses these to delay gain/EV application
+ * by EffectFrame frames to account for sensor readout latency */
+static uint32_t EffectFrame = 0;    /* OEM: data_a0cdc — number of frame delay slots */
+static uint32_t EffectCount0 = 0;   /* OEM: scratch counter */
+
+/* Per-frame cache rings: exposure value, total gain (analog*digital), analog gain, digital gain.
+ * Index 0 = current, [1..EffectFrame] = delayed pipeline.
+ * OEM: ev0_cache[], ad0_cache[], ag0_cache[], dg0_cache[] */
+static uint32_t ev0_cache[16];      /* exposure value cache (Q-format) */
+static uint32_t ad0_cache[16];      /* total gain (ag*dg) cache */
+static uint32_t ag0_cache[16];      /* analog gain cache */
+static uint32_t dg0_cache[16];      /* digital gain cache */
+
+/* AE gain tracking for event 4/5 push decisions */
+static uint32_t total_gain_new = 0;
+static uint32_t total_gain_old = 0;
+static uint32_t again_new = 0;
+static uint32_t again_old = 0;
+
+/* AE control state flags */
+static uint32_t tisp_ae_ctrls = 0;  /* When nonzero, force event pushes */
+static uint32_t _ae_ev = 0;        /* Current exposure value (output of ae0_tune2) */
+static uint32_t ae_scene_luma = 0;  /* Scene luminance output */
+static uint32_t IspAeFlag = 0;     /* AE initial convergence flag */
+
+/* OEM analog/digital gain state for tisp_set_ae0_ag */
+static uint32_t ag_new = 0x400;    /* Current analog gain (Q10) */
+static uint32_t dg_new = 0x400;    /* Current digital gain (Q10) */
+static uint32_t data_c46a0 = 0x400; /* Cached analog gain */
+static uint32_t data_c46a4 = 0x400; /* Cached digital gain */
+static uint32_t data_c46ac = 0x400; /* Cached compensated digital gain */
+
+/* OEM gain register/limit references */
+static uint32_t data_c46a8 = 0x400; /* Max integration time (tuning param) */
+
+/* OEM event data caches */
+static uint32_t data_c46c0 = 0;    /* Last pushed EV (event 7) */
+static uint32_t data_c46c4 = 0;    /* Last pushed total gain log2 (event 4) */
+static uint32_t data_c46c8 = 0;    /* Last pushed analog gain log2 (event 5) */
+
+/* AE convergence state for ae0_tune2 */
+static uint32_t data_a0e04 = 1;    /* Force-init flag (1 = fill caches on first run) */
+static uint32_t data_a0df4 = 0;    /* Hysteresis engaged flag */
+static uint32_t data_a0df8 = 0;    /* Exposure unchanged flag */
+static uint32_t data_a0dfc = 0;    /* Convergence started flag */
+static uint32_t data_9a2ec = 0;    /* Comp AE mode flag */
+static uint32_t data_c46d0 = 0;    /* AE gain distribution mode */
+static uint32_t ftune_wmeans_state = 0; /* OEM: ftune_wmeans.32574 */
+
+/* OEM scene luma tracking */
+static uint32_t scene_luma_old[8];
+static uint32_t scene_luma_wmean = 0;
+static uint32_t scene_luma_weight = 0x24;
+
+/* OEM WDR mode flag for AE — maps to data_a0e00 in OEM binary */
+static uint32_t ae_wdr_mode = 0;
+
+/* Forward declarations for AE internal functions */
+static void ae0_weight_mean2(uint32_t *zone_y, uint32_t *zone_weight,
+                             uint32_t cols, uint32_t rows,
+                             uint32_t *out_wmean, uint32_t *out_total_weight);
+static int ae0_tune2(uint32_t wmean, uint32_t q,
+                     uint32_t *exp_out, uint32_t *ag_out, uint32_t *dg_out);
+static void tisp_set_ae0_ag(uint32_t ag, uint32_t dg);
+
 /* Data section variables */
 static uint32_t data_d0878[256];
 static uint32_t data_d0bfc[256];
@@ -3807,6 +3874,10 @@ static int tisp_ae0_ctrls_update(void);
 static int tisp_ae0_process_impl(void);
 static int tisp_event_push(void *event);
 static int system_reg_write_ae(int ae_id, uint32_t reg, uint32_t value);
+static int32_t tisp_log2_fixed_to_fixed_tuning(uint32_t input_val, int32_t in_precision, char out_precision);
+static void tisp_set_sensor_integration_time(uint32_t time);
+static void tisp_set_sensor_analog_gain(void);
+extern int tisp_ae_get_y_zone(void *buffer);
 
 /* Helper function implementations */
 /* Helper function implementations */
@@ -3923,13 +3994,505 @@ static int tisp_ae0_ctrls_update(void)
     return 0;
 }
 
+/* ae0_weight_mean2 — Compute weighted mean luminance from 15x15 zone grid.
+ *
+ * OEM (0x4f93c) does a complex per-zone weighted sum using zone weights,
+ * color channel ratios, and anti-flicker corrections.  This simplified
+ * version computes the essential weighted mean Y that drives the exposure
+ * controller.
+ *
+ * OEM per-zone processing:
+ *   zone_area = row_spacing[row] * col_spacing
+ *   zone_luma = raw_y / zone_area  (normalize by pixel count)
+ *   weighted_sum += zone_luma * weight
+ *   weight_sum += weight
+ *   wmean = weighted_sum / weight_sum
+ *
+ * zone_y:     225-element array of per-zone Y luminance values (raw from DMA)
+ * zone_wt:    225-element array of per-zone weight values
+ * cols:       number of columns in grid (from _ae_parameter.data[1])
+ * rows:       number of rows in grid (from _ae_parameter.data[3])
+ * out_wmean:  output weighted mean luminance (area-normalized)
+ * out_total:  output total weight (for normalization)
+ */
+static void ae0_weight_mean2(uint32_t *zone_y, uint32_t *zone_wt,
+                             uint32_t cols, uint32_t rows,
+                             uint32_t *out_wmean, uint32_t *out_total_weight)
+{
+    uint64_t sum_yw = 0;   /* sum of (normalized_Y * weight) */
+    uint64_t sum_w = 0;    /* sum of weights */
+    uint32_t r, c;
+    uint32_t row_spacing, col_spacing, zone_area;
+    uint32_t idx, y, w, zone_luma;
+
+    if (cols == 0) cols = 1;
+    if (rows == 0) rows = 1;
+    if (cols > 15) cols = 15;
+    if (rows > 15) rows = 15;
+
+    for (r = 0; r < rows; r++) {
+        /* OEM: row_spacing is _ae_parameter.data[19 + r] (offset 0x4c in OEM param block)
+         * col_spacing is _ae_parameter.data[4 + c] (per-column spacing) */
+        row_spacing = _ae_parameter.data[19 + r];
+        if (row_spacing == 0) row_spacing = 1;
+
+        for (c = 0; c < cols; c++) {
+            idx = r * cols + c;
+            if (idx >= 225)
+                break;
+
+            col_spacing = _ae_parameter.data[4 + c];
+            if (col_spacing == 0) col_spacing = 1;
+
+            zone_area = row_spacing * col_spacing;
+            y = zone_y[idx];
+            w = zone_wt[idx];
+
+            if (w == 0)
+                continue;
+
+            /* OEM: normalize raw Y by zone pixel area */
+            zone_luma = y / zone_area;
+
+            sum_yw += (uint64_t)zone_luma * w;
+            sum_w += w;
+        }
+    }
+
+    if (sum_w == 0) {
+        *out_wmean = 1;  /* OEM: never return 0 */
+        *out_total_weight = 1;
+        return;
+    }
+
+    {
+        uint64_t result = sum_yw;
+        do_div(result, (uint32_t)sum_w);
+        *out_wmean = (uint32_t)result;
+    }
+
+    *out_total_weight = (uint32_t)sum_w;
+
+    if (*out_wmean == 0)
+        *out_wmean = 1;  /* OEM clamps to minimum 1 */
+}
+
+/* ae0_tune2 — Simplified AE exposure convergence controller.
+ *
+ * OEM (0x500b8) is an extremely complex gain-splitting PID controller
+ * with 64-bit fixed-point math, multi-level gain distribution, hysteresis,
+ * anti-flicker, and EV-target interpolation.
+ *
+ * This simplified version implements the core convergence loop:
+ *   1. Compare weighted mean luminance against AE target
+ *   2. Compute required exposure value change as a ratio
+ *   3. Adjust integration time first (primary control)
+ *   4. When IT is maxed/minned, adjust analog gain (secondary)
+ *   5. Digital gain is a last resort (tertiary)
+ *   6. Apply convergence speed damping to avoid oscillation
+ *
+ * wmean:   current weighted mean scene luminance
+ * q:       Q-format fixed-point position
+ * exp_out: output integration time
+ * ag_out:  output analog gain (Q10)
+ * dg_out:  output digital gain (Q10)
+ *
+ * Returns: 0 = converged (stable), 1 = still adjusting
+ */
+static int ae0_tune2(uint32_t wmean, uint32_t q,
+                     uint32_t *exp_out, uint32_t *ag_out, uint32_t *dg_out)
+{
+    uint32_t ae_target;
+    uint32_t cur_it, cur_ag, cur_dg;
+    uint32_t min_it, max_it, min_ag, max_ag, min_dg, max_dg;
+    uint32_t conv_speed, tolerance;
+    uint32_t qm, one_q;
+    uint32_t ratio, error;
+    uint32_t tol_q, tol_scaled;
+    int32_t delta, step_speed, damped_delta;
+    uint32_t step_ratio;
+    uint32_t new_it, new_ag, new_dg;
+
+    /* AE target from scene_para: data[0] is the target luminance.
+     * OEM ae_target() interpolates from ae0_ev_list+lum_list based on EV,
+     * but for initial convergence the base target works. */
+    ae_target = _scene_para.data[0];
+    if (ae_target == 0)
+        ae_target = 0x80;  /* Safe default: ~128 out of 255 */
+
+    /* Current exposure state */
+    cur_it = _ae_reg.data[0];
+    cur_ag = data_c46a0;
+    cur_dg = data_c46a4;
+
+    if (cur_it == 0) cur_it = 1;
+    if (cur_ag == 0) cur_ag = 0x400;  /* Unity Q10 */
+    if (cur_dg == 0) cur_dg = 0x400;  /* Unity Q10 */
+
+    /* Exposure limits from tuning parameters.
+     * ae_exp_th.data[0] = max IT, data[4] = max AG, data[6] = max DG.
+     * Min IT defaults to 1 (OEM data_b0cfc is the min-exp from sensor). */
+    min_it = 1;
+    max_it = ae_exp_th.data[0]; /* Max integration time */
+    min_ag = 0x400;             /* Min analog gain (1x in Q10) */
+    max_ag = ae_exp_th.data[4]; /* Max analog gain */
+    min_dg = 0x400;             /* Min digital gain (1x in Q10) */
+    max_dg = ae_exp_th.data[6]; /* Max digital gain */
+
+    /* Sanity clamp limits */
+    if (max_it == 0) max_it = 0x40000;
+    if (max_ag == 0) max_ag = 0x4000;
+    if (max_dg == 0) max_dg = 0x4000;
+    if (max_it < min_it) max_it = min_it;
+
+    /* Convergence speed parameters from _exp_parameter:
+     * data[3] = convergence speed (higher = faster)
+     * data[6] = tolerance (how close to target before declaring stable) */
+    conv_speed = _exp_parameter.data[3];
+    tolerance = _exp_parameter.data[6];
+    if (conv_speed == 0) conv_speed = 0x400;  /* Default Q10 speed */
+    if (tolerance == 0) tolerance = 1;
+
+    /* Compute error: how far are we from target?
+     * ratio = target / wmean in Q-format
+     * >1.0 means too dark (need more exposure)
+     * <1.0 means too bright (need less exposure) */
+    qm = q & 31;
+    if (qm == 0) qm = 10;
+    one_q = 1u << qm;
+
+    if (wmean == 0)
+        ratio = one_q << 2;  /* Very dark: 4x increase */
+    else
+        ratio = fix_point_div_32(qm, ae_target << qm, wmean << qm);
+
+    /* Check if already within tolerance */
+    if (ratio >= one_q)
+        error = ratio - one_q;
+    else
+        error = one_q - ratio;
+
+    /* Stable tolerance check: OEM uses ae_stable_tol */
+    tol_q = ae_stable_tol.data[0];
+    if (tol_q == 0) tol_q = 0x33;  /* ~5% tolerance */
+    tol_scaled = (tol_q * one_q) >> 8;  /* Convert 0..255 to Q-format fraction */
+
+    if (error <= tol_scaled) {
+        /* Within tolerance — declare stable */
+        *exp_out = cur_it;
+        *ag_out = cur_ag;
+        *dg_out = cur_dg;
+        return 0;
+    }
+
+    /* Apply convergence damping: don't jump the full ratio in one frame.
+     * OEM uses ae_ev_step data for this; we use conv_speed as a fraction
+     * of the full correction to apply per frame.
+     *
+     * damped_ratio = 1.0 + (ratio - 1.0) * speed / 256
+     * This gives ~60% correction per frame at speed=0x9a (OEM default). */
+    delta = (int32_t)ratio - (int32_t)one_q;
+    step_speed = ae_ev_step.data[4];
+    if (step_speed == 0) step_speed = 0x9a;  /* OEM default */
+
+    /* Scale delta by speed/256 to get per-frame step */
+    damped_delta = (delta * step_speed) >> 8;
+
+    /* Clamp minimum step to ensure convergence */
+    if (damped_delta > 0 && damped_delta < (int32_t)(one_q >> 6))
+        damped_delta = one_q >> 6;
+    if (damped_delta < 0 && damped_delta > -(int32_t)(one_q >> 6))
+        damped_delta = -(int32_t)(one_q >> 6);
+
+    step_ratio = (uint32_t)((int32_t)one_q + damped_delta);
+    if (step_ratio == 0)
+        step_ratio = 1;
+
+    /* Apply the step ratio to current EV = IT * AG * DG.
+     * Strategy: adjust IT first, then AG, then DG.
+     *
+     * Compute new_ev = cur_ev * step_ratio
+     * Then distribute across IT, AG, DG respecting limits. */
+
+    /* First: try to adjust integration time only */
+    {
+        uint64_t new_it_64 = (uint64_t)cur_it * step_ratio;
+        new_it_64 >>= qm;
+        new_it = (uint32_t)new_it_64;
+    }
+
+    if (new_it < min_it) new_it = min_it;
+    if (new_it > max_it) new_it = max_it;
+    new_ag = cur_ag;
+    new_dg = cur_dg;
+
+    /* If IT was clamped, compute residual and apply to AG */
+    if (new_it == max_it || new_it == min_it) {
+        uint32_t desired_it, residual;
+        {
+            uint64_t tmp = (uint64_t)cur_it * step_ratio;
+            tmp >>= qm;
+            desired_it = (uint32_t)tmp;
+        }
+        if (desired_it == 0) desired_it = 1;
+        if (new_it == 0) new_it = 1;
+
+        residual = fix_point_div_32(qm, desired_it << qm, new_it << qm);
+
+        /* Apply residual to analog gain */
+        {
+            uint64_t new_ag_64 = (uint64_t)cur_ag * residual;
+            new_ag_64 >>= qm;
+            new_ag = (uint32_t)new_ag_64;
+        }
+        if (new_ag < min_ag) new_ag = min_ag;
+        if (new_ag > max_ag) new_ag = max_ag;
+
+        /* If AG also clamped, apply remainder to DG */
+        if (new_ag == max_ag || new_ag == min_ag) {
+            uint32_t desired_ag, ag_residual;
+            {
+                uint64_t tmp = (uint64_t)cur_ag * residual;
+                tmp >>= qm;
+                desired_ag = (uint32_t)tmp;
+            }
+            if (desired_ag == 0) desired_ag = 1;
+            if (new_ag == 0) new_ag = 1;
+
+            ag_residual = fix_point_div_32(qm, desired_ag << qm, new_ag << qm);
+            {
+                uint64_t new_dg_64 = (uint64_t)cur_dg * ag_residual;
+                new_dg_64 >>= qm;
+                new_dg = (uint32_t)new_dg_64;
+            }
+            if (new_dg < min_dg) new_dg = min_dg;
+            if (new_dg > max_dg) new_dg = max_dg;
+        }
+    }
+
+    *exp_out = new_it;
+    *ag_out = new_ag;
+    *dg_out = new_dg;
+
+    data_a0dfc = 1;  /* Mark convergence in progress */
+    return 1;  /* Still adjusting */
+}
+
+/* tisp_set_ae0_ag — Write analog + digital gain to sensor.
+ *
+ * OEM (0x51870) calls tisp_set_sensor_analog_gain() and
+ * tisp_set_sensor_digital_gain_short(), then compensates for the
+ * sensor's actual allocated gain vs requested gain.
+ *
+ * This simplified version calls our existing sensor gain write function
+ * and caches the result. */
+static void tisp_set_ae0_ag(uint32_t ag, uint32_t dg)
+{
+    /* Update cached gain state */
+    data_c46a0 = ag;
+    data_c46a4 = dg;
+
+    /* Call existing sensor analog gain writer (uses alloc_again + SENSOR_EXPO) */
+    tisp_set_sensor_analog_gain();
+
+    /* For digital gain, the OEM calls tisp_set_sensor_digital_gain_short
+     * which goes through log2 -> alloc -> exp2 pipeline. For now we cache
+     * the digital gain for use in EV calculations. */
+    data_c46ac = dg;
+
+    IspAeFlag = 0;  /* Clear initial convergence flag after first gain write */
+}
+
+/* tisp_ae0_process_impl — Main AE0 processing function.
+ *
+ * OEM (0x54e8c) orchestrates the full AE pipeline:
+ *   1. Copies current exposure/tuning params to local buffers
+ *   2. Calls Tiziano_ae0_fpga() which runs ae0_weight_mean2 + ae0_tune2
+ *   3. When ta_custom_en==0 (internal AE): writes results to sensor
+ *   4. Updates effect frame delay pipeline
+ *   5. Writes digital gain to ISP registers via system_reg_write_ae
+ *   6. Pushes event 7 (EV update), event 4 (total gain), event 5 (analog gain)
+ *
+ * This implementation follows the OEM flow with simplified internals. */
 static int tisp_ae0_process_impl(void)
 {
-    /* OEM tisp_ae0_process_impl (0x54e8c) runs the full AE algorithm:
-     * Tiziano_ae0_fpga(), sensor integration time, analog/digital gain.
-     * Previously we wrote 0x1 to 0xa004 here, which CLOBBERED the first
-     * AE zone/weight config register, making all AE zones read as 0x80.
-     * Stub for now — libimp runs its own AE via sensor driver ioctls. */
+    uint32_t q;
+    uint32_t zones[225];
+    uint32_t wmean = 0, total_wt = 0;
+    uint32_t new_it, new_ag, new_dg;
+
+    q = _AePointPos.data[0] & 31;
+    if (q == 0)
+        q = 10;  /* Default Q10 fixed-point */
+
+    /* ---- Step 1: Read zone data and compute weighted mean ---- */
+    tisp_ae_get_y_zone(zones);
+    ae0_weight_mean2(zones, _ae_zone_weight.data,
+                     _ae_parameter.data[1], _ae_parameter.data[3],
+                     &wmean, &total_wt);
+
+    /* ---- Step 2: Run exposure convergence algorithm ---- */
+    new_it = _ae_reg.data[0];
+    new_ag = data_c46a0;
+    new_dg = data_c46a4;
+
+    /* Sensible defaults if not yet initialized */
+    if (new_it == 0) new_it = 0x400;  /* ~1024 lines initial exposure */
+    if (new_ag == 0) new_ag = 0x400;  /* Unity analog gain (Q10) */
+    if (new_dg == 0) new_dg = 0x400;  /* Unity digital gain (Q10) */
+
+    /* Handle initial EV seeding (from tisp_s_ev_start ioctl) */
+    if (ae_ev_init_en == 1) {
+        /* OEM: seed initial exposure from ae_ev_init_strict, clear flag */
+        if (ae_ev_init_strict > 0) {
+            new_it = ae_ev_init_strict;
+            data_a0dfc = 0;
+        }
+        ae_ev_init_en = 0;
+    }
+
+    ae0_tune2(wmean, q, &new_it, &new_ag, &new_dg);
+
+    /* Store computed exposure value */
+    _ae_ev = fix_point_mult3_32(q, new_it << q, new_ag, new_dg);
+
+    {
+        static int ae_log_cnt;
+        if (ae_log_cnt < 30 || (ae_log_cnt & 0xff) == 0) {
+            pr_info("AE0[%d]: wmean=%u target=%u it=%u ag=0x%x dg=0x%x ev=0x%x\n",
+                    ae_log_cnt, wmean, _scene_para.data[0],
+                    new_it, new_ag, new_dg, _ae_ev);
+        }
+        ae_log_cnt++;
+    }
+
+    /* ---- Step 3: Write to sensor (only in internal AE mode) ---- */
+    if (ta_custom_en != 0)
+        return 0;
+
+    /* Write integration time to sensor */
+    tisp_set_sensor_integration_time(new_it);
+
+    /* Write analog + digital gain to sensor */
+    tisp_set_ae0_ag(new_ag, new_dg);
+
+    /* ---- Step 4: Update effect frame delay pipeline ---- */
+    /* OEM shifts ev0_cache/ad0_cache/ag0_cache/dg0_cache arrays by 1,
+     * inserting current values at index 0. This implements the sensor
+     * readout delay compensation. */
+    {
+        int i;
+        int ef = EffectFrame;
+        uint32_t cur_ev, cur_ad;
+
+        if (ef > 14) ef = 14;  /* Safety: don't overflow 16-entry cache */
+
+        for (i = ef; i > 0; i--) {
+            ev0_cache[i] = ev0_cache[i - 1];
+            ad0_cache[i] = ad0_cache[i - 1];
+            ag0_cache[i] = ag0_cache[i - 1];
+            dg0_cache[i] = dg0_cache[i - 1];
+        }
+
+        /* Insert current values */
+        cur_ev = fix_point_mult2_32(q, new_it << q, data_c46a0);
+        cur_ad = fix_point_mult2_32(q, data_c46a0, data_c46ac);
+        ev0_cache[0] = cur_ev;
+        ad0_cache[0] = cur_ad;
+        ag0_cache[0] = data_c46a0;
+        dg0_cache[0] = data_c46ac;
+
+        /* OEM: on first run (data_a0e04 == 1), fill entire pipeline
+         * with current values so there's no stale data in the delay. */
+        if (data_a0e04 == 1) {
+            data_a0e04 = 0;
+            for (i = 1; i <= ef; i++) {
+                ev0_cache[i] = cur_ev;
+                ad0_cache[i] = cur_ad;
+                ag0_cache[i] = data_c46a0;
+                dg0_cache[i] = data_c46ac;
+            }
+        }
+    }
+
+    /* ---- Step 5: Write digital gain to ISP DG registers ---- */
+    /* OEM calls JZ_Isp_Ae_Dg2reg to pack DG into register format,
+     * then writes to 0x1030/0x1034 (normal) or 0x1000/0x1004 (WDR).
+     *
+     * OEM JZ_Isp_Ae_Dg2reg(q, &var_38, dg0_cache[EffectFrame], &var_40):
+     *   var_38 = (dg << 16) | mult(q, dg_pair[0], dg)  = dg<<16 | dg
+     *   var_34 = (mult(q, dg_pair[1], dg) << 16) | dg   = dg<<16 | dg
+     * Since dg_pair[0]=dg_pair[1]=one_q (1.0), both registers are dg|dg. */
+    {
+        uint32_t dg_val = dg0_cache[EffectFrame < 15 ? EffectFrame : 0];
+        uint32_t reg_packed = (dg_val << 16) | dg_val;
+
+        if (ae_wdr_mode == 0) {
+            /* Normal mode: write to 0x1030/0x1034 */
+            system_reg_write_ae(3, 0x1030, reg_packed);
+            system_reg_write_ae(3, 0x1034, reg_packed);
+        } else if (ae_wdr_mode == 1) {
+            /* WDR mode: write to 0x1000/0x1004 */
+            system_reg_write_ae(3, 0x1000, reg_packed);
+            system_reg_write_ae(3, 0x1004, reg_packed);
+        }
+    }
+
+    /* ---- Step 6: Copy results to _ae_result ---- */
+    memcpy(&_ae_result, &_ae_reg, sizeof(_ae_result));
+
+    /* ---- Step 7: Push events for downstream ISP blocks ---- */
+
+    /* Event 7: EV update — tells downstream blocks the current EV level.
+     * OEM: var_68=7, var_60=ev0_cache[EffectFrame+1], var_5c=0
+     * Maps to: event_id=7, args[0]=EV, args[1]=0 */
+    {
+        uint32_t ef_idx = (EffectFrame + 1 < 16) ? EffectFrame + 1 : 0;
+        struct tisp_event_record ev = {0};
+        ev.event_id = 7;
+        ev.args[0] = ev0_cache[ef_idx];
+        /* args[1..7] already zero from {0} initializer */
+        tisp_event_push(&ev);
+        data_c46c0 = ev0_cache[ef_idx];
+    }
+
+    /* Event 4: Total gain update — log2 of (analog_gain * digital_gain) << 6.
+     * OEM: var_68=4, var_60=log2(total_gain), var_5c=0
+     * Drives MDNS/sharpen/DPC/LSC gain-dependent interpolation. */
+    {
+        uint32_t ef_idx = (EffectFrame + 1 < 16) ? EffectFrame + 1 : 0;
+        uint32_t total_g = ad0_cache[ef_idx] << 6;
+        total_gain_new = total_g;
+
+        if (total_g != total_gain_old || tisp_ae_ctrls != 0) {
+            total_gain_old = total_g;
+            uint32_t log2_tg = tisp_log2_fixed_to_fixed_tuning(total_g, 0x10, 0x10);
+            struct tisp_event_record ev = {0};
+            ev.event_id = 4;
+            ev.args[0] = log2_tg;
+            tisp_event_push(&ev);
+            data_c46c4 = log2_tg;
+        }
+    }
+
+    /* Event 5: Analog gain update — log2 of analog_gain << 6.
+     * OEM: var_68=5, var_60=log2(analog_gain), var_5c=0
+     * Drives sensor-specific gain compensation. */
+    {
+        uint32_t ag_val = ag0_cache[EffectFrame < 15 ? EffectFrame : 0] << 6;
+        again_new = ag_val;
+
+        if (ag_val != again_old || tisp_ae_ctrls != 0) {
+            again_old = ag_val;
+            uint32_t log2_ag = tisp_log2_fixed_to_fixed_tuning(ag_val, 0x10, 0x10);
+            struct tisp_event_record ev = {0};
+            ev.event_id = 5;
+            ev.args[0] = log2_ag;
+            tisp_event_push(&ev);
+            data_c46c8 = log2_ag;
+        }
+    }
+
     return 0;
 }
 
@@ -4194,46 +4757,43 @@ int ae0_interrupt_static(void)
         }
     }
 
-    /* OEM EXACT: Push event 4 with args[0] = 0x10000 (1.0x gain in Q16).
-     * This triggers tisp_tgain_update which refreshes all gain-dependent
-     * ISP blocks: MDNS, sharpen, SDNS, DPC, LSC, YDNS, RDNS. */
-    {
-        struct tisp_event_record ev = {0};
-        ev.event_id = 4;
-        ev.args[0] = 0x10000;
-        tisp_event_push(&ev);
-    }
+    /* OEM ae0_interrupt_static does NOT push events — events 4/5/7 are
+     * pushed by tisp_ae0_process_impl after the exposure algorithm runs.
+     * Previously we pushed event 4 here with 0x10000 which was incorrect. */
 
     return 1;
 }
 EXPORT_SYMBOL(ae0_interrupt_static);
 
-/* tisp_ae0_process - OEM EXACT implementation (0x2dea0)
+/* tisp_ae0_process — OEM EXACT implementation (0x55468)
  *
- * OEM decompilation shows this function ONLY sets a completion flag
- * in tuning_data.  It does NOT call tisp_ae0_ctrls_update() or
- * tisp_ae0_process_impl() — those functions don't exist in the OEM.
- * The actual AE algorithm runs in libimp.so (userspace). */
+ * OEM decompilation (re-checked):
+ *   if (ta_custom_en == 0)
+ *       tisp_ae0_ctrls_update()
+ *   tisp_ae0_process_impl()
+ *   if (ta_custom_en == 1)
+ *       private_complete(&ae_algo_comp)
+ *   return 0
+ *
+ * This is the event-1 callback, invoked once per frame after ae0_interrupt_static
+ * has collected zone statistics.  When using internal AE (ta_custom_en==0), it
+ * first clamps AE control limits, then runs the full AE algorithm.
+ * When using custom/external AE (ta_custom_en==1), it runs the algorithm but
+ * signals completion so the external code can read results.
+ */
 int tisp_ae0_process(void)
 {
-    extern struct tx_isp_dev *ourISPdev;
+    /* OEM: when internal AE, clamp exposure/gain limits first */
+    if (ta_custom_en == 0)
+        tisp_ae0_ctrls_update();
 
-    pr_debug("tisp_ae0_process: Starting AE0 processing\n");
+    /* Run the AE algorithm (weighted mean + exposure convergence + sensor write) */
+    tisp_ae0_process_impl();
 
-    /* OEM: *(*(ourISPdev + 0x29d8) + flag_offset) = 1
-     * Sets a "stats ready" flag in tuning_data for libimp to poll. */
-    if (ourISPdev) {
-        struct isp_tuning_data *td = ourISPdev->tuning_data;
-        if (td) {
-            /* Signal that AE stats are available for this frame.
-             * The exact offset in the OEM is a large structure member;
-             * we use ae_comp as a reasonable proxy for the "AE ready" flag
-             * since it's in the tuning_data area. */
-            td->state |= 1;  /* Mark AE stats ready */
-        }
-    }
+    /* OEM: when custom AE, signal completion for external algorithm to read results */
+    if (ta_custom_en == 1)
+        private_complete(&ae_algo_comp);
 
-    pr_debug("tisp_ae0_process: AE0 processing completed\n");
     return 0;
 }
 EXPORT_SYMBOL(tisp_ae0_process);
