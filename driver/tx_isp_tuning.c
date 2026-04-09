@@ -16272,11 +16272,22 @@ static int Tiziano_awb_fpga(const uint32_t *stats_r,
 		 * producing interp=0 and CT=5000 (fallback).
 		 *
 		 * The << q shift converts Q8 → Q18 to match Ct_Detect's format.
-		 * Previous code also divided by cof_rg, which was wrong — the
-		 * cof calibration is already applied by fix_point_mult2_32. */
-		for (idx = 0; idx < AWB_STATS_ZONES; idx++) {
-			awb_zone_rgbg[idx] = awb_zone_rg[idx] << q;
-			awb_zone_rgbg[idx + AWB_STATS_ZONES] = awb_zone_bg[idx] << q;
+		 *
+		 * For bg: cof_bg (e.g. 4) is a calibration scaling factor baked
+		 * into zone_bg by fix_point_mult2_32. This inflates zone_bg 4x
+		 * relative to the natural B/G ratio, pushing it above bg_pos[14]
+		 * (the ceiling) and clamping bg_bi to max → ct_wght_mesh returns 0
+		 * → CT=5000 fallback. Divide by cof_bg to recover the true Q8
+		 * ratio before the << q shift. cof_rg=1 so no division is needed
+		 * for rg. */
+		{
+			u32 safe_cof_bg = cof_bg ? cof_bg : 1;
+
+			for (idx = 0; idx < AWB_STATS_ZONES; idx++) {
+				awb_zone_rgbg[idx] = awb_zone_rg[idx] << q;
+				awb_zone_rgbg[idx + AWB_STATS_ZONES] =
+					(awb_zone_bg[idx] / safe_cof_bg) << q;
+			}
 		}
 
 		if (fpga_diag_count <= 5) {
