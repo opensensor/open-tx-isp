@@ -3535,7 +3535,7 @@ static uint32_t again_old = 0;
 static uint32_t tisp_ae_ctrls = 0;  /* When nonzero, force event pushes */
 static uint32_t _ae_ev = 0;        /* Current exposure value (output of ae0_tune2) */
 static uint32_t ae_scene_luma = 0;  /* Scene luminance output */
-static uint32_t IspAeFlag = 0;     /* AE initial convergence flag */
+static uint32_t IspAeFlag = 1;     /* AE initial convergence flag (OEM: initialized to 1) */
 
 /* OEM analog/digital gain state for tisp_set_ae0_ag */
 static uint32_t ag_new = 0x400;    /* Current analog gain (Q10) */
@@ -3560,6 +3560,19 @@ static uint32_t data_a0dfc = 0;    /* Convergence started flag */
 static uint32_t data_9a2ec = 0;    /* Comp AE mode flag */
 static uint32_t data_c46d0 = 0;    /* AE gain distribution mode */
 static uint32_t ftune_wmeans_state = 0; /* OEM: ftune_wmeans.32574 */
+
+/* OEM ae0_tune2 history buffer: 16-entry ring buffer for wmean smoothing.
+ * OEM passes this as arg8 to ae0_tune2; we use a static array. */
+static uint32_t ae_wmean_hist[16];
+
+/* OEM ae0_tune2 convergence bounds (var_dc, var_e0 in OEM).
+ * tisp_ae_tune steps these toward the targets each frame. */
+static int32_t ae_tune_upper = 0;  /* Upper convergence bound (stepped) */
+static int32_t ae_tune_lower = 0;  /* Lower convergence bound (stepped) */
+/* OEM ae0_tune2 convergence targets (arg28 in OEM decompilation).
+ * Separate from bounds — targets are the desired delta, bounds are
+ * incrementally stepped toward them by tisp_ae_tune each frame. */
+static int32_t ae_tune_targets[2] = {0, 0}; /* [0]=upper target, [1]=lower target */
 
 /* OEM scene luma tracking */
 static uint32_t scene_luma_old[8];
@@ -4201,6 +4214,22 @@ static void ae0_weight_mean2(uint32_t *zone_y, uint32_t *zone_wt,
 
     if (*out_wmean == 0)
         *out_wmean = 1;  /* OEM clamps to minimum 1 */
+
+    /* Debug: when wmean is suspiciously low, dump zone details */
+    {
+        static unsigned int ae_wmean_diag;
+        ae_wmean_diag++;
+        if (*out_wmean <= 2 && (ae_wmean_diag <= 10 || (ae_wmean_diag % 300) == 0)) {
+            uint32_t rs0 = _ae_parameter.data[19];
+            uint32_t cs0 = _ae_parameter.data[4];
+            pr_info("AE_WMEAN_DBG[%u]: wmean=%u sum_yw=%llu sum_w=%llu "
+                "z[0]=%u z[112]=%u z[224]=%u w[0]=%u "
+                "rs0=%u cs0=%u area=%u cols=%u rows=%u\n",
+                ae_wmean_diag, *out_wmean, sum_yw, sum_w,
+                zone_y[0], zone_y[112], zone_y[224],
+                zone_wt[0], rs0, cs0, rs0 * cs0, cols, rows);
+        }
+    }
 }
 
 /* tisp_ae_target — OEM EXACT: Interpolate AE brightness target from EV tables.
@@ -4260,19 +4289,56 @@ static uint32_t tisp_ae_target(uint32_t cur_ev_q, uint32_t q)
     }
 }
 
-/* ae0_tune2 — Simplified AE exposure convergence controller.
+/* tisp_ae_tune — OEM EXACT (0x4fe84): Per-frame convergence stepping.
  *
- * OEM (0x500b8) is an extremely complex gain-splitting PID controller
- * with 64-bit fixed-point math, multi-level gain distribution, hysteresis,
- * anti-flicker, and EV-target interpolation.
+ * OEM takes 6 arguments: separate target and bound arrays.
+ * Each frame, bounds are stepped toward targets by (speed/128).
+ * This prevents overshoot: bounds accumulate gradually rather than
+ * jumping to the full desired delta in one frame.
  *
- * This simplified version implements the core convergence loop:
- *   1. Compare weighted mean luminance against AE target
- *   2. Compute required exposure value change as a ratio
- *   3. Adjust integration time first (primary control)
- *   4. When IT is maxed/minned, adjust analog gain (secondary)
- *   5. Digital gain is a last resort (tertiary)
- *   6. Apply convergence speed damping to avoid oscillation
+ * targets:    pointer to [upper_target, lower_target] desired deltas
+ * upper:      pointer to upper convergence bound (incrementally stepped)
+ * lower:      pointer to lower convergence bound (incrementally stepped)
+ * conv_speed: convergence speed parameter (ae_ev_step.data[4])
+ * q:          Q-format bit position
+ * one_q:      1.0 in Q-format (clamping limit)
+ */
+static void tisp_ae_tune(int32_t *targets, int32_t *upper, int32_t *lower,
+                         int32_t conv_speed, uint32_t q, uint32_t one_q)
+{
+    uint32_t qm = q & 31;
+    int32_t tgt_u = targets[0];
+    int32_t tgt_l = targets[1];
+    int32_t cur_u = *upper;
+    int32_t cur_l = *lower;
+    int32_t speed_q = conv_speed << qm;
+    uint32_t divisor = 0x80u << qm; /* 128 in Q-format */
+
+    /* OEM EXACT: clamp targets so bound+target doesn't exceed one_q */
+    if (one_q < (uint32_t)(tgt_u + cur_u))
+        tgt_u = (int32_t)one_q - cur_u;
+    if (one_q < (uint32_t)(tgt_l + cur_l))
+        tgt_l = (int32_t)one_q - cur_l;
+
+    /* Step: bound += (speed * target) / 128 */
+    *upper = cur_u + (int32_t)fix_point_div_32(qm,
+                fix_point_mult2_32(qm, speed_q, tgt_u), divisor);
+    *lower = cur_l + (int32_t)fix_point_div_32(qm,
+                fix_point_mult2_32(qm, speed_q, tgt_l), divisor);
+}
+
+/* ae0_tune2 — OEM-equivalent AE exposure convergence controller.
+ *
+ * OEM (0x500b8): Full AE convergence with history smoothing, 64-bit math,
+ * damped convergence via tisp_ae_tune, and multi-level IT/AG/DG gain split.
+ *
+ * Key OEM behaviors implemented:
+ *   1. 16-entry triangular-weighted wmean history smoothing
+ *   2. EV-target interpolation via tisp_ae_target
+ *   3. Ratio-based desired EV computation (target/smoothed_wmean * cur_ev)
+ *   4. Damped convergence stepping via tisp_ae_tune
+ *   5. 64-bit math for new EV to avoid overflow/truncation
+ *   6. Multi-level gain split: IT -> AG -> DG cascade
  *
  * wmean:   current weighted mean scene luminance
  * q:       Q-format fixed-point position
@@ -4285,203 +4351,433 @@ static uint32_t tisp_ae_target(uint32_t cur_ev_q, uint32_t q)
 static int ae0_tune2(uint32_t wmean, uint32_t q,
                      uint32_t *exp_out, uint32_t *ag_out, uint32_t *dg_out)
 {
-    uint32_t ae_target;
+    uint32_t qm = q & 31;
+    uint32_t one_q, cur_ev_q;
+    uint32_t ae_target, smoothed_wmean;
     uint32_t cur_it, cur_ag, cur_dg;
     uint32_t min_it, max_it, min_ag, max_ag, min_dg, max_dg;
-    uint32_t conv_speed, tolerance;
-    uint32_t qm, one_q;
-    uint32_t ratio, error;
-    uint32_t tol_q, tol_scaled;
-    int32_t delta, step_speed, damped_delta;
-    uint32_t step_ratio;
+    uint32_t ratio, desired_ev_q;
+    uint32_t new_ev;
     uint32_t new_it, new_ag, new_dg;
+    uint32_t hist_depth;
+    int i;
 
-    /* AE target via OEM-exact interpolation from ae0_ev_list + _lum_list.
-     * The OEM tisp_ae_target() interpolates the target brightness based on
-     * the current total EV. _scene_para.data[0] is NOT the AE target —
-     * it's a scene mode flag. */
-    {
-        uint32_t cur_ev_q;
-        uint32_t cur_it_tmp = _ae_reg.data[0];
-        uint32_t cur_ag_tmp = data_c46a0;
-        uint32_t cur_dg_tmp = data_c46a4;
-        uint32_t qm_tmp = q & 31;
-        if (qm_tmp == 0) qm_tmp = 10;
-        if (cur_it_tmp == 0) cur_it_tmp = 1;
-        if (cur_ag_tmp == 0) cur_ag_tmp = 0x400;
-        if (cur_dg_tmp == 0) cur_dg_tmp = 0x400;
-        cur_ev_q = fix_point_mult3_32(qm_tmp,
-                                      cur_it_tmp << qm_tmp,
-                                      cur_ag_tmp, cur_dg_tmp);
-        ae_target = tisp_ae_target(cur_ev_q, q);
-    }
-    if (ae_target == 0)
-        ae_target = 0x80;  /* Safe default: ~128 out of 255 */
+    if (qm == 0) qm = 10;
+    one_q = 1u << qm;
 
-    /* Current exposure state */
+    /* ---- Current exposure state ---- */
     cur_it = _ae_reg.data[0];
     cur_ag = data_c46a0;
     cur_dg = data_c46a4;
+    /* When _ae_reg.data[0] is uninitialized (0), use sensor max IT.
+     * The sensor is physically running at max IT from power-on.
+     * Without this, cur_ev starts at ~one_q (1.0) instead of the
+     * real sensor EV, causing ae_target to be 10000 instead of ~100
+     * and the convergence overshoots massively. */
+    if (cur_it == 0) {
+        cur_it = ae_exp_th.data[0];  /* Sensor max IT */
+        if (cur_it == 0) cur_it = 1;
+    }
+    if (cur_ag == 0) cur_ag = 0x400;
+    if (cur_dg == 0) cur_dg = 0x400;
 
-    if (cur_it == 0) cur_it = 1;
-    if (cur_ag == 0) cur_ag = 0x400;  /* Unity Q10 */
-    if (cur_dg == 0) cur_dg = 0x400;  /* Unity Q10 */
+    /* ---- Compute current EV in Q-format ---- */
+    cur_ev_q = fix_point_mult3_32(qm, cur_it << qm, cur_ag, cur_dg);
 
-    /* Exposure limits from tuning parameters.
-     * OEM ae_exp_th layout (AE0 group, indices 0..6):
-     *   [0] = max integration time (clamped to sensor max by init_exp_th)
-     *   [1] = max analog gain in Q10 (from tuning binary, ~0x157fe for GC2053)
-     *   [2] = max digital gain in Q10 (from tuning binary, typically 0x400 = 1x)
-     *   [3] = short IT threshold (overwritten by sensor param)
-     *   [4] = min analog gain (raw value clamped to >= 0x400 by init_exp_th)
-     *   [5] = min digital gain (raw value clamped to >= 0x400 by init_exp_th)
-     *   [6] = max DG secondary (0x400)
-     * Min IT defaults to 1 (OEM data_b0cfc is the min-exp from sensor). */
+    /* ---- Exposure limits ---- */
     min_it = 1;
-    max_it = ae_exp_th.data[0]; /* Max integration time */
-    min_ag = ae_exp_th.data[4]; /* Min analog gain (raw, clamped below) */
-    if (min_ag < 0x400) min_ag = 0x400;  /* OEM clamps to >= 1x Q10 */
-    max_ag = ae_exp_th.data[1]; /* Max analog gain in Q10 */
-    min_dg = ae_exp_th.data[5]; /* Min digital gain */
-    if (min_dg < 0x400) min_dg = 0x400;  /* OEM clamps to >= 1x Q10 */
-    max_dg = ae_exp_th.data[2]; /* Max digital gain in Q10 */
-
-    /* Sanity clamp limits */
+    max_it = ae_exp_th.data[0];
+    min_ag = ae_exp_th.data[4];
+    if (min_ag < 0x400) min_ag = 0x400;
+    max_ag = ae_exp_th.data[1];
+    min_dg = ae_exp_th.data[5];
+    if (min_dg < 0x400) min_dg = 0x400;
+    max_dg = ae_exp_th.data[2];
     if (max_it == 0) max_it = 0x40000;
     if (max_ag < min_ag) max_ag = 0x4000;
     if (max_dg < min_dg) max_dg = 0x4000;
     if (max_it < min_it) max_it = min_it;
 
-    /* Convergence speed parameters from _exp_parameter:
-     * data[3] = convergence speed (higher = faster)
-     * data[6] = tolerance (how close to target before declaring stable) */
-    conv_speed = _exp_parameter.data[3];
-    tolerance = _exp_parameter.data[6];
-    if (conv_speed == 0) conv_speed = 0x400;  /* Default Q10 speed */
-    if (tolerance == 0) tolerance = 1;
+    /* ---- Step 1: Update history buffer and shift ----
+     * OEM: shift history entries down by 1, insert new wmean at [14].
+     * History[0] is oldest, [14] is newest. */
+    for (i = 0; i < 14; i++)
+        ae_wmean_hist[i] = ae_wmean_hist[i + 1];
+    ae_wmean_hist[14] = wmean;
 
-    /* Compute error: how far are we from target?
-     * ratio = target / wmean in Q-format
-     * >1.0 means too dark (need more exposure)
-     * <1.0 means too bright (need less exposure) */
-    qm = q & 31;
-    if (qm == 0) qm = 10;
-    one_q = 1u << qm;
+    /* ---- Step 2: Compute smoothed wmean via triangular-weighted history ----
+     * OEM (0x50538): When IspAeFlag != 1 and not resetting, compute weighted
+     * average of the last N frames. Weight[i] = (i+1) where i counts from
+     * oldest to newest, giving more weight to recent frames.
+     *
+     * hist_depth from _exp_parameter.data[2], capped to [1..15]. */
+    if (IspAeFlag == 1) {
+        /* First frame or forced convergence: use raw wmean, reset state */
+        ftune_wmeans_state = 1;
+        smoothed_wmean = wmean;
+    } else {
+        if (ftune_wmeans_state == 1) {
+            /* Just came from IspAeFlag=1: use raw wmean this frame,
+             * then clear the flag so next frame uses history */
+            ftune_wmeans_state = 0;
+            smoothed_wmean = wmean;
+        } else {
+            /* Normal: triangular-weighted average of last hist_depth frames */
+            hist_depth = _exp_parameter.data[2];
+            if (hist_depth == 0) hist_depth = 1;
+            if (hist_depth > 15) hist_depth = 15;
 
-    if (wmean == 0)
-        ratio = one_q << 2;  /* Very dark: 4x increase */
-    else
-        ratio = fix_point_div_32(qm, ae_target << qm, wmean << qm);
+            {
+                uint32_t sum_val = 0;
+                uint32_t sum_wt = 0;
+                uint32_t start_idx = 15 - hist_depth;
+                uint32_t w;
 
-    /* Check if already within tolerance */
-    if (ratio >= one_q)
-        error = ratio - one_q;
-    else
-        error = one_q - ratio;
+                for (i = start_idx; i < 15; i++) {
+                    w = (uint32_t)(i - start_idx + 1);
+                    sum_wt += w;
+                    sum_val += w * ae_wmean_hist[i];
+                }
 
-    /* Stable tolerance check: OEM uses ae_stable_tol */
-    tol_q = ae_stable_tol.data[0];
-    if (tol_q == 0) tol_q = 0x33;  /* ~5% tolerance */
-    tol_scaled = (tol_q * one_q) >> 8;  /* Convert 0..255 to Q-format fraction */
-
-    if (error <= tol_scaled) {
-        /* Within tolerance — declare stable */
-        *exp_out = cur_it;
-        *ag_out = cur_ag;
-        *dg_out = cur_dg;
-        return 0;
+                if (sum_wt > 0)
+                    smoothed_wmean = sum_val / sum_wt;
+                else
+                    smoothed_wmean = wmean;
+            }
+        }
     }
 
-    /* Apply convergence damping: don't jump the full ratio in one frame.
-     * OEM uses ae_ev_step data for this; we use conv_speed as a fraction
-     * of the full correction to apply per frame.
-     *
-     * damped_ratio = 1.0 + (ratio - 1.0) * speed / 256
-     * This gives ~60% correction per frame at speed=0x9a (OEM default). */
-    delta = (int32_t)ratio - (int32_t)one_q;
-    step_speed = ae_ev_step.data[4];
-    if (step_speed == 0) step_speed = 0x9a;  /* OEM default */
+    /* Clamp smoothed wmean to minimum 1 to avoid division by zero.
+     * NOTE: wmean<=1 means all AE zone Y data is zero (ae0_weight_mean2
+     * clamps to 1). This happens when sensor is saturated at max gain —
+     * ISP HW produces zero stats for overexposed frames. */
+    if (smoothed_wmean == 0)
+        smoothed_wmean = 1;
 
-    /* Scale delta by speed/256 to get per-frame step */
-    damped_delta = (delta * step_speed) >> 8;
+    /* ---- Step 3: Compute AE target from EV tables ---- */
+    ae_target = tisp_ae_target(cur_ev_q, q);
+    if (ae_target == 0)
+        ae_target = 0x80;
 
-    /* Clamp minimum step to ensure convergence */
-    if (damped_delta > 0 && damped_delta < (int32_t)(one_q >> 6))
-        damped_delta = one_q >> 6;
-    if (damped_delta < 0 && damped_delta > -(int32_t)(one_q >> 6))
-        damped_delta = -(int32_t)(one_q >> 6);
+    /* ---- Step 4: Compute ratio = target / smoothed_wmean ----
+     * ratio > 1.0 (one_q) means too dark, < 1.0 means too bright.
+     * desired_ev_q = cur_ev_q * ratio = where we want total EV to be. */
+    ratio = fix_point_div_32(qm, ae_target << qm, smoothed_wmean << qm);
+    desired_ev_q = fix_point_mult2_32(qm, cur_ev_q, ratio);
 
-    step_ratio = (uint32_t)((int32_t)one_q + damped_delta);
-    if (step_ratio == 0)
-        step_ratio = 1;
-
-    /* Apply the step ratio to current EV = IT * AG * DG.
-     * Strategy: adjust IT first, then AG, then DG.
-     *
-     * Compute new_ev = cur_ev * step_ratio
-     * Then distribute across IT, AG, DG respecting limits. */
-
-    /* First: try to adjust integration time only */
+    /* ---- Step 5: Convergence / hysteresis check ----
+     * OEM uses a multi-state machine with hysteresis. We implement the
+     * key behaviors:
+     * - If within tolerance, declare stable
+     * - If outside tolerance, use tisp_ae_tune for damped stepping
+     * - Apply the stepped ratio to compute new EV via 64-bit math */
     {
-        uint64_t new_it_64 = (uint64_t)cur_it * step_ratio;
-        new_it_64 >>= qm;
-        new_it = (uint32_t)new_it_64;
+        uint32_t target_luma = tisp_ae_target(desired_ev_q, q);
+        uint32_t luma_diff;
+        uint32_t tol_q, tol_scaled;
+        int32_t conv_speed;
+
+        /* OEM stable tolerance check */
+        if (smoothed_wmean >= target_luma)
+            luma_diff = smoothed_wmean - target_luma;
+        else
+            luma_diff = target_luma - smoothed_wmean;
+
+        /* Compute tolerance: ae_stable_tol is 0..255 fraction of one_q */
+        tol_q = ae_stable_tol.data[0];
+        if (tol_q == 0) tol_q = 0x33;
+        tol_scaled = fix_point_div_32(qm, luma_diff << qm,
+                                      smoothed_wmean << qm);
+
+        /* Check stability: ratio of error to wmean vs tolerance */
+        if (tol_scaled <= tol_q &&
+            cur_ev_q == _ae_ev && data_a0dfc != 0) {
+            /* Within tolerance and EV unchanged: stable */
+            data_a0df8 = 1;
+            *exp_out = cur_it;
+            *ag_out = cur_ag;
+            *dg_out = cur_dg;
+            return 0;
+        }
+
+        /* ---- Step 6: Damped convergence via tisp_ae_tune ----
+         * OEM: ae_tune_upper/lower are stepped toward the desired delta
+         * each frame, providing smooth convergence. */
+        conv_speed = ae_ev_step.data[4];
+        if (conv_speed <= 0) conv_speed = 0x9a;
+
+        /* OEM: bounds are LOCAL vars in Tiziano_ae0_fpga, initialized
+         * from mode parameters each frame (value=1 for normal mode).
+         * They do NOT accumulate across frames. */
+        ae_tune_upper = 0;
+        ae_tune_lower = 0;
+
+        /* OEM EXACT: set convergence TARGETS (separate from bounds).
+         * Targets are ALWAYS POSITIVE magnitudes — the direction is
+         * encoded by which index gets the target:
+         *   [0] = upper target (too bright, wants EV decrease)
+         *   [1] = lower target (too dark, wants EV increase)
+         * tisp_ae_tune steps bounds toward targets using unsigned Q math,
+         * then the EV computation applies: delta = lower - upper. */
+        ae_tune_targets[0] = 0;
+        ae_tune_targets[1] = 0;
+        if (smoothed_wmean < ae_target) {
+            /* Too dark: lower target = how much above 1.0 we want */
+            ae_tune_targets[1] = (int32_t)ratio - (int32_t)one_q;
+        } else {
+            /* Too bright: upper target = how much below 1.0 we want */
+            ae_tune_targets[0] = (int32_t)one_q - (int32_t)ratio;
+        }
+
+        /* Step the convergence bounds toward targets */
+        if (conv_speed > 0)
+            tisp_ae_tune(ae_tune_targets, &ae_tune_upper, &ae_tune_lower,
+                         conv_speed, q, one_q);
+
+        /* Cap bounds to one_q/4 — limits max EV change to ~1.25x per frame.
+         * The OEM's complex 64-bit EV computation + effect frame delay
+         * pipeline inherently limits the effective step to ~1.2x.
+         * Our simplified formula lacks the delay pipeline, so the sensor
+         * has 2-3 frames of lag before stats reflect gain changes.
+         * one_q/4 gives the sensor time to respond before overshooting. */
+        {
+            int32_t max_step = (int32_t)(one_q >> 2);
+            if (ae_tune_lower > max_step)
+                ae_tune_lower = max_step;
+            if (ae_tune_upper > max_step)
+                ae_tune_upper = max_step;
+        }
     }
 
-    if (new_it < min_it) new_it = min_it;
-    if (new_it > max_it) new_it = max_it;
+    /* ---- Step 7: Compute new EV using 64-bit math ----
+     * OEM uses fix_point_mult2_64 / fix_point_div_64 / fix_point_mult3_64
+     * for the EV computation to avoid 32-bit overflow.
+     *
+     * The new EV is computed from the convergence bounds:
+     *   new_ev = cur_ev * stepped_ratio
+     * where stepped_ratio incorporates the damped convergence. */
+    {
+        uint64_t cur_ev_64 = (uint64_t)cur_ev_q;
+        uint64_t one_q_64 = (uint64_t)one_q;
+        int32_t stepped_delta;
+        uint64_t stepped_ratio_64;
+        uint64_t new_ev_64;
+
+        /* Combine bounds: lower increases EV, upper decreases EV.
+         * OEM uses asymmetric 64-bit computation; this approximation
+         * gives the same net direction and magnitude. */
+        stepped_delta = ae_tune_lower - ae_tune_upper;
+
+        /* Compute stepped ratio = one_q + stepped_delta */
+        if ((int32_t)one_q + stepped_delta <= 0)
+            stepped_ratio_64 = 1; /* Minimum: don't go to zero/negative */
+        else
+            stepped_ratio_64 = (uint64_t)((int32_t)one_q + stepped_delta);
+
+        /* new_ev = cur_ev * stepped_ratio / one_q (64-bit) */
+        new_ev_64 = (cur_ev_64 * stepped_ratio_64) >> qm;
+
+        {
+            static int ae_conv_cnt;
+            if (ae_conv_cnt < 30) {
+                pr_info("AE_CONV[%d]: wmean=%u sm_wmean=%u tgt=%u ratio=%u tgt_lo=%d tgt_up=%d lo=%d up=%d delta=%d sr=%llu cur_ev=%u new_ev=%u q=%u\n",
+                    ae_conv_cnt, wmean, smoothed_wmean, ae_target, ratio,
+                    ae_tune_targets[1], ae_tune_targets[0],
+                    ae_tune_lower, ae_tune_upper,
+                    stepped_delta, stepped_ratio_64,
+                    cur_ev_q, new_ev, qm);
+                ae_conv_cnt++;
+            }
+        }
+
+        /* Clamp to 32-bit range */
+        if (new_ev_64 > 0xFFFFFFFFULL)
+            new_ev = 0xFFFFFFFF;
+        else
+            new_ev = (uint32_t)new_ev_64;
+    }
+
+    /* ---- Step 8: Split new EV across IT / AG / DG ----
+     * OEM gain distribution mode (data_c46d0):
+     *   0 = Normal: IT first, then AG overflow, then DG overflow
+     *   1 = Gain-priority mode (used with antiflicker)
+     *
+     * For mode 0 (normal, most common):
+     *   1. desired_ev_needed = new_ev / (ag * dg)
+     *      If that fits in max_it, just change IT
+     *   2. If IT maxed: compute needed_gain = new_ev / (max_it)
+     *      Split needed_gain across AG then DG
+     *   3. Clamp everything to min/max */
+    new_it = cur_it;
     new_ag = cur_ag;
     new_dg = cur_dg;
 
-    /* If IT was clamped, compute residual and apply to AG */
-    if (new_it == max_it || new_it == min_it) {
-        uint32_t desired_it, residual;
+    if (cur_ev_q == new_ev && data_a0df8 == 0 && data_a0dfc != 0) {
+        /* EV unchanged, not first frame: keep current values */
+        *exp_out = cur_it;
+        *ag_out = cur_ag;
+        *dg_out = cur_dg;
+        data_a0df8 = 1;
+        return 0;
+    }
+
+    data_a0dfc = 1;
+    data_a0df8 = 0;
+
+    if (data_c46d0 == 0) {
+        /* Normal mode: IT -> AG -> DG cascade */
+        uint32_t gain_product;
+        uint64_t needed_it_64;
+
+        /* Current total gain = AG * DG in Q-format */
+        gain_product = fix_point_mult2_32(qm, cur_ag, cur_dg);
+        if (gain_product == 0) gain_product = one_q;
+
+        /* Desired IT = new_ev / (ag * dg) */
+        needed_it_64 = ((uint64_t)new_ev << qm);
+        do_div(needed_it_64, gain_product);
+        new_it = (uint32_t)needed_it_64;
+
+        if (new_it > max_it) new_it = max_it;
+        if (new_it < min_it) new_it = min_it;
+
+        /* Check if IT alone is sufficient */
         {
-            uint64_t tmp = (uint64_t)cur_it * step_ratio;
-            tmp >>= qm;
-            desired_it = (uint32_t)tmp;
+            uint32_t it_ev = fix_point_mult3_32(qm, new_it << qm,
+                                                 cur_ag, cur_dg);
+            if (it_ev < new_ev) {
+                /* IT maxed out: need to increase gain */
+                uint32_t it_q = new_it << qm;
+                uint32_t needed_gain;
+                uint64_t ng64;
+
+                if (it_q == 0) it_q = one_q;
+
+                /* needed_gain = new_ev / (new_it * min_dg)
+                 * This gives us what AG needs to be if DG is at minimum */
+                ng64 = ((uint64_t)new_ev << qm);
+                do_div(ng64, fix_point_mult2_32(qm, it_q, cur_dg));
+                needed_gain = (uint32_t)ng64;
+
+                if (needed_gain <= max_ag) {
+                    /* Fits in AG alone */
+                    new_ag = needed_gain;
+                    if (new_ag < min_ag) new_ag = min_ag;
+                } else {
+                    /* AG maxed: overflow to DG */
+                    new_ag = max_ag;
+                    {
+                        uint32_t it_ag_ev = fix_point_mult2_32(qm,
+                                              it_q, max_ag);
+                        uint64_t nd64;
+                        if (it_ag_ev == 0) it_ag_ev = 1;
+                        nd64 = ((uint64_t)new_ev << qm);
+                        do_div(nd64, it_ag_ev);
+                        new_dg = (uint32_t)nd64;
+                    }
+                    if (new_dg < min_dg) new_dg = min_dg;
+                    if (new_dg > max_dg) new_dg = max_dg;
+                }
+            } else if (it_ev > new_ev && cur_ag > min_ag) {
+                /* IT provides more than needed and gain is above min:
+                 * reduce gain first, keep IT at max for best quality */
+                uint32_t it_q = new_it << qm;
+                uint64_t ng64;
+
+                if (it_q == 0) it_q = one_q;
+
+                /* First try reducing DG toward minimum */
+                if (cur_dg > min_dg) {
+                    ng64 = ((uint64_t)new_ev << qm);
+                    do_div(ng64, fix_point_mult2_32(qm, it_q, cur_ag));
+                    new_dg = (uint32_t)ng64;
+                    if (new_dg < min_dg) new_dg = min_dg;
+                }
+
+                /* Then reduce AG if still too much EV */
+                {
+                    uint32_t check_ev = fix_point_mult3_32(qm,
+                                          it_q, cur_ag, new_dg);
+                    if (check_ev > new_ev) {
+                        ng64 = ((uint64_t)new_ev << qm);
+                        do_div(ng64, fix_point_mult2_32(qm, it_q, new_dg));
+                        new_ag = (uint32_t)ng64;
+                        if (new_ag < min_ag) new_ag = min_ag;
+                    }
+                }
+            }
         }
-        if (desired_it == 0) desired_it = 1;
-        if (new_it == 0) new_it = 1;
+    } else if (data_c46d0 == 1) {
+        /* Gain-priority mode: cap IT to data_c46a8, adjust gain.
+         * OEM uses this for antiflicker. */
+        uint32_t max_it_cap = data_c46a8;
+        uint64_t ng64;
 
-        residual = fix_point_div_32(qm, desired_it << qm, new_it << qm);
+        if (max_it_cap == 0) max_it_cap = max_it;
+        if (max_it_cap > max_it) max_it_cap = max_it;
 
-        /* Apply residual to analog gain */
+        /* Cap IT to the antiflicker limit */
+        if (cur_it > max_it_cap) {
+            new_it = max_it_cap;
+        } else {
+            /* Try to fit in IT first */
+            uint32_t gain_product = fix_point_mult2_32(qm, cur_ag, cur_dg);
+            if (gain_product == 0) gain_product = one_q;
+            ng64 = ((uint64_t)new_ev << qm);
+            do_div(ng64, gain_product);
+            new_it = (uint32_t)ng64;
+            if (new_it > max_it_cap) new_it = max_it_cap;
+            if (new_it < min_it) new_it = min_it;
+        }
+
+        /* Compute needed gain = new_ev / new_it */
         {
-            uint64_t new_ag_64 = (uint64_t)cur_ag * residual;
-            new_ag_64 >>= qm;
-            new_ag = (uint32_t)new_ag_64;
+            uint32_t it_q = new_it << qm;
+            uint32_t total_gain_needed;
+
+            if (it_q == 0) it_q = one_q;
+
+            ng64 = ((uint64_t)new_ev << qm);
+            do_div(ng64, it_q);
+            total_gain_needed = (uint32_t)ng64;
+
+            /* Split total_gain into AG * DG */
+            if (total_gain_needed <= max_ag) {
+                new_ag = total_gain_needed;
+                new_dg = min_dg;
+            } else {
+                new_ag = max_ag;
+                ng64 = ((uint64_t)total_gain_needed << qm);
+                do_div(ng64, max_ag);
+                new_dg = (uint32_t)ng64;
+            }
         }
         if (new_ag < min_ag) new_ag = min_ag;
         if (new_ag > max_ag) new_ag = max_ag;
-
-        /* If AG also clamped, apply remainder to DG */
-        if (new_ag == max_ag || new_ag == min_ag) {
-            uint32_t desired_ag, ag_residual;
-            {
-                uint64_t tmp = (uint64_t)cur_ag * residual;
-                tmp >>= qm;
-                desired_ag = (uint32_t)tmp;
-            }
-            if (desired_ag == 0) desired_ag = 1;
-            if (new_ag == 0) new_ag = 1;
-
-            ag_residual = fix_point_div_32(qm, desired_ag << qm, new_ag << qm);
-            {
-                uint64_t new_dg_64 = (uint64_t)cur_dg * ag_residual;
-                new_dg_64 >>= qm;
-                new_dg = (uint32_t)new_dg_64;
-            }
-            if (new_dg < min_dg) new_dg = min_dg;
-            if (new_dg > max_dg) new_dg = max_dg;
-        }
+        if (new_dg < min_dg) new_dg = min_dg;
+        if (new_dg > max_dg) new_dg = max_dg;
+    } else {
+        /* Unknown mode: reset gains to defaults */
+        new_it = cur_it;
+        new_ag = min_ag;
+        new_dg = min_dg;
     }
+
+    /* Final clamp */
+    if (new_it < min_it) new_it = min_it;
+    if (new_it > max_it) new_it = max_it;
+    if (new_ag < min_ag) new_ag = min_ag;
+    if (new_ag > max_ag) new_ag = max_ag;
+    if (new_dg < min_dg) new_dg = min_dg;
+    if (new_dg > max_dg) new_dg = max_dg;
+
+    /* Store new total EV */
+    _ae_ev = fix_point_mult3_32(qm, new_it << qm, new_ag, new_dg);
 
     *exp_out = new_it;
     *ag_out = new_ag;
     *dg_out = new_dg;
 
-    data_a0dfc = 1;  /* Mark convergence in progress */
     return 1;  /* Still adjusting */
 }
 
@@ -25174,6 +25470,8 @@ int tisp_dmsc_wdr_en(int enable)
 int tisp_ae_wdr_en(int enable)
 {
     pr_info("tisp_ae_wdr_en: %s AE WDR mode\n", enable ? "Enable" : "Disable");
+    /* OEM EXACT (0x540d0): Set IspAeFlag=1 to trigger re-convergence */
+    IspAeFlag = 1;
     return 0;
 }
 
