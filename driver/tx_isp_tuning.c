@@ -28142,31 +28142,14 @@ int tiziano_ae_params_refresh(void)
      * stats DMA engine produces data.  With 0xa004=0, all DMA zones are zero.
      * The tradeoff: our DMA format puts Y in word[1] instead of word[0],
      * which ae0_interrupt_static handles by reading src[1]. */
-    /* Do NOT zero _ae_parameter — keep static grid config for AE DMA */
-    memset(&ae_exp_th, 0, 0x50);
-    memset(&_exp_parameter, 0, 0x2c);
-    memset(&ae_ev_step, 0, 0x14);
-    memset(&ae_stable_tol, 0, 0x10);
-    memset(&ae0_ev_list, 0, 0x28);
-    memset(&_lum_list, 0, 0x28);
-    memset(&_deflicker_para, 0, 0x0c);
-    memset(&_flicker_t, 0, 0x18);
-    memset(&_scene_para, 0, 0x2c);
-    memset(&ae_scene_mode_th, 0, 0x10);
-    memset(&_log2_lut, 0, 0x50);
-    memset(&_weight_lut, 0, 0x50);
-    memset(&_ae_zone_weight, 0, 0x384);
-    memset(&_scene_roui_weight, 0, 0x384);
-    memset(&_scene_roi_weight, 0, 0x384);
-    memset(&ae_comp_ev_list, 0, 0x28);
-    memset(&ae_extra_at_list, 0, 0x28);
-
-    /* OEM EXACT: conditional zero of result/stat structures */
-    if (data_b0df8 == 0) {
-        memset(&_ae_result, 0, 0x18);
-        memset(&_ae_stat, 0, 0x14);
-        memset(&_ae_wm_q, 0, 0x3c);
-    }
+    /* Do NOT zero _ae_parameter — keep static grid config for AE DMA.
+     * Do NOT zero AE algorithm parameters (_exp_parameter, ae_exp_th,
+     * ae_stable_tol, _ae_zone_weight, etc.) — their static initializers
+     * contain the correct tuning values (target brightness, exposure
+     * limits, convergence rates, zone weights). The OEM zeros them
+     * because it reloads from the tuning binary later via ioctl, but
+     * we keep the static defaults since we don't have that reload path.
+     * Without these, target=0 and the AE cranks exposure to maximum. */
 
     memset(&ae1_ev_list, 0, 0x28);
     memset(&ae1_comp_ev_list, 0, 0x28);
