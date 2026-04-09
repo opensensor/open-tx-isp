@@ -283,8 +283,8 @@ static int tx_isp_v4l2_reqbufs(struct file *file, void *priv,
         return -EINVAL;
     }
 
-    pr_info("*** V4L2 Channel %d: REQBUFS count=%d ***\n",
-            dev->channel_num, rb->count);
+    pr_debug("*** V4L2 Channel %d: REQBUFS count=%d ***\n",
+             dev->channel_num, rb->count);
 
     /* Create a fake file structure for frame_channel_unlocked_ioctl */
     memset(&fake_file, 0, sizeof(fake_file));
@@ -293,8 +293,8 @@ static int tx_isp_v4l2_reqbufs(struct file *file, void *priv,
     /* Route to frame_channel_unlocked_ioctl with channel context */
     ret = frame_channel_unlocked_ioctl(&fake_file, 0xc0145608, (unsigned long)rb);
 
-    pr_info("*** V4L2 Channel %d: REQBUFS result=%d ***\n",
-            dev->channel_num, ret);
+    pr_debug("*** V4L2 Channel %d: REQBUFS result=%d ***\n",
+             dev->channel_num, ret);
     
     return ret;
 }
@@ -312,8 +312,8 @@ static int tx_isp_v4l2_qbuf(struct file *file, void *priv,
         return -EINVAL;
     }
 
-    pr_info("*** V4L2 Channel %d: QBUF index=%d ***\n",
-            dev->channel_num, buf->index);
+    pr_debug("*** V4L2 Channel %d: QBUF index=%d ***\n",
+             dev->channel_num, buf->index);
 
     /* Create a fake file structure for frame_channel_unlocked_ioctl */
     memset(&fake_file, 0, sizeof(fake_file));
@@ -322,8 +322,8 @@ static int tx_isp_v4l2_qbuf(struct file *file, void *priv,
     /* Route to frame_channel_unlocked_ioctl QBUF (0xc044560f) */
     ret = frame_channel_unlocked_ioctl(&fake_file, 0xc044560f, (unsigned long)buf);
 
-    pr_info("*** V4L2 Channel %d: QBUF result=%d ***\n",
-            dev->channel_num, ret);
+    pr_debug("*** V4L2 Channel %d: QBUF result=%d ***\n",
+             dev->channel_num, ret);
 
     return ret;
 }
@@ -340,7 +340,7 @@ static int tx_isp_v4l2_dqbuf(struct file *file, void *priv,
         return -EINVAL;
     }
 
-    pr_info("*** V4L2 Channel %d: DQBUF ***\n", dev->channel_num);
+    pr_debug("*** V4L2 Channel %d: DQBUF ***\n", dev->channel_num);
 
     /* Create a fake file structure for frame_channel_unlocked_ioctl */
     memset(&fake_file, 0, sizeof(fake_file));
@@ -349,8 +349,8 @@ static int tx_isp_v4l2_dqbuf(struct file *file, void *priv,
     /* Route to frame_channel_unlocked_ioctl DQBUF (0xc0445611) */
     ret = frame_channel_unlocked_ioctl(&fake_file, 0xc0445611, (unsigned long)buf);
 
-    pr_info("*** V4L2 Channel %d: DQBUF result=%d, index=%d ***\n",
-            dev->channel_num, ret, (ret == 0) ? buf->index : -1);
+    pr_debug("*** V4L2 Channel %d: DQBUF result=%d, index=%d ***\n",
+             dev->channel_num, ret, (ret == 0) ? buf->index : -1);
 
     return ret;
 }
@@ -768,14 +768,14 @@ static long tx_isp_v4l2_unlocked_ioctl(struct file *file, unsigned int cmd, unsi
     
     /* If V4L2 handled it successfully, return that result */
     if (ret != -ENOTTY && ret != -EINVAL) {
-        pr_info("*** V4L2 Channel %d: IOCTL 0x%x handled by V4L2, result=%ld ***\n",
-                dev->channel_num, cmd, ret);
+        pr_debug("*** V4L2 Channel %d: IOCTL 0x%x handled by V4L2, result=%ld ***\n",
+                 dev->channel_num, cmd, ret);
         return ret;
     }
     
     /* For unhandled ioctls or failures, route to frame_channel_unlocked_ioctl */
-    pr_info("*** V4L2 Channel %d: Routing IOCTL 0x%x to frame_channel_unlocked_ioctl ***\n",
-            dev->channel_num, cmd);
+    pr_debug("*** V4L2 Channel %d: Routing IOCTL 0x%x to frame_channel_unlocked_ioctl ***\n",
+             dev->channel_num, cmd);
     
     /* Create a fake file structure for frame_channel_unlocked_ioctl */
     memset(&fake_file, 0, sizeof(fake_file));
@@ -784,8 +784,8 @@ static long tx_isp_v4l2_unlocked_ioctl(struct file *file, unsigned int cmd, unsi
     /* Route to frame_channel_unlocked_ioctl */
     ret = frame_channel_unlocked_ioctl(&fake_file, cmd, arg);
     
-    pr_info("*** V4L2 Channel %d: frame_channel_unlocked_ioctl result=%ld for cmd=0x%x ***\n",
-            dev->channel_num, ret, cmd);
+    pr_debug("*** V4L2 Channel %d: frame_channel_unlocked_ioctl result=%ld for cmd=0x%x ***\n",
+             dev->channel_num, ret, cmd);
     
     return ret;
 }

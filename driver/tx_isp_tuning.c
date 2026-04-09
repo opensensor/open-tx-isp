@@ -402,6 +402,10 @@ static uint32_t awb_algo_mode;
 static uint32_t awb_ct_manual;
 static uint32_t _awb_trend = 1;
 
+/* Post-pipeline saturation multiplier — declared early, used in tiziano_bcsh_reg_apply.
+ * 128=1.0x neutral, 255=~2.0x, 64=0.5x. Set via module param isp_sat_mul. */
+static uint isp_sat_mul = 128;
+
 /* BCSH matrices and state - declared early for use in tiziano_bcsh functions */
 static int32_t tiziano_MMatrix[9] = {
 	/* OEM MMatrix at 0x9a62c — BT.601 RGB->YUV */
@@ -586,25 +590,44 @@ static void tiziano_bcsh_build_HMatrix(int32_t out[9])
     /* CT bias removed — A-matrix CCM boosts green, counterproductive */
     tiziano_bcsh_build_active_ccm(active_ccm, ct);
 
-    pr_info("BCSH_DIAG: CT=%u CCM=[%d,%d,%d, %d,%d,%d, %d,%d,%d]\n",
-            ct, active_ccm[0], active_ccm[1], active_ccm[2],
-            active_ccm[3], active_ccm[4], active_ccm[5],
-            active_ccm[6], active_ccm[7], active_ccm[8]);
-    pr_info("BCSH_DIAG: M=[%d,%d,%d, %d,%d,%d, %d,%d,%d]\n",
-            tiziano_MMatrix[0], tiziano_MMatrix[1], tiziano_MMatrix[2],
-            tiziano_MMatrix[3], tiziano_MMatrix[4], tiziano_MMatrix[5],
-            tiziano_MMatrix[6], tiziano_MMatrix[7], tiziano_MMatrix[8]);
-    pr_info("BCSH_DIAG: Minv=[%d,%d,%d, %d,%d,%d, %d,%d,%d]\n",
-            tiziano_MinvMatrix[0], tiziano_MinvMatrix[1], tiziano_MinvMatrix[2],
-            tiziano_MinvMatrix[3], tiziano_MinvMatrix[4], tiziano_MinvMatrix[5],
-            tiziano_MinvMatrix[6], tiziano_MinvMatrix[7], tiziano_MinvMatrix[8]);
+    {
+        static unsigned int bcsh_diag_counter;
+        bool bcsh_diag_print = (bcsh_diag_counter++ % 300) == 0;
 
-    tiziano_bcsh_Tccm_RGBYUV(tmp, tiziano_MMatrix, active_ccm, tiziano_MinvMatrix);
+        if (bcsh_diag_print) {
+            pr_info("BCSH_DIAG[%u]: CT=%u CCM=[%d,%d,%d, %d,%d,%d, %d,%d,%d]\n",
+                    bcsh_diag_counter - 1, ct,
+                    active_ccm[0], active_ccm[1], active_ccm[2],
+                    active_ccm[3], active_ccm[4], active_ccm[5],
+                    active_ccm[6], active_ccm[7], active_ccm[8]);
+            pr_info("BCSH_DIAG: M=[%d,%d,%d, %d,%d,%d, %d,%d,%d]\n",
+                    tiziano_MMatrix[0], tiziano_MMatrix[1], tiziano_MMatrix[2],
+                    tiziano_MMatrix[3], tiziano_MMatrix[4], tiziano_MMatrix[5],
+                    tiziano_MMatrix[6], tiziano_MMatrix[7], tiziano_MMatrix[8]);
+            pr_info("BCSH_DIAG: Minv=[%d,%d,%d, %d,%d,%d, %d,%d,%d]\n",
+                    tiziano_MinvMatrix[0], tiziano_MinvMatrix[1], tiziano_MinvMatrix[2],
+                    tiziano_MinvMatrix[3], tiziano_MinvMatrix[4], tiziano_MinvMatrix[5],
+                    tiziano_MinvMatrix[6], tiziano_MinvMatrix[7], tiziano_MinvMatrix[8]);
+        } else {
+            pr_debug("BCSH_DIAG: CT=%u CCM=[%d,%d,%d, %d,%d,%d, %d,%d,%d]\n",
+                     ct, active_ccm[0], active_ccm[1], active_ccm[2],
+                     active_ccm[3], active_ccm[4], active_ccm[5],
+                     active_ccm[6], active_ccm[7], active_ccm[8]);
+        }
 
-    /* CT bias removed — A-matrix CCM boosts green, counterproductive */
-    pr_info("BCSH_DIAG: HMatrix=[%d,%d,%d, %d,%d,%d, %d,%d,%d]\n",
-            tmp[0], tmp[1], tmp[2], tmp[3], tmp[4], tmp[5],
-            tmp[6], tmp[7], tmp[8]);
+        tiziano_bcsh_Tccm_RGBYUV(tmp, tiziano_MMatrix, active_ccm, tiziano_MinvMatrix);
+
+        /* CT bias removed — A-matrix CCM boosts green, counterproductive */
+        if (bcsh_diag_print) {
+            pr_info("BCSH_DIAG: HMatrix=[%d,%d,%d, %d,%d,%d, %d,%d,%d]\n",
+                    tmp[0], tmp[1], tmp[2], tmp[3], tmp[4], tmp[5],
+                    tmp[6], tmp[7], tmp[8]);
+        } else {
+            pr_debug("BCSH_DIAG: HMatrix=[%d,%d,%d, %d,%d,%d, %d,%d,%d]\n",
+                     tmp[0], tmp[1], tmp[2], tmp[3], tmp[4], tmp[5],
+                     tmp[6], tmp[7], tmp[8]);
+        }
+    }
 
     for (int i = 0; i < 9; ++i)
         out[i] = tmp[i];
@@ -1695,7 +1718,23 @@ static void tiziano_bcsh_reg_apply(struct isp_tuning_data *tuning)
         system_reg_write(BASE + 0x0020, PACK16(bcsh_OffsetRGB2yuv[2], 0x400));
     }
 
-    /* 0x8024..0x8038: HMatrixReg (9 elements) — OEM arg13 */
+    /* 0x8024..0x8038: HMatrixReg (9 elements) — OEM arg13
+     * Row 0 (Y): elements 0-2 — luma extraction, keep unchanged
+     * Row 1 (Cb): elements 3-5 — blue chroma
+     * Row 2 (Cr): elements 6-8 — red chroma
+     * Scaling Cb/Cr rows boosts/reduces color saturation. */
+    {
+        uint32_t sat_mul = isp_sat_mul;
+        if (sat_mul != 128 && sat_mul > 0) {
+            int k;
+            for (k = 3; k < 9; k++) {
+                /* H[] is signed, Hreg[] is 14-bit unsigned (neg masked) */
+                int32_t sv = H[k];
+                sv = (int32_t)((int64_t)sv * sat_mul / 128);
+                Hreg[k] = (sv < 0) ? (sv & 0x3fff) : sv;
+            }
+        }
+    }
     system_reg_write(BASE + 0x0024, PACK16((u32)Hreg[1], (u32)Hreg[0]));
     system_reg_write(BASE + 0x0028, (u32)Hreg[2]);
     system_reg_write(BASE + 0x002c, PACK16((u32)Hreg[4], (u32)Hreg[3]));
@@ -1808,7 +1847,28 @@ static void tiziano_bcsh_reg_apply(struct isp_tuning_data *tuning)
     }
     system_reg_write(BASE + 0x0068, PACK16(Sth[2], Sth[1]));
 
-    /* 0x806c..0x8070: Svalue (OEM arg11 = saturation values) */
+    /* 0x806c..0x8070: Svalue (OEM arg11 = saturation values)
+     * Apply post-pipeline saturation multiplier (isp_sat_mul).
+     * This survives per-frame BCSH updates from CT/EV events.
+     * 128=1.0x neutral, 255=~2.0x boost, 64=0.5x. */
+    {
+        uint32_t sat_mul = isp_sat_mul;
+        static unsigned int sat_diag;
+        if (sat_mul != 128 && sat_mul > 0) {
+            int k;
+            for (k = 0; k < 4; k++) {
+                uint32_t v = (uint32_t)svec1[k] * sat_mul / 128;
+                if (v > 0xFFFF) v = 0xFFFF;
+                svec1[k] = (uint16_t)v;
+            }
+        }
+        sat_diag++;
+        if (sat_diag <= 5 || (sat_diag % 300) == 0)
+            pr_info("BCSH_SAT_MUL[%u]: mul=%u svec=[%u,%u,%u,%u] reg=0x%04x%04x,0x%04x%04x\n",
+                sat_diag, sat_mul,
+                svec1[0], svec1[1], svec1[2], svec1[3],
+                svec1[0], svec1[1], svec1[2], svec1[3]);
+    }
     system_reg_write(BASE + 0x006c, PACK16(svec1[0], svec1[1]));
     system_reg_write(BASE + 0x0070, PACK16(svec1[2], svec1[3]));
 }
@@ -2255,6 +2315,55 @@ static uint isp_block_enable = 0x3DD94;  /* All OEM blocks except GIB(5) — ADR
 module_param(isp_block_enable, uint, 0644);
 MODULE_PARM_DESC(isp_block_enable,
 		 "Block enable bitmask: set bits enable ISP blocks (0=all bypassed)");
+
+/* Image style presets — adjustable via module param or ioctl.
+ * 0=default (OEM tuning), 1=vivid, 2=bright, 3=cinematic, 4=sepia
+ *
+ * Each style adjusts two layers:
+ *   - BCSH: saturation, contrast, brightness, hue (YUV domain, per-frame)
+ *   - CCM:  cm_sat_list override (RGB domain, affects color matrix)
+ *
+ * Combined saturation: CCM_sat × BCSH_sat.  Default OEM is ~1.17 × 1.13 = 1.32x.
+ * "Vivid" targets ~1.8x total; "cinematic" ~1.1x with warm hue shift.
+ */
+#define ISP_STYLE_DEFAULT    0
+#define ISP_STYLE_VIVID      1
+#define ISP_STYLE_BRIGHT     2
+#define ISP_STYLE_CINEMATIC  3
+#define ISP_STYLE_SEPIA      4
+#define ISP_STYLE_MAX        4
+
+struct isp_style_params {
+	uint8_t saturation;   /* 0-255, 128=neutral */
+	uint8_t contrast;     /* 0-255, 128=neutral */
+	uint8_t brightness;   /* 0-255, 128=neutral */
+	uint8_t hue;          /* 0-255, maps to BCSH hue angle (0=neutral/0x3c) */
+};
+
+static const struct isp_style_params isp_styles[] = {
+	[ISP_STYLE_DEFAULT]   = { 128, 128, 128,   0 },  /* OEM tuning bin values */
+	[ISP_STYLE_VIVID]     = { 200, 135, 128,   0 },  /* strong saturation + mild contrast */
+	[ISP_STYLE_BRIGHT]    = { 150, 128, 160,   0 },  /* boosted brightness + mild sat */
+	[ISP_STYLE_CINEMATIC] = { 110, 145, 120, 135 },  /* low sat, high contrast, warm hue */
+	[ISP_STYLE_SEPIA]     = {  50, 140, 128, 160 },  /* very low sat, warm hue */
+};
+
+static int isp_image_style;
+static int isp_image_style_set(const char *val, const struct kernel_param *kp);
+static const struct kernel_param_ops isp_style_ops = {
+	.set = isp_image_style_set,
+	.get = param_get_int,
+};
+module_param_cb(image_style, &isp_style_ops, &isp_image_style, 0644);
+MODULE_PARM_DESC(image_style,
+	"Image style preset: 0=default 1=vivid 2=bright 3=cinematic 4=sepia");
+
+/* isp_sat_mul declared early (~line 405) so tiziano_bcsh_reg_apply can see it. */
+module_param(isp_sat_mul, uint, 0644);
+MODULE_PARM_DESC(isp_sat_mul,
+	"Saturation multiplier: 128=1.0x 192=1.5x 255=2.0x 64=0.5x");
+
+static void tisp_apply_image_style(int style);
 
 #define TISP_TOP_BYPASS_BLOCK_MASK	0x0003DDB4
 
@@ -5900,6 +6009,38 @@ int tisp_bcsh_set_mjpeg_contrast(uint32_t mode, uint32_t y_low, uint32_t fixed_c
     if (ourISPdev && ourISPdev->tuning_data)
         return tiziano_bcsh_update(ourISPdev->tuning_data);
     return 0;
+}
+
+/* tisp_apply_image_style - Apply a preset image style via multipliers.
+ * Sets post-pipeline multipliers that persist across per-frame ISP updates.
+ * Called from module param write or ioctl. Takes effect on next frame. */
+static void tisp_apply_image_style(int style)
+{
+	const struct isp_style_params *sp;
+
+	if (style < 0 || style > ISP_STYLE_MAX)
+		style = ISP_STYLE_DEFAULT;
+
+	sp = &isp_styles[style];
+	isp_sat_mul = sp->saturation;
+
+	pr_info("ISP_STYLE: style %d — sat_mul=%u\n", style, isp_sat_mul);
+}
+
+/* Module param callback: echo N > /sys/module/tx_isp_t31/parameters/image_style */
+static int isp_image_style_set(const char *val, const struct kernel_param *kp)
+{
+	int style, ret;
+
+	ret = kstrtoint(val, 0, &style);
+	if (ret)
+		return ret;
+	if (style < 0 || style > ISP_STYLE_MAX)
+		return -EINVAL;
+
+	isp_image_style = style;
+	tisp_apply_image_style(style);
+	return 0;
 }
 
 int tisp_bcsh_set_attr(const void *in)
@@ -16060,17 +16201,17 @@ fail_output:
 }
 
 /* OEM-matched Tiziano_awb_fpga: compute per-zone rg/bg ratios in Q-format
- * with _awb_cof calibration coefficients, matching the OEM exactly.
+ * using _wb_static as the calibration reference (WB reference gains).
  *
  * OEM zone ratio: zone_rg[i] = fix_point_mult2_32(pp, (R << q) / G, cof_rg_q)
  *                 zone_bg[i] = fix_point_mult2_32(pp, (B << q) / G, cof_bg_q)
- * where cof_rg_q = fix_point_mult2_32(pp, 0x100 << q, _awb_cof[0])
+ * where cof_rg_q = fix_point_mult2_32(pp, 0x100 << q, _wb_static[0])
  *
- * OEM global: rg_global = fix_point_div(q, rg_pix_cnt, rg_sum) >> q
- *
- * Previous code used simple Q8 ratios (R*256/G) without _awb_cof calibration,
- * and weighted-mean averaging instead of OEM reciprocal-average, producing
- * wrong rg/bg values (e.g., bg_global=21 instead of ~200-300).
+ * IMPORTANT: OEM arg9 = _wb_static (WB reference gains), NOT _awb_cof.
+ * _awb_cof[0] is the AWB history depth (1-15 frames) and _awb_cof[1]
+ * is the convergence tolerance — these are convergence parameters.
+ * With _wb_static, zone values are in the correct scale to match
+ * rg_pos/bg_pos ranges in Ct_Detect without any extra << q shift.
  */
 static int Tiziano_awb_fpga(const uint32_t *stats_r,
 			    const uint32_t *stats_g,
@@ -16197,13 +16338,9 @@ static int Tiziano_awb_fpga(const uint32_t *stats_r,
 	memcpy(awb_zone_bg_last, awb_zone_bg, sizeof(awb_zone_bg));
 	awb_zone_cache_valid = 1;
 
-	/* OEM: rg_global = fix_point_div(q, rg_sum, _awb_cof[0]) >> q
-	 * = rg_sum / cof_rg (the raw zone-ratio sum divided by calibration).
-	 * Then data_a5a30 = rg_global / pix_cnt = per-zone average rg ratio.
-	 *
-	 * The OEM then feeds zone data into Tiziano_Awb_Ct_Detect which
-	 * computes a weighted/interpolated rg/bg target in ~0x100 scale.
-	 */
+	/* OEM: rg_global uses _wb_static-scaled zones.
+	 * cof_rg/cof_bg are now _wb_static values (WB reference gains).
+	 * Global averages are diagnostic-only. */
 	{
 		u32 ct_detect_status = 0;
 		u32 ct_detect_rg_bg[2] = { 0x100, 0x100 };
@@ -16263,23 +16400,10 @@ static int Tiziano_awb_fpga(const uint32_t *stats_r,
 		cl_params[4] = _awb_cluster_tail[1];  /* convergence tolerance */
 		cl_params[5] = _awb_cluster_tail[2];  /* max iterations */
 
-		/* OEM (Tiziano_awb_fpga): zone_rgbg is computed directly as
-		 *   mult2(q, (R << q) / G, cof_rg_q)
-		 * Zone rg/bg values from fix_point_mult2_32 are in Q8 format
-		 * (e.g., zone_rg=224 for R/G=1.4). Ct_Detect compares against
-		 * rg_pos[i] << q (Q18 format, e.g., 169<<10=173056). Without
-		 * the << q shift, all zones fall below the minimum rg_pos range,
-		 * producing interp=0 and CT=5000 (fallback).
-		 *
-		 * The << q shift converts Q8 → Q18 to match Ct_Detect's format.
-		 *
-		 * For bg: cof_bg (e.g. 4) is a calibration scaling factor baked
-		 * into zone_bg by fix_point_mult2_32. This inflates zone_bg 4x
-		 * relative to the natural B/G ratio, pushing it above bg_pos[14]
-		 * (the ceiling) and clamping bg_bi to max → ct_wght_mesh returns 0
-		 * → CT=5000 fallback. Divide by cof_bg to recover the true Q8
-		 * ratio before the << q shift. cof_rg=1 so no division is needed
-		 * for rg. */
+		/* Zone rgbg scaling for Ct_Detect.
+		 * With _awb_cof calibration, zone values are in Q8 scale
+		 * and need << q to match Ct_Detect's rg_pos[i] << q comparisons.
+		 * For bg: divide by cof_bg to undo the calibration inflation. */
 		{
 			u32 safe_cof_bg = cof_bg ? cof_bg : 1;
 
@@ -16402,8 +16526,11 @@ static int Tiziano_awb_fpga(const uint32_t *stats_r,
 			(live_gb - tgt_gb) : (tgt_gb - live_gb);
 		u32 total_diff = diff_gr + diff_gb;
 		u32 threshold;
-		/* OEM: step count ($s1) comes from _awb_mode[0], clamped 1-15.
-		 * First frame after reset uses 1. */
+		/* OEM: step count ($s1) comes from _awb_cof[0], clamped 1-15.
+		 * _awb_cof[0]=1 means immediate convergence (no smoothing).
+		 * For nighttime stability, use _awb_mode[0] (larger) until
+		 * the zone calibration is validated in daytime conditions.
+		 * TODO: switch to _awb_cof[0] once CT detection is validated. */
 		u32 step_count = (awb_history_reset || awb_history_count <= 1)
 			? 1 : _awb_mode[0];
 
@@ -16412,10 +16539,10 @@ static int Tiziano_awb_fpga(const uint32_t *stats_r,
 		if (step_count == 0)
 			step_count = 1;
 
-		/* OEM threshold for starting convergence ramp.
-		 * From decompilation: uses _awb_mode[1] as primary threshold;
-		 * falls through to _awb_parameter-based threshold if [1]==0.
-		 * Use _awb_mode[1] with sane default fallback. */
+		/* OEM threshold ($v1_1) for convergence comes from _awb_cof[1].
+		 * _awb_cof[1]=4 is very aggressive.  Keep _awb_mode[1] for now
+		 * until zone calibration is validated.
+		 * TODO: switch to _awb_cof[1] once CT detection is validated. */
 		threshold = _awb_mode[1];
 		if (threshold == 0)
 			threshold = 8;
@@ -28817,24 +28944,15 @@ static int data_b2ef0(uint32_t time, void **var_ptr)
 
 static int data_b2ef4(uint32_t param, int flag)
 {
-    /* Safe sensor integration time setting */
-    pr_debug("data_b2ef4: Setting sensor integration time %u, flag %d\n", param, flag);
-
+    /* Set sensor integration time — defer I2C write via workqueue */
     extern struct tx_isp_dev *ourISPdev;
-    if (!ourISPdev || !ourISPdev->sensor) {
-        pr_err("data_b2ef4: No ISP device or sensor available\n");
+    extern struct work_struct sensor_expo_work;
+    if (!ourISPdev || !ourISPdev->sensor)
         return -ENODEV;
-    }
 
-    /* Set integration time via sensor attribute */
-    if (ourISPdev->sensor) {
-        ourISPdev->sensor->attr.integration_time = param;
-        pr_debug("data_b2ef4: Set sensor integration_time to %u\n", param);
-        return 0;
-    }
-
-    /* Fallback: just log the operation */
-    pr_debug("data_b2ef4: No sensor set_integration_time operation available\n");
+    ourISPdev->sensor->attr.integration_time = param;
+    ourISPdev->sensor_update_pending = 1;
+    schedule_work(&sensor_expo_work);
     return 0;
 }
 
@@ -28913,24 +29031,16 @@ static uint32_t data_b2ee4(uint32_t log_val, void **var_ptr)
 
 static int data_b2f04(uint32_t param, int flag)
 {
-    /* Safe sensor analog gain setting */
-    pr_debug("data_b2f04: Setting sensor analog gain %u, flag %d\n", param, flag);
-
+    /* Set sensor analog gain — defer I2C write via workqueue
+     * (can't do I2C directly, IRQs may be disabled in this context) */
     extern struct tx_isp_dev *ourISPdev;
-    if (!ourISPdev || !ourISPdev->sensor) {
-        pr_err("data_b2f04: No ISP device or sensor available\n");
+    extern struct work_struct sensor_expo_work;
+    if (!ourISPdev || !ourISPdev->sensor)
         return -ENODEV;
-    }
 
-    /* Set analog gain via sensor attribute */
-    if (ourISPdev->sensor) {
-        ourISPdev->sensor->attr.again = param;
-        pr_debug("data_b2f04: Set sensor again to %u\n", param);
-        return 0;
-    }
-
-    /* Fallback: just log the operation */
-    pr_debug("data_b2f04: No sensor set_analog_gain operation available\n");
+    ourISPdev->sensor->attr.again = param;
+    ourISPdev->sensor_update_pending = 1;
+    schedule_work(&sensor_expo_work);
     return 0;
 }
 
