@@ -16028,6 +16028,21 @@ find_bg_idx:
 					ct_val = 5000; /* 0x1388 */
 				}
 
+				{
+					static unsigned int p10_diag;
+					p10_diag++;
+					if (p10_diag <= 10 || (p10_diag % 300) == 0)
+						pr_info("AWB_CTDET_P10[%u]: rg_bi=%u bg_bi=%u "
+							"interp=%u interp_unq=%u ct=%u "
+							"final_rg=%u final_bg=%u\n",
+							p10_diag, rg_bi, bg_bi,
+							interp_val,
+							q_mask ? (interp_val >> q_mask) : interp_val,
+							ct_val,
+							(final_rg + rounding) >> q_mask,
+							(final_bg + rounding) >> q_mask);
+				}
+
 				*out_ct = ct_val;
 				out_rg_bg[0] = (final_rg + rounding) >> q_mask;
 				out_rg_bg[1] = (final_bg + rounding) >> q_mask;
@@ -16248,28 +16263,39 @@ static int Tiziano_awb_fpga(const uint32_t *stats_r,
 		cl_params[4] = _awb_cluster_tail[1];  /* convergence tolerance */
 		cl_params[5] = _awb_cluster_tail[2];  /* max iterations */
 
-		/* OEM (Tiziano_awb_fpga): zone_rgbg[i] = (zone_rg[i] / cof_rg) << q
-		 * This converts from Q8 (R/G * 256 * cof) to Q(q+8) format so
-		 * Ct_Detect comparisons against rg_pos[j] << q are in the same scale.
-		 * Previous code did a raw memcpy (no /cof, no <<q), causing zone
-		 * values to land in the wrong CT mesh bracket → target_rg=169
-		 * instead of ~311. */
-		{
-			u32 safe_cof_rg = cof_rg ? cof_rg : 1;
-			u32 safe_cof_bg = cof_bg ? cof_bg : 1;
-			for (idx = 0; idx < AWB_STATS_ZONES; idx++) {
-				awb_zone_rgbg[idx] = (awb_zone_rg[idx] / safe_cof_rg) << q;
-				awb_zone_rgbg[idx + AWB_STATS_ZONES] = (awb_zone_bg[idx] / safe_cof_bg) << q;
-			}
+		/* OEM (Tiziano_awb_fpga): zone_rgbg is computed directly as
+		 *   mult2(q, (R << q) / G, cof_rg_q)
+		 * and passed straight to Ct_Detect without any further
+		 * division or shifting.  awb_zone_rg already holds exactly
+		 * that value, so just copy it into the interleaved rgbg
+		 * array that Ct_Detect expects.
+		 *
+		 * Previous code incorrectly applied an extra (/ cof_rg) << q
+		 * which distorted zone values and caused Ct_Detect to produce
+		 * wrong CT (20000-33000 K instead of 2800-6500 K). */
+		for (idx = 0; idx < AWB_STATS_ZONES; idx++) {
+			awb_zone_rgbg[idx] = awb_zone_rg[idx];
+			awb_zone_rgbg[idx + AWB_STATS_ZONES] = awb_zone_bg[idx];
 		}
 
 		if (fpga_diag_count <= 5) {
-			pr_info("AWB_CTDET_PRE[%u]: calling Ct_Detect light_src=%u q=%u\n",
-				fpga_diag_count, active_light_src_num, q);
-			pr_info("AWB_CTDET_PRE[%u]: zone_rg[0]=%u zone_bg[0]=%u rgbg[0]=%u rgbg[225]=%u rg_pos[0]=%u rg_pos[14]=%u\n",
-				fpga_diag_count, awb_zone_rg[0], awb_zone_bg[0],
+			pr_info("AWB_CTDET_PRE[%u]: calling Ct_Detect light_src=%u q=%u "
+				"cof_rg=%u cof_bg=%u\n",
+				fpga_diag_count, active_light_src_num, q,
+				cof_rg, cof_bg);
+			pr_info("AWB_CTDET_PRE[%u]: rgbg[0]=%u rgbg[225]=%u "
+				"rgbg_unq[0]=%u rgbg_unq[225]=%u "
+				"rg_pos[0]=%u rg_pos[14]=%u "
+				"bg_pos[0]=%u bg_pos[14]=%u\n",
+				fpga_diag_count,
 				awb_zone_rgbg[0], awb_zone_rgbg[AWB_STATS_ZONES],
-				((const uint32_t *)_rg_pos)[0], ((const uint32_t *)_rg_pos)[14]);
+				q ? (awb_zone_rgbg[0] >> q) : awb_zone_rgbg[0],
+				q ? (awb_zone_rgbg[AWB_STATS_ZONES] >> q) :
+					awb_zone_rgbg[AWB_STATS_ZONES],
+				((const uint32_t *)_rg_pos)[0],
+				((const uint32_t *)_rg_pos)[14],
+				((const uint32_t *)_bg_pos)[0],
+				((const uint32_t *)_bg_pos)[14]);
 		}
 
 		Tiziano_Awb_Ct_Detect(
