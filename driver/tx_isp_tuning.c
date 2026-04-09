@@ -3197,15 +3197,19 @@ static struct ae_parameter _ae_parameter = { .data = {
 }};
 static struct ae_exp_th ae_exp_th = { .data = {
 	/* Fallback defaults — overridden by tuning binary in tiziano_ae_params_refresh.
-	 * These are intentionally permissive so they don't artificially limit
-	 * any sensor. The actual limits come from:
+	 * OEM AE0 group (indices 0..6):
 	 *   [0] max IT: clamped to sensor's real max by tiziano_ae_init_exp_th
-	 *   [4] max AG: overridden by tuning binary's sensor-specific value
-	 *   [6] max DG: overridden by tuning binary
+	 *   [1] max AG in Q10: sensor-specific (GC2053 binary: 0x157fe ~= 87x)
+	 *   [2] max DG in Q10: typically 0x400 (1x)
+	 *   [3] short IT threshold: overwritten by sensor init param
+	 *   [4] min AG: raw value, OEM clamps to >= 0x400
+	 *   [5] min DG: raw value, OEM clamps to >= 0x400
+	 *   [6] max DG secondary: 0x400
+	 * OEM AE1/WDR group (indices 7..13): same layout for second AE engine.
 	 * Fallback [0]=0xFFFF (unclamped until sensor caps apply),
-	 * [4]=0xFFFF (permissive until tuning binary overrides). */
-	0xFFFF, 0x000, 0x000, 0x000, 0xFFFF, 0x3d49, 0x400, 0xfff,
-	0x002, 0x400, 0x400, 0x400, 0x1f4, 0x400, 0x400, 0x400,
+	 * [1]=0x4000 (permissive ~16x until tuning binary overrides). */
+	0xFFFF, 0x4000, 0x400, 0x800, 0x001, 0x400, 0x400, 0x400,
+	0x1f4, 0x400, 0x400, 0x400, 0x001, 0x400, 0x400, 0x400,
 	0x001, 0x400, 0x400, 0x400
 }};
 static struct ae_point_pos _AePointPos;
@@ -3234,6 +3238,10 @@ static struct flicker_t _flicker_t = { .data = {
 	0x019, 0x000, 0x000, 0x014, 0x032, 0x190001
 }};
 static struct scene_para _scene_para = { .data = {
+	/* OEM: _scene_para is NOT the AE target. The AE target is computed by
+	 * tisp_ae_target() interpolating ae0_ev_list + _lum_list based on EV.
+	 * _scene_para fields are scene detection thresholds/modes.
+	 * Tuning binary for GC2053: [0]=1 [1]=0xe6 [2]=0x65400 [3]=0x1e ... */
 	0x0546, 0x0a00, 0x034c, 0x03f4, 0x0001, 0x00e6, 0x65400, 0x001e,
 	0x65400, 0x0001, 0x0004
 }};
@@ -4086,6 +4094,63 @@ static void ae0_weight_mean2(uint32_t *zone_y, uint32_t *zone_wt,
         *out_wmean = 1;  /* OEM clamps to minimum 1 */
 }
 
+/* tisp_ae_target — OEM EXACT: Interpolate AE brightness target from EV tables.
+ *
+ * OEM (0x4ff98): Given current EV value, interpolate the target brightness
+ * from ae0_ev_list (threshold X values) and _lum_list (target Y values).
+ * Both arrays have 10 entries.
+ *
+ * cur_ev:  current total exposure value (unshifted, i.e. >> q already)
+ * q:       Q-format fixed-point position
+ *
+ * Returns: interpolated AE target brightness
+ */
+static uint32_t tisp_ae_target(uint32_t cur_ev_q, uint32_t q)
+{
+    uint32_t qm = q & 31;
+    uint32_t cur_ev = cur_ev_q >> qm;
+    int i, idx;
+    uint32_t x0, x1, y0, y1, dx, num;
+
+    /* Edge cases: below first threshold or above last */
+    if (cur_ev <= ae0_ev_list.data[0])
+        return _lum_list.data[0];
+    if (cur_ev >= ae0_ev_list.data[9])
+        return _lum_list.data[9];
+
+    /* Find bracketing interval */
+    idx = 0;
+    for (i = 0; i < 9; i++) {
+        if (cur_ev >= ae0_ev_list.data[i] && cur_ev <= ae0_ev_list.data[i + 1]) {
+            idx = i;
+            break;
+        }
+        /* OEM: if cur_ev < threshold, still increment (skip) */
+        if (cur_ev < ae0_ev_list.data[i])
+            idx = i;
+    }
+
+    x0 = ae0_ev_list.data[idx];
+    x1 = ae0_ev_list.data[idx + 1];
+    y0 = _lum_list.data[idx];
+    y1 = _lum_list.data[idx + 1];
+
+    /* Linear interpolation between y0 and y1 */
+    if (x1 == x0)
+        return y0;
+
+    dx = (x1 > x0) ? (x1 - x0) : 1;
+    num = (cur_ev > x0) ? (cur_ev - x0) : 0;
+
+    if (y1 >= y0) {
+        /* Ascending: y0 + (y1-y0)*num/dx */
+        return y0 + (y1 - y0) * num / dx;
+    } else {
+        /* Descending: y0 - (y0-y1)*num/dx */
+        return y0 - (y0 - y1) * num / dx;
+    }
+}
+
 /* ae0_tune2 — Simplified AE exposure convergence controller.
  *
  * OEM (0x500b8) is an extremely complex gain-splitting PID controller
@@ -4122,10 +4187,25 @@ static int ae0_tune2(uint32_t wmean, uint32_t q,
     uint32_t step_ratio;
     uint32_t new_it, new_ag, new_dg;
 
-    /* AE target from scene_para: data[0] is the target luminance.
-     * OEM ae_target() interpolates from ae0_ev_list+lum_list based on EV,
-     * but for initial convergence the base target works. */
-    ae_target = _scene_para.data[0];
+    /* AE target via OEM-exact interpolation from ae0_ev_list + _lum_list.
+     * The OEM tisp_ae_target() interpolates the target brightness based on
+     * the current total EV. _scene_para.data[0] is NOT the AE target —
+     * it's a scene mode flag. */
+    {
+        uint32_t cur_ev_q;
+        uint32_t cur_it_tmp = _ae_reg.data[0];
+        uint32_t cur_ag_tmp = data_c46a0;
+        uint32_t cur_dg_tmp = data_c46a4;
+        uint32_t qm_tmp = q & 31;
+        if (qm_tmp == 0) qm_tmp = 10;
+        if (cur_it_tmp == 0) cur_it_tmp = 1;
+        if (cur_ag_tmp == 0) cur_ag_tmp = 0x400;
+        if (cur_dg_tmp == 0) cur_dg_tmp = 0x400;
+        cur_ev_q = fix_point_mult3_32(qm_tmp,
+                                      cur_it_tmp << qm_tmp,
+                                      cur_ag_tmp, cur_dg_tmp);
+        ae_target = tisp_ae_target(cur_ev_q, q);
+    }
     if (ae_target == 0)
         ae_target = 0x80;  /* Safe default: ~128 out of 255 */
 
@@ -4139,19 +4219,28 @@ static int ae0_tune2(uint32_t wmean, uint32_t q,
     if (cur_dg == 0) cur_dg = 0x400;  /* Unity Q10 */
 
     /* Exposure limits from tuning parameters.
-     * ae_exp_th.data[0] = max IT, data[4] = max AG, data[6] = max DG.
+     * OEM ae_exp_th layout (AE0 group, indices 0..6):
+     *   [0] = max integration time (clamped to sensor max by init_exp_th)
+     *   [1] = max analog gain in Q10 (from tuning binary, ~0x157fe for GC2053)
+     *   [2] = max digital gain in Q10 (from tuning binary, typically 0x400 = 1x)
+     *   [3] = short IT threshold (overwritten by sensor param)
+     *   [4] = min analog gain (raw value clamped to >= 0x400 by init_exp_th)
+     *   [5] = min digital gain (raw value clamped to >= 0x400 by init_exp_th)
+     *   [6] = max DG secondary (0x400)
      * Min IT defaults to 1 (OEM data_b0cfc is the min-exp from sensor). */
     min_it = 1;
     max_it = ae_exp_th.data[0]; /* Max integration time */
-    min_ag = 0x400;             /* Min analog gain (1x in Q10) */
-    max_ag = ae_exp_th.data[4]; /* Max analog gain */
-    min_dg = 0x400;             /* Min digital gain (1x in Q10) */
-    max_dg = ae_exp_th.data[6]; /* Max digital gain */
+    min_ag = ae_exp_th.data[4]; /* Min analog gain (raw, clamped below) */
+    if (min_ag < 0x400) min_ag = 0x400;  /* OEM clamps to >= 1x Q10 */
+    max_ag = ae_exp_th.data[1]; /* Max analog gain in Q10 */
+    min_dg = ae_exp_th.data[5]; /* Min digital gain */
+    if (min_dg < 0x400) min_dg = 0x400;  /* OEM clamps to >= 1x Q10 */
+    max_dg = ae_exp_th.data[2]; /* Max digital gain in Q10 */
 
     /* Sanity clamp limits */
     if (max_it == 0) max_it = 0x40000;
-    if (max_ag == 0) max_ag = 0x4000;
-    if (max_dg == 0) max_dg = 0x4000;
+    if (max_ag < min_ag) max_ag = 0x4000;
+    if (max_dg < min_dg) max_dg = 0x4000;
     if (max_it < min_it) max_it = min_it;
 
     /* Convergence speed parameters from _exp_parameter:
@@ -4339,10 +4428,12 @@ static void tisp_set_ae0_ag(uint32_t ag, uint32_t dg)
         dg_comp = dg;
     }
 
-    /* Step 4: Clamp to max digital gain from ae_exp_th[6..7].
-     * OEM uses *(arg4) which is a pointer to a max-DG value passed in.
-     * In our simplified call, we use ae_exp_th.data[7] as max DG. */
-    max_dg = ae_exp_th.data[7];
+    /* Step 4: Clamp to max digital gain.
+     * OEM ae_exp_th[2] = max DG in Q10 (typically 0x400 = 1x).
+     * ae_exp_th[6] is a secondary max-DG limit. Use the larger. */
+    max_dg = ae_exp_th.data[2];
+    if (ae_exp_th.data[6] > max_dg)
+        max_dg = ae_exp_th.data[6];
     if (max_dg > 0 && dg_comp > max_dg)
         dg_comp = max_dg;
 
@@ -4420,9 +4511,10 @@ static int tisp_ae0_process_impl(void)
         static int ae_log_cnt;
         if (ae_log_cnt < 30 || (ae_log_cnt & 0xff) == 0) {
             pr_info("AE0[%d]: wmean=%u target=%u it=%u/%u ag=0x%x/0x%x dg=0x%x ev=0x%x\n",
-                    ae_log_cnt, wmean, _scene_para.data[0],
+                    ae_log_cnt, wmean,
+                    tisp_ae_target(_ae_ev, q),
                     new_it, ae_exp_th.data[0],
-                    new_ag, ae_exp_th.data[4],
+                    new_ag, ae_exp_th.data[1],
                     new_dg, _ae_ev);
         }
         ae_log_cnt++;
@@ -14172,8 +14264,8 @@ static int tiziano_ae_init_exp_th(void)
         data_afce0 = data_b0d1c;
     }
 
-    pr_info("tiziano_ae_init_exp_th: FINAL ae_exp_th[0]=%u(max_it) [4]=0x%x(max_ag) [6]=0x%x(max_dg)\n",
-            ae_exp_th.data[0], ae_exp_th.data[4], ae_exp_th.data[6]);
+    pr_info("tiziano_ae_init_exp_th: FINAL ae_exp_th[0]=%u(max_it) [1]=0x%x(max_ag) [2]=0x%x(max_dg)\n",
+            ae_exp_th.data[0], ae_exp_th.data[1], ae_exp_th.data[2]);
     return 0;
 }
 
@@ -28258,10 +28350,11 @@ int tiziano_ae_params_refresh(void)
         }
 
         pr_info("tiziano_ae_params_refresh: loaded AE params from tuning binary "
-                "(ae_exp_th[0]=0x%x [4]=0x%x, _exp_param[3]=0x%x, "
-                "scene_target=0x%x, ae_param[1]=%u ae_param[3]=%u)\n",
-                ae_exp_th.data[0], ae_exp_th.data[4], _exp_parameter.data[3],
-                _scene_para.data[0], _ae_parameter.data[1], _ae_parameter.data[3]);
+                "(ae_exp_th[0]=0x%x [1]=0x%x(max_ag) [2]=0x%x(max_dg), "
+                "_exp_param[3]=0x%x, ae_param[1]=%u ae_param[3]=%u)\n",
+                ae_exp_th.data[0], ae_exp_th.data[1], ae_exp_th.data[2],
+                _exp_parameter.data[3],
+                _ae_parameter.data[1], _ae_parameter.data[3]);
     } else {
         pr_info("tiziano_ae_params_refresh: no tuning binary, using static defaults\n");
     }
