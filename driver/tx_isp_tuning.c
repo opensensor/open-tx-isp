@@ -16265,17 +16265,18 @@ static int Tiziano_awb_fpga(const uint32_t *stats_r,
 
 		/* OEM (Tiziano_awb_fpga): zone_rgbg is computed directly as
 		 *   mult2(q, (R << q) / G, cof_rg_q)
-		 * and passed straight to Ct_Detect without any further
-		 * division or shifting.  awb_zone_rg already holds exactly
-		 * that value, so just copy it into the interleaved rgbg
-		 * array that Ct_Detect expects.
+		 * Zone rg/bg values from fix_point_mult2_32 are in Q8 format
+		 * (e.g., zone_rg=224 for R/G=1.4). Ct_Detect compares against
+		 * rg_pos[i] << q (Q18 format, e.g., 169<<10=173056). Without
+		 * the << q shift, all zones fall below the minimum rg_pos range,
+		 * producing interp=0 and CT=5000 (fallback).
 		 *
-		 * Previous code incorrectly applied an extra (/ cof_rg) << q
-		 * which distorted zone values and caused Ct_Detect to produce
-		 * wrong CT (20000-33000 K instead of 2800-6500 K). */
+		 * The << q shift converts Q8 → Q18 to match Ct_Detect's format.
+		 * Previous code also divided by cof_rg, which was wrong — the
+		 * cof calibration is already applied by fix_point_mult2_32. */
 		for (idx = 0; idx < AWB_STATS_ZONES; idx++) {
-			awb_zone_rgbg[idx] = awb_zone_rg[idx];
-			awb_zone_rgbg[idx + AWB_STATS_ZONES] = awb_zone_bg[idx];
+			awb_zone_rgbg[idx] = awb_zone_rg[idx] << q;
+			awb_zone_rgbg[idx + AWB_STATS_ZONES] = awb_zone_bg[idx] << q;
 		}
 
 		if (fpga_diag_count <= 5) {
