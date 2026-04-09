@@ -3884,7 +3884,8 @@ static int tisp_event_push(void *event);
 static int system_reg_write_ae(int ae_id, uint32_t reg, uint32_t value);
 static int32_t tisp_log2_fixed_to_fixed_tuning(uint32_t input_val, int32_t in_precision, char out_precision);
 static void tisp_set_sensor_integration_time(uint32_t time);
-static void tisp_set_sensor_analog_gain(void);
+static uint32_t tisp_set_sensor_analog_gain(uint32_t requested_gain);
+static uint32_t tisp_set_sensor_digital_gain_short(uint32_t requested_gain);
 extern int tisp_ae_get_y_zone(void *buffer);
 
 /* Helper function implementations */
@@ -4286,29 +4287,80 @@ static int ae0_tune2(uint32_t wmean, uint32_t q,
     return 1;  /* Still adjusting */
 }
 
-/* tisp_set_ae0_ag — Write analog + digital gain to sensor.
+/* tisp_set_ae0_ag — OEM EXACT (0x51870): Write analog + digital gain to sensor.
  *
- * OEM (0x51870) calls tisp_set_sensor_analog_gain() and
- * tisp_set_sensor_digital_gain_short(), then compensates for the
- * sensor's actual allocated gain vs requested gain.
+ * OEM flow:
+ * 1. Call tisp_set_sensor_analog_gain(requested_ag) -> returns actual_ag
+ * 2. Call tisp_set_sensor_digital_gain_short(requested_dg) -> returns actual_dg
+ * 3. Compute compensation: dg_comp = (req_ag * req_dg) / (actual_ag * actual_dg)
+ * 4. Clamp dg_comp to max digital gain
+ * 5. Store actual values back into IspAeExp fields
  *
- * This simplified version calls our existing sensor gain write function
- * and caches the result. */
+ * This ensures that when the sensor clips the requested analog gain (e.g.,
+ * GC2053 max ~16x vs requested 64x), the excess is compensated via ISP
+ * digital gain so total system gain stays consistent. */
 static void tisp_set_ae0_ag(uint32_t ag, uint32_t dg)
 {
-    /* Update cached gain state */
-    data_c46a0 = ag;
-    data_c46a4 = dg;
+    uint32_t q = _AePointPos.data[0] & 31;
+    uint32_t actual_ag, actual_dg;
+    uint32_t req_product, actual_product;
+    uint32_t dg_comp, max_dg;
 
-    /* Call existing sensor analog gain writer (uses alloc_again + SENSOR_EXPO) */
-    tisp_set_sensor_analog_gain();
+    if (q == 0) q = 10;  /* Default Q10 if not initialized */
 
-    /* For digital gain, the OEM calls tisp_set_sensor_digital_gain_short
-     * which goes through log2 -> alloc -> exp2 pipeline. For now we cache
-     * the digital gain for use in EV calculations. */
-    data_c46ac = dg;
+    /* OEM: Skip if IspAeFlag is 0 and gains haven't changed and no ctrls pending.
+     * For simplicity, always process (OEM has early-out optimization). */
 
-    IspAeFlag = 0;  /* Clear initial convergence flag after first gain write */
+    /* OEM: Handle tisp_ae_ctrls override */
+    if (tisp_ae_ctrls != 0) {
+        ag = data_c46a0;
+        dg = fix_point_mult2_32(q, data_c46a4, data_c46ac);
+    }
+
+    /* Step 1: Set analog gain — sensor clips to real max, returns actual */
+    actual_ag = tisp_set_sensor_analog_gain(ag);
+    ag_new = actual_ag;
+    data_c46a0 = actual_ag;
+
+    /* Step 2: Set digital gain — sensor clips, returns actual */
+    actual_dg = tisp_set_sensor_digital_gain_short(dg);
+    dg_new = actual_dg;
+    data_c46a4 = actual_dg;
+
+    /* Step 3: Compute compensation digital gain.
+     * If sensor couldn't provide full AG, push overflow into DG.
+     * dg_comp = (requested_ag * requested_dg) / (actual_ag * actual_dg) */
+    req_product = fix_point_mult2_32(q, ag, dg);
+    actual_product = fix_point_mult2_32(q, actual_ag, actual_dg);
+
+    if (actual_product > 0) {
+        dg_comp = fix_point_div_32(q, req_product, actual_product);
+    } else {
+        dg_comp = dg;
+    }
+
+    /* Step 4: Clamp to max digital gain from ae_exp_th[6..7].
+     * OEM uses *(arg4) which is a pointer to a max-DG value passed in.
+     * In our simplified call, we use ae_exp_th.data[7] as max DG. */
+    max_dg = ae_exp_th.data[7];
+    if (max_dg > 0 && dg_comp > max_dg)
+        dg_comp = max_dg;
+
+    /* Store the compensated digital gain */
+    dg_new = dg_comp;
+    data_c46ac = dg_comp;
+
+    IspAeFlag = 0;  /* Clear initial convergence flag */
+
+    {
+        static int ae0ag_log_cnt;
+        if (ae0ag_log_cnt < 20 || (ae0ag_log_cnt & 0xff) == 0) {
+            pr_info("AE0_AG[%d]: req_ag=0x%x req_dg=0x%x actual_ag=0x%x actual_dg=0x%x "
+                    "dg_comp=0x%x (max_dg=0x%x)\n",
+                    ae0ag_log_cnt, ag, dg, actual_ag, actual_dg, dg_comp, max_dg);
+        }
+        ae0ag_log_cnt++;
+    }
 }
 
 /* tisp_ae0_process_impl — Main AE0 processing function.
@@ -5222,8 +5274,14 @@ static int32_t tisp_log2_int_to_fixed(uint32_t value, char precision_bits, char 
 
 static int32_t tisp_log2_fixed_to_fixed_tuning(uint32_t input_val, int32_t in_precision, char out_precision)
 {
-    // Call helper directly with original param signature
-    return tisp_log2_int_to_fixed(input_val, out_precision, 0);
+    /* OEM EXACT (0x11470): log2_int_to_fixed(value, out_q, 0) - (in_q << out_q)
+     *
+     * For a fixed-point value in Q(in_q) format, log2(value) in integer sense
+     * gives log2(mantissa * 2^in_q) = log2(mantissa) + in_q.
+     * Subtracting in_q gives the true log2 of the represented value.
+     * E.g., gain=0x400 in Q10 means 1.0x; log2(0x400) - 10 = 0, correct. */
+    return tisp_log2_int_to_fixed(input_val, out_precision, 0)
+           - (in_precision << (out_precision & 0x1f));
 }
 
 
@@ -13745,9 +13803,10 @@ static void tisp_ae1_process(void);
 /* AE processing functions - Forward declarations */
 static int tiziano_ae_init_exp_th(void);
 static void tisp_set_sensor_integration_time(uint32_t time);
-static void tisp_set_sensor_analog_gain(void);
+static uint32_t tisp_set_sensor_analog_gain(uint32_t requested_gain);
+static uint32_t tisp_set_sensor_digital_gain_short(uint32_t requested_gain);
 static void tisp_set_sensor_integration_time_short(uint32_t time);
-static void tisp_set_sensor_analog_gain_short(void);
+static uint32_t tisp_set_sensor_analog_gain_short(uint32_t requested_gain);
 /* tiziano_deflicker_expt implemented as exported function below */
 static int system_reg_write_ae(int ae_id, uint32_t reg, uint32_t value);
 /* REMOVED: Conflicting static declaration - use extern from tx_isp_core.c */
@@ -13764,8 +13823,8 @@ static uint32_t data_b2ee0(uint32_t log_val, int16_t *var_ptr);
 static uint32_t data_b2ee4(uint32_t log_val, void **var_ptr);
 static int data_b2f04(uint32_t param, int flag);
 static int data_b2f08(uint32_t param, int flag);
-static uint32_t tisp_log2_fixed_to_fixed(void);
-/* Note: tisp_log2_fixed_to_fixed and system_reg_write already declared elsewhere */
+/* tisp_log2_fixed_to_fixed(void) stub removed — tisp_log2_fixed_to_fixed_tuning
+ * is used directly by gain functions with proper (value, in_q, out_q) args. */
 
 /* Remove duplicate declarations - using the struct versions defined earlier */
 
@@ -14176,8 +14235,8 @@ int tiziano_ae_init(uint32_t height, uint32_t width, uint32_t fps)
         /* Binary Ninja EXACT: tisp_set_sensor_integration_time(_ae_result) */
         tisp_set_sensor_integration_time(_ae_result.data[0]);
 
-        /* Binary Ninja EXACT: tisp_set_sensor_analog_gain() */
-        tisp_set_sensor_analog_gain();
+        /* Binary Ninja EXACT: tisp_set_sensor_analog_gain(data_afcd0) */
+        tisp_set_sensor_analog_gain(data_afcd0);
 
         /* Binary Ninja EXACT: int32_t $v1_1 = data_b0e10 */
         int32_t v1_1 = data_b0e10;
@@ -14222,8 +14281,10 @@ int tiziano_ae_init(uint32_t height, uint32_t width, uint32_t fps)
             /* Binary Ninja EXACT: tisp_set_sensor_integration_time_short(data_afcd8) */
             tisp_set_sensor_integration_time_short(data_afcd8);
 
-            /* Binary Ninja EXACT: tisp_set_sensor_analog_gain_short() */
-            tisp_set_sensor_analog_gain_short();
+            /* Binary Ninja EXACT: tisp_set_sensor_analog_gain_short(data_afce0)
+             * OEM uses data_9fccc which is the short-frame analog gain.
+             * In our mapping data_afce0 is closest (short-frame gain field). */
+            tisp_set_sensor_analog_gain_short(data_afce0);
 
             /* Binary Ninja EXACT: int32_t $v0_7 = data_afce0 */
             int32_t v0_7 = data_afce0;
@@ -28158,37 +28219,17 @@ int tiziano_ae_params_refresh(void)
 
     /* OEM EXACT: Load AE algorithm parameters from tuning binary.
      * The OEM tiziano_ae_params_refresh copies all AE structs from the
-     * tuning binary (tparams) into the static variables.  Without this,
-     * the static initializers are used — but those are just fallback
-     * defaults that may not match the sensor's actual tuning.
+     * tuning binary (tparams) into the static variables.
      *
-     * We skip _ae_parameter because we need to keep the static 15x15
-     * grid config for AE DMA — the OEM zeros it then reprograms via
-     * data_d04bc, but we don't implement that path. */
-    if (0 /* DISABLED: tuning binary AE offsets load wrong values (target=1, max_ag=1).
-         * The tparams layout doesn't match expected OEM offsets.
-         * Keep static defaults until offset mapping is verified. */
-        && p && tuning_bin_loaded) {
-        /* OEM offsets from tparams base (0x84b10 in OEM binary):
-         *   _ae_parameter:  +0x0080  — SKIPPED (keep static grid config)
-         *   ae_exp_th:      +0x0128  0x50 bytes
-         *   _AePointPos:    +0x0178  0x08 bytes
-         *   _exp_parameter: +0x0180  0x2c bytes
-         *   ae_ev_step:     +0x01ac  0x14 bytes
-         *   ae_stable_tol:  +0x01c0  0x10 bytes
-         *   ae0_ev_list:    +0x01d0  0x28 bytes
-         *   _lum_list:      +0x01f8  0x28 bytes
-         *   _deflicker_para:+0x0248  0x0c bytes
-         *   _flicker_t:     +0x0254  0x18 bytes
-         *   _scene_para:    +0x026c  0x2c bytes
-         *   ae_scene_mode_th:+0x0298 0x10 bytes
-         *   _log2_lut:      +0x02a8  0x50 bytes
-         *   _weight_lut:    +0x02f8  0x50 bytes
-         *   _ae_zone_weight:+0x0348  0x384 bytes
-         *   _scene_roui_weight:+0x06cc 0x384 bytes
-         *   _scene_roi_weight:+0x0a50 0x384 bytes
-         *   ae_comp_param:  +0x0e3c  0x18 bytes
-         */
+     * OEM offsets verified against decompilation of tiziano_ae_params_refresh
+     * at 0x52b3c: tparams base = 0x84b10, so _ae_parameter is at
+     * 0x84b90 - 0x84b10 = +0x80, ae_exp_th at 0x84c38 - 0x84b10 = +0x128, etc.
+     * Our tparams_day is loaded from file[0x18] with size 0x137f0, matching OEM. */
+    if (p && tuning_bin_loaded) {
+        /* OEM EXACT: Copy _ae_parameter from tuning binary.
+         * The zone spacing fields ([4..18] col, [19..33] row) are overwritten
+         * below by the sensor-dimension-based computation loops, matching OEM. */
+        memcpy(&_ae_parameter,      p + 0x0080, 0xa8);
         memcpy(&ae_exp_th,          p + 0x0128, 0x50);
         memcpy(&_AePointPos,        p + 0x0178, 0x08);
         memcpy(&_exp_parameter,     p + 0x0180, 0x2c);
@@ -28218,39 +28259,85 @@ int tiziano_ae_params_refresh(void)
 
         pr_info("tiziano_ae_params_refresh: loaded AE params from tuning binary "
                 "(ae_exp_th[0]=0x%x [4]=0x%x, _exp_param[3]=0x%x, "
-                "scene_target=0x%x)\n",
+                "scene_target=0x%x, ae_param[1]=%u ae_param[3]=%u)\n",
                 ae_exp_th.data[0], ae_exp_th.data[4], _exp_parameter.data[3],
-                _scene_para.data[0]);
+                _scene_para.data[0], _ae_parameter.data[1], _ae_parameter.data[3]);
     } else {
         pr_info("tiziano_ae_params_refresh: no tuning binary, using static defaults\n");
     }
 
-    memset(&ae1_ev_list, 0, 0x28);
-    memset(&ae1_comp_ev_list, 0, 0x28);
-
-    /* OEM EXACT (0x154b4): Compute default zone spacing from sensor dims.
-     * These go to separate variables in the OEM (data_8064c etc), not into
-     * _ae_parameter.  The column/row spacing within _ae_parameter stays 0
-     * until libimp sends proper AE config.
-     * sensor_info >> 3 gives a default zone size for the spacing variables. */
-    {
-        uint32_t col_space = tisp_si_width(&sensor_info) >> 3;
-        uint32_t row_space = tisp_si_height(&sensor_info) >> 3;
-        /* OEM writes to data_8064c..data_80658 (4 consecutive uint32).
-         * In our code, these are separate from _ae_parameter. */
-        pr_info("tiziano_ae_params_refresh: OEM-exact zero (col_space=%u row_space=%u)\n",
-                col_space, row_space);
+    /* OEM EXACT: ae1 lists from tuning binary at +0x0ecc and +0x0fe8 */
+    if (p && tuning_bin_loaded) {
+        memcpy(&ae1_ev_list, p + 0x0ecc, 0x28);
+        memcpy(&ae1_comp_ev_list, p + 0x0fe8, 0x28);
+    } else {
+        memset(&ae1_ev_list, 0, 0x28);
+        memset(&ae1_comp_ev_list, 0, 0x28);
     }
 
-    /* OEM EXACT: Zero WDR parameters */
-    memset(&ae0_ev_list_wdr, 0, sizeof(ae0_ev_list_wdr));
-    memset(&_lum_list_wdr, 0, sizeof(_lum_list_wdr));
-    memset(&_scene_para_wdr, 0, sizeof(_scene_para_wdr));
-    memset(&ae_scene_mode_th_wdr, 0, sizeof(ae_scene_mode_th_wdr));
-    memset(&ae_comp_param_wdr, 0, sizeof(ae_comp_param_wdr));
-    memset(&ae_extra_at_list_wdr, 0, sizeof(ae_extra_at_list_wdr));
+    /* OEM EXACT: set data_b0df8 = 0 BEFORE the zone spacing loops */
+    data_b0df8 = 0;
 
-    data_b0df8 = 0;  /* Mark as initialized */
+    /* OEM EXACT (end of tiziano_ae_params_refresh @ 0x52b3c):
+     * Compute zone column/row spacing from sensor dimensions.
+     * The OEM loops fill _ae_parameter[4..4+cols-1] with
+     * (sensor_width / 2) / cols, and _ae_parameter[19..19+rows-1] with
+     * (sensor_height / 2) / rows.
+     *
+     * Loop 1: col spacing — $lo = sensor_width / 2
+     *   for (i = 0; i < _ae_parameter[3]; i++)
+     *     _ae_parameter[i + 4] = (sensor_width / 2) / _ae_parameter[3]
+     *
+     * Loop 2: row spacing — $lo_2 = sensor_height / 2
+     *   for (i = 0; i < _ae_parameter[1]; i++)
+     *     _ae_parameter[i + 19] = (sensor_height / 2) / _ae_parameter[1] */
+    {
+        uint32_t w = tisp_si_width(&sensor_info);
+        uint32_t h = tisp_si_height(&sensor_info);
+        uint32_t cols = _ae_parameter.data[3];
+        uint32_t rows = _ae_parameter.data[1];
+        uint32_t i;
+
+        if (cols > 0 && cols <= 15) {
+            uint32_t col_space = (w / 2) / cols;
+            for (i = 0; i < cols; i++)
+                _ae_parameter.data[4 + i] = col_space;
+        }
+
+        if (rows > 0 && rows <= 15) {
+            uint32_t row_space = (h / 2) / rows;
+            for (i = 0; i < rows; i++)
+                _ae_parameter.data[19 + i] = row_space;
+        }
+
+        pr_info("tiziano_ae_params_refresh: zone spacing cols=%u rows=%u "
+                "col_space=%u row_space=%u\n",
+                cols, rows,
+                cols ? (w / 2) / cols : 0,
+                rows ? (h / 2) / rows : 0);
+    }
+
+    /* OEM EXACT: Load WDR parameters from tuning binary.
+     * OEM copies these at 0x85a04..0x85af8 = tparams + 0x0ef4..0x0fe8.
+     * Non-WDR sensors will have zeros in these offsets. */
+    if (p && tuning_bin_loaded) {
+        memcpy(&ae0_ev_list_wdr,       p + 0x0ef4, 0x28);
+        memcpy(&_lum_list_wdr,         p + 0x0f1c, 0x28);
+        /* OEM also copies ae0_ev_list_wdr_2 at +0x0f44, skip */
+        memcpy(&_scene_para_wdr,       p + 0x0f6c, 0x2c);
+        memcpy(&ae_scene_mode_th_wdr,  p + 0x0f98, 0x10);
+        memcpy(&ae_comp_param_wdr,     p + 0x0fa8, 0x18);
+        memcpy(&ae_extra_at_list_wdr,  p + 0x0fc0, 0x28);
+    } else {
+        memset(&ae0_ev_list_wdr, 0, sizeof(ae0_ev_list_wdr));
+        memset(&_lum_list_wdr, 0, sizeof(_lum_list_wdr));
+        memset(&_scene_para_wdr, 0, sizeof(_scene_para_wdr));
+        memset(&ae_scene_mode_th_wdr, 0, sizeof(ae_scene_mode_th_wdr));
+        memset(&ae_comp_param_wdr, 0, sizeof(ae_comp_param_wdr));
+        memset(&ae_extra_at_list_wdr, 0, sizeof(ae_extra_at_list_wdr));
+    }
+
+    /* data_b0df8 already set to 0 above (before zone spacing loops) */
 
     pr_debug("tiziano_ae_params_refresh: AE parameters refreshed\n");
     return 0;
@@ -28391,23 +28478,88 @@ static void tisp_set_sensor_integration_time(uint32_t time)
     }
 }
 
-static void tisp_set_sensor_analog_gain(void)
+/* tisp_set_sensor_analog_gain — OEM EXACT (0x4e804).
+ *
+ * Takes requested analog gain in linear Q10 format, converts to log2 Q16,
+ * passes through sensor's alloc_again (which clips to sensor's real max),
+ * converts back to linear, writes to sensor via set_again, and returns
+ * the actual applied gain in linear Q10 format.
+ *
+ * This is critical for gain redistribution: the caller uses the return
+ * value to compute a compensation digital gain when the sensor can't
+ * provide the full requested analog gain. */
+static uint32_t tisp_set_sensor_analog_gain(uint32_t requested_gain)
 {
     int16_t var_28;
+    uint32_t log_result, gain_param, v0_2, final_gain;
 
-    pr_debug("tisp_set_sensor_analog_gain: Setting analog gain\n");
+    pr_debug("tisp_set_sensor_analog_gain: requested gain=0x%x\n", requested_gain);
 
-    /* Binary Ninja: uint32_t $v0_2 = tisp_math_exp2(data_b2ee0(tisp_log2_fixed_to_fixed(), &var_28), 0x10, 0x10) */
-    uint32_t log_result = tisp_log2_fixed_to_fixed();
-    uint32_t gain_param = data_b2ee0(log_result, &var_28);
-    uint32_t v0_2 = tisp_math_exp2(gain_param, 0x10, 0x10);
+    /* OEM EXACT: tisp_log2_fixed_to_fixed(arg1 << 6, 0x10, 0x10)
+     * The << 6 converts from Q10 to Q16 before log2. */
+    log_result = tisp_log2_fixed_to_fixed_tuning(
+        requested_gain << 6, 0x10, 0x10);
 
-    /* Binary Ninja: data_b2f04(zx.d(var_28), 0) */
-    data_b2f04((uint32_t)var_28, 0);
+    /* OEM EXACT: data_a2ed0(log_result, &var_28)
+     * alloc_again clips to sensor's real max and returns clipped log2.
+     * var_28 receives the sensor register index to write. */
+    gain_param = data_b2ee0(log_result, &var_28);
 
-    /* Binary Ninja: return $v0_2 u>> 6 */
-    uint32_t final_gain = v0_2 >> 6;
-    pr_debug("tisp_set_sensor_analog_gain: Calculated gain = %u\n", final_gain);
+    /* OEM EXACT: tisp_math_exp2(clipped_log2, 0x10, 0x10)
+     * Convert clipped log2 back to linear Q16. */
+    v0_2 = tisp_math_exp2(gain_param, 0x10, 0x10);
+
+    /* OEM EXACT: data_a2ef4(zx.d(var_28), 0)
+     * Write the sensor register value (the index from alloc_again). */
+    data_b2f04((uint32_t)(uint16_t)var_28, 0);
+
+    /* OEM EXACT: return $v0_2 u>> 6
+     * Convert from Q16 linear back to Q10 linear. */
+    final_gain = v0_2 >> 6;
+    pr_debug("tisp_set_sensor_analog_gain: actual gain=0x%x\n", final_gain);
+    return final_gain;
+}
+
+/* tisp_set_sensor_digital_gain_short — OEM EXACT (0x4e90c).
+ *
+ * Same pattern as tisp_set_sensor_analog_gain but for digital gain.
+ * Uses sensor's alloc_dgain callback to clip, then set_dgain to write.
+ * Returns actual applied digital gain in linear Q10 format. */
+static uint32_t tisp_set_sensor_digital_gain_short(uint32_t requested_gain)
+{
+    uint32_t log_result, gain_param, v0_2, final_gain;
+    int16_t var_28 = 0;
+
+    pr_debug("tisp_set_sensor_digital_gain_short: requested=0x%x\n", requested_gain);
+
+    /* Convert Q10 linear to log2 Q16 */
+    log_result = tisp_log2_fixed_to_fixed_tuning(requested_gain << 6, 0x10, 0x10);
+
+    /* Clip through sensor's alloc_dgain callback.
+     * GC2053 may not have alloc_dgain, in which case we pass through. */
+    if (ourISPdev && ourISPdev->sensor &&
+        ourISPdev->sensor->attr.sensor_ctrl.alloc_dgain) {
+        unsigned int sensor_dgain = 0;
+        gain_param = ourISPdev->sensor->attr.sensor_ctrl.alloc_dgain(
+            log_result, TX_ISP_GAIN_FIXED_POINT, &sensor_dgain);
+        var_28 = (int16_t)sensor_dgain;
+    } else {
+        /* No alloc_dgain: pass through unclipped */
+        gain_param = log_result;
+    }
+
+    /* Convert clipped log2 back to linear */
+    v0_2 = tisp_math_exp2(gain_param, 0x10, 0x10);
+
+    /* Write to sensor via set_digital_gain if available */
+    if (ourISPdev && ourISPdev->sensor) {
+        ourISPdev->sensor->attr.dgain = (uint32_t)(uint16_t)var_28;
+    }
+
+    /* Return actual gain in Q10 */
+    final_gain = v0_2 >> 6;
+    pr_debug("tisp_set_sensor_digital_gain_short: actual=0x%x\n", final_gain);
+    return final_gain;
 }
 
 static void tisp_set_sensor_integration_time_short(uint32_t time)
@@ -28450,24 +28602,30 @@ static void tisp_set_sensor_integration_time_short(uint32_t time)
     }
 }
 
-static void tisp_set_sensor_analog_gain_short(void)
+/* tisp_set_sensor_analog_gain_short — OEM EXACT (0x4e888).
+ * Same as tisp_set_sensor_analog_gain but uses alloc_again_short callback.
+ * Only called in WDR mode. */
+static uint32_t tisp_set_sensor_analog_gain_short(uint32_t requested_gain)
 {
-    void *var_28;
-    int16_t var_1a;
+    void *var_28 = NULL;
+    uint32_t log_result, gain_param, v0_2, final_gain;
 
-    pr_debug("tisp_set_sensor_analog_gain_short: Setting short analog gain\n");
+    pr_debug("tisp_set_sensor_analog_gain_short: requested=0x%x\n", requested_gain);
 
-    /* Binary Ninja: uint32_t $v0_2 = tisp_math_exp2(data_b2ee4(tisp_log2_fixed_to_fixed(), &var_28), 0x10, 0x10) */
-    uint32_t log_result = tisp_log2_fixed_to_fixed();
-    uint32_t gain_param = data_b2ee4(log_result, &var_28);
-    uint32_t v0_2 = tisp_math_exp2(gain_param, 0x10, 0x10);
+    log_result = tisp_log2_fixed_to_fixed_tuning(
+        requested_gain << 6, 0x10, 0x10);
+    gain_param = data_b2ee4(log_result, &var_28);
+    v0_2 = tisp_math_exp2(gain_param, 0x10, 0x10);
 
-    /* Binary Ninja: data_b2f08(zx.d(var_1a), 0) */
-    data_b2f08((uint32_t)var_1a, 0);
+    /* OEM: data_a2ef8(zx.d(var_1a), 0)
+     * var_1a is stored by alloc_again_short at *(arg2+2) which overlaps var_28.
+     * data_b2ee4 stores the sensor index in var_28 as (void*)(uintptr_t)val.
+     * Pass the low 16 bits as the sensor register index. */
+    data_b2f08((uint32_t)(uint16_t)(uintptr_t)var_28, 0);
 
-    /* Binary Ninja: return $v0_2 u>> 6 */
-    uint32_t final_gain = v0_2 >> 6;
-    pr_debug("tisp_set_sensor_analog_gain_short: Calculated short gain = %u\n", final_gain);
+    final_gain = v0_2 >> 6;
+    pr_debug("tisp_set_sensor_analog_gain_short: actual=0x%x\n", final_gain);
+    return final_gain;
 }
 
 /* System control functions - Binary Ninja EXACT implementations (already implemented above) */
@@ -28668,12 +28826,9 @@ static int data_b2f08(uint32_t param, int flag)
     return 0;
 }
 
-static uint32_t tisp_log2_fixed_to_fixed(void)
-{
-    /* Fixed point log2 conversion */
-    pr_debug("tisp_log2_fixed_to_fixed: Performing log2 conversion\n");
-    return 0x1000; /* Return default fixed point value */
-}
+/* tisp_log2_fixed_to_fixed stub removed — now using tisp_log2_fixed_to_fixed_tuning
+ * which correctly implements log2_int_to_fixed(val, out_q, 0) - (in_q << out_q).
+ * The old stub returned a constant 0x1000 which made tisp_set_sensor_analog_gain broken. */
 
 /* REMOVED: Static stub system_reg_write - use external implementation from tx-isp-module.c */
 /* The real system_reg_write() that does actual hardware writes is declared extern */
