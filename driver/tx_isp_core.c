@@ -933,14 +933,24 @@ void mbus_to_bayer_write(u32 mbus_code)
  *
  * Sets bit 31 of ISP register 0xc.  Called exactly once on the first
  * interrupt after stream-on.
+ *
+ * CRITICAL FIX: Also re-enforce the block enable whitelist here.
+ * Between tisp_init() and the first frame, something (likely an ioctl
+ * from libimp.so or a day/night path) overwrites reg 0xc with the OEM
+ * value 0xb5742249 which has ALL blocks enabled — including GIB(bit 5)
+ * whose BLC component zeros AE/AWB stats data at high sensor gain.
  */
 void tisp_top_sel(void)
 {
+	extern u32 tisp_enforce_block_whitelist(u32 bypass_val);
 	u32 reg_val = system_reg_read(0xc);
+	u32 enforced = tisp_enforce_block_whitelist(reg_val);
 
-	system_reg_write(0xc, reg_val | 0x80000000);
-	pr_info("tisp_top_sel: reg[0xc] 0x%08x -> 0x%08x\n",
-		reg_val, reg_val | 0x80000000);
+	enforced |= 0x80000000;
+	system_reg_write(0xc, enforced);
+	pr_info("tisp_top_sel: reg[0xc] 0x%08x -> 0x%08x%s\n",
+		reg_val, enforced,
+		(enforced != (reg_val | 0x80000000)) ? " (whitelist enforced)" : "");
 }
 
 /* Core subdev operations implementations */

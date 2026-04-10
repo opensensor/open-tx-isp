@@ -2266,6 +2266,13 @@ static u32 tisp_apply_block_enable_whitelist(u32 bypass_val)
 	return bypass_val | not_whitelisted;
 }
 
+/* Exported for tisp_top_sel (tx_isp_core.c) to enforce at stream-on */
+u32 tisp_enforce_block_whitelist(u32 bypass_val)
+{
+	return tisp_apply_block_enable_whitelist(bypass_val);
+}
+EXPORT_SYMBOL(tisp_enforce_block_whitelist);
+
 static u32 tisp_compute_top_bypass_from_params(int wdr_enable)
 {
 	u32 bypass_val = 0x8077efff;  /* OEM EXACT starting value */
@@ -13968,64 +13975,38 @@ static void JZ_Isp_Ae_Dg2reg(uint32_t pos, uint32_t *reg1, uint32_t dg_val, uint
 static int tisp_ae1_expt(void);
 static void tisp_set_ae1_ag(uint32_t ag_q10, uint32_t dg_q10);
 
-/* tisp_ae1_process - Simple proportional AE controller.
- * The OEM's tisp_ae1_expt is a complex algorithm we haven't fully ported.
- * This reads actual zone luminance and adjusts sensor exposure/gain
- * to reach a target brightness. */
+/* tisp_ae1_process - OEM-matching AE1 event callback (event 6).
+ *
+ * OEM decompilation (0x53704):
+ *   tisp_ae1_ctrls_update()
+ *   tisp_ae1_process_impl()
+ *   return 0
+ *
+ * In the OEM, tisp_ae1_process_impl handles WDR/HDR short exposure control.
+ * It calls tisp_set_sensor_integration_time_short() and
+ * tisp_set_sensor_analog_gain_short(), which store values via function
+ * pointers (data_a2ee8/data_a2ef8) — these are no-ops on non-WDR sensors
+ * like the GC2053 (no alloc_again_short/alloc_integration_time_short
+ * callbacks registered).
+ *
+ * CRITICAL: This callback runs from tisp_event_process() with IRQs disabled
+ * (local_irq_save).  It must NEVER do I2C (which sleeps).  The previous
+ * "simple proportional AE controller" called tx_isp_send_event_to_remote()
+ * → sensor_set_expo() → i2c_transfer() directly, causing I2C bus corruption
+ * and sensor death.  It also conflicted with AE0 by independently writing
+ * gain_idx=0, overriding AE0's computed gain values.
+ *
+ * AE0 (event callback 1) handles all sensor exposure control correctly via
+ * the deferred workqueue (sensor_expo_work).
+ */
 static void tisp_ae1_process(void)
 {
-    extern int tisp_ae_get_y_zone(void *buffer);
-    static uint32_t cur_expo = 0x300;   /* integration lines (start moderate) */
-    uint32_t zones[225];
-    uint64_t sum = 0;
-    uint32_t mean;
-    int i;
-
-    /* Zone values are 21-bit luminance sums (~9216 pixels/zone).
-     * mean=142 is near-black. Target ~50000 for mid-brightness. */
-    const uint32_t TARGET = 50000;
-    const uint32_t MAX_EXPO = 0x4e2;  /* gc2053 max ~1250 lines for 30fps */
-
-    tisp_ae_get_y_zone(zones);
-    for (i = 0; i < 225; i++)
-        sum += zones[i];
-    do_div(sum, 225);
-    mean = (uint32_t)sum;
-
-    if (mean == 0)
-        return; /* No data yet */
-
-    /* Simple proportional control: adjust exposure only */
-    if (mean < (TARGET - TARGET / 10)) {
-        cur_expo += (cur_expo >> 3) + 1; /* ~12% increase */
-    } else if (mean > (TARGET + TARGET / 10)) {
-        cur_expo -= (cur_expo >> 4) + 1; /* ~6% decrease */
-    }
-
-    if (cur_expo < 0x20) cur_expo = 0x20;
-    if (cur_expo > MAX_EXPO) cur_expo = MAX_EXPO;
-
-    /* Write directly to sensor via TX_ISP_EVENT_SENSOR_EXPO.
-     * Format: (analog_gain_idx << 16) | integration_time.
-     * Use gain_idx=0 (default) and vary integration time only. */
-    {
-        extern struct tx_isp_dev *ourISPdev;
-        if (ourISPdev && ourISPdev->sensor) {
-            struct tx_isp_sensor *sensor = ourISPdev->sensor;
-            int expo_val = (0 << 16) | (cur_expo & 0xffff);
-            tx_isp_send_event_to_remote(&sensor->sd,
-                TX_ISP_EVENT_SENSOR_EXPO, &expo_val);
-        }
-    }
-
-    {
-        static int ae_log;
-        if (ae_log < 10 || (ae_log % 300) == 0) {
-            pr_info("AE_CTRL[%d]: mean=%u expo=0x%x\n",
-                    ae_log, mean, cur_expo);
-        }
-        ae_log++;
-    }
+    /* Non-WDR mode: AE1 has no short exposure to control.
+     * GC2053 does not register alloc_again_short or
+     * alloc_integration_time_short callbacks.
+     * All sensor exposure is managed by AE0 via data_b2ef4/data_b2f04
+     * → sensor_expo_work (deferred I2C in process context). */
+    return;
 }
 
 /* Minimal port of tisp_ae1_expt based on BN/Ghidra structure
@@ -14141,48 +14122,26 @@ static int tisp_ae1_expt(void)
     return 0;
 }
 
-/* Minimal tisp_set_ae1_ag: map fixed-point gains to register domain.
- * For now, keep AG at unity in register space and let short-gain path compute precise value.
+/* tisp_set_ae1_ag - OEM-matching AE1 analog gain setter.
+ *
+ * OEM (0x51a14) calls tisp_set_sensor_analog_gain_short() which goes through
+ * data_a2ef8 — a function pointer set during sensor registration.  On non-WDR
+ * sensors (GC2053), alloc_again_short is not registered, so this is a no-op.
+ *
+ * CRITICAL: This may be called from tisp_event_process with IRQs disabled.
+ * Must NOT do I2C.  Previous version called tx_isp_send_event_to_remote()
+ * which triggered sensor_set_expo() → i2c_transfer() — unsafe.
  */
 static void tisp_set_ae1_ag(uint32_t ag_q10, uint32_t dg_q10)
 {
-    /* Generic mapping following reference: use sensor's alloc_again(_short) to get index, then send SENSOR_EXPO */
-    extern struct tx_isp_dev *ourISPdev;
-    if (!ourISPdev || !ourISPdev->sensor) {
-        pr_err("tisp_set_ae1_ag: No ISP device or sensor available\n");
-        return;
-    }
-
-    struct tx_isp_sensor *sensor = ourISPdev->sensor;
-    unsigned int sensor_again_idx = 0;
-    unsigned int isp_gain_q16;
-
-    /* Convert Q10 analog gain factor to isp_gain (log2 Q16): log2(ag_q10) - 10 */
-    int32_t log2_q16 = tisp_log2_int_to_fixed(ag_q10, 16, 0) - (10 << 16);
-    if (log2_q16 < 0)
-        log2_q16 = 0; /* clamp */
-
-    if (sensor->attr.sensor_ctrl.alloc_again_short) {
-        sensor->attr.sensor_ctrl.alloc_again_short((unsigned)log2_q16, TX_ISP_GAIN_FIXED_POINT, &sensor_again_idx);
-    } else if (sensor->attr.sensor_ctrl.alloc_again) {
-        sensor->attr.sensor_ctrl.alloc_again((unsigned)log2_q16, TX_ISP_GAIN_FIXED_POINT, &sensor_again_idx);
-    } else {
-        pr_debug("tisp_set_ae1_ag: No alloc_again hook; leaving unity\n");
-        sensor_again_idx = 0;
-    }
-
-    /* Program sensor exposure+again atomically via SENSOR_EXPO (generic pattern in reference drivers) */
-    int expo_val = ((int)(sensor_again_idx & 0xffff) << 16) | (data_afcd8 & 0xffff);
-    tx_isp_send_event_to_remote(&sensor->sd, TX_ISP_EVENT_SENSOR_EXPO, &expo_val);
-
     /* Cache desired gains for AE register mapping */
     ae1_ag_q10_cur = ag_q10;
     ae1_dg_q10_cur = dg_q10;
 
-    /* AE1 internal analog-gain register value for mirrored AG regs if ever used */
+    /* AE1 internal analog-gain register value */
     data_afce0 = 0x100;
-    pr_debug("tisp_set_ae1_ag: ag_q10=0x%x dg_q10=0x%x -> sensor_again_idx=%u, it=0x%x\n",
-             ag_q10, dg_q10, sensor_again_idx, data_afcd8);
+    pr_debug("tisp_set_ae1_ag: ag_q10=0x%x dg_q10=0x%x (no sensor write — non-WDR)\n",
+             ag_q10, dg_q10);
 }
 
 /* tiziano_ae_init_exp_th - Based on decompiled code with safe memory access */
@@ -14589,7 +14548,7 @@ static int Tiziano_awb_set_gain(void *mf_para, uint32_t point_pos, const uint32_
 
 	awb_gain_diag_count++;
 	if (awb_gain_diag_count <= 10 || (awb_gain_diag_count % 300) == 0) {
-		pr_debug("AWB_GAIN[%u]: base=%u,%u mf=%u,%u gain=%u,%u "
+		pr_info("AWB_GAIN[%u]: base=%u,%u mf=%u,%u gain=%u,%u "
 			"apply=%u,%u reg=0x%x,0x%x frz=%d "
 			"pp=0x%x q=%u wb_mode=%u\n",
 			awb_gain_diag_count,
@@ -14598,7 +14557,7 @@ static int Tiziano_awb_set_gain(void *mf_para, uint32_t point_pos, const uint32_
 			apply_pair[0], apply_pair[1],
 			reg_pair[0], reg_pair[1],
 			awb_frz, point_pos, q, wb_mode);
-		pr_debug("AWB_GAIN[%u]: mf_all=[%u,%u,%u,%u,%u,%u] "
+		pr_info("AWB_GAIN[%u]: mf_all=[%u,%u,%u,%u,%u,%u] "
 			"gain_gr_q=0x%x gain_gb_q=0x%x rounding=0x%x "
 			"AwbPointPos=0x%x,0x%x wb_static=%u,%u\n",
 			awb_gain_diag_count,
@@ -16205,7 +16164,7 @@ static int Tiziano_awb_fpga(const uint32_t *stats_r,
 		if (avg_diff < diff_threshold) {
 			static unsigned int awb_stable_count;
 			awb_stable_count++;
-			if (awb_stable_count <= 3 || (awb_stable_count % 300) == 0)
+			if (awb_stable_count <= 10 || (awb_stable_count % 300) == 0)
 				pr_info("Tiziano_awb_fpga[%u]: stable (diff=%u < thr=%u), skip update\n",
 					awb_stable_count, avg_diff, diff_threshold);
 			return awb_moa;
@@ -16284,18 +16243,17 @@ static int Tiziano_awb_fpga(const uint32_t *stats_r,
 
 		/* OEM (Tiziano_awb_fpga): zone_rgbg is computed directly as
 		 *   mult2(q, (R << q) / G, cof_rg_q)
-		 * Zone rg/bg values from fix_point_mult2_32 are in Q8 format
-		 * (e.g., zone_rg=224 for R/G=1.4). Ct_Detect compares against
-		 * rg_pos[i] << q (Q18 format, e.g., 169<<10=173056). Without
-		 * the << q shift, all zones fall below the minimum rg_pos range,
-		 * producing interp=0 and CT=5000 (fallback).
-		 *
-		 * The << q shift converts Q8 → Q18 to match Ct_Detect's format.
-		 * Previous code also divided by cof_rg, which was wrong — the
-		 * cof calibration is already applied by fix_point_mult2_32. */
+		 * The result of mult2(q, (R<<q)/G, cof_q) with cof in Q10 format
+		 * (cof=1024 for 1.0) produces values of magnitude R/G * 256 * cof,
+		 * which matches rg_pos[i] << q (e.g., 169 * 1024 = 173056).
+		 * The OEM stores these values DIRECTLY into zone_rgbg without any
+		 * additional shift.  A previous bug here applied an extra << q shift
+		 * which inflated zone values by 2^q, causing them to be clamped to
+		 * the max position boundary — producing wrong bg targets (e.g.,
+		 * bg=397 instead of bg=149) when cof_bg differs from cof_rg. */
 		for (idx = 0; idx < AWB_STATS_ZONES; idx++) {
-			awb_zone_rgbg[idx] = awb_zone_rg[idx] << q;
-			awb_zone_rgbg[idx + AWB_STATS_ZONES] = awb_zone_bg[idx] << q;
+			awb_zone_rgbg[idx] = awb_zone_rg[idx];
+			awb_zone_rgbg[idx + AWB_STATS_ZONES] = awb_zone_bg[idx];
 		}
 
 		if (fpga_diag_count <= 5) {
@@ -16304,16 +16262,15 @@ static int Tiziano_awb_fpga(const uint32_t *stats_r,
 				fpga_diag_count, active_light_src_num, q,
 				cof_rg, cof_bg);
 			pr_debug("AWB_CTDET_PRE[%u]: rgbg[0]=%u rgbg[225]=%u "
-				"rgbg_unq[0]=%u rgbg_unq[225]=%u "
 				"rg_pos[0]=%u rg_pos[14]=%u "
+				"rg_pos0_q=%u bg_pos0_q=%u "
 				"bg_pos[0]=%u bg_pos[14]=%u\n",
 				fpga_diag_count,
 				awb_zone_rgbg[0], awb_zone_rgbg[AWB_STATS_ZONES],
-				q ? (awb_zone_rgbg[0] >> q) : awb_zone_rgbg[0],
-				q ? (awb_zone_rgbg[AWB_STATS_ZONES] >> q) :
-					awb_zone_rgbg[AWB_STATS_ZONES],
 				((const uint32_t *)_rg_pos)[0],
 				((const uint32_t *)_rg_pos)[14],
+				((const uint32_t *)_rg_pos)[0] << q,
+				((const uint32_t *)_bg_pos)[0] << q,
 				((const uint32_t *)_bg_pos)[0],
 				((const uint32_t *)_bg_pos)[14]);
 		}
@@ -16340,10 +16297,13 @@ static int Tiziano_awb_fpga(const uint32_t *stats_r,
 			ct_detect_rg_bg,                      /* arg19: output rg/bg */
 			&ct_detect_status);                   /* arg20: output status */
 
-		if (fpga_diag_count <= 5)
-			pr_debug("AWB_CTDET_POST[%u]: status=%u rg=%u bg=%u ct=%u\n",
+		if (fpga_diag_count <= 10 || (fpga_diag_count % 300) == 0)
+			pr_info("AWB_CTDET[%u]: status=%u rg=%u bg=%u ct=%u "
+				"rg_global=%u bg_global=%u zones=%u/%u\n",
 				fpga_diag_count, ct_detect_status,
-				ct_detect_rg_bg[0], ct_detect_rg_bg[1], ct_detect_ct);
+				ct_detect_rg_bg[0], ct_detect_rg_bg[1], ct_detect_ct,
+				awb_zone_rg_global, awb_zone_bg_global,
+				rg_pix_cnt, total_zones);
 
 		if (ct_detect_status == 0) {
 			target_rg = ct_detect_rg_bg[0];
@@ -16485,7 +16445,7 @@ static int Tiziano_awb_fpga(const uint32_t *stats_r,
 	}
 
 	if (fpga_diag_count <= 10 || (fpga_diag_count % 300) == 0)
-		pr_debug("AWB_FPGA_GAIN[%u]: target_rg=%u target_bg=%u "
+		pr_info("AWB_FPGA_GAIN[%u]: target_rg=%u target_bg=%u "
 			"live_gr=%u live_gb=%u ct=%u "
 			"mf=[%u,%u,%u,%u,%u,%u]\n",
 			fpga_diag_count, target_rg, target_bg,
@@ -20487,10 +20447,12 @@ void tisp_mdns_enable_after_dma(void)
 	if (!mdns_hw_enabled) {
 		tisp_mdns_par_refresh(0x10000, 0x10000);
 		tisp_mdns_bypass(0);
-		/* Clear MDNS bypass bit 16 in register 0xc */
+		/* Clear MDNS bypass bit 16 in register 0xc, but enforce whitelist
+		 * to prevent re-enabling blocks that should stay bypassed. */
 		{
 			u32 bypass = system_reg_read(0xc);
 			bypass &= ~0x10000;
+			bypass = tisp_apply_block_enable_whitelist(bypass);
 			system_reg_write(0xc, bypass);
 		}
 		mdns_hw_enabled = 1;
