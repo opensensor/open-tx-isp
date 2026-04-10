@@ -4304,16 +4304,14 @@ static int ae0_tune2(uint32_t wmean, uint32_t q,
     if (step_ratio == 0)
         step_ratio = 1;
 
-    /* Cap maximum per-frame exposure change to 2x increase / 0.5x decrease.
-     * The OEM's PID controller limits this inherently; our simplified
-     * damping formula overshoots on large errors (e.g., 75x initial error
-     * → 45x step after 60% damping, causing sensor saturation and AE
-     * positive feedback loop). With 2x cap, convergence takes ~7 frames
-     * for a 75x error (~230ms at 30fps). */
-    if (step_ratio > one_q * 2)
-        step_ratio = one_q * 2;
-    if (step_ratio < one_q / 2)
-        step_ratio = one_q / 2;
+    /* Cap maximum per-frame exposure change to 1.25x increase / 0.8x decrease.
+     * Tighter than 2x to prevent AE oscillation (hunting) around the target.
+     * With 1.25x cap, convergence takes ~20 frames for a 75x error (~660ms)
+     * but the image doesn't flash. */
+    if (step_ratio > one_q + (one_q >> 2))   /* 1.25x max increase */
+        step_ratio = one_q + (one_q >> 2);
+    if (step_ratio < one_q - (one_q >> 2))   /* 0.75x max decrease */
+        step_ratio = one_q - (one_q >> 2);
 
     /* Apply the step ratio to current EV = IT * AG * DG.
      * Strategy: adjust IT first, then AG, then DG.
