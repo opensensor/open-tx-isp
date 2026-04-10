@@ -74,16 +74,38 @@ EXPORT_SYMBOL(sensor_expo_work);
 
 static void sensor_expo_work_func(struct work_struct *work)
 {
+    int ret;
+    unsigned int again, it;
+
     if (!ourISPdev || !ourISPdev->sensor || !ourISPdev->sensor_update_pending)
         return;
     if (stored_sensor_ops.original_ops &&
         stored_sensor_ops.original_ops->sensor &&
         stored_sensor_ops.original_ops->sensor->ioctl &&
         stored_sensor_ops.sensor_sd) {
-        int packed = ((int)ourISPdev->sensor->attr.again << 16) |
-                     ((int)ourISPdev->sensor->attr.integration_time & 0xffff);
-        stored_sensor_ops.original_ops->sensor->ioctl(
-            stored_sensor_ops.sensor_sd, TX_ISP_EVENT_SENSOR_EXPO, &packed);
+        again = ourISPdev->sensor->attr.again;
+        it = ourISPdev->sensor->attr.integration_time;
+
+        /* Bounds check: GC2053 LUT has 29 entries (0-28). Out-of-bounds
+         * index causes kernel crash via array overrun in sensor driver. */
+        if (again > 28) {
+            pr_warn("sensor_expo_work: again=%u out of range, clamping to 28\n", again);
+            again = 28;
+        }
+        if (it == 0) {
+            pr_warn("sensor_expo_work: integration_time=0, skipping write\n");
+            ourISPdev->sensor_update_pending = 0;
+            return;
+        }
+
+        {
+            int packed = ((int)again << 16) | ((int)it & 0xffff);
+            pr_err("sensor_expo_work: again=%u it=%u packed=0x%08x\n", again, it, packed);
+            ret = stored_sensor_ops.original_ops->sensor->ioctl(
+                stored_sensor_ops.sensor_sd, TX_ISP_EVENT_SENSOR_EXPO, &packed);
+            if (ret)
+                pr_err("sensor_expo_work: ioctl returned %d\n", ret);
+        }
     }
     ourISPdev->sensor_update_pending = 0;
 }

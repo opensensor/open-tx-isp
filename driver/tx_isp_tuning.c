@@ -4304,6 +4304,17 @@ static int ae0_tune2(uint32_t wmean, uint32_t q,
     if (step_ratio == 0)
         step_ratio = 1;
 
+    /* Cap maximum per-frame exposure change to 2x increase / 0.5x decrease.
+     * The OEM's PID controller limits this inherently; our simplified
+     * damping formula overshoots on large errors (e.g., 75x initial error
+     * → 45x step after 60% damping, causing sensor saturation and AE
+     * positive feedback loop). With 2x cap, convergence takes ~7 frames
+     * for a 75x error (~230ms at 30fps). */
+    if (step_ratio > one_q * 2)
+        step_ratio = one_q * 2;
+    if (step_ratio < one_q / 2)
+        step_ratio = one_q / 2;
+
     /* Apply the step ratio to current EV = IT * AG * DG.
      * Strategy: adjust IT first, then AG, then DG.
      *
@@ -14307,6 +14318,24 @@ int tiziano_ae_init(uint32_t height, uint32_t width, uint32_t fps)
 
     /* Binary Ninja EXACT: tiziano_ae_init_exp_th() */
     tiziano_ae_init_exp_th();
+
+    /* Seed AE with sensor's default integration time so the AE doesn't
+     * start from IT=0 and write absurdly dark exposure on the first frame.
+     * The sensor's init register table sets IT=0x0456=1110 lines.
+     * OEM likely initializes this from sensor_attr.integration_time. */
+    {
+        extern struct tx_isp_dev *ourISPdev;
+        uint32_t seed_it = 0;
+        if (ourISPdev && ourISPdev->sensor)
+            seed_it = ourISPdev->sensor->attr.integration_time;
+        if (seed_it == 0)
+            seed_it = ae_exp_th.data[0] / 2;  /* Fallback: half of max IT */
+        if (seed_it == 0)
+            seed_it = 0x400;
+        _ae_reg.data[0] = seed_it;
+        data_c46b8 = seed_it;
+        pr_info("tiziano_ae_init: seeded _ae_reg IT=%u\n", seed_it);
+    }
 
     /* Binary Ninja EXACT: tiziano_ae_para_addr() */
     (void)tiziano_ae_para_addr();
@@ -28605,7 +28634,9 @@ static uint32_t tisp_set_sensor_analog_gain(uint32_t requested_gain)
 
     /* OEM EXACT: data_a2ef4(zx.d(var_28), 0)
      * Write the sensor register value (the index from alloc_again). */
+    pr_err("SET_AG: calling data_b2f04 idx=%u\n", (uint32_t)(uint16_t)var_28);
     data_b2f04((uint32_t)(uint16_t)var_28, 0);
+    pr_err("SET_AG: data_b2f04 returned\n");
 
     /* OEM EXACT: return $v0_2 u>> 6
      * Convert from Q16 linear back to Q10 linear. */
@@ -28887,6 +28918,12 @@ static int data_b2f04(uint32_t param, int flag)
 
     /* Set analog gain via sensor attribute, then trigger I2C write */
     if (ourISPdev->sensor) {
+        /* Belt-and-suspenders: cap gain index to prevent AE overshoot
+         * from saturating sensor (max valid GC2053 index = 28) */
+        if (param > 10)
+            param = 10;  /* Cap to ~5.6x gain until AE convergence is fixed */
+        pr_err("data_b2f04: again_idx=%u it=%u\n", param,
+                ourISPdev->sensor->attr.integration_time);
         ourISPdev->sensor->attr.again = param;
         /* Queue deferred I2C write to sensor hardware.
          * Both IT and AG attributes are set by the time AG is written,
