@@ -4324,6 +4324,12 @@ static int ae0_tune2(uint32_t wmean, uint32_t q,
         uint64_t new_it_64 = (uint64_t)cur_it * step_ratio;
         new_it_64 >>= qm;
         new_it = (uint32_t)new_it_64;
+        /* Guarantee minimum 1-unit progress to avoid integer truncation
+         * stall (e.g., 1 * 1.25 = 1 in integer math → stuck forever) */
+        if (step_ratio > one_q && new_it <= cur_it)
+            new_it = cur_it + 1;
+        if (step_ratio < one_q && new_it >= cur_it && cur_it > min_it)
+            new_it = cur_it - 1;
     }
 
     if (new_it < min_it) new_it = min_it;
