@@ -2251,7 +2251,7 @@ module_param(isp_bypass_override, uint, 0644);
  *          isp_block_enable=0xDD24 adds GIB (green imbalance correction) to crisp set
  *          isp_block_enable=0xDD34 adds GIB+LSC (green correction + lens shading)
  */
-static uint isp_block_enable = 0x2DDB4;  /* All OEM blocks incl GIB(5), except MDNS(16) which is deferred to set_buf */
+static uint isp_block_enable = 0x2DD94;  /* All OEM blocks except GIB(5) and MDNS(16); GIB zeros data at high gain */
 module_param(isp_block_enable, uint, 0644);
 MODULE_PARM_DESC(isp_block_enable,
 		 "Block enable bitmask: set bits enable ISP blocks (0=all bypassed)");
