@@ -196,7 +196,7 @@ int tx_isp_send_event_to_remote(struct tx_isp_subdev *sd, unsigned int event, vo
 {
     int ret;
 
-    pr_info("*** tx_isp_send_event_to_remote: sd=%p, event=0x%x ***\n", sd, event);
+    pr_debug("*** tx_isp_send_event_to_remote: sd=%p, event=0x%x ***\n", sd, event);
 
     if (!sd)
         return -EINVAL;

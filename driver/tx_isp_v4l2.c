@@ -312,7 +312,7 @@ static int tx_isp_v4l2_qbuf(struct file *file, void *priv,
         return -EINVAL;
     }
 
-    pr_info("*** V4L2 Channel %d: QBUF index=%d ***\n",
+    pr_debug("*** V4L2 Channel %d: QBUF index=%d ***\n",
             dev->channel_num, buf->index);
 
     /* Create a fake file structure for frame_channel_unlocked_ioctl */
@@ -322,7 +322,7 @@ static int tx_isp_v4l2_qbuf(struct file *file, void *priv,
     /* Route to frame_channel_unlocked_ioctl QBUF (0xc044560f) */
     ret = frame_channel_unlocked_ioctl(&fake_file, 0xc044560f, (unsigned long)buf);
 
-    pr_info("*** V4L2 Channel %d: QBUF result=%d ***\n",
+    pr_debug("*** V4L2 Channel %d: QBUF result=%d ***\n",
             dev->channel_num, ret);
 
     return ret;
@@ -340,7 +340,7 @@ static int tx_isp_v4l2_dqbuf(struct file *file, void *priv,
         return -EINVAL;
     }
 
-    pr_info("*** V4L2 Channel %d: DQBUF ***\n", dev->channel_num);
+    pr_debug("*** V4L2 Channel %d: DQBUF ***\n", dev->channel_num);
 
     /* Create a fake file structure for frame_channel_unlocked_ioctl */
     memset(&fake_file, 0, sizeof(fake_file));
@@ -349,7 +349,7 @@ static int tx_isp_v4l2_dqbuf(struct file *file, void *priv,
     /* Route to frame_channel_unlocked_ioctl DQBUF (0xc0445611) */
     ret = frame_channel_unlocked_ioctl(&fake_file, 0xc0445611, (unsigned long)buf);
 
-    pr_info("*** V4L2 Channel %d: DQBUF result=%d, index=%d ***\n",
+    pr_debug("*** V4L2 Channel %d: DQBUF result=%d, index=%d ***\n",
             dev->channel_num, ret, (ret == 0) ? buf->index : -1);
 
     return ret;

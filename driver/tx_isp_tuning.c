@@ -586,15 +586,15 @@ static void tiziano_bcsh_build_HMatrix(int32_t out[9])
     /* CT bias removed — A-matrix CCM boosts green, counterproductive */
     tiziano_bcsh_build_active_ccm(active_ccm, ct);
 
-    pr_info("BCSH_DIAG: CT=%u CCM=[%d,%d,%d, %d,%d,%d, %d,%d,%d]\n",
+    pr_debug("BCSH_DIAG: CT=%u CCM=[%d,%d,%d, %d,%d,%d, %d,%d,%d]\n",
             ct, active_ccm[0], active_ccm[1], active_ccm[2],
             active_ccm[3], active_ccm[4], active_ccm[5],
             active_ccm[6], active_ccm[7], active_ccm[8]);
-    pr_info("BCSH_DIAG: M=[%d,%d,%d, %d,%d,%d, %d,%d,%d]\n",
+    pr_debug("BCSH_DIAG: M=[%d,%d,%d, %d,%d,%d, %d,%d,%d]\n",
             tiziano_MMatrix[0], tiziano_MMatrix[1], tiziano_MMatrix[2],
             tiziano_MMatrix[3], tiziano_MMatrix[4], tiziano_MMatrix[5],
             tiziano_MMatrix[6], tiziano_MMatrix[7], tiziano_MMatrix[8]);
-    pr_info("BCSH_DIAG: Minv=[%d,%d,%d, %d,%d,%d, %d,%d,%d]\n",
+    pr_debug("BCSH_DIAG: Minv=[%d,%d,%d, %d,%d,%d, %d,%d,%d]\n",
             tiziano_MinvMatrix[0], tiziano_MinvMatrix[1], tiziano_MinvMatrix[2],
             tiziano_MinvMatrix[3], tiziano_MinvMatrix[4], tiziano_MinvMatrix[5],
             tiziano_MinvMatrix[6], tiziano_MinvMatrix[7], tiziano_MinvMatrix[8]);
@@ -602,7 +602,7 @@ static void tiziano_bcsh_build_HMatrix(int32_t out[9])
     tiziano_bcsh_Tccm_RGBYUV(tmp, tiziano_MMatrix, active_ccm, tiziano_MinvMatrix);
 
     /* CT bias removed — A-matrix CCM boosts green, counterproductive */
-    pr_info("BCSH_DIAG: HMatrix=[%d,%d,%d, %d,%d,%d, %d,%d,%d]\n",
+    pr_debug("BCSH_DIAG: HMatrix=[%d,%d,%d, %d,%d,%d, %d,%d,%d]\n",
             tmp[0], tmp[1], tmp[2], tmp[3], tmp[4], tmp[5],
             tmp[6], tmp[7], tmp[8]);
 
@@ -4444,7 +4444,7 @@ static void tisp_set_ae0_ag(uint32_t ag, uint32_t dg)
     {
         static int ae0ag_log_cnt;
         if (ae0ag_log_cnt < 20 || (ae0ag_log_cnt & 0xff) == 0) {
-            pr_info("AE0_AG[%d]: req_ag=0x%x req_dg=0x%x actual_ag=0x%x actual_dg=0x%x "
+            pr_debug("AE0_AG[%d]: req_ag=0x%x req_dg=0x%x actual_ag=0x%x actual_dg=0x%x "
                     "dg_comp=0x%x (max_dg=0x%x)\n",
                     ae0ag_log_cnt, ag, dg, actual_ag, actual_dg, dg_comp, max_dg);
         }
@@ -4508,7 +4508,7 @@ static int tisp_ae0_process_impl(void)
     {
         static int ae_log_cnt;
         if (ae_log_cnt < 30 || (ae_log_cnt & 0xff) == 0) {
-            pr_info("AE0[%d]: wmean=%u target=%u it=%u/%u ag=0x%x/0x%x dg=0x%x ev=0x%x\n",
+            pr_debug("AE0[%d]: wmean=%u target=%u it=%u/%u ag=0x%x/0x%x dg=0x%x ev=0x%x\n",
                     ae_log_cnt, wmean,
                     tisp_ae_target(_ae_ev, q),
                     new_it, ae_exp_th.data[0],
@@ -4869,12 +4869,12 @@ int ae0_interrupt_static(void)
                     if (dma[i*4+2]) nz_w2++;
                     if (dma[i*4+3]) nz_w3++;
                 }
-                pr_info("AE0_SCAN[%d]: status=0x%x bank=%u nz_w0=%d nz_w1=%d nz_w2=%d nz_w3=%d "
+                pr_debug("AE0_SCAN[%d]: status=0x%x bank=%u nz_w0=%d nz_w1=%d nz_w2=%d nz_w3=%d "
                         "1st_nz_w0=%d 1st_nz_w1=%d\n",
                         ae_zone_log, ae0_status, bank_offset >> 12,
                         nz_w0, nz_w1, nz_w2, nz_w3, first_nz_w0, first_nz_w1);
                 /* Dump zone 0 all 4 words, plus zone 1, 112, 224 word[0..1] */
-                pr_info("AE0_RAW[%d]: z0=[%08x %08x %08x %08x] z1=[%08x %08x] "
+                pr_debug("AE0_RAW[%d]: z0=[%08x %08x %08x %08x] z1=[%08x %08x] "
                         "z112=[%08x %08x] z224=[%08x %08x]\n",
                         ae_zone_log,
                         dma[0], dma[1], dma[2], dma[3],
@@ -4882,7 +4882,7 @@ int ae0_interrupt_static(void)
                         dma[448], dma[449],
                         dma[896], dma[897]);
                 /* Also check if data might start at a word offset */
-                pr_info("AE0_OFF[%d]: dma[-1..3]=%08x %08x %08x %08x %08x "
+                pr_debug("AE0_OFF[%d]: dma[-1..3]=%08x %08x %08x %08x %08x "
                         "w1_z0=%u w1_z1=%u w1_z224=%u\n",
                         ae_zone_log,
                         (bank_offset >= 4) ? *(dma-1) : 0xDEAD,
@@ -14538,7 +14538,7 @@ static int Tiziano_awb_set_gain(void *mf_para, uint32_t point_pos, const uint32_
 
 	awb_gain_diag_count++;
 	if (awb_gain_diag_count <= 10 || (awb_gain_diag_count % 300) == 0) {
-		pr_info("AWB_GAIN[%u]: base=%u,%u mf=%u,%u gain=%u,%u "
+		pr_debug("AWB_GAIN[%u]: base=%u,%u mf=%u,%u gain=%u,%u "
 			"apply=%u,%u reg=0x%x,0x%x frz=%d "
 			"pp=0x%x q=%u wb_mode=%u\n",
 			awb_gain_diag_count,
@@ -14547,7 +14547,7 @@ static int Tiziano_awb_set_gain(void *mf_para, uint32_t point_pos, const uint32_
 			apply_pair[0], apply_pair[1],
 			reg_pair[0], reg_pair[1],
 			awb_frz, point_pos, q, wb_mode);
-		pr_info("AWB_GAIN[%u]: mf_all=[%u,%u,%u,%u,%u,%u] "
+		pr_debug("AWB_GAIN[%u]: mf_all=[%u,%u,%u,%u,%u,%u] "
 			"gain_gr_q=0x%x gain_gb_q=0x%x rounding=0x%x "
 			"AwbPointPos=0x%x,0x%x wb_static=%u,%u\n",
 			awb_gain_diag_count,
@@ -15712,7 +15712,7 @@ find_bg_idx:
 					for (c = 0; c < cols; c++)
 						if (rgbg_wght[r * cols + c])
 							nz++;
-				pr_info("AWB_CTDET_WGHT[%u]: total_wght=%u nonzero=%u/%u "
+				pr_debug("AWB_CTDET_WGHT[%u]: total_wght=%u nonzero=%u/%u "
 					"pix[0]=%u pix[112]=%u wght[0]=%u wght[112]=%u "
 					"rg[0]=%u bg[0]=%u rg[112]=%u bg[112]=%u\n",
 					ctdet_diag, total_wght, nz, total,
@@ -15774,7 +15774,7 @@ find_bg_idx:
 				static unsigned int avg_diag;
 				avg_diag++;
 				if (avg_diag <= 5)
-					pr_info("AWB_CTDET_AVG[%u]: i_18=%u i_17=%u "
+					pr_debug("AWB_CTDET_AVG[%u]: i_18=%u i_17=%u "
 						"sum_rg=%llu sum_bg=%llu sum_w=%llu "
 						"rg_out=%u bg_out=%u\n",
 						avg_diag, i_18, i_17,
@@ -16000,7 +16000,7 @@ find_bg_idx:
 					static unsigned int p10_diag;
 					p10_diag++;
 					if (p10_diag <= 10 || (p10_diag % 300) == 0)
-						pr_info("AWB_CTDET_P10[%u]: rg_bi=%u bg_bi=%u "
+						pr_debug("AWB_CTDET_P10[%u]: rg_bi=%u bg_bi=%u "
 							"interp=%u interp_unq=%u ct=%u "
 							"final_rg=%u final_bg=%u\n",
 							p10_diag, rg_bi, bg_bi,
@@ -16248,11 +16248,11 @@ static int Tiziano_awb_fpga(const uint32_t *stats_r,
 		}
 
 		if (fpga_diag_count <= 5) {
-			pr_info("AWB_CTDET_PRE[%u]: calling Ct_Detect light_src=%u q=%u "
+			pr_debug("AWB_CTDET_PRE[%u]: calling Ct_Detect light_src=%u q=%u "
 				"cof_rg=%u cof_bg=%u\n",
 				fpga_diag_count, active_light_src_num, q,
 				cof_rg, cof_bg);
-			pr_info("AWB_CTDET_PRE[%u]: rgbg[0]=%u rgbg[225]=%u "
+			pr_debug("AWB_CTDET_PRE[%u]: rgbg[0]=%u rgbg[225]=%u "
 				"rgbg_unq[0]=%u rgbg_unq[225]=%u "
 				"rg_pos[0]=%u rg_pos[14]=%u "
 				"bg_pos[0]=%u bg_pos[14]=%u\n",
@@ -16290,7 +16290,7 @@ static int Tiziano_awb_fpga(const uint32_t *stats_r,
 			&ct_detect_status);                   /* arg20: output status */
 
 		if (fpga_diag_count <= 5)
-			pr_info("AWB_CTDET_POST[%u]: status=%u rg=%u bg=%u ct=%u\n",
+			pr_debug("AWB_CTDET_POST[%u]: status=%u rg=%u bg=%u ct=%u\n",
 				fpga_diag_count, ct_detect_status,
 				ct_detect_rg_bg[0], ct_detect_rg_bg[1], ct_detect_ct);
 
@@ -16308,7 +16308,7 @@ static int Tiziano_awb_fpga(const uint32_t *stats_r,
 		}
 
 		if (fpga_diag_count <= 10 || (fpga_diag_count % 300) == 0) {
-			pr_info("AWB_FPGA[%u]: Ct_Detect status=%u "
+			pr_debug("AWB_FPGA[%u]: Ct_Detect status=%u "
 				"rg=%u bg=%u ct=%u "
 				"rg_global=%u bg_global=%u "
 				"zones=%u q=%u\n",
@@ -16434,7 +16434,7 @@ static int Tiziano_awb_fpga(const uint32_t *stats_r,
 	}
 
 	if (fpga_diag_count <= 10 || (fpga_diag_count % 300) == 0)
-		pr_info("AWB_FPGA_GAIN[%u]: target_rg=%u target_bg=%u "
+		pr_debug("AWB_FPGA_GAIN[%u]: target_rg=%u target_bg=%u "
 			"live_gr=%u live_gb=%u ct=%u "
 			"mf=[%u,%u,%u,%u,%u,%u]\n",
 			fpga_diag_count, target_rg, target_bg,
@@ -16541,7 +16541,7 @@ static int tiziano_awb_set_lum_th_freq(void)
 	{
 		static int aediag;
 		if (aediag < 5) {
-			pr_info("AE_DIAG: ae_mean=%u scale=%d lum_freq=%u\n", mean, scale, lum_freq);
+			pr_debug("AE_DIAG: ae_mean=%u scale=%d lum_freq=%u\n", mean, scale, lum_freq);
 			aediag++;
 		}
 	}
@@ -16672,13 +16672,13 @@ int awb_interrupt_static(void)
 	private_dma_cache_sync(NULL, buffer_addr, 0x1000, 0);
 
 	if (awb_irq_count == 1) {
-		pr_info("AWB_HW_LIVE: 0xb000=0x%08x 0xb004=0x%08x 0xb050=0x%08x\n",
+		pr_debug("AWB_HW_LIVE: 0xb000=0x%08x 0xb004=0x%08x 0xb050=0x%08x\n",
 			system_reg_read(0xb000), system_reg_read(0xb004),
 			system_reg_read(0xb050));
-		pr_info("AWB_HW_LIVE: WB 0x1804=0x%08x 0x1808=0x%08x 0x180c=0x%08x 0x1810=0x%08x\n",
+		pr_debug("AWB_HW_LIVE: WB 0x1804=0x%08x 0x1808=0x%08x 0x180c=0x%08x 0x1810=0x%08x\n",
 			system_reg_read(0x1804), system_reg_read(0x1808),
 			system_reg_read(0x180c), system_reg_read(0x1810));
-		pr_info("AWB_HW_LIVE: DMA 0xb03c=0x%08x 0xb040=0x%08x 0xb044=0x%08x 0xb048=0x%08x 0xb04c=0x%08x\n",
+		pr_debug("AWB_HW_LIVE: DMA 0xb03c=0x%08x 0xb040=0x%08x 0xb044=0x%08x 0xb048=0x%08x 0xb04c=0x%08x\n",
 			system_reg_read(0xb03c), system_reg_read(0xb040),
 			system_reg_read(0xb044), system_reg_read(0xb048),
 			system_reg_read(0xb04c));
@@ -16686,7 +16686,7 @@ int awb_interrupt_static(void)
 
 	if (awb_irq_count <= 10 || (awb_irq_count % 30) == 0) {
 		u32 *raw = (u32 *)buffer_addr;
-		pr_info("AWB_BANK[%u]: bank=%u changes=%u/%u "
+		pr_debug("AWB_BANK[%u]: bank=%u changes=%u/%u "
 			"raw[0..3]=%08x %08x %08x %08x\n",
 			awb_irq_count, awb_status,
 			awb_bank_change_count, awb_irq_count,
@@ -16696,7 +16696,7 @@ int awb_interrupt_static(void)
 	JZ_Isp_Get_Awb_Statistics(buffer_addr, 0xf001f001);
 
 	if (awb_irq_count <= 10 || (awb_irq_count % 30) == 0) {
-		pr_info("AWB_STATS[%u]: R[0]=%u G[0]=%u B[0]=%u "
+		pr_debug("AWB_STATS[%u]: R[0]=%u G[0]=%u B[0]=%u "
 			"P[0]=%u | R[112]=%u G[112]=%u B[112]=%u P[112]=%u\n",
 			awb_irq_count,
 			awb_array_r[0], awb_array_g[0],
@@ -17719,7 +17719,7 @@ static int tiziano_ccm_lut_parameter(int32_t *ccm_data)
     int32_t i;
     int32_t *ptr = ccm_data + 1;  /* OEM: $s4 = arg1 + 4 */
 
-    pr_info("tiziano_ccm_lut_parameter: Writing CCM matrix to registers\n");
+    pr_debug("tiziano_ccm_lut_parameter: Writing CCM matrix to registers\n");
 
     for (i = 0; i != 0xa; i += 2, ptr += 2) {
         uint32_t val;
@@ -17756,7 +17756,7 @@ static int tiziano_ccm_lut_parameter(int32_t *ccm_data)
         system_reg_write(0x5020, (data_aa47c << 16) | data_aa478);
     }
 
-    pr_info("tiziano_ccm_lut_parameter: CCM matrix written to hardware\n");
+    pr_debug("tiziano_ccm_lut_parameter: CCM matrix written to hardware\n");
     return 0;
 }
 

@@ -2835,7 +2835,7 @@ static irqreturn_t isp_vic_interrupt_service_routine(int irq, void *dev_id)
         if (v1_7 || v1_10) {
             static unsigned int vic_isr_count;
             if ((vic_isr_count++ % 30) == 0)
-                pr_info("VIC ISR[%u]: v1_7=0x%x v1_10=0x%x stream_state=%d\n",
+                pr_debug("VIC ISR[%u]: v1_7=0x%x v1_10=0x%x stream_state=%d\n",
                         vic_isr_count, v1_7, v1_10,
                         vic_dev->stream_state);
         }
@@ -3751,7 +3751,7 @@ long frame_channel_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned 
         struct v4l2_buffer buffer;
         unsigned long flags;
 
-        pr_info("*** Channel %d: QBUF - EXACT Binary Ninja implementation ***\n", channel);
+        pr_debug("*** Channel %d: QBUF - EXACT Binary Ninja implementation ***\n", channel);
 
         /* Binary Ninja: private_copy_from_user(&var_78, $s2, 0x44) */
         if (copy_from_user(&buffer, argp, sizeof(buffer))) {
@@ -3771,9 +3771,9 @@ long frame_channel_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned 
             return -EINVAL;
         }
 
-        pr_info("*** Channel %d: QBUF - Queue buffer index=%d ***\n", channel, buffer.index);
+        pr_debug("*** Channel %d: QBUF - Queue buffer index=%d ***\n", channel, buffer.index);
         if (!state->streaming || !state->capture_active) {
-            pr_info("*** Channel %d: QBUF accepted before active streaming - staging buffer for later delivery ***\n",
+            pr_debug("*** Channel %d: QBUF accepted before active streaming - staging buffer for later delivery ***\n",
                     channel);
         }
 
@@ -3808,7 +3808,7 @@ long frame_channel_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned 
             buffer_phys_addr = 0x6300000 + (buffer.index * buffer_size);
         }
 
-	        pr_info("*** Channel %d: QBUF - Buffer %d: phys_addr=0x%x, sizeimage=%u, memory=%d, userptr=0x%lx ***\n",
+	        pr_debug("*** Channel %d: QBUF - Buffer %d: phys_addr=0x%x, sizeimage=%u, memory=%d, userptr=0x%lx ***\n",
                 channel, buffer.index, buffer_phys_addr, buffer_size, buffer.memory, buffer.m.userptr);
 
         if (frame_channel_track_buffer(fcd, &buffer) == 0) {
@@ -3887,7 +3887,7 @@ long frame_channel_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned 
                 attr_words[7] = h;       /* crop height = output */
                 attr_words[8] = 0;       /* scaler mode */
 
-                pr_info("QBUF ch%d: auto-configuring MSCA scaler for %ux%u\n",
+                pr_debug("QBUF ch%d: auto-configuring MSCA scaler for %ux%u\n",
                         channel, w, h);
                 tisp_channel_attr_set(channel, attr_words);
                 tisp_channel_start(channel, NULL);
@@ -3913,7 +3913,7 @@ long frame_channel_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned 
             return -EFAULT;
         }
 
-        pr_info("*** Channel %d: QBUF completed successfully (MIPS-safe) ***\n", channel);
+        pr_debug("*** Channel %d: QBUF completed successfully (MIPS-safe) ***\n", channel);
         return 0;
     }
     case 0xc0445609: { // VIDIOC_DQBUF - Dequeue buffer
@@ -3986,7 +3986,7 @@ long frame_channel_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned 
         if (copy_from_user(&buffer, argp, sizeof(buffer)))
             return -EFAULT;
 
-        pr_info("*** Channel %d: DQBUF - dequeue buffer request ***\n", channel);
+        pr_debug("*** Channel %d: DQBUF - dequeue buffer request ***\n", channel);
 
         // Validate buffer type matches channel configuration
         if (buffer.type != 1) { // V4L2_BUF_TYPE_VIDEO_CAPTURE
@@ -6538,30 +6538,30 @@ static int tx_isp_send_event_to_remote_local(void *subdev, int event_type, void 
     /* MIPS SAFE: Fallback processing for specific critical events */
     switch (event_type) {
     case 0x3000008: /* TX_ISP_EVENT_FRAME_QBUF */
-        pr_info("*** QBUF EVENT: MIPS-safe fallback processing ***\n");
+        pr_debug("*** QBUF EVENT: MIPS-safe fallback processing ***\n");
 
         /* MIPS SAFE: Basic frame count increment as fallback */
         if (vic_dev && ((uintptr_t)&vic_dev->frame_count & 0x3) == 0) {
             vic_dev->frame_count++;
-            pr_info("*** QBUF: Frame count incremented safely (count=%u) ***\n", vic_dev->frame_count);
+            pr_debug("*** QBUF: Frame count incremented safely (count=%u) ***\n", vic_dev->frame_count);
         }
         return 0;
 
     case 0x3000006: /* TX_ISP_EVENT_FRAME_DQBUF */
-        pr_info("*** DQBUF EVENT: MIPS-safe fallback processing ***\n");
+        pr_debug("*** DQBUF EVENT: MIPS-safe fallback processing ***\n");
         return 0;
 
     case 0x3000003: /* TX_ISP_EVENT_FRAME_STREAMON */
-        pr_info("*** STREAMON EVENT: MIPS-safe fallback processing ***\n");
+        pr_debug("*** STREAMON EVENT: MIPS-safe fallback processing ***\n");
         return 0;
 
     case 0x200000c: /* VIC sensor registration events */
     case 0x200000f:
-        pr_info("*** VIC SENSOR EVENT 0x%x: MIPS-safe fallback processing ***\n", event_type);
+        pr_debug("*** VIC SENSOR EVENT 0x%x: MIPS-safe fallback processing ***\n", event_type);
         return 0;
 
     default:
-        pr_info("*** EVENT 0x%x: MIPS-safe completion - no specific handler ***\n", event_type);
+        pr_debug("*** EVENT 0x%x: MIPS-safe completion - no specific handler ***\n", event_type);
         return 0xfffffdfd; /* Return "no handler" code for unknown events */
     }
 }
@@ -6576,7 +6576,7 @@ int vic_event_handler(void *subdev, int event_type, void *data)
         return 0xfffffdfd;
     }
 
-    pr_info("*** vic_event_handler: Processing event 0x%x ***\n", event_type);
+    pr_debug("*** vic_event_handler: Processing event 0x%x ***\n", event_type);
 
     switch (event_type) {
     case 0x200000c: { /* VIC sensor registration event - CRITICAL for tx_isp_vic_start! */
@@ -6598,7 +6598,7 @@ int vic_event_handler(void *subdev, int event_type, void *data)
         return tx_isp_vic_notify(vic_dev, event_type, data);
     }
     case 0x3000008: { /* TX_ISP_EVENT_FRAME_QBUF - ONLY buffer programming, NO VIC restart! */
-        pr_info("*** VIC EVENT: QBUF (0x3000008) - forwarding to vic_core_ops_ioctl ***\n");
+        pr_debug("*** VIC EVENT: QBUF (0x3000008) - forwarding to vic_core_ops_ioctl ***\n");
         return vic_core_ops_ioctl(&vic_dev->sd, 0x3000008, data);
     }
     case 0x3000003: { /* TX_ISP_EVENT_FRAME_STREAMON - Start VIC streaming */
@@ -6620,13 +6620,13 @@ int vic_event_handler(void *subdev, int event_type, void *data)
         return ispvic_frame_channel_s_stream(vic_dev, 0);
     }
     case 0x3000005: { /* Buffer enqueue event from __enqueue_in_driver */
-        pr_info("*** VIC EVENT: BUFFER_ENQUEUE (0x3000005) ***\n");
+        pr_debug("*** VIC EVENT: BUFFER_ENQUEUE (0x3000005) ***\n");
         /* Only Channel 0 programs VIC slots. Gate others to avoid wrong UV/stride. */
         if (data) {
             struct vic_buffer_entry *node = (struct vic_buffer_entry *)data;
-            pr_info("*** VIC ENQUEUE: node.channel=%u idx=%u phys=0x%x ***\n", node->channel, node->buffer_index, node->buffer_addr);
+            pr_debug("*** VIC ENQUEUE: node.channel=%u idx=%u phys=0x%x ***\n", node->channel, node->buffer_index, node->buffer_addr);
             if (node->channel != 0) {
-                pr_info("*** VIC ENQUEUE: Skipping non-chn0 enqueue (channel=%u) ***\n", node->channel);
+                pr_debug("*** VIC ENQUEUE: Skipping non-chn0 enqueue (channel=%u) ***\n", node->channel);
                 return 0; /* treat as handled to avoid retries */
             }
         }
@@ -6731,7 +6731,7 @@ static int ispvic_frame_channel_qbuf(struct tx_isp_vic_device *vic_dev, void *bu
                         writel(a1_2, vic_dev->vic_regs + buffer_reg_offset);
                         wmb();
 
-                        pr_info("*** MIPS-SAFE: VIC BUFFER WRITE - reg[0x%x] = 0x%x (buffer[%d] addr) ***\n",
+                        pr_debug("*** MIPS-SAFE: VIC BUFFER WRITE - reg[0x%x] = 0x%x (buffer[%d] addr) ***\n",
                                buffer_reg_offset, a1_2, v1_1);
                     } else {
                         pr_err("*** MIPS ALIGNMENT ERROR: register offset 0x%x not aligned ***\n", buffer_reg_offset);
@@ -6746,7 +6746,7 @@ static int ispvic_frame_channel_qbuf(struct tx_isp_vic_device *vic_dev, void *bu
                 /* MIPS SAFE: Increment frame count with alignment check */
                 if (((uintptr_t)&vic_dev->frame_count & 0x3) == 0) {
                     vic_dev->frame_count++;
-                    pr_info("*** MIPS-SAFE: Buffer programmed to VIC, frame_count=%u ***\n",
+                    pr_debug("*** MIPS-SAFE: Buffer programmed to VIC, frame_count=%u ***\n",
                            vic_dev->frame_count);
                 } else {
                     pr_warn("*** MIPS WARNING: frame_count not aligned, skipping increment ***\n");
@@ -6756,7 +6756,7 @@ static int ispvic_frame_channel_qbuf(struct tx_isp_vic_device *vic_dev, void *bu
                 pr_err("*** MIPS ALIGNMENT ERROR: buffer data not properly aligned ***\n");
             }
         } else {
-            pr_info("ispvic_frame_channel_qbuf: no free buffer or buffer not aligned\n");
+            pr_debug("ispvic_frame_channel_qbuf: no free buffer or buffer not aligned\n");
         }
 
         a1_4 = var_18;

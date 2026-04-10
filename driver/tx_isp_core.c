@@ -1712,16 +1712,16 @@ irqreturn_t ispcore_interrupt_service_routine(int irq, void *dev_id)
         isr_log_counter++;
         if (isr_log_counter <= 5 || (isr_log_counter % 60) == 0) {
             u32 fifo_diag = readl(isp_regs + 0x997c);
-            pr_info("ISP ISR[%u]: int=0x%x fifo_ch0=0x%x fc=%u bypass=%d\n",
+            pr_debug("ISP ISR[%u]: int=0x%x fifo_ch0=0x%x fc=%u bypass=%d\n",
                     isr_log_counter, interrupt_status, fifo_diag,
                     isp_dev ? isp_dev->frame_count : 0,
                     isp_dev ? isp_dev->bypass_enabled : -1);
-            pr_info("MSCA diag: 0x9804=0x%x 0x9818=0x%x 0x9900=0x%x 0x9904=0x%x\n",
+            pr_debug("MSCA diag: 0x9804=0x%x 0x9818=0x%x 0x9900=0x%x 0x9904=0x%x\n",
                     readl(isp_regs + 0x9804), readl(isp_regs + 0x9818),
                     readl(isp_regs + 0x9900), readl(isp_regs + 0x9904));
             /* NOTE: Do NOT read 0x9974 here — it's the FIFO POP register,
              * reading it consumes entries! */
-            pr_info("MSCA diag: 0x996c=0x%x 0x997c=0x%x 0x9984=0x%x 0x9968=0x%x\n",
+            pr_debug("MSCA diag: 0x996c=0x%x 0x997c=0x%x 0x9984=0x%x 0x9968=0x%x\n",
                     readl(isp_regs + 0x996c),
                     readl(isp_regs + 0x997c), readl(isp_regs + 0x9984),
                     readl(isp_regs + 0x9968));

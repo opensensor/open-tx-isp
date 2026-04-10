@@ -2766,7 +2766,7 @@ static int vic_pad_event_handler(void *priv, unsigned int cmd, void *data)
             ret = 0;
             break;
         case 0x3000008:
-            pr_info("*** VIC EVENT: REQBUFS (0x3000008) via dispatch ***\n");
+            pr_debug("*** VIC EVENT: REQBUFS (0x3000008) via dispatch ***\n");
             ret = data ? vic_core_ops_ioctl(sd, cmd, data) : -EINVAL;
             break;
         default:
