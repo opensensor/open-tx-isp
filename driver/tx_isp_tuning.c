@@ -4854,10 +4854,9 @@ int ae0_interrupt_static(void)
         int i;
 
         for (i = 0; i < 225; i++) {
-            /* OEM EXACT: word[0] & 0x1fffff is Y luminance (channel 0)
-             * of the 6-channel packed AE DMA format. The format is
-             * identical to AWB DMA (R,G,B,IR,P packed into 4 words).
-             * Values are valid Y accumulations per zone. */
+            /* AE DMA zone Y luminance from word[0].
+             * Note: nz_w0=225 (all zones populated) vs nz_w1=122 (partial).
+             * Word[0] has consistent data across all zones. */
             zones[i] = *src & 0x1fffff;
             src += 4;  /* Advance 4 words (16 bytes) to next zone */
         }
@@ -16551,7 +16550,10 @@ static int tiziano_awb_set_lum_th_freq(void)
 		}
 	}
 
-	system_reg_write_awb(1, 0x0b038,
+	/* Write lum threshold directly — do NOT use system_reg_write_awb(1,...)
+	 * which re-arms AWB DMA (0xb000=1) mid-collection, corrupting
+	 * subsequent bank reads (all zeros after the re-armed bank). */
+	system_reg_write(0x0b038,
 		(AWB_LUM_FREQ_MODE << 16) | (AWB_LUM_FREQ_BASE << 8) | lum_freq);
 	return 0;
 }
