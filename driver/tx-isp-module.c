@@ -100,7 +100,7 @@ static void sensor_expo_work_func(struct work_struct *work)
 
         {
             int packed = ((int)again << 16) | ((int)it & 0xffff);
-            pr_err("sensor_expo_work: again=%u it=%u packed=0x%08x\n", again, it, packed);
+            pr_debug("sensor_expo_work: again=%u it=%u packed=0x%08x\n", again, it, packed);
             ret = stored_sensor_ops.original_ops->sensor->ioctl(
                 stored_sensor_ops.sensor_sd, TX_ISP_EVENT_SENSOR_EXPO, &packed);
             if (ret)
