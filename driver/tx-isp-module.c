@@ -4794,44 +4794,55 @@ static long tx_isp_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned 
         return 0;
     }
     case 0x800856d5: { // TX_ISP_GET_BUF - Calculate required buffer size
+        /* OEM EXACT buffer size calculation from Binary Ninja HLIL at 0xe960.
+         * Computes space for: NV12 (Y+UV) + R-plane reference banks (for MDNS
+         * temporal noise reduction) + UV reference banks + tiny planes. */
         struct isp_buf_result {
-            uint32_t addr;   // Physical address (usually 0)
+            uint32_t addr;   // Physical address (always 0)
             uint32_t size;   // Calculated buffer size
         } buf_result;
-        uint32_t width = 1920;   // Default HD width
-        uint32_t height = 1080;  // Default HD height
-        uint32_t stride_factor;
-        uint32_t main_buf;
-        uint32_t total_main;
-        uint32_t yuv_stride;
+        uint32_t width, height;
+        uint32_t stride8, h8, y_full, nv12_size;
+        uint32_t r_factor, r_lines, r_block;
         uint32_t total_size;
 
-        pr_info("ISP buffer calculation: width=%d height=%d memopt=%d\n",
-                width, height, isp_memopt);
+        /* Get dimensions from ISP device */
+        width = isp_dev->sensor_width;
+        height = isp_dev->sensor_height;
+        if (!width) width = 1920;
+        if (!height) height = 1080;
 
-        // CRITICAL FIX: Use correct RAW10 buffer calculation instead of YUV
-        // RAW10 format: 10 bits per pixel = 1.25 bytes per pixel
-        // Formula: width * height * 1.25 (with proper alignment)
+        /* OEM EXACT formula:
+         * stride8 = (width+7)/8, h8 = height*8
+         * y_full = stride8 * h8 = stride * height
+         * nv12 = y_full * 1.5
+         * r_block = small reference plane
+         * Then add UV/tiny planes depending on isp_memopt */
+        stride8 = (width + 7) >> 3;
+        h8 = height << 3;
+        y_full = stride8 * h8;               /* = stride * height */
+        nv12_size = y_full + (y_full >> 1);   /* NV12 = Y + UV/2 */
 
-        pr_info("*** BUFFER FIX: Using RAW10 calculation instead of incorrect YUV calculation ***\n");
+        r_factor = (((width + 0x1f) >> 5) + 7) >> 3;
+        r_lines = (((height + 0xf) >> 4) + 1) << 3;
+        r_block = r_factor * r_lines;
 
-        // RAW10: 10 bits per pixel, packed format
-        // Each 4 pixels = 5 bytes (4 * 10 bits = 40 bits = 5 bytes)
-        // So: (width * height * 5) / 4
-        uint32_t raw10_pixels = width * height;
-        uint32_t raw10_bytes = (raw10_pixels * 5) / 4;  // 10 bits per pixel = 1.25 bytes
+        if (isp_memopt == 0) {
+            /* Full buffer mode: 4 R-plane banks + UV + UV/2 + tiny */
+            uint32_t uv_factor = ((width >> 1) + 7) >> 3;
+            uint32_t uv_block = uv_factor * h8;
+            uint32_t tiny_factor = ((width >> 5) + 7) >> 3;
+            uint32_t tiny_size = (tiny_factor * h8) >> 5;
+            total_size = nv12_size + (r_block << 2) + uv_block
+                       + (uv_block >> 1) + tiny_size;
+        } else {
+            /* Memory optimized: single R-plane bank, no extra UV */
+            total_size = nv12_size + r_block;
+        }
 
-        // Add alignment padding (align to 64-byte boundaries for DMA)
-        uint32_t aligned_size = (raw10_bytes + 63) & ~63;
+        pr_info("ISP buffer calculation: %ux%u memopt=%d -> %u bytes (0x%x)\n",
+                width, height, isp_memopt, total_size, total_size);
 
-        total_size = aligned_size;
-
-        pr_info("*** RAW10 BUFFER: %d pixels -> %d bytes -> %d aligned ***\n",
-                raw10_pixels, raw10_bytes, aligned_size);
-
-        pr_info("ISP calculated buffer size: %d bytes (0x%x)\n", total_size, total_size);
-
-        // Set result: address=0, size=calculated
         buf_result.addr = 0;
         buf_result.size = total_size;
 
@@ -4841,54 +4852,154 @@ static long tx_isp_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned 
         return 0;
     }
     case 0x800856d4: { // TX_ISP_SET_BUF - Set buffer addresses and configure DMA
+        // OEM-exact implementation: programs 0x7820-0x786c ISP frame buffer registers
+        // Required for MDNS (3D noise reduction) temporal reference frames.
+        extern void tisp_mdns_enable_after_dma(void);
+
         struct isp_buf_setup {
             uint32_t addr;   // Physical buffer address
             uint32_t size;   // Buffer size
         } buf_setup;
-        uint32_t width = 1920;
-        uint32_t height = 1080;
-        uint32_t stride;
-        uint32_t frame_size;
-        uint32_t uv_offset;
-        uint32_t yuv_stride;
-        uint32_t yuv_size;
+        uint32_t width, height;
+        uint32_t y_stride, y_size;
+        uint32_t y_stride2, y_size2;
+        uint32_t r_offset, r_stride, r_size, r_total;
+        uint32_t uv_base, uv_stride, uv_size;
+        uint32_t uv_base2, uv_stride2, uv_size2;
+        uint32_t uv_base3, tiny_stride, tiny_size;
+        uint32_t final_offset;
 
         if (copy_from_user(&buf_setup, argp, sizeof(buf_setup)))
             return -EFAULT;
 
-        pr_info("ISP set buffer: addr=0x%x size=%d\n", buf_setup.addr, buf_setup.size);
+        // Get dimensions from ISP device (OEM uses tispinfo/data_b2f34)
+        width = isp_dev->sensor_width;
+        height = isp_dev->sensor_height;
+        if (!width)
+            width = 1920;
+        if (!height)
+            height = 1080;
 
-        // Calculate stride and buffer offsets like reference
-        stride = ((width + 7) >> 3) << 3;  // Aligned stride
-        frame_size = stride * height;
+        pr_info("ISP set buffer: addr=0x%x size=%d width=%u height=%u isp_memopt=%d\n",
+                buf_setup.addr, buf_setup.size, width, height, isp_memopt);
 
-        // Validate buffer size
-        if (buf_setup.size < frame_size) {
-            pr_err("Buffer too small: need %d, got %d\n", frame_size, buf_setup.size);
-            return -EFAULT;
+        // === Y-plane (main output) ===
+        y_stride = ((width + 7) >> 3) << 3;   // 8-byte aligned
+        y_size = y_stride * height;
+        if (buf_setup.size < y_size) {
+            pr_err("Buffer too small for Y plane: need %u, got %u\n", y_size, buf_setup.size);
+            return -EINVAL;
         }
+        system_reg_write(0x7820, buf_setup.addr);          // Y base address
+        system_reg_write(0x7824, y_stride);                 // Y stride
 
-        // Configure main frame buffers (system registers like reference)
-        // These would be actual register writes in hardware implementation
-        pr_info("Configuring main frame buffer: 0x%x stride=%d\n", buf_setup.addr, stride);
+        // === Y second bank ===
+        y_stride2 = ((width + 7) >> 3) << 3;  // same alignment
+        y_size2 = y_stride2 * height;
+        system_reg_write(0x7828, buf_setup.addr + y_size);  // Y bank 2
+        system_reg_write(0x782c, y_stride2);                // Y bank 2 stride
 
-        // UV buffer offset calculation
-        uv_offset = frame_size + (frame_size >> 1);
-        if (buf_setup.size >= uv_offset) {
-            pr_info("Configuring UV buffer: 0x%x\n", buf_setup.addr + frame_size);
+        // === R-plane (reference frame for MDNS temporal) ===
+        r_offset = y_size + (y_size2 >> 1);    // after Y + half UV
+        if (buf_setup.size < r_offset) {
+            pr_err("Buffer too small for R plane offset: need %u, got %u\n", r_offset, buf_setup.size);
+            return -EINVAL;
         }
+        r_stride = ((((width + 0x1f) >> 5) + 7) >> 3) << 3;
+        r_size = r_stride * (((height + 0xf) >> 4) + 1);  /* OEM: compressed height */
+        system_reg_write(0x7830, buf_setup.addr + r_offset);  // R base
+        system_reg_write(0x7834, r_stride);                    // R stride
 
-        // YUV420 additional buffer configuration
-        yuv_stride = ((((width + 0x1f) >> 5) + 7) >> 3) << 3;
-        yuv_size = yuv_stride * ((((height + 0xf) >> 4) + 1) << 3);
+        // === Common registers ===
+        system_reg_write(0x7838, 0);
+        system_reg_write(0x783c, 1);   // Enable flag
 
-        if (!isp_memopt) {
-            // Full buffer mode - configure all planes
-            pr_info("Full buffer mode: YUV stride=%d size=%d\n", yuv_stride, yuv_size);
+        // === Middle banks (0x7840-0x7854) — depends on isp_memopt ===
+        if (isp_memopt == 0) {
+            // Full buffer mode: 4 reference banks
+            system_reg_write(0x7840, buf_setup.addr + r_offset + r_size);
+            system_reg_write(0x7844, r_stride);
+            system_reg_write(0x7848, buf_setup.addr + r_offset + 2 * r_size);
+            system_reg_write(0x784c, r_stride);
+            system_reg_write(0x7850, buf_setup.addr + r_offset + 3 * r_size);
+            system_reg_write(0x7854, r_stride);
+            r_total = 4 * r_size;
+            pr_info("Full buffer mode: r_stride=%u r_size=%u r_total=%u\n",
+                    r_stride, r_size, r_total);
         } else {
-            // Memory optimized mode
-            pr_info("Memory optimized mode\n");
+            // Memory optimized: all banks point at same location
+            system_reg_write(0x7840, buf_setup.addr + r_offset);
+            system_reg_write(0x7844, 0);
+            system_reg_write(0x7848, buf_setup.addr + r_offset);
+            system_reg_write(0x784c, 0);
+            system_reg_write(0x7850, buf_setup.addr + r_offset);
+            system_reg_write(0x7854, 0);
+            r_total = r_size;
+            pr_info("Memory optimized mode: r_stride=%u r_size=%u\n", r_stride, r_size);
         }
+
+        // === UV-plane ===
+        uv_base = r_offset + r_total;
+        if (buf_setup.size < uv_base) {
+            pr_err("Buffer too small for UV base: need %u, got %u\n", uv_base, buf_setup.size);
+            return -EINVAL;
+        }
+
+        if (isp_memopt == 0) {
+            // Full UV buffer mode
+            uv_stride = ((width / 2 + 7) >> 3) << 3;
+            uv_size = uv_stride * height;
+            system_reg_write(0x7858, buf_setup.addr + uv_base);
+            system_reg_write(0x785c, uv_stride);
+
+            uv_base2 = uv_base + uv_size;
+            if (buf_setup.size < uv_base2) {
+                pr_err("Buffer too small for UV bank2: need %u, got %u\n", uv_base2, buf_setup.size);
+                return -EINVAL;
+            }
+            uv_stride2 = ((width / 2 + 7) >> 3) << 3;
+            uv_size2 = uv_stride2 * height;
+            system_reg_write(0x7860, buf_setup.addr + uv_base2);
+            system_reg_write(0x7864, uv_stride2);
+
+            uv_base3 = uv_base2 + uv_size2 / 2;
+            if (buf_setup.size < uv_base3) {
+                pr_err("Buffer too small for UV bank3: need %u, got %u\n", uv_base3, buf_setup.size);
+                return -EINVAL;
+            }
+            tiny_stride = ((width / 32 + 7) >> 3) << 3;
+            tiny_size = tiny_stride * height;
+            system_reg_write(0x7868, buf_setup.addr + uv_base3);
+            system_reg_write(0x786c, tiny_stride);
+            final_offset = uv_base3 + tiny_size / 32;
+
+            pr_info("UV full mode: uv_stride=%u uv_stride2=%u tiny_stride=%u final=%u\n",
+                    uv_stride, uv_stride2, tiny_stride, final_offset);
+        } else {
+            // Memory optimized: all UV banks point at base addr
+            system_reg_write(0x7858, buf_setup.addr);
+            system_reg_write(0x785c, 0);
+            system_reg_write(0x7860, buf_setup.addr);
+            system_reg_write(0x7864, 0);
+            system_reg_write(0x7868, buf_setup.addr);
+            system_reg_write(0x786c, 0);
+            final_offset = uv_base;
+
+            pr_info("UV memopt mode: all UV banks -> addr=0x%x final=%u\n",
+                    buf_setup.addr, final_offset);
+        }
+
+        // Final size check
+        if (buf_setup.size < final_offset) {
+            pr_err("Buffer too small for final layout: need %u, got %u\n",
+                   final_offset, buf_setup.size);
+            return -EINVAL;
+        }
+
+        pr_info("ISP DMA registers 0x7820-0x786c programmed successfully\n");
+
+        // Enable MDNS now that DMA registers are valid
+        tisp_mdns_enable_after_dma();
 
         return 0;
     }

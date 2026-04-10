@@ -20425,6 +20425,30 @@ int tiziano_mdns_init(uint32_t width, uint32_t height)
 	return 0;
 }
 
+/**
+ * tisp_mdns_enable_after_dma - Enable MDNS after DMA registers are programmed.
+ *
+ * Called from tx_isp_set_buf (ioctl 0x800856d4) after the 0x7820-0x786c
+ * register block has been written with valid frame buffer addresses.
+ * This completes the deferred MDNS enable that tiziano_mdns_init() skipped.
+ */
+void tisp_mdns_enable_after_dma(void)
+{
+	if (!mdns_hw_enabled) {
+		tisp_mdns_par_refresh(0x10000, 0x10000);
+		tisp_mdns_bypass(0);
+		/* Clear MDNS bypass bit 16 in register 0xc */
+		{
+			u32 bypass = system_reg_read(0xc);
+			bypass &= ~0x10000;
+			system_reg_write(0xc, bypass);
+		}
+		mdns_hw_enabled = 1;
+		pr_info("tisp_mdns_enable_after_dma: MDNS enabled after DMA registers programmed\n");
+	}
+}
+EXPORT_SYMBOL(tisp_mdns_enable_after_dma);
+
 /* OEM EXACT: tiziano_mdns_dn_params_refresh — Day/Night transition handler.
  * Called during day/night mode switch to reload MDNS params from the new
  * tparams_active blob and force a full HW register refresh.
