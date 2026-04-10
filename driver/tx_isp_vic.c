@@ -2726,14 +2726,14 @@ static int vic_pad_event_handler(void *priv, unsigned int cmd, void *data)
         return -EINVAL;
     }
 
-    pr_info("*** VIC EVENT CALLBACK: cmd=0x%x, data=%p, vic_dev=%p ***\n",
+    pr_debug("*** VIC EVENT CALLBACK: cmd=0x%x, data=%p, vic_dev=%p ***\n",
             cmd, data, vic_dev);
 
     switch (cmd) {
         case 0x3000003: {
             /* atomic_inc_return returns value AFTER increment */
             int newval = atomic_inc_return(&vic_dev->stream_refcount);
-            pr_info("*** VIC EVENT: STREAM_START (0x3000003) refcount→%d ***\n",
+            pr_debug("*** VIC EVENT: STREAM_START (0x3000003) refcount→%d ***\n",
                     newval);
             /* Only enable VIC MDMA on the FIRST channel to start streaming.
              * Subsequent channels share the already-running MDMA pipeline. */
@@ -2749,7 +2749,7 @@ static int vic_pad_event_handler(void *priv, unsigned int cmd, void *data)
                 atomic_set(&vic_dev->stream_refcount, 0);
                 newval = 0;
             }
-            pr_info("*** VIC EVENT: STREAM_STOP (0x3000004) refcount→%d ***\n",
+            pr_debug("*** VIC EVENT: STREAM_STOP (0x3000004) refcount→%d ***\n",
                     newval);
             /* Only disable VIC MDMA when the LAST channel stops streaming.
              * Other channels still need the VIC pipeline running. */
@@ -2770,12 +2770,12 @@ static int vic_pad_event_handler(void *priv, unsigned int cmd, void *data)
             ret = data ? vic_core_ops_ioctl(sd, cmd, data) : -EINVAL;
             break;
         default:
-            pr_info("VIC: Unknown event cmd=0x%x\n", cmd);
+            pr_debug("VIC: Unknown event cmd=0x%x\n", cmd);
             ret = -ENOIOCTLCMD;
             break;
     }
 
-    pr_info("*** VIC EVENT CALLBACK: returning %d ***\n", ret);
+    pr_debug("*** VIC EVENT CALLBACK: returning %d ***\n", ret);
     return ret;
 }
 
@@ -2793,7 +2793,7 @@ static void vic_bind_event_dispatch_table(struct tx_isp_vic_device *vic_dev)
 
     vic_dev->event_callback_struct = &vic_event_dispatch;
 
-    pr_info("*** VIC event dispatch bound: sd=%p table=%p handler=%p priv=%p ***\n",
+    pr_debug("*** VIC event dispatch bound: sd=%p table=%p handler=%p priv=%p ***\n",
             &vic_dev->sd, &vic_event_dispatch,
             vic_event_dispatch.event_handler,
             vic_event_dispatch.event_priv);
@@ -3205,13 +3205,13 @@ static int ispvic_frame_channel_qbuf(void *arg1, void *arg2)
 
 	/* OEM: check free_head first, then queue_head */
 	if (list_empty(&vic_dev->free_head)) {
-		pr_info("bank no free\n");
+		pr_debug("bank no free\n");
 		private_spin_unlock_irqrestore(&vic_dev->buffer_mgmt_lock, var_18);
 		return 0;
 	}
 
 	if (list_empty(&vic_dev->queue_head)) {
-		pr_info("qbuffer null\n");
+		pr_debug("qbuffer null\n");
 		private_spin_unlock_irqrestore(&vic_dev->buffer_mgmt_lock, var_18);
 		return 0;
 	}

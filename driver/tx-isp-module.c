@@ -3494,7 +3494,7 @@ long frame_channel_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned 
     struct tx_isp_channel_state *state;
     int channel;
 
-    pr_info("*** frame_channel_unlocked_ioctl: MIPS-SAFE implementation - cmd=0x%x ***\n", cmd);
+    pr_debug("*** frame_channel_unlocked_ioctl: MIPS-SAFE implementation - cmd=0x%x ***\n", cmd);
 
     /* MIPS ALIGNMENT CHECK: Validate file pointer */
     if (!file || ((uintptr_t)file & 0x3) != 0) {
@@ -3541,7 +3541,7 @@ long frame_channel_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned 
         return -EFAULT;
     }
 
-    pr_info("*** Frame channel %d IOCTL: MIPS-safe processing - cmd=0x%x ***\n", channel, cmd);
+    pr_debug("*** Frame channel %d IOCTL: MIPS-safe processing - cmd=0x%x ***\n", channel, cmd);
 
     // Add channel enable/disable IOCTLs that IMP_FrameSource_EnableChn uses
     switch (cmd) {

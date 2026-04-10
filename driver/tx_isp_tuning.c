@@ -4444,7 +4444,7 @@ static void tisp_set_ae0_ag(uint32_t ag, uint32_t dg)
     {
         static int ae0ag_log_cnt;
         if (ae0ag_log_cnt < 20 || (ae0ag_log_cnt & 0xff) == 0) {
-            pr_debug("AE0_AG[%d]: req_ag=0x%x req_dg=0x%x actual_ag=0x%x actual_dg=0x%x "
+            pr_info("AE0_AG[%d]: req_ag=0x%x req_dg=0x%x actual_ag=0x%x actual_dg=0x%x "
                     "dg_comp=0x%x (max_dg=0x%x)\n",
                     ae0ag_log_cnt, ag, dg, actual_ag, actual_dg, dg_comp, max_dg);
         }
@@ -4480,6 +4480,26 @@ static int tisp_ae0_process_impl(void)
                      _ae_parameter.data[1], _ae_parameter.data[3],
                      &wmean, &total_wt);
 
+    {
+        static int ae_table_logged;
+        if (!ae_table_logged) {
+            ae_table_logged = 1;
+            pr_info("AE_TABLES: ev_list=[%u,%u,%u,%u,%u,%u,%u,%u,%u,%u]\n",
+                ae0_ev_list.data[0], ae0_ev_list.data[1], ae0_ev_list.data[2],
+                ae0_ev_list.data[3], ae0_ev_list.data[4], ae0_ev_list.data[5],
+                ae0_ev_list.data[6], ae0_ev_list.data[7], ae0_ev_list.data[8],
+                ae0_ev_list.data[9]);
+            pr_info("AE_TABLES: lum_list=[%u,%u,%u,%u,%u,%u,%u,%u,%u,%u]\n",
+                _lum_list.data[0], _lum_list.data[1], _lum_list.data[2],
+                _lum_list.data[3], _lum_list.data[4], _lum_list.data[5],
+                _lum_list.data[6], _lum_list.data[7], _lum_list.data[8],
+                _lum_list.data[9]);
+            pr_info("AE_TABLES: ae_exp_th=[0x%x,0x%x,0x%x] zone_spacing=%ux%u\n",
+                ae_exp_th.data[0], ae_exp_th.data[1], ae_exp_th.data[2],
+                _ae_parameter.data[4], _ae_parameter.data[19]);
+        }
+    }
+
     /* ---- Step 2: Run exposure convergence algorithm ---- */
     new_it = _ae_reg.data[0];
     new_ag = data_c46a0;
@@ -4506,9 +4526,19 @@ static int tisp_ae0_process_impl(void)
     _ae_ev = fix_point_mult3_32(q, new_it << q, new_ag, new_dg);
 
     {
+        static int ae_frame_diag;
+        ae_frame_diag++;
+        if ((ae_frame_diag % 30) == 0) {
+            uint32_t ae_tgt = tisp_ae_target(_ae_ev, q);
+            pr_info("AE_CONV[%d]: wmean=%u target=%u ev=0x%x zone[0]=%u zone[112]=%u zone[224]=%u q=%u\n",
+                ae_frame_diag, wmean, ae_tgt, _ae_ev, zones[0], zones[112], zones[224], q);
+        }
+    }
+
+    {
         static int ae_log_cnt;
         if (ae_log_cnt < 30 || (ae_log_cnt & 0xff) == 0) {
-            pr_debug("AE0[%d]: wmean=%u target=%u it=%u/%u ag=0x%x/0x%x dg=0x%x ev=0x%x\n",
+            pr_info("AE0[%d]: wmean=%u target=%u it=%u/%u ag=0x%x/0x%x dg=0x%x ev=0x%x\n",
                     ae_log_cnt, wmean,
                     tisp_ae_target(_ae_ev, q),
                     new_it, ae_exp_th.data[0],
@@ -4869,12 +4899,12 @@ int ae0_interrupt_static(void)
                     if (dma[i*4+2]) nz_w2++;
                     if (dma[i*4+3]) nz_w3++;
                 }
-                pr_debug("AE0_SCAN[%d]: status=0x%x bank=%u nz_w0=%d nz_w1=%d nz_w2=%d nz_w3=%d "
+                pr_info("AE0_SCAN[%d]: status=0x%x bank=%u nz_w0=%d nz_w1=%d nz_w2=%d nz_w3=%d "
                         "1st_nz_w0=%d 1st_nz_w1=%d\n",
                         ae_zone_log, ae0_status, bank_offset >> 12,
                         nz_w0, nz_w1, nz_w2, nz_w3, first_nz_w0, first_nz_w1);
                 /* Dump zone 0 all 4 words, plus zone 1, 112, 224 word[0..1] */
-                pr_debug("AE0_RAW[%d]: z0=[%08x %08x %08x %08x] z1=[%08x %08x] "
+                pr_info("AE0_RAW[%d]: z0=[%08x %08x %08x %08x] z1=[%08x %08x] "
                         "z112=[%08x %08x] z224=[%08x %08x]\n",
                         ae_zone_log,
                         dma[0], dma[1], dma[2], dma[3],
@@ -16541,7 +16571,7 @@ static int tiziano_awb_set_lum_th_freq(void)
 	{
 		static int aediag;
 		if (aediag < 5) {
-			pr_debug("AE_DIAG: ae_mean=%u scale=%d lum_freq=%u\n", mean, scale, lum_freq);
+			pr_info("AE_DIAG: ae_mean=%u scale=%d lum_freq=%u\n", mean, scale, lum_freq);
 			aediag++;
 		}
 	}
@@ -16686,7 +16716,7 @@ int awb_interrupt_static(void)
 
 	if (awb_irq_count <= 10 || (awb_irq_count % 30) == 0) {
 		u32 *raw = (u32 *)buffer_addr;
-		pr_debug("AWB_BANK[%u]: bank=%u changes=%u/%u "
+		pr_info("AWB_BANK[%u]: bank=%u changes=%u/%u "
 			"raw[0..3]=%08x %08x %08x %08x\n",
 			awb_irq_count, awb_status,
 			awb_bank_change_count, awb_irq_count,
@@ -16696,7 +16726,7 @@ int awb_interrupt_static(void)
 	JZ_Isp_Get_Awb_Statistics(buffer_addr, 0xf001f001);
 
 	if (awb_irq_count <= 10 || (awb_irq_count % 30) == 0) {
-		pr_debug("AWB_STATS[%u]: R[0]=%u G[0]=%u B[0]=%u "
+		pr_info("AWB_STATS[%u]: R[0]=%u G[0]=%u B[0]=%u "
 			"P[0]=%u | R[112]=%u G[112]=%u B[112]=%u P[112]=%u\n",
 			awb_irq_count,
 			awb_array_r[0], awb_array_g[0],
