@@ -4832,21 +4832,15 @@ int ae0_interrupt_static(void)
      * We call private_dma_cache_sync for safety on systems with cached DMA. */
     private_dma_cache_sync(NULL, dma, 0x1000, 0);
 
-    /* Extract Y luminance from each 4-word zone entry.
+    /* OEM EXACT: Extract zone luminance as R+G+B from packed 4-word AE DMA entries.
      *
-     * OEM decompilation shows: *src & 0x1fffff (word[0]).
-     * However, with our explicit 15x15 grid config (0xa004=0xf001f001),
-     * the AE DMA engine puts Y luminance in word[1], not word[0].
-     * Diagnostic scan confirms: nz_w0=129 nz_w1=207 (word[1] has
-     * Y data for 92% of zones, word[0] only 57%).
-     * The OEM ends up with 0xa004=0 (zeroed _ae_parameter) which may
-     * use a different DMA output format.
+     * OEM tisp_ae0_get_statistics unpacks 6 channels per zone:
+     *   Ch0 (R) = word[0] & 0x1fffff
+     *   Ch1 (G) = (word[1] & 0x3ff) << 11 | word[0] >> 21
+     *   Ch2 (B) = (word[1] & 0x7ffffc00) >> 10
      *
-     * With the 15x15 grid config (0xa004=0xf001f001), word[1] provides
-     * Y values that produce correct exposure when fed to libimp's AE.
-     * Word[0] has more non-zero zones but its values are too small,
-     * causing libimp to under-expose (very dark image).
-     * Word[1] tested and confirmed working for good exposure. */
+     * OEM ae0_weight_mean2 computes zone luminance as R+G+B.
+     * Previously we only read Ch0 (R), giving ~1/3 of actual luminance → wmean too low. */
     {
         extern int tisp_ae_update_zone_data(uint32_t *new_zone_data, size_t data_size);
         uint32_t zones[225];
@@ -4854,10 +4848,12 @@ int ae0_interrupt_static(void)
         int i;
 
         for (i = 0; i < 225; i++) {
-            /* AE DMA zone Y luminance from word[0].
-             * Note: nz_w0=225 (all zones populated) vs nz_w1=122 (partial).
-             * Word[0] has consistent data across all zones. */
-            zones[i] = *src & 0x1fffff;
+            uint32_t w0 = src[0];
+            uint32_t w1 = src[1];
+            uint32_t r = w0 & 0x1fffff;
+            uint32_t g = ((w1 & 0x3ff) << 11) | (w0 >> 21);
+            uint32_t b = (w1 & 0x7ffffc00) >> 10;
+            zones[i] = r + g + b;
             src += 4;  /* Advance 4 words (16 bytes) to next zone */
         }
 
@@ -16550,9 +16546,10 @@ static int tiziano_awb_set_lum_th_freq(void)
 		}
 	}
 
-	/* Write lum threshold directly — do NOT use system_reg_write_awb(1,...)
-	 * which re-arms AWB DMA (0xb000=1) mid-collection, corrupting
-	 * subsequent bank reads (all zeros after the re-armed bank). */
+	/* Write lum threshold without re-arming AWB DMA.
+	 * OEM uses system_reg_write_awb(1,...) which writes 0xb000=1 first,
+	 * but in our driver this corrupts subsequent AWB bank reads.
+	 * Plain write preserves partial AWB stats. */
 	system_reg_write(0x0b038,
 		(AWB_LUM_FREQ_MODE << 16) | (AWB_LUM_FREQ_BASE << 8) | lum_freq);
 	return 0;
