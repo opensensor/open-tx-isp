@@ -28885,15 +28885,20 @@ static int data_b2f04(uint32_t param, int flag)
         return -ENODEV;
     }
 
-    /* Set analog gain via sensor attribute */
+    /* Set analog gain via sensor attribute, then trigger I2C write */
     if (ourISPdev->sensor) {
         ourISPdev->sensor->attr.again = param;
-        pr_debug("data_b2f04: Set sensor again to %u\n", param);
+        /* Queue deferred I2C write to sensor hardware.
+         * Both IT and AG attributes are set by the time AG is written,
+         * so one workqueue trigger here covers both. */
+        ourISPdev->sensor_update_pending = 1;
+        {
+            extern struct work_struct sensor_expo_work;
+            schedule_work(&sensor_expo_work);
+        }
         return 0;
     }
 
-    /* Fallback: just log the operation */
-    pr_debug("data_b2f04: No sensor set_analog_gain operation available\n");
     return 0;
 }
 

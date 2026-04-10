@@ -69,7 +69,8 @@ static struct sensor_ops_storage stored_sensor_ops;
 
 /* Deferred sensor I2C write — runs in workqueue context (process context, no locks) */
 static void sensor_expo_work_func(struct work_struct *work);
-static DECLARE_WORK(sensor_expo_work, sensor_expo_work_func);
+DECLARE_WORK(sensor_expo_work, sensor_expo_work_func);
+EXPORT_SYMBOL(sensor_expo_work);
 
 static void sensor_expo_work_func(struct work_struct *work)
 {
