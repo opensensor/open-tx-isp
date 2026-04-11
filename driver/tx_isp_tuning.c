@@ -17012,7 +17012,7 @@ static int tisp_gib_gain_interpolation(uint32_t gain)
     case 0x01: ch0 = blc_b;  ch1 = blc_gb; ch2 = blc_gr; ch3 = blc_r;  ch4 = blc_ir; break;
     case 0x02: ch0 = blc_gr; ch1 = blc_r;  ch2 = blc_b;  ch3 = blc_gb; ch4 = blc_ir; break;
     case 0x03: ch0 = blc_gb; ch1 = blc_b;  ch2 = blc_r;  ch3 = blc_gr; ch4 = blc_ir; break;
-    case 0x08: ch0 = blc_gb; ch1 = blc_gr; ch2 = blc_ir; ch3 = blc_b;  ch4 = blc_r;  break;
+    case 0x08: ch0 = blc_r;  ch1 = blc_gr; ch2 = blc_ir; ch3 = blc_b;  ch4 = blc_gb; break;
     case 0x09: ch0 = blc_b;  ch1 = blc_gb; ch2 = blc_ir; ch3 = blc_r;  ch4 = blc_gr; break;
     case 0x0a: ch0 = blc_r;  ch1 = blc_ir; ch2 = blc_gb; ch3 = blc_b;  ch4 = blc_gr; break;
     case 0x0b: ch0 = blc_b;  ch1 = blc_ir; ch2 = blc_gr; ch3 = blc_r;  ch4 = blc_gb; break;
