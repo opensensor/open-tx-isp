@@ -2251,7 +2251,7 @@ module_param(isp_bypass_override, uint, 0644);
  *          isp_block_enable=0xDD24 adds GIB (green imbalance correction) to crisp set
  *          isp_block_enable=0xDD34 adds GIB+LSC (green correction + lens shading)
  */
-static uint isp_block_enable = 0x2DD94;  /* All OEM blocks except GIB(5) and MDNS(16); GIB BLC zeros data at high gain */
+static uint isp_block_enable = 0x2DD94;  /* All OEM blocks except GIB(5) and MDNS(16); GIB needs HW reset investigation */
 module_param(isp_block_enable, uint, 0644);
 MODULE_PARM_DESC(isp_block_enable,
 		 "Block enable bitmask: set bits enable ISP blocks (0=all bypassed)");
@@ -16895,11 +16895,22 @@ static int tiziano_gib_params_refresh(void)
         memcpy(tiziano_gib_config_line,         p + GIB_TBIN_CONFIG_LINE, 0x30);
         memcpy(tiziano_gib_r_g_linear,          p + GIB_TBIN_RG_LINEAR,   0x08);
         memcpy(tiziano_gib_b_ir_linear,         p + GIB_TBIN_BIR_LINEAR,  0x08);
-        memcpy(tiziano_gib_deirm_blc_r_linear,  p + GIB_TBIN_BLC_R,      0x24);
-        memcpy(tiziano_gib_deirm_blc_gr_linear, p + GIB_TBIN_BLC_GR,     0x24);
-        memcpy(tiziano_gib_deirm_blc_gb_linear, p + GIB_TBIN_BLC_GB,     0x24);
-        memcpy(tiziano_gib_deirm_blc_b_linear,  p + GIB_TBIN_BLC_B,      0x24);
-        memcpy(tiziano_gib_deirm_blc_ir_linear, p + GIB_TBIN_BLC_IR,     0x24);
+        /* OEM CRITICAL: BLC arrays are NOT loaded from the tuning binary.
+         * The OEM's tiziano_gib_params_refresh (0x21a98) loads BLC from
+         * static data embedded in the binary (values ~67), NOT from tparams.
+         * The tuning blob at offset 0x2A88 contains 257 which is wrong —
+         * it clips pixel data and destroys the image.  Always use the OEM
+         * static defaults for BLC. */
+        memcpy(tiziano_gib_deirm_blc_r_linear,  tiziano_gib_deirm_blc_r_linear_oem,
+               sizeof(tiziano_gib_deirm_blc_r_linear));
+        memcpy(tiziano_gib_deirm_blc_gr_linear, tiziano_gib_deirm_blc_gr_linear_oem,
+               sizeof(tiziano_gib_deirm_blc_gr_linear));
+        memcpy(tiziano_gib_deirm_blc_gb_linear, tiziano_gib_deirm_blc_gb_linear_oem,
+               sizeof(tiziano_gib_deirm_blc_gb_linear));
+        memcpy(tiziano_gib_deirm_blc_b_linear,  tiziano_gib_deirm_blc_b_linear_oem,
+               sizeof(tiziano_gib_deirm_blc_b_linear));
+        memcpy(tiziano_gib_deirm_blc_ir_linear, tiziano_gib_deirm_blc_ir_linear_oem,
+               sizeof(tiziano_gib_deirm_blc_ir_linear));
         memcpy(gib_ir_point,                     p + GIB_TBIN_IR_POINT,   0x10);
         memcpy(gib_ir_reser,                     p + GIB_TBIN_IR_RESER,   0x3c);
         memcpy(tiziano_gib_deir_r_h,             p + GIB_TBIN_DEIR_R_H,   0x84);
