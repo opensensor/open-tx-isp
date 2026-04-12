@@ -942,13 +942,27 @@ int csi_core_ops_init(struct tx_isp_subdev *sd, int enable)
         writel(interface_type, csi_regs + 0x0c);
         private_msleep(1);
 
+        /*
+         * OEM logic: when settle_time_apative_en is set (boolean flag),
+         * skip rate register writes entirely — let the PHY use hardware
+         * defaults.  Only calculate and write rate_sel from mipi.clk
+         * when the flag is clear.
+         *
+         * NOTE: These writes go to isp_csi_regs which may read as zero
+         * until the VIC kick below enables the PHY bus bridge.  The
+         * writes still land in the hardware shadow registers.
+         */
+        if (!sensor_attr->mipi.settle_time_apative_en) {
+            rate_sel = csi_calc_rate_sel(sensor_attr);
+        } else {
+            rate_sel = -1; /* adaptive — HW defaults used */
+        }
+
         /* Kick VIC 0x0c to enable CSI PHY register bus bridge.
-         * clk_enable("csi") alone doesn't make CSI regs accessible —
-         * this VIC write gates a MIPI PHY bus bridge at the hardware
-         * level.  The OEM doesn't need this (its kernel/module handles
-         * it differently).  Value must be 1; VIC 0x0c is overwritten
-         * to 2 (MIPI) later in tx_isp_vic_start before VIC RUN.
-         * TODO: causes split-frame on SC2336, needs proper fix. */
+         * Must happen BEFORE wrapper writes so they land in live regs.
+         * Rate regs (0x160/0x1e0/0x260) are written AFTER the kick
+         * so they take effect on both adaptive and non-adaptive sensors.
+         * Value must be 1; tx_isp_vic_start overwrites to 2 (MIPI). */
         vic_write32(0x0c, 1);
         wmb();
         if (!csi_wait_w01_phase(250)) {
@@ -956,26 +970,20 @@ int csi_core_ops_init(struct tx_isp_subdev *sd, int enable)
                     vic_read32(0x14));
         }
 
-        /*
-         * OEM logic: when settle_time_apative_en is set (boolean flag),
-         * skip rate register writes entirely — let the PHY use hardware
-         * defaults.  Only calculate and write rate_sel from mipi.clk
-         * when the flag is clear.
-         */
-        if (!sensor_attr->mipi.settle_time_apative_en) {
-            rate_sel = csi_calc_rate_sel(sensor_attr);
+        /* Now write rate regs (bridge is active, writes will land) */
+        if (rate_sel >= 0) {
             rate_reg = (readl(isp_csi_regs + 0x160) & 0xfffffff0) | (rate_sel & 0xf);
             writel(rate_reg, isp_csi_regs + 0x160);
             writel(rate_reg, isp_csi_regs + 0x1e0);
             writel(rate_reg, isp_csi_regs + 0x260);
-        } else {
-            rate_sel = -1; /* adaptive — HW defaults used */
         }
+
         /* OEM writes 0x7d and lane mask to wrapper regs, always 0x3f */
         writel(0x7d, isp_csi_regs + 0x00);
         writel(0x3f, isp_csi_regs + 0x128);
         /* OEM only writes csi_regs+0x10, NOT vic 0x10 */
         writel(1, csi_regs + 0x10);
+
         private_msleep(10);
         pr_info("csi_core_ops_init: MIPI init programmed lanes=%u rate_sel=%d (adaptive=%d) basic[0x00]=0x%08x basic[0x04]=0x%08x basic[0x0c]=0x%08x basic[0x10]=0x%08x basic[0x128]=0x%08x lanec[0x200]=0x%08x lanec[0x204]=0x%08x lanec[0x210]=0x%08x lanec[0x230]=0x%08x lanec[0x250]=0x%08x lanec[0x254]=0x%08x lanec[0x2f4]=0x%08x slot13c[0x00]=0x%08x slot13c[0x0c]=0x%08x w01[0x14]=0x%08x w01[0x40]=0x%08x slot13c[0x128]=0x%08x\n",
                 csi_dev->lanes, rate_sel, sensor_attr->mipi.settle_time_apative_en,
