@@ -25909,9 +25909,11 @@ int tisp_ct_update(uint32_t ct)
 	if ((reg_0c & 0x40) == 0)
 		tisp_lsc_ct_update(ct);
 
-	/* OEM gates BCSH/CLM CT update on MDNS bypass bit 16 in reg 0xc */
-	if ((reg_0c & 0x10000) == 0)
-		tisp_bcsh_ct_update(ct);
+	/* OEM gates on MDNS bypass bit 16, but our isp_block_enable
+	 * intentionally bypasses MDNS (bit 16=1), permanently blocking
+	 * BCSH CT adaptation. Call unconditionally — the HMatrix and
+	 * saturation update is independent of MDNS processing. */
+	tisp_bcsh_ct_update(ct);
 
 	return 0;
 }
