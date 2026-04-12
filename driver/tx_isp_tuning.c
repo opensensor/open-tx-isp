@@ -586,18 +586,24 @@ static void tiziano_bcsh_build_HMatrix(int32_t out[9])
     /* CT bias removed — A-matrix CCM boosts green, counterproductive */
     tiziano_bcsh_build_active_ccm(active_ccm, ct);
 
-    pr_debug("BCSH_DIAG: CT=%u CCM=[%d,%d,%d, %d,%d,%d, %d,%d,%d]\n",
-            ct, active_ccm[0], active_ccm[1], active_ccm[2],
-            active_ccm[3], active_ccm[4], active_ccm[5],
-            active_ccm[6], active_ccm[7], active_ccm[8]);
-    pr_debug("BCSH_DIAG: M=[%d,%d,%d, %d,%d,%d, %d,%d,%d]\n",
-            tiziano_MMatrix[0], tiziano_MMatrix[1], tiziano_MMatrix[2],
-            tiziano_MMatrix[3], tiziano_MMatrix[4], tiziano_MMatrix[5],
-            tiziano_MMatrix[6], tiziano_MMatrix[7], tiziano_MMatrix[8]);
-    pr_debug("BCSH_DIAG: Minv=[%d,%d,%d, %d,%d,%d, %d,%d,%d]\n",
-            tiziano_MinvMatrix[0], tiziano_MinvMatrix[1], tiziano_MinvMatrix[2],
-            tiziano_MinvMatrix[3], tiziano_MinvMatrix[4], tiziano_MinvMatrix[5],
-            tiziano_MinvMatrix[6], tiziano_MinvMatrix[7], tiziano_MinvMatrix[8]);
+    {
+        static int blog;
+        if (!blog) {
+            blog = 1;
+            pr_info("BCSH_DIAG: CT=%u CCM=[%d,%d,%d, %d,%d,%d, %d,%d,%d]\n",
+                    ct, active_ccm[0], active_ccm[1], active_ccm[2],
+                    active_ccm[3], active_ccm[4], active_ccm[5],
+                    active_ccm[6], active_ccm[7], active_ccm[8]);
+            pr_info("BCSH_DIAG: M=[%d,%d,%d, %d,%d,%d, %d,%d,%d]\n",
+                    tiziano_MMatrix[0], tiziano_MMatrix[1], tiziano_MMatrix[2],
+                    tiziano_MMatrix[3], tiziano_MMatrix[4], tiziano_MMatrix[5],
+                    tiziano_MMatrix[6], tiziano_MMatrix[7], tiziano_MMatrix[8]);
+            pr_info("BCSH_DIAG: Minv=[%d,%d,%d, %d,%d,%d, %d,%d,%d]\n",
+                    tiziano_MinvMatrix[0], tiziano_MinvMatrix[1], tiziano_MinvMatrix[2],
+                    tiziano_MinvMatrix[3], tiziano_MinvMatrix[4], tiziano_MinvMatrix[5],
+                    tiziano_MinvMatrix[6], tiziano_MinvMatrix[7], tiziano_MinvMatrix[8]);
+        }
+    }
 
     tiziano_bcsh_Tccm_RGBYUV(tmp, tiziano_MMatrix, active_ccm, tiziano_MinvMatrix);
 
@@ -2251,7 +2257,7 @@ module_param(isp_bypass_override, uint, 0644);
  *          isp_block_enable=0xDD24 adds GIB (green imbalance correction) to crisp set
  *          isp_block_enable=0xDD34 adds GIB+LSC (green correction + lens shading)
  */
-static uint isp_block_enable = 0x2DD94;  /* All OEM blocks except GIB(5) and MDNS(16); GIB needs HW reset investigation */
+static uint isp_block_enable = 0x2DD94;  /* GIB(bit 5) DISABLED, MDNS(bit 16) DISABLED — GIB HW flattens all downstream pixel stats to a constant regardless of cfg[] sub-function enables (cfg bypass diagnostic ruled this out), root cause pending OEM reset-sequence / libimp param investigation. */
 module_param(isp_block_enable, uint, 0644);
 MODULE_PARM_DESC(isp_block_enable,
 		 "Block enable bitmask: set bits enable ISP blocks (0=all bypassed)");
@@ -3684,7 +3690,17 @@ static void tisp_rdns_intp_reg_refresh(uint32_t gain);
 
 /* GIB tuning binary blob offsets — verified against OEM memcpy addresses.
  * OEM tparams_day base: 0x84B10; offset = OEM_addr - 0x84B10.
- * tiziano_gib_params_refresh reads ALL GIB data from the tuning blob. */
+ * tiziano_gib_params_refresh reads ALL GIB data from the tuning blob.
+ *
+ * NOTE: A previous "fix" shifted these by +0x18 based on inspecting
+ * ingenic-sdk-march/sensor-iq/t31/gc2053.bin (which has a 32-byte LUT preamble
+ * that the OEM driver does NOT consume). The DEPLOYED tuning binary on the
+ * device follows the OEM layout WITHOUT that preamble, so 0x2A48 is correct.
+ * Verification (loaded with 0x2A60, off by +0x18):
+ *   cfg = {0,0,0,3,4095,4095,1024,1024,1024,1024,257,257} ← cfg[6..11]+rg+bir+blc_r[0..1]
+ * Verification (loaded with 0x2A48, OEM layout):
+ *   cfg = {1,1,0,0,1,0,0,0,0,3,4095,4095} ← OEM defaults
+ */
 #define GIB_TBIN_CONFIG_LINE    0x2A48  /* 12 × u32 = 48 bytes */
 #define GIB_TBIN_RG_LINEAR      0x2A78  /*  2 × u32 =  8 bytes */
 #define GIB_TBIN_BIR_LINEAR     0x2A80  /*  2 × u32 =  8 bytes */
@@ -11303,31 +11319,42 @@ static int tiziano_awb_set_hardware_param(void)
         }
     }
 
-    /* OEM algo-mode path plus runtime ModeFlag thresholds. */
+    /* OEM algo-mode path plus runtime ModeFlag thresholds.
+     *
+     * RACE FIX: OEM uses system_reg_write_awb(1, ...) which writes 0xb000=1
+     * BEFORE each register write. With 4-5 threshold writes in a row, that's
+     * 4-5 DMA re-arms inside the same frame. When this function is called
+     * mid-stream from tiziano_awb_dn_params_refresh (CT-driven day/night
+     * refresh), each re-arm corrupts the AWB stats DMA collection, causing
+     * subsequent banks to read stale data from adjacent kernel pages — which
+     * is exactly the R=G=B=59904 symptom we hunted. Use raw system_reg_write
+     * for the threshold registers and re-arm 0xb000 ONCE at the end. The
+     * sister fix in tiziano_awb_set_lum_th_freq (line ~16580) made the same
+     * change for that path. */
     {
         if (awb_algo_mode == 1) {
-            system_reg_write_awb(1, 0x0b028, 0x0fff0001);
-            system_reg_write_awb(1, 0x0b02c, 0x0fff0001);
-            system_reg_write_awb(1, 0x0b030, 0x00000100);
-            system_reg_write_awb(1, 0x0b034, 0xffff0100);
+            system_reg_write(0x0b028, 0x0fff0001);
+            system_reg_write(0x0b02c, 0x0fff0001);
+            system_reg_write(0x0b030, 0x00000100);
+            system_reg_write(0x0b034, 0xffff0100);
         } else {
             if (awb_mode_flag == 1) {
                 u32 rg_lo = (_awb_lowlight_rg_th[0] & 0x0FFF);
                 u32 rg_hi = (_awb_lowlight_rg_th[1] & 0x0FFF) << 16;
-                system_reg_write_awb(1, 0x0b028, rg_hi | rg_lo);
-                system_reg_write_awb(1, 0x0b02c, 0x03ff0001);
+                system_reg_write(0x0b028, rg_hi | rg_lo);
+                system_reg_write(0x0b02c, 0x03ff0001);
             } else {
-                system_reg_write_awb(1, 0x0b028, awb_default_rg);
-                system_reg_write_awb(1, 0x0b02c, awb_default_bg);
+                system_reg_write(0x0b028, awb_default_rg);
+                system_reg_write(0x0b02c, awb_default_bg);
             }
-            system_reg_write_awb(1, 0x0b030, awb_default_v30);
-            system_reg_write_awb(1, 0x0b034, awb_default_v34);
+            system_reg_write(0x0b030, awb_default_v30);
+            system_reg_write(0x0b034, awb_default_v34);
             tiziano_awb_set_lum_th_freq();
         }
     }
 
-    /* Ensure AWB stats enable latch persists after all config writes.
-     * OEM trace shows 0xb000=1 persisting between frames. */
+    /* Single re-arm of the AWB stats engine after all config writes are
+     * latched. This is the only 0xb000=1 pulse for this whole function. */
     system_reg_write(0xb000, 1);
 
     return 0;
@@ -16659,10 +16686,12 @@ int awb_interrupt_static(void)
 {
 	struct tisp_event_record event_data = {0};
 	uint32_t awb_status;
+	uint32_t bank_idx;
 	void *buffer_addr;
 	static unsigned int awb_irq_count;
 	static uint32_t awb_last_bank = 0xFFFFFFFF;
 	static unsigned int awb_bank_change_count;
+	static unsigned int awb_oob_warn;
 
 	if (data_a2f5c == 0)
 		return 0;
@@ -16677,7 +16706,20 @@ int awb_interrupt_static(void)
 		awb_last_bank = awb_status;
 	}
 
-	buffer_addr = (void *)(unsigned long)(data_a2f5c + (awb_status << 12));
+	/* Only 4 banks were allocated (0xb03c..0xb048 → +0x000/+0x1000/+0x2000/+0x3000).
+	 * If the hardware status register returns a value >= 4, an unmasked index
+	 * would push buffer_addr past the AWB DMA allocation into adjacent kernel
+	 * pages — those pages may contain GIB/MDNS LUT data that decodes (via the
+	 * 21-bits-per-channel unpack in JZ_Isp_Get_Awb_Statistics) to constant
+	 * R=G=B values, which is exactly the symptom we observed when GIB was
+	 * enabled. Mask the index to keep reads inside the allocation. */
+	bank_idx = awb_status & 0x3;
+	if (awb_status >= 4 && awb_oob_warn < 5) {
+		pr_warn("AWB_BANK_OOB: 0xb050=0x%x out of range (4 banks), masked to %u\n",
+			awb_status, bank_idx);
+		awb_oob_warn++;
+	}
+	buffer_addr = (void *)(unsigned long)(data_a2f5c + (bank_idx << 12));
 
 	/* OEM: private_dma_cache_sync(0, virt + (status << 12), 0x1000, 0) */
 	private_dma_cache_sync(NULL, buffer_addr, 0x1000, 0);
@@ -20410,13 +20452,16 @@ static int tiziano_mdns_params_refresh(void)
 	return 0;
 }
 
-/* tiziano_mdns_init — Load MDNS parameters but defer HW enable.
- * OEM at 0x3fa44 calls par_refresh + bypass(0) here, but OEM's MDNS temporal
- * reference DMA registers (0x7820+) are programmed from VIC frame buffers that
- * aren't allocated until stream-on.  Enabling MDNS before those DMA addresses
- * are valid causes a hardware bus hang.
+/* tiziano_mdns_init — OEM EXACT: par_refresh + bypass(0) inline.
+ * OEM at 0x3fa44 enables MDNS in init BEFORE 0x800=1 (ISP main enable).
+ * The previous defer-to-set_buf approach left MDNS in a wrong state because
+ * 0x800=1 latches the MDNS-bypassed state into the ISP pipeline; toggling
+ * the bypass bit later does not fully transition MDNS to active processing.
  *
- * Safe sequence: load params now, enable after first frame buffer is queued. */
+ * The DMA addresses (0x7820+) are programmed later by tx_isp_set_buf, but
+ * MDNS hardware doesn't actually try to DMA until a frame arrives via the
+ * sensor stream-on, which happens after tx_isp_set_buf.  So enabling MDNS
+ * here is safe — the hardware just sets its config and waits for data. */
 int tiziano_mdns_init(uint32_t width, uint32_t height)
 {
 	/* OEM EXACT: WDR table selection + store dimensions */
@@ -20432,17 +20477,36 @@ int tiziano_mdns_init(uint32_t width, uint32_t height)
 
 	tiziano_mdns_params_refresh();
 
-	/* Defer tisp_mdns_par_refresh + tisp_mdns_bypass(0) until MDNS DMA
-	 * registers (0x7820+) are programmed with valid frame buffer addresses.
-	 * Force MDNS bypass bit 16 to prevent premature enable. */
-	mdns_hw_enabled = 0;
-	{
-		u32 bypass_reg = system_reg_read(0xc);
-		if (!(bypass_reg & 0x10000)) {
-			system_reg_write(0xc, bypass_reg | 0x10000);
-		}
+	/* BISECT: Respect the user's isp_block_enable whitelist. If bit 16 (MDNS)
+	 * is NOT in the whitelist, skip the hardware enable so the user can
+	 * isolate MDNS from the rest of the pipeline. Previously this function
+	 * unconditionally self-authorized bit 16, ignoring the user's intent. */
+	if (!(isp_block_enable & 0x10000)) {
+		mdns_hw_enabled = 0;
+		pr_info("tiziano_mdns_init: SKIPPING MDNS enable (bit 16 not in isp_block_enable=0x%x)\n",
+			isp_block_enable);
+		return 0;
 	}
 
+	/* OEM EXACT: enable MDNS NOW, before 0x800=1 latches the ISP state.
+	 * tisp_mdns_par_refresh writes 0x7878-0x7aff (param config registers).
+	 * tisp_mdns_bypass(0) writes 0x7810 with sub-block enables and clears
+	 * the bypass via top_func_cfg(1). */
+	tisp_mdns_par_refresh(0x10000, 0x10000);
+	tisp_mdns_bypass(0);
+
+	/* Mark as enabled so tisp_mdns_enable_after_dma is a no-op when
+	 * tx_isp_set_buf later tries to "complete" the deferred enable. */
+	mdns_hw_enabled = 1;
+
+	{
+		u32 bypass = system_reg_read(0xc);
+		bypass &= ~0x10000;
+		bypass = tisp_apply_block_enable_whitelist(bypass);
+		system_reg_write(0xc, bypass);
+	}
+
+	pr_info("tiziano_mdns_init: MDNS enabled OEM-style (in init, before 0x800=1)\n");
 	return 0;
 }
 
@@ -20456,10 +20520,15 @@ int tiziano_mdns_init(uint32_t width, uint32_t height)
 void tisp_mdns_enable_after_dma(void)
 {
 	if (!mdns_hw_enabled) {
+		/* BISECT: Respect the user's isp_block_enable whitelist. If bit 16
+		 * (MDNS) is NOT in the whitelist, skip the deferred enable. */
+		if (!(isp_block_enable & 0x10000)) {
+			pr_info("tisp_mdns_enable_after_dma: SKIPPING MDNS enable (bit 16 not in isp_block_enable=0x%x)\n",
+				isp_block_enable);
+			return;
+		}
 		tisp_mdns_par_refresh(0x10000, 0x10000);
 		tisp_mdns_bypass(0);
-		/* Clear MDNS bypass bit 16 in register 0xc, but enforce whitelist
-		 * to prevent re-enabling blocks that should stay bypassed. */
 		{
 			u32 bypass = system_reg_read(0xc);
 			bypass &= ~0x10000;
@@ -20467,7 +20536,68 @@ void tisp_mdns_enable_after_dma(void)
 			system_reg_write(0xc, bypass);
 		}
 		mdns_hw_enabled = 1;
-		pr_info("tisp_mdns_enable_after_dma: MDNS enabled after DMA registers programmed\n");
+		pr_info("tisp_mdns_enable_after_dma: MDNS enabled (bit 16 added to whitelist)\n");
+
+		/* PINK_DIAG: dump MDNS chroma config + raw arrays right after enable.
+		 * Use this to find why MDNS produces a pink/magenta color cast. */
+		pr_info("MDNS_PINK_DIAG: top en arrays "
+			"y_filt=%u y_sf_cur=%u y_sf_ref=%u "
+			"uv_filt=%u uv_sf_cur=%u uv_sf_ref=%u\n",
+			mdns_y_filter_en_array, mdns_y_sf_cur_en_array,
+			mdns_y_sf_ref_en_array, mdns_uv_filter_en_array,
+			mdns_uv_sf_cur_en_array, mdns_uv_sf_ref_en_array);
+		pr_info("MDNS_PINK_DIAG: sat_lmt_thres[0..2]=%u %u %u "
+			"sat_lmt_stren[0..2]=%u %u %u sat_nml_stren[0..2]=%u %u %u\n",
+			mdns_c_sat_lmt_thres_array[0], mdns_c_sat_lmt_thres_array[1],
+			mdns_c_sat_lmt_thres_array[2],
+			mdns_c_sat_lmt_stren_array[0], mdns_c_sat_lmt_stren_array[1],
+			mdns_c_sat_lmt_stren_array[2],
+			mdns_c_sat_nml_stren_array[0], mdns_c_sat_nml_stren_array[1],
+			mdns_c_sat_nml_stren_array[2]);
+		pr_info("MDNS_PINK_DIAG: intp values lmt_thres=%u lmt_stren=%u nml_stren=%u\n",
+			mdns_c_sat_lmt_thres_intp, mdns_c_sat_lmt_stren_intp,
+			mdns_c_sat_nml_stren_intp);
+		pr_info("MDNS_PINK_DIAG: median_smj_thres=%u median_edg_thres=%u "
+			"cur_lmt_op_en=%u cur_lmt_wei=%u ref_lmt_op_en=%u ref_lmt_wei=%u\n",
+			mdns_c_median_smj_thres_intp, mdns_c_median_edg_thres_intp,
+			mdns_c_median_cur_lmt_op_en_intp, mdns_c_median_cur_lmt_wei_intp,
+			mdns_c_median_ref_lmt_op_en_intp, mdns_c_median_ref_lmt_wei_intp);
+		pr_info("MDNS_PINK_DIAG: bgm cur_src=%u ref_src=%u inter_en=%u "
+			"false_thres=%u false_step=%u win_opt=%u\n",
+			mdns_c_bgm_cur_src_intp, mdns_c_bgm_ref_src_intp,
+			mdns_bgm_inter_en_array, mdns_c_bgm_false_thres_intp,
+			mdns_c_bgm_false_step_intp, mdns_c_bgm_win_opt_intp);
+		pr_info("MDNS_PINK_DIAG: regs 0x7810=0x%08x 0x7814=0x%08x 0x7808=0x%08x "
+			"0x7a74=0x%08x 0x7a80=0x%08x 0x7aec=0x%08x\n",
+			system_reg_read(0x7810), system_reg_read(0x7814),
+			system_reg_read(0x7808), system_reg_read(0x7a74),
+			system_reg_read(0x7a80), system_reg_read(0x7aec));
+		pr_info("MDNS_PINK_DIAG: regs 0x7ad8=0x%08x 0x7adc=0x%08x 0x7ae0=0x%08x "
+			"0x7ae4=0x%08x 0x7ae8=0x%08x 0x7c=0x%08x\n",
+			system_reg_read(0x7ad8), system_reg_read(0x7adc),
+			system_reg_read(0x7ae0), system_reg_read(0x7ae4),
+			system_reg_read(0x7ae8), system_reg_read(0xc));
+		pr_info("MDNS_PINK_DIAG: regs 0x7820=0x%08x 0x7824=0x%08x "
+			"0x7830=0x%08x 0x7858=0x%08x 0x7860=0x%08x\n",
+			system_reg_read(0x7820), system_reg_read(0x7824),
+			system_reg_read(0x7830), system_reg_read(0x7858),
+			system_reg_read(0x7860));
+		/* BCSH HMatrix is the suspected real cause of pink tint per
+		 * memory note project_bcsh_hmatrix_bug.md. Dump 0x8024-0x8038
+		 * here so we can compare against OEM expected values. */
+		pr_info("MDNS_PINK_DIAG: BCSH_HMATRIX 0x8024=0x%08x 0x8028=0x%08x "
+			"0x802c=0x%08x 0x8030=0x%08x 0x8034=0x%08x 0x8038=0x%08x\n",
+			system_reg_read(0x8024), system_reg_read(0x8028),
+			system_reg_read(0x802c), system_reg_read(0x8030),
+			system_reg_read(0x8034), system_reg_read(0x8038));
+		pr_info("MDNS_PINK_DIAG: BCSH_OFF 0x8018=0x%08x 0x801c=0x%08x 0x8020=0x%08x "
+			"BCSH_SAT 0x806c=0x%08x 0x8070=0x%08x\n",
+			system_reg_read(0x8018), system_reg_read(0x801c),
+			system_reg_read(0x8020), system_reg_read(0x806c),
+			system_reg_read(0x8070));
+		pr_info("MDNS_PINK_DIAG: WB 0x1804=0x%08x 0x1808=0x%08x 0x180c=0x%08x 0x1810=0x%08x\n",
+			system_reg_read(0x1804), system_reg_read(0x1808),
+			system_reg_read(0x180c), system_reg_read(0x1810));
 	}
 }
 EXPORT_SYMBOL(tisp_mdns_enable_after_dma);
@@ -27498,6 +27628,7 @@ static int tisp_mdns_top_func_cfg(int enable)
 {
     u32 ctrl = 0x101;
     u32 top1;
+    static int top_func_diag_count;
 
     if (enable) {
         ctrl = 0x10001 |
@@ -27507,6 +27638,19 @@ static int tisp_mdns_top_func_cfg(int enable)
                (mdns_uv_sf_cur_en_array << 20) |
                (mdns_uv_sf_ref_en_array << 24) |
                (mdns_uv_filter_en_array << 28);
+    }
+
+    /* PINK_DIAG: trace each top_func_cfg call to see what value is written
+     * vs what the register reads back. Helps spot double-buffer/mask issues. */
+    if (top_func_diag_count < 6) {
+        top_func_diag_count++;
+        pr_info("MDNS_TOP_CFG[%d]: enable=%d arrays=%u/%u/%u/%u/%u/%u "
+                "ctrl=0x%08x (about to write 0x7810)\n",
+                top_func_diag_count, enable,
+                mdns_y_sf_cur_en_array, mdns_y_sf_ref_en_array,
+                mdns_y_filter_en_array, mdns_uv_sf_cur_en_array,
+                mdns_uv_sf_ref_en_array, mdns_uv_filter_en_array,
+                ctrl);
     }
 
     system_reg_write(0x7810, ctrl);
@@ -27520,6 +27664,15 @@ static int tisp_mdns_top_func_cfg(int enable)
            (mdns_psn_max_num_array << 20);
     system_reg_write(0x7814, top1);
     system_reg_write(0x7808, (mdns_uv_debug_array << 5) | mdns_y_debug_array);
+
+    if (top_func_diag_count <= 6 && top_func_diag_count >= 1) {
+        pr_info("MDNS_TOP_CFG[%d]: top1=0x%08x debug=0x%08x | readback "
+                "0x7810=0x%08x 0x7814=0x%08x 0x7808=0x%08x\n",
+                top_func_diag_count, top1,
+                (mdns_uv_debug_array << 5) | mdns_y_debug_array,
+                system_reg_read(0x7810), system_reg_read(0x7814),
+                system_reg_read(0x7808));
+    }
     return 0;
 }
 
