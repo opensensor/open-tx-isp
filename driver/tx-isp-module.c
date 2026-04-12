@@ -86,12 +86,10 @@ static void sensor_expo_work_func(struct work_struct *work)
         again = ourISPdev->sensor->attr.again;
         it = ourISPdev->sensor->attr.integration_time;
 
-        /* Bounds check: GC2053 LUT has 29 entries (0-28). Out-of-bounds
-         * index causes kernel crash via array overrun in sensor driver. */
-        if (again > 28) {
-            pr_warn("sensor_expo_work: again=%u out of range, clamping to 28\n", again);
-            again = 28;
-        }
+        /* The sensor driver's set_again iterates its own LUT with
+         * bounds checking against sensor_attr.max_again — no need
+         * to clamp here.  The LUT size is sensor-specific (e.g.,
+         * 29 for GC2053, 162 for SC2336). */
         if (it == 0) {
             pr_warn("sensor_expo_work: integration_time=0, skipping write\n");
             ourISPdev->sensor_update_pending = 0;
@@ -100,7 +98,7 @@ static void sensor_expo_work_func(struct work_struct *work)
 
         {
             int packed = ((int)again << 16) | ((int)it & 0xffff);
-            pr_debug("sensor_expo_work: again=%u it=%u packed=0x%08x\n", again, it, packed);
+            pr_info_ratelimited("sensor_expo_work: again=%u it=%u packed=0x%08x\n", again, it, packed);
             ret = stored_sensor_ops.original_ops->sensor->ioctl(
                 stored_sensor_ops.sensor_sd, TX_ISP_EVENT_SENSOR_EXPO, &packed);
             if (ret)
@@ -1537,7 +1535,7 @@ void system_reg_write_gib(u32 arg1, u32 arg2, u32 arg3)
      */
 
     if (arg1 == 1) {
-        system_reg_write(0x1070, 1);  /* Enable GIB block */
+        system_reg_write(0x1070, 1);
     }
 
     /* Tailcall to system_reg_write with remaining args */

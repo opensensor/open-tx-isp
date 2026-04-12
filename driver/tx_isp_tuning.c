@@ -2257,7 +2257,7 @@ module_param(isp_bypass_override, uint, 0644);
  *          isp_block_enable=0xDD24 adds GIB (green imbalance correction) to crisp set
  *          isp_block_enable=0xDD34 adds GIB+LSC (green correction + lens shading)
  */
-static uint isp_block_enable = 0x2DD94;  /* GIB(bit 5) DISABLED, MDNS(bit 16) DISABLED — GIB HW flattens all downstream pixel stats to a constant regardless of cfg[] sub-function enables (cfg bypass diagnostic ruled this out), root cause pending OEM reset-sequence / libimp param investigation. */
+static uint isp_block_enable = 0x2DDB4;  /* GIB(bit 5) ENABLED, MDNS(bit 16) DISABLED */
 module_param(isp_block_enable, uint, 0644);
 MODULE_PARM_DESC(isp_block_enable,
 		 "Block enable bitmask: set bits enable ISP blocks (0=all bypassed)");
@@ -2304,9 +2304,10 @@ static u32 tisp_compute_top_bypass_from_params(int wdr_enable)
 		goto apply_force_mask;
 	}
 
-	/* OEM EXACT per-bit loop: each u32 in tparams[0..31] is 0 (bypass)
-	 * or non-zero (enable).  The OEM uses params[i] << i directly, which
-	 * sets bit i if the param is non-zero. */
+	/* OEM EXACT per-bit loop: each u32 in tparams[0..31] is a BYPASS flag:
+	 * 0 = block ENABLED, non-zero = block BYPASSED.
+	 * The OEM clears bit i then ORs (params[i] << i), so bit i in the
+	 * bypass register is set when tparams[i] is non-zero (bypassed). */
 	for (i = 0; i < 32; i++) {
 		u32 bit = 1U << i;
 		u32 val = params[i] ? 1U : 0U;
@@ -13961,7 +13962,7 @@ static int data_b2eec(uint32_t time, void **var_ptr);
 static int data_b2ef0(uint32_t time, void **var_ptr);
 static int data_b2ef4(uint32_t param, int flag);
 static int data_b2ef8(uint32_t param, int flag);
-static uint32_t data_b2ee0(uint32_t log_val, int16_t *var_ptr);
+static uint32_t data_b2ee0(uint32_t log_val, unsigned int *var_ptr);
 static uint32_t data_b2ee4(uint32_t log_val, void **var_ptr);
 static int data_b2f04(uint32_t param, int flag);
 static int data_b2f08(uint32_t param, int flag);
@@ -16937,22 +16938,13 @@ static int tiziano_gib_params_refresh(void)
         memcpy(tiziano_gib_config_line,         p + GIB_TBIN_CONFIG_LINE, 0x30);
         memcpy(tiziano_gib_r_g_linear,          p + GIB_TBIN_RG_LINEAR,   0x08);
         memcpy(tiziano_gib_b_ir_linear,         p + GIB_TBIN_BIR_LINEAR,  0x08);
-        /* OEM CRITICAL: BLC arrays are NOT loaded from the tuning binary.
-         * The OEM's tiziano_gib_params_refresh (0x21a98) loads BLC from
-         * static data embedded in the binary (values ~67), NOT from tparams.
-         * The tuning blob at offset 0x2A88 contains 257 which is wrong —
-         * it clips pixel data and destroys the image.  Always use the OEM
-         * static defaults for BLC. */
-        memcpy(tiziano_gib_deirm_blc_r_linear,  tiziano_gib_deirm_blc_r_linear_oem,
-               sizeof(tiziano_gib_deirm_blc_r_linear));
-        memcpy(tiziano_gib_deirm_blc_gr_linear, tiziano_gib_deirm_blc_gr_linear_oem,
-               sizeof(tiziano_gib_deirm_blc_gr_linear));
-        memcpy(tiziano_gib_deirm_blc_gb_linear, tiziano_gib_deirm_blc_gb_linear_oem,
-               sizeof(tiziano_gib_deirm_blc_gb_linear));
-        memcpy(tiziano_gib_deirm_blc_b_linear,  tiziano_gib_deirm_blc_b_linear_oem,
-               sizeof(tiziano_gib_deirm_blc_b_linear));
-        memcpy(tiziano_gib_deirm_blc_ir_linear, tiziano_gib_deirm_blc_ir_linear_oem,
-               sizeof(tiziano_gib_deirm_blc_ir_linear));
+        /* OEM loads BLC from tparams like everything else (verified by offset
+         * audit against OEM tiziano_gib_params_refresh @ 0x21a98). */
+        memcpy(tiziano_gib_deirm_blc_r_linear,  p + GIB_TBIN_BLC_R,  0x24);
+        memcpy(tiziano_gib_deirm_blc_gr_linear, p + GIB_TBIN_BLC_GR, 0x24);
+        memcpy(tiziano_gib_deirm_blc_gb_linear, p + GIB_TBIN_BLC_GB, 0x24);
+        memcpy(tiziano_gib_deirm_blc_b_linear,  p + GIB_TBIN_BLC_B,  0x24);
+        memcpy(tiziano_gib_deirm_blc_ir_linear, p + GIB_TBIN_BLC_IR, 0x24);
         memcpy(gib_ir_point,                     p + GIB_TBIN_IR_POINT,   0x10);
         memcpy(gib_ir_reser,                     p + GIB_TBIN_IR_RESER,   0x3c);
         memcpy(tiziano_gib_deir_r_h,             p + GIB_TBIN_DEIR_R_H,   0x84);
@@ -17087,8 +17079,6 @@ static int tisp_gib_gain_interpolation(uint32_t gain)
 /* OEM EXACT: tiziano_gib_lut_parameter — program GIB LUT registers */
 static int tiziano_gib_lut_parameter(void)
 {
-    static int gib_lut_init_done = 0;
-
     /* Register 0x1038: weight config */
     system_reg_write(0x1038, (GIB_CFG_WGT_HI << 16) | GIB_CFG_WGT_LO);
 
@@ -17111,14 +17101,15 @@ static int tiziano_gib_lut_parameter(void)
     /* Interpolate BLC offsets based on current gain */
     tisp_gib_gain_interpolation(tisp_gib_blc_ag);
 
-    /* First-time init: program R/G and B/IR linearization LUTs */
-    if (!gib_lut_init_done) {
-        system_reg_write_gib(1, 0x1030,
-            (tiziano_gib_r_g_linear[1] << 16) | tiziano_gib_r_g_linear[0]);
-        system_reg_write_gib(1, 0x1034,
-            (tiziano_gib_b_ir_linear[1] << 16) | tiziano_gib_b_ir_linear[0]);
-        gib_lut_init_done = 1;
-    }
+    /* Program R/G and B/IR linearization LUTs unconditionally.
+     * OEM guards this with a static flag (init.31779), but GCC's ISRA
+     * optimization eliminates the conditional and the writes entirely
+     * in the .isra.0 version, leaving 0x1030/0x1034 unprogrammed.
+     * Writing every call is harmless and matches OEM first-call behavior. */
+    system_reg_write_gib(1, 0x1030,
+        (tiziano_gib_r_g_linear[1] << 16) | tiziano_gib_r_g_linear[0]);
+    system_reg_write_gib(1, 0x1034,
+        (tiziano_gib_b_ir_linear[1] << 16) | tiziano_gib_b_ir_linear[0]);
 
     return 0;
 }
@@ -28728,7 +28719,7 @@ static void tisp_set_sensor_integration_time(uint32_t time)
  * provide the full requested analog gain. */
 static uint32_t tisp_set_sensor_analog_gain(uint32_t requested_gain)
 {
-    int16_t var_28;
+    unsigned int var_28;
     uint32_t log_result, gain_param, v0_2, final_gain;
 
     pr_debug("tisp_set_sensor_analog_gain: requested gain=0x%x\n", requested_gain);
@@ -28747,9 +28738,8 @@ static uint32_t tisp_set_sensor_analog_gain(uint32_t requested_gain)
      * Convert clipped log2 back to linear Q16. */
     v0_2 = tisp_math_exp2(gain_param, 0x10, 0x10);
 
-    /* OEM EXACT: data_a2ef4(zx.d(var_28), 0)
-     * Write the sensor register value (the index from alloc_again). */
-    data_b2f04((uint32_t)(uint16_t)var_28, 0);
+    /* Write the sensor register value (the index from alloc_again). */
+    data_b2f04(var_28, 0);
 
     /* OEM EXACT: return $v0_2 u>> 6
      * Convert from Q16 linear back to Q10 linear. */
@@ -28968,7 +28958,7 @@ static int data_b2ef8(uint32_t param, int flag)
     return 0;
 }
 
-static uint32_t data_b2ee0(uint32_t log_val, int16_t *var_ptr)
+static uint32_t data_b2ee0(uint32_t log_val, unsigned int *var_ptr)
 {
     /* Safe sensor analog gain allocation */
     pr_debug("data_b2ee0: Allocating analog gain log_val %u\n", log_val);
@@ -28984,7 +28974,9 @@ static uint32_t data_b2ee0(uint32_t log_val, int16_t *var_ptr)
     if (ourISPdev->sensor->attr.sensor_ctrl.alloc_again) {
         unsigned int sensor_again = 0;
         uint32_t result = ourISPdev->sensor->attr.sensor_ctrl.alloc_again(log_val, TX_ISP_GAIN_FIXED_POINT, &sensor_again);
-        if (var_ptr) *var_ptr = (int16_t)sensor_again;
+        if (var_ptr) *var_ptr = sensor_again;
+        pr_info_ratelimited("alloc_again: log_val=%u result=%u sensor_again=0x%x\n",
+                log_val, result, sensor_again);
         return result;
     }
 

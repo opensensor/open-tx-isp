@@ -954,19 +954,29 @@ int csi_core_ops_init(struct tx_isp_subdev *sd, int enable)
                     vic_read32(0x14), vic_read32(0x40));
         }
 
-        rate_sel = csi_calc_rate_sel(sensor_attr);
-        rate_reg = (readl(isp_csi_regs + 0x160) & 0xfffffff0) | (rate_sel & 0xf);
-        writel(rate_reg, isp_csi_regs + 0x160);
-        writel(rate_reg, isp_csi_regs + 0x1e0);
-        writel(rate_reg, isp_csi_regs + 0x260);
-        writel(0x7d, csi_regs + 0x00);
-        writel(lane_mask, csi_regs + 0x128);
-        vic_write32(0x10, 1);
-        wmb();
+        /*
+         * OEM logic: when settle_time_apative_en is set (boolean flag),
+         * skip rate register writes entirely — let the PHY use hardware
+         * defaults.  Only calculate and write rate_sel from mipi.clk
+         * when the flag is clear.
+         */
+        if (!sensor_attr->mipi.settle_time_apative_en) {
+            rate_sel = csi_calc_rate_sel(sensor_attr);
+            rate_reg = (readl(isp_csi_regs + 0x160) & 0xfffffff0) | (rate_sel & 0xf);
+            writel(rate_reg, isp_csi_regs + 0x160);
+            writel(rate_reg, isp_csi_regs + 0x1e0);
+            writel(rate_reg, isp_csi_regs + 0x260);
+        } else {
+            rate_sel = -1; /* adaptive — HW defaults used */
+        }
+        /* OEM writes 0x7d and lane mask to wrapper regs, always 0x3f */
+        writel(0x7d, isp_csi_regs + 0x00);
+        writel(0x3f, isp_csi_regs + 0x128);
+        /* OEM only writes csi_regs+0x10, NOT vic 0x10 */
         writel(1, csi_regs + 0x10);
         private_msleep(10);
-        pr_info("csi_core_ops_init: MIPI init programmed lanes=%u rate_sel=%d basic[0x00]=0x%08x basic[0x04]=0x%08x basic[0x0c]=0x%08x basic[0x10]=0x%08x basic[0x128]=0x%08x lanec[0x200]=0x%08x lanec[0x204]=0x%08x lanec[0x210]=0x%08x lanec[0x230]=0x%08x lanec[0x250]=0x%08x lanec[0x254]=0x%08x lanec[0x2f4]=0x%08x slot13c[0x00]=0x%08x slot13c[0x0c]=0x%08x w01[0x14]=0x%08x w01[0x40]=0x%08x slot13c[0x128]=0x%08x\n",
-                csi_dev->lanes, rate_sel,
+        pr_info("csi_core_ops_init: MIPI init programmed lanes=%u rate_sel=%d (adaptive=%d) basic[0x00]=0x%08x basic[0x04]=0x%08x basic[0x0c]=0x%08x basic[0x10]=0x%08x basic[0x128]=0x%08x lanec[0x200]=0x%08x lanec[0x204]=0x%08x lanec[0x210]=0x%08x lanec[0x230]=0x%08x lanec[0x250]=0x%08x lanec[0x254]=0x%08x lanec[0x2f4]=0x%08x slot13c[0x00]=0x%08x slot13c[0x0c]=0x%08x w01[0x14]=0x%08x w01[0x40]=0x%08x slot13c[0x128]=0x%08x\n",
+                csi_dev->lanes, rate_sel, sensor_attr->mipi.settle_time_apative_en,
                 readl(csi_regs + 0x00), readl(csi_regs + 0x04), readl(csi_regs + 0x0c),
                 readl(csi_regs + 0x10), readl(csi_regs + 0x128),
                 readl(csi_regs + 0x200), readl(csi_regs + 0x204), readl(csi_regs + 0x210),

@@ -1695,6 +1695,7 @@ int tx_isp_vic_start(struct tx_isp_vic_device *vic_dev)
          * ispvic_frame_channel_s_stream.  VIC RUN starts the input engine
          * (sensor→VIC FIFO), MDMA enable starts the output engine
          * (VIC FIFO→DRAM).  They are independent. */
+        vic_write32(0x10, 1); /* Enable VIC frame processing — needed for IRQs */
         writel(1, vic_regs + 0x0);
         wmb();
         pr_info("tx_isp_vic_start: MIPI config done, VIC RUN issued (reg 0x0 = 1)\n");
