@@ -942,16 +942,18 @@ int csi_core_ops_init(struct tx_isp_subdev *sd, int enable)
         writel(interface_type, csi_regs + 0x0c);
         private_msleep(1);
 
-        /*
-         * The working trace advances W01 from 0x200 to 0x630 via a 0x0c write
-         * before the CSI basic/PHY window becomes live. Without this kick our
-         * reads stay all-zero and VIC later times out in unlock.
-         */
+        /* Kick VIC 0x0c to enable CSI PHY register bus bridge.
+         * clk_enable("csi") alone doesn't make CSI regs accessible —
+         * this VIC write gates a MIPI PHY bus bridge at the hardware
+         * level.  The OEM doesn't need this (its kernel/module handles
+         * it differently).  Value must be 1; VIC 0x0c is overwritten
+         * to 2 (MIPI) later in tx_isp_vic_start before VIC RUN.
+         * TODO: causes split-frame on SC2336, needs proper fix. */
         vic_write32(0x0c, 1);
         wmb();
         if (!csi_wait_w01_phase(250)) {
-            pr_warn("csi_core_ops_init: W01 phase did not advance after 0x0c kick (0x14=0x%08x 0x40=0x%08x)\n",
-                    vic_read32(0x14), vic_read32(0x40));
+            pr_warn("csi_core_ops_init: W01 phase did not advance (0x14=0x%08x)\n",
+                    vic_read32(0x14));
         }
 
         /*

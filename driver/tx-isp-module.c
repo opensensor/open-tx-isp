@@ -2308,6 +2308,8 @@ static int tx_isp_ispcore_activate_module_complete(struct tx_isp_dev *isp_dev)
         return ret;
     }
 
+    pr_info("*** CSI_ACTIVATE_DEBUG: isp_dev=%p csi_dev=%p ourISPdev=%p ourISPdev->csi_dev=%p ***\n",
+            isp_dev, isp_dev->csi_dev, ourISPdev, ourISPdev ? ourISPdev->csi_dev : NULL);
     csi_sd = isp_dev->csi_dev ? &((struct tx_isp_csi_device *)isp_dev->csi_dev)->sd : NULL;
     if (csi_sd) {
         pr_info("*** tx_isp_ispcore_activate_module_complete: ensuring CSI subdev is activated ***\n");
@@ -2330,7 +2332,24 @@ static int tx_isp_ispcore_activate_module_complete(struct tx_isp_dev *isp_dev)
         return ret;
     }
 
+    /* Re-resolve csi_sd in case it was NULL earlier but set during core init */
+    if (!csi_sd)
+        csi_sd = isp_dev->csi_dev ? &((struct tx_isp_csi_device *)isp_dev->csi_dev)->sd : NULL;
+
     if (csi_sd) {
+        /* OEM enables CSI clocks in tx_isp_csi_activate_subdev before
+         * csi_core_ops_init.  Ensure clocks are enabled so CSI PHY
+         * registers are accessible (without this, reads return zero). */
+        if (csi_sd->clks && csi_sd->clk_num > 0) {
+            int ci;
+            for (ci = 0; ci < csi_sd->clk_num; ci++) {
+                if (csi_sd->clks[ci])
+                    clk_enable(csi_sd->clks[ci]);
+            }
+            pr_info("*** tx_isp_ispcore_activate_module_complete: enabled %d CSI clock(s) ***\n",
+                    csi_sd->clk_num);
+        }
+
         pr_info("*** tx_isp_ispcore_activate_module_complete: calling csi_core_ops_init(on=1) after core init ***\n");
         ret = csi_core_ops_init(csi_sd, 1);
         if (ret != 0 && ret != -ENOIOCTLCMD) {
