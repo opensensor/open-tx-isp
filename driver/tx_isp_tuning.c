@@ -2257,7 +2257,7 @@ module_param(isp_bypass_override, uint, 0644);
  *          isp_block_enable=0xDD24 adds GIB (green imbalance correction) to crisp set
  *          isp_block_enable=0xDD34 adds GIB+LSC (green correction + lens shading)
  */
-static uint isp_block_enable = 0x2DDB4;  /* GIB(bit 5) ENABLED, MDNS(bit 16) DISABLED */
+static uint isp_block_enable = 0x2DD94;  /* GIB(bit 5) DISABLED, MDNS(bit 16) DISABLED */
 module_param(isp_block_enable, uint, 0644);
 MODULE_PARM_DESC(isp_block_enable,
 		 "Block enable bitmask: set bits enable ISP blocks (0=all bypassed)");
@@ -4328,14 +4328,29 @@ static int ae0_tune2(uint32_t wmean, uint32_t q,
     if (step_ratio == 0)
         step_ratio = 1;
 
-    /* Cap maximum per-frame exposure change to 1.25x increase / 0.8x decrease.
-     * Tighter than 2x to prevent AE oscillation (hunting) around the target.
-     * With 1.25x cap, convergence takes ~20 frames for a 75x error (~660ms)
-     * but the image doesn't flash. */
-    if (step_ratio > one_q + (one_q >> 2))   /* 1.25x max increase */
-        step_ratio = one_q + (one_q >> 2);
-    if (step_ratio < one_q - (one_q >> 2))   /* 0.75x max decrease */
-        step_ratio = one_q - (one_q >> 2);
+    /* OEM uses ae_ev_step parameters for convergence speed.
+     * Adaptive cap: large steps when far from target for fast
+     * initial convergence, tight steps near target for stability. */
+    {
+        uint32_t max_up, min_down;
+        if (error > (one_q << 2)) {
+            /* >4x error: allow 4x step, 0.25x down */
+            max_up = one_q << 2;
+            min_down = one_q >> 2;
+        } else if (error > (one_q << 1)) {
+            /* >2x error: allow 2x step, 0.5x down */
+            max_up = one_q << 1;
+            min_down = one_q >> 1;
+        } else {
+            /* Near target: 1.25x up, 0.8x down */
+            max_up = one_q + (one_q >> 2);
+            min_down = one_q - (one_q >> 2);
+        }
+        if (step_ratio > max_up)
+            step_ratio = max_up;
+        if (step_ratio < min_down)
+            step_ratio = min_down;
+    }
 
     /* Apply the step ratio to current EV = IT * AG * DG.
      * Strategy: adjust IT first, then AG, then DG.
@@ -11317,46 +11332,36 @@ static int tiziano_awb_set_hardware_param(void)
             pr_info("AWB_HW_DIAG: WB 0x1804=0x%08x 0x1808=0x%08x CFA 0x4800=0x%08x bypass=0x%08x\n",
                     system_reg_read(0x1804), system_reg_read(0x1808),
                     system_reg_read(0x4800), system_reg_read(0xc));
+            pr_info("AWB_HW_DIAG: thresh 0xb028=0x%08x 0xb02c=0x%08x 0xb030=0x%08x 0xb034=0x%08x\n",
+                    system_reg_read(0xb028), system_reg_read(0xb02c),
+                    system_reg_read(0xb030), system_reg_read(0xb034));
         }
     }
 
-    /* OEM algo-mode path plus runtime ModeFlag thresholds.
-     *
-     * RACE FIX: OEM uses system_reg_write_awb(1, ...) which writes 0xb000=1
-     * BEFORE each register write. With 4-5 threshold writes in a row, that's
-     * 4-5 DMA re-arms inside the same frame. When this function is called
-     * mid-stream from tiziano_awb_dn_params_refresh (CT-driven day/night
-     * refresh), each re-arm corrupts the AWB stats DMA collection, causing
-     * subsequent banks to read stale data from adjacent kernel pages — which
-     * is exactly the R=G=B=59904 symptom we hunted. Use raw system_reg_write
-     * for the threshold registers and re-arm 0xb000 ONCE at the end. The
-     * sister fix in tiziano_awb_set_lum_th_freq (line ~16580) made the same
-     * change for that path. */
+    /* OEM uses system_reg_write_awb(1, ...) for ALL AWB threshold
+     * register writes. The 0xb000=1 latch pulse must precede each
+     * config register write — the hardware gates config access. */
     {
         if (awb_algo_mode == 1) {
-            system_reg_write(0x0b028, 0x0fff0001);
-            system_reg_write(0x0b02c, 0x0fff0001);
-            system_reg_write(0x0b030, 0x00000100);
-            system_reg_write(0x0b034, 0xffff0100);
+            system_reg_write_awb(1, 0xb028, 0x0fff0001);
+            system_reg_write_awb(1, 0xb02c, 0x0fff0001);
+            system_reg_write_awb(1, 0xb030, 0x00000100);
+            system_reg_write_awb(1, 0xb034, 0xffff0100);
         } else {
             if (awb_mode_flag == 1) {
                 u32 rg_lo = (_awb_lowlight_rg_th[0] & 0x0FFF);
                 u32 rg_hi = (_awb_lowlight_rg_th[1] & 0x0FFF) << 16;
-                system_reg_write(0x0b028, rg_hi | rg_lo);
-                system_reg_write(0x0b02c, 0x03ff0001);
+                system_reg_write_awb(1, 0xb028, rg_hi | rg_lo);
+                system_reg_write_awb(1, 0xb02c, 0x03ff0001);
             } else {
-                system_reg_write(0x0b028, awb_default_rg);
-                system_reg_write(0x0b02c, awb_default_bg);
+                system_reg_write_awb(1, 0xb028, awb_default_rg);
+                system_reg_write_awb(1, 0xb02c, awb_default_bg);
             }
-            system_reg_write(0x0b030, awb_default_v30);
-            system_reg_write(0x0b034, awb_default_v34);
+            system_reg_write_awb(1, 0xb030, awb_default_v30);
+            system_reg_write_awb(1, 0xb034, awb_default_v34);
             tiziano_awb_set_lum_th_freq();
         }
     }
-
-    /* Single re-arm of the AWB stats engine after all config writes are
-     * latched. This is the only 0xb000=1 pulse for this whole function. */
-    system_reg_write(0xb000, 1);
 
     return 0;
 }
@@ -16585,11 +16590,10 @@ static int tiziano_awb_set_lum_th_freq(void)
 		}
 	}
 
-	/* Write lum threshold without re-arming AWB DMA.
-	 * OEM uses system_reg_write_awb(1,...) which writes 0xb000=1 first,
-	 * but in our driver this corrupts subsequent AWB bank reads.
-	 * Plain write preserves partial AWB stats. */
-	system_reg_write(0x0b038,
+	/* OEM uses system_reg_write_awb(1,...) which writes 0xb000=1
+	 * (latch pulse) before the register write. Without the latch,
+	 * AWB hardware ignores config register updates. */
+	system_reg_write_awb(1, 0xb038,
 		(AWB_LUM_FREQ_MODE << 16) | (AWB_LUM_FREQ_BASE << 8) | lum_freq);
 	return 0;
 }

@@ -1251,32 +1251,22 @@ int ispcore_video_s_stream(struct tx_isp_subdev *sd, int enable)
                 }
             }
 
-            /* Reset VIC MDMA stream_state so the next frame channel STREAMON
-             * can re-enable with the correct active_buffer_count.
-             * Without this, the idempotency guard blocks re-configuration. */
-            if (vic_dev)
-                ispvic_frame_channel_s_stream(vic_dev, 0);
+            /* OEM does NOT do a blanket VIC streamoff here — it only
+             * stops individual channels via ispcore_frame_channel_streamoff.
+             * Our previous ispvic_frame_channel_s_stream(vic_dev, 0) was
+             * killing AWB/AE stats DMA, causing zero stats after restart
+             * and preventing AWB convergence (pink image). */
         }
     } else {
         s3_1 = &isp_dev->subdevs[0];
 
         if (v0_3 == 3) {
-	            /* OEM first-frame init is one-shot. Re-arm it on each fresh
-	             * stream enable so Bayer + top-select program against the live
-	             * sensor mode instead of stale boot-time state.
-	             */
-	            first_into = 1;
-	            bayer_write_pending = 1;
-            /* isp_dev->state = 4 gates re-entry: the second
-             * ispcore_video_s_stream(enable=1) sees state != 3
-             * and skips the subdev walk entirely.
-             */
+            /* OEM BN: state 3→4 is the only action here.
+             * The subdev walk below calls vic_core_s_stream(1)
+             * which re-runs tx_isp_vic_start (VIC reset→config→run).
+             * AWB/AE stats DMA stays active across the cycle —
+             * OEM never re-arms 0xb000/0xa000 here. */
             isp_dev->state = 4;
-            /* Do NOT touch vic_dev->state here — vic_core_s_stream
-             * manages its own state transitions. The isp_dev->state=4
-             * guard prevents re-entry into the subdev walk, which is
-             * sufficient to avoid the duplicate VIC re-arm timeout.
-             */
         }
     }
 
@@ -1373,13 +1363,8 @@ int ispcore_video_s_stream(struct tx_isp_subdev *sd, int enable)
         tx_isp_disable_irq(isp_dev);
     } else {
         tx_isp_enable_irq(isp_dev);
-
-        /* VIC IRQ enable only.  Do NOT call ispvic_frame_channel_s_stream(1)
-         * here — it starts MDMA before QBUF has programmed bank addresses,
-         * causing writes to addr 0 and triggering MSCA DMA auto-disable.
-         * The frame channel STREAMON event dispatch calls it after QBUF. */
-        if (vic_dev)
-            tx_vic_enable_irq(vic_dev);
+        /* OEM BN: only tx_isp_enable_irq here. VIC IRQ is already
+         * enabled by vic_core_s_stream(1) → tx_isp_vic_start path. */
     }
 
     /* Binary Ninja: if (result == 0xfffffdfd) return 0 */

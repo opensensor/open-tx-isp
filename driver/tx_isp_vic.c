@@ -2818,20 +2818,15 @@ int vic_core_s_stream(struct tx_isp_subdev *sd, int enable)
     current_state = vic_dev->state;
 
     if (enable == 0) {
-        /* OEM BN sets state 4→3 here, but the OEM subdev walk uses
-         * pad-linked children (offset 0x38 in the subdev struct).
-         * After link_destroy, those entries are NULL so the VIC
-         * s_stream is never called on the next streamon — the VIC
-         * stays at state 4 and tx_isp_vic_start is never re-called.
-         *
-         * Our subdev walk uses the global isp_dev->subdevs[] which
-         * is always populated, so vic_core_s_stream(1) WOULD fire
-         * and re-call tx_isp_vic_start, disrupting the running VIC.
-         *
-         * Keep state=4 so the next streamon is a no-op.  The VIC
-         * hardware stays running across the pulse gate.
-         */
-        return 0;
+        /* OEM BN: if state == 4, set state = 3. No hardware stop.
+         * This allows vic_core_s_stream(1) on re-enable to re-run
+         * tx_isp_vic_start, which fully reinitializes the VIC
+         * pipeline (reset→configure→run). Without this, AWB/AE
+         * stats DMA dies after stream restart. */
+        ret = 0;
+        if (current_state == 4)
+            vic_dev->state = 3;
+        return ret;
     }
 
     /* OEM BN: disable_irq -> vic_start -> state=4 -> enable_irq. No extras. */
