@@ -4328,29 +4328,13 @@ static int ae0_tune2(uint32_t wmean, uint32_t q,
     if (step_ratio == 0)
         step_ratio = 1;
 
-    /* OEM uses ae_ev_step parameters for convergence speed.
-     * Adaptive cap: large steps when far from target for fast
-     * initial convergence, tight steps near target for stability. */
-    {
-        uint32_t max_up, min_down;
-        if (error > (one_q << 2)) {
-            /* >4x error: allow 4x step, 0.25x down */
-            max_up = one_q << 2;
-            min_down = one_q >> 2;
-        } else if (error > (one_q << 1)) {
-            /* >2x error: allow 2x step, 0.5x down */
-            max_up = one_q << 1;
-            min_down = one_q >> 1;
-        } else {
-            /* Near target: 1.25x up, 0.8x down */
-            max_up = one_q + (one_q >> 2);
-            min_down = one_q - (one_q >> 2);
-        }
-        if (step_ratio > max_up)
-            step_ratio = max_up;
-        if (step_ratio < min_down)
-            step_ratio = min_down;
-    }
+    /* Cap maximum per-frame exposure change to 1.25x increase / 0.8x decrease.
+     * Larger caps cause AE oscillation due to sensor lag (the gain change
+     * takes 2-3 frames to appear in stats, so oversized steps overshoot). */
+    if (step_ratio > one_q + (one_q >> 2))   /* 1.25x max increase */
+        step_ratio = one_q + (one_q >> 2);
+    if (step_ratio < one_q - (one_q >> 2))   /* 0.75x max decrease */
+        step_ratio = one_q - (one_q >> 2);
 
     /* Apply the step ratio to current EV = IT * AG * DG.
      * Strategy: adjust IT first, then AG, then DG.
@@ -16768,6 +16752,17 @@ int awb_interrupt_static(void)
 	 * inside tiziano_awb_set_lum_th_freq. Do NOT write it again here —
 	 * a second 0xb000=1 re-arms the DMA mid-collection, corrupting
 	 * subsequent banks (all zeros after bank 0). */
+
+	/* OEM pushes event 9 (CT update) with _awb_ct BEFORE event 10.
+	 * This triggers tisp_ct_update() → BCSH saturation + CCM
+	 * interpolation at the runtime color temperature. Without this,
+	 * BCSH stays stuck at the init CT (9984) causing pink cast. */
+	{
+		struct tisp_event_record ct_event = {0};
+		ct_event.event_id = 9;
+		ct_event.args[0] = _awb_ct;
+		tisp_event_push(&ct_event);
+	}
 
 	event_data.event_id = 0xa;
 	tisp_event_push(&event_data);
