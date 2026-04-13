@@ -5849,11 +5849,19 @@ int tisp_bcsh_g_rgb_coefft(int32_t *out)
     return out[2];
 }
 
+/* Guard: tuning_data must be allocated AND fully initialized (state==1)
+ * before any field or mutex access. Prevents NULL deref and crashes
+ * from zeroed-but-uninit'd mutex (count=0 → locked → NULL wait_list). */
+static inline bool tuning_ready(void)
+{
+    return ourISPdev && ourISPdev->tuning_data &&
+           ourISPdev->tuning_data->state == 1;
+}
 
 int tisp_bcsh_s_hue(uint32_t val)
 {
     uint8_t scaled;
-    if (!ourISPdev || !ourISPdev->tuning_data)
+    if (!tuning_ready())
         return -ENODEV;
     /* OEM scaling: bcsh_hue = ((val*0x78 - 1)/0x100) + 1, 8-bit */
     scaled = (uint8_t)((((uint32_t)val * 0x78u) - 1u) >> 8);
@@ -5866,7 +5874,7 @@ int tisp_bcsh_s_hue(uint32_t val)
 
 int tisp_bcsh_g_hue(uint8_t *out)
 {
-    if (!out || !ourISPdev || !ourISPdev->tuning_data)
+    if (!out || !tuning_ready())
         return -ENODEV;
     *out = ourISPdev->tuning_data->bcsh_hue;
     return *out;
@@ -5874,7 +5882,7 @@ int tisp_bcsh_g_hue(uint8_t *out)
 
 int tisp_bcsh_brightness(uint32_t val)
 {
-    if (!ourISPdev || !ourISPdev->tuning_data)
+    if (!tuning_ready())
         return -ENODEV;
     mutex_lock(&ourISPdev->tuning_data->mutex);
     ourISPdev->tuning_data->bcsh_brightness = (uint8_t)val;
@@ -5884,7 +5892,7 @@ int tisp_bcsh_brightness(uint32_t val)
 
 int tisp_bcsh_contrast(uint32_t val)
 {
-    if (!ourISPdev || !ourISPdev->tuning_data)
+    if (!tuning_ready())
         return -ENODEV;
     mutex_lock(&ourISPdev->tuning_data->mutex);
     ourISPdev->tuning_data->bcsh_contrast = (uint8_t)val;
@@ -5896,7 +5904,7 @@ int tisp_bcsh_saturation(struct isp_tuning_data *tuning, uint8_t value);
 
 int tisp_set_brightness(int32_t val)
 {
-    if (!ourISPdev || !ourISPdev->tuning_data)
+    if (!tuning_ready())
         return -ENODEV;
 
     mutex_lock(&ourISPdev->tuning_data->mutex);
@@ -5908,7 +5916,7 @@ int tisp_set_brightness(int32_t val)
 
 int tisp_set_contrast(int32_t val)
 {
-    if (!ourISPdev || !ourISPdev->tuning_data)
+    if (!tuning_ready())
         return -ENODEV;
 
     mutex_lock(&ourISPdev->tuning_data->mutex);
@@ -5920,7 +5928,7 @@ int tisp_set_contrast(int32_t val)
 
 int tisp_set_saturation(int32_t val)
 {
-    if (!ourISPdev || !ourISPdev->tuning_data)
+    if (!tuning_ready())
         return -ENODEV;
 
     mutex_lock(&ourISPdev->tuning_data->mutex);
@@ -6002,7 +6010,7 @@ int tisp_bcsh_ev_update(uint32_t ev)
 
 int tisp_bcsh_ct_update(uint32_t ct)
 {
-    if (!ourISPdev || !ourISPdev->tuning_data)
+    if (!tuning_ready())
         return -ENODEV;
     /* Cache CT override for BCSH CCM blending; do not alter AWB's wb_temp here */
     s_bcsh_ct_override = ct;
@@ -28146,7 +28154,7 @@ void *isp_core_tuning_init(void *arg1)
     tuning_data->wb_gains.r = 0x100;
     tuning_data->wb_gains.g = 0x100;
     tuning_data->wb_gains.b = 0x100;
-    tuning_data->wb_temp = 0x2700;
+    tuning_data->wb_temp = 5000;  /* OEM default D50 daylight */
 
     /* Initialize BCSH specific fields */
     tuning_data->bcsh_hue = 0x3c; /* neutral hue = 60 in scaled 0-120 range */
