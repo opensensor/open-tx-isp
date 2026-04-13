@@ -1159,70 +1159,22 @@ int ispvic_frame_channel_s_stream(struct tx_isp_vic_device *vic_dev, int enable)
 static int tx_isp_hardware_init(struct tx_isp_dev *isp_dev);
 void system_reg_write(u32 reg, u32 value);
 
-static void __iomem *tx_isp_get_system_reg_base(u32 reg, const char *op)
-{
-    if (!ourISPdev) {
-        pr_warn("system_reg_%s: ourISPdev is NULL for reg=0x%x\n", op, reg);
-        return NULL;
-    }
-
-    /* Prefer the explicit ISP core mapping established by tx_isp_core.c. */
-    if (ourISPdev->core_regs)
-        return ourISPdev->core_regs;
-
-    /*
-     * Last resort: derive the core base only from the PRIMARY VIC window.
-     * Do not use ourISPdev->vic_regs here: tx_isp_core.c maps that field to the
-     * secondary/control bank at 0x10023000, so subtracting 0xe0000 from it is wrong.
-     */
-    if (ourISPdev->vic_dev && ourISPdev->vic_dev->vic_regs) {
-        pr_warn_ratelimited("system_reg_%s: falling back to vic_dev->vic_regs-derived core base for reg=0x%x\n",
-                            op, reg);
-        return ourISPdev->vic_dev->vic_regs - 0xe0000;
-    }
-
-    pr_warn_ratelimited("system_reg_%s: no valid ISP core base for reg=0x%x (core_regs=%p vic_dev=%p)\n",
-                        op, reg, ourISPdev->core_regs, ourISPdev->vic_dev);
-    return NULL;
-}
-
-/* system_reg_write - Helper function to write ISP registers safely */
+/* system_reg_write - OEM-lean implementation.
+ * OEM objdump shows just 6 instructions: load ourISPdev, load core_regs,
+ * add offset, store value, return. NO null checks, NO logging, NO wmb().
+ * Our previous 75-instruction version caused the 0x1070 write-gate to
+ * auto-close before the value write arrived, breaking GIB/GB. */
 void system_reg_write(u32 reg, u32 value)
 {
-    void __iomem *isp_regs = tx_isp_get_system_reg_base(reg, "write");
-
-    if (!isp_regs) {
-        pr_warn("system_reg_write: No ISP core base available for reg=0x%x val=0x%x\n", reg, value);
-        return;
-    }
-
-    /* CRITICAL: Log all writes to critical registers to find source of 0x0 writes */
-    if ((reg >= 0x100 && reg <= 0x10c) || (reg >= 0xb054 && reg <= 0xb078)) {
-        pr_warn("*** CRITICAL REG WRITE: reg=0x%x value=0x%x ***\n", reg, value);
-        if (value == 0x0) {
-            pr_err("*** FOUND 0x0 WRITE: reg=0x%x - THIS IS THE PROBLEM! ***\n", reg);
-        }
-    }
-
-    pr_debug("system_reg_write: Writing ISP reg[0x%x] = 0x%x\n", reg, value);
-
-    /* Write to ISP register with proper offset */
-    writel(value, isp_regs + reg);
-    wmb();
+    volatile u32 *addr = (volatile u32 *)(ourISPdev->core_regs + reg);
+    *addr = value;
 }
 
-
-/* system_reg_read - Helper function to read ISP registers safely (paired with system_reg_write) */
+/* system_reg_read - OEM-lean implementation (mirrors system_reg_write). */
 u32 system_reg_read(u32 reg)
 {
-    void __iomem *isp_regs = tx_isp_get_system_reg_base(reg, "read");
-
-    if (!isp_regs) {
-        pr_warn("system_reg_read: No ISP core base available for reg=0x%x\n", reg);
-        return 0;
-    }
-
-    return readl(isp_regs + reg);
+    volatile u32 *addr = (volatile u32 *)(ourISPdev->core_regs + reg);
+    return *addr;
 }
 EXPORT_SYMBOL_GPL(system_reg_read);
 
@@ -1506,39 +1458,24 @@ void system_reg_write_clm(u32 arg1, u32 arg2, u32 arg3)
     system_reg_write(arg2, arg3);
 }
 
-/* system_reg_write_gb - EXACT Binary Ninja decompiled implementation */
+/* system_reg_write_gb - EXACT Binary Ninja decompiled implementation.
+ * OEM-identical: calls system_reg_write for both gate and value. */
 void system_reg_write_gb(u32 arg1, u32 arg2, u32 arg3)
 {
-    /* Binary Ninja decompiled code:
-     * if (arg1 == 1)
-     *     system_reg_write(0x1070, 1)
-     *
-     * return system_reg_write(arg2, arg3) __tailcall
-     */
+    if (arg1 == 1)
+        system_reg_write(0x1070, 1);
 
-    if (arg1 == 1) {
-        system_reg_write(0x1070, 1);  /* Enable GB block */
-    }
-
-    /* Tailcall to system_reg_write with remaining args */
     system_reg_write(arg2, arg3);
 }
 
-/* system_reg_write_gib - EXACT Binary Ninja decompiled implementation */
+/* system_reg_write_gib - EXACT Binary Ninja decompiled implementation.
+ * OEM-identical (verified via objdump: our Apr 6 .ko matches OEM byte-for-byte).
+ * Calls system_reg_write for both the 0x1070 gate and the value. */
 void system_reg_write_gib(u32 arg1, u32 arg2, u32 arg3)
 {
-    /* Binary Ninja decompiled code:
-     * if (arg1 == 1)
-     *     system_reg_write(0x1070, 1)
-     *
-     * return system_reg_write(arg2, arg3) __tailcall
-     */
-
-    if (arg1 == 1) {
+    if (arg1 == 1)
         system_reg_write(0x1070, 1);
-    }
 
-    /* Tailcall to system_reg_write with remaining args */
     system_reg_write(arg2, arg3);
 }
 

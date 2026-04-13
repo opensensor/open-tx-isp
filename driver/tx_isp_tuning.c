@@ -728,30 +728,42 @@ static void tiziano_bcsh_build_active_ccm(int32_t out[9], uint32_t ct)
  * fix_point_mult2_32(16, mag_a, mag_b << 6).  This is equivalent to
  * standard Q16 multiply when the <<6 and final >>6 cancel out.
  * Use plain Q16 here and rely on the final >>6 for hardware scaling. */
+/* OEM-exact fixed-point multiply: unsigned magnitude with separate sign.
+ * Rounds toward zero (not toward -inf like signed >>), matching
+ * the OEM's fix_point_mult2_32 used in tiziano_bcsh_Tccm_RGBYUV. */
+static inline int32_t oem_fixmul(int32_t a, int32_t b, int shift)
+{
+    int sign = 1;
+    uint32_t ma = (a < 0) ? (sign = -sign, (uint32_t)(-a)) : (uint32_t)a;
+    uint32_t mb = (b < 0) ? (sign = -sign, (uint32_t)(-b)) : (uint32_t)b;
+    uint32_t prod = (uint32_t)(((uint64_t)ma * mb) >> shift);
+    return sign < 0 ? -(int32_t)prod : (int32_t)prod;
+}
+
 static void tiziano_matmul3_q16(const int32_t A[9], const int32_t B[9], int32_t O[9])
 {
     int i, j, k;
     for (i = 0; i < 3; ++i) {
         for (j = 0; j < 3; ++j) {
-            int64_t acc = 0;
+            int32_t acc = 0;
             for (k = 0; k < 3; ++k)
-                acc += ((int64_t)A[i * 3 + k] * (int64_t)B[k * 3 + j]) >> 16;
-            O[i * 3 + j] = (int32_t)acc;
+                acc += oem_fixmul(A[i * 3 + k], B[k * 3 + j], 16);
+            O[i * 3 + j] = acc;
         }
     }
 }
 
-/* Q10 matmul: (A * B) >> 10.  The << 6 compensates for the CCM
- * being in Q10 while M is in Q16, keeping the intermediate result in Q16. */
+/* Q10 matmul: OEM uses fix_point_mult2_32(16, mag, mag<<6) which is
+ * effectively (mag * mag) >> 10.  Match with unsigned magnitude approach. */
 static void tiziano_matmul3_q10(const int32_t A[9], const int32_t B[9], int32_t O[9])
 {
     int i, j, k;
     for (i = 0; i < 3; ++i) {
         for (j = 0; j < 3; ++j) {
-            int64_t acc = 0;
+            int32_t acc = 0;
             for (k = 0; k < 3; ++k)
-                acc += ((int64_t)A[i * 3 + k] * (int64_t)B[k * 3 + j]) >> 10;
-            O[i * 3 + j] = (int32_t)acc;
+                acc += oem_fixmul(A[i * 3 + k], B[k * 3 + j], 10);
+            O[i * 3 + j] = acc;
         }
     }
 }
@@ -2257,25 +2269,14 @@ module_param(isp_bypass_override, uint, 0644);
  *          isp_block_enable=0xDD24 adds GIB (green imbalance correction) to crisp set
  *          isp_block_enable=0xDD34 adds GIB+LSC (green correction + lens shading)
  */
-static uint isp_block_enable = 0x2DD94;  /* GIB(bit 5) DISABLED, MDNS(bit 16) DISABLED */
-module_param(isp_block_enable, uint, 0644);
-MODULE_PARM_DESC(isp_block_enable,
-		 "Block enable bitmask: set bits enable ISP blocks (0=all bypassed)");
+/* OEM has no whitelist — bypass is computed once from tuning params and
+ * never modified. Our whitelist was re-writing bypass at multiple points
+ * during streaming, potentially glitching GIB/MDNS block activation. */
 
-#define TISP_TOP_BYPASS_BLOCK_MASK	0x0003DDB4
-
-static u32 tisp_apply_block_enable_whitelist(u32 bypass_val)
-{
-	u32 currently_enabled = (~bypass_val) & TISP_TOP_BYPASS_BLOCK_MASK;
-	u32 not_whitelisted = currently_enabled & ~isp_block_enable;
-
-	return bypass_val | not_whitelisted;
-}
-
-/* Exported for tisp_top_sel (tx_isp_core.c) to enforce at stream-on */
+/* Passthrough — OEM doesn't filter bypass */
 u32 tisp_enforce_block_whitelist(u32 bypass_val)
 {
-	return tisp_apply_block_enable_whitelist(bypass_val);
+	return bypass_val;
 }
 EXPORT_SYMBOL(tisp_enforce_block_whitelist);
 
@@ -2326,17 +2327,10 @@ apply_force_mask:
 		bypass_val = (bypass_val & 0xb577fffd) | 0x34000009;
 
 	/* Re-bypass blocks we haven't fully implemented.
-	 * bypass register: bit=0 → block ENABLED, bit=1 → block BYPASSED.
-	 * Only touch the documented ISP processing-block bits here; preserve
-	 * all OEM control bits outside that mask exactly as computed.
-	 * For blocks that are currently enabled (bit=0) but NOT in our
-	 * isp_block_enable whitelist, set bit=1 to bypass them.
+	 * OEM: no whitelist — bypass passes through unchanged from tuning params.
 	 */
-	bypass_val = tisp_apply_block_enable_whitelist(bypass_val);
-
-	pr_info("tisp_compute_top_bypass: allow=0x%08x final=0x%08x "
-		"(OEM target=0x%08x)\n",
-		isp_block_enable, bypass_val, 0xb5742249);
+	pr_info("tisp_compute_top_bypass: final=0x%08x (OEM target=0x%08x)\n",
+		bypass_val, 0xb5742249);
 
 	return tisp_apply_debug_top_bypass_overrides(bypass_val, __func__);
 }
@@ -3730,7 +3724,9 @@ static void tisp_rdns_intp_reg_refresh(uint32_t gain);
 #define GB_TBIN_DGAIN_SHIFT     0x127FC /*  2 × u32 =  8 bytes */
 #define GB_TBIN_DGAIN_RGBIR_L   0x12804 /*  4 × u32 = 16 bytes */
 #define GB_TBIN_DGAIN_RGBIR_S   0x12814 /*  4 × u32 = 16 bytes */
-#define GB_TBIN_BLC_OFFSET_BASE 0x12824 /* 4×9 u32 = 144 bytes (ch4,ch3,ch2,ch1) */
+#define GB_TBIN_BLC_OFFSET_BASE 0x12824 /* 5×9 u32 = 180 bytes (ch4,ch3,ch2,ch1,ch0) */
+#define GB_TBIN_BLC_OFFSET_CH0  0x128B4 /*  9 × u32 = 36 bytes (ch0=R) */
+#define GB_TBIN_BLC_MIN_EN      0x128D8 /*  2 × u32 =  8 bytes */
 #define GB_TBIN_BLC_MIN         0x128E0 /*  9 × u32 = 36 bytes */
 
 /* GIB parameter arrays — static defaults used when tuning binary is not loaded.
@@ -4648,13 +4644,19 @@ static int tisp_ae0_process_impl(void)
         uint32_t reg_packed = (dg_val << 16) | dg_val;
 
         if (ae_wdr_mode == 0) {
-            /* Normal mode: write to 0x1030/0x1034 */
-            system_reg_write_ae(3, 0x1030, reg_packed);
-            system_reg_write_ae(3, 0x1034, reg_packed);
+            /* Normal mode: inline gate writes to 0x1030/0x1034 */
+            volatile u32 *base = (volatile u32 *)ourISPdev->core_regs;
+            base[0x1070/4] = 1;
+            base[0x1030/4] = reg_packed;
+            base[0x1070/4] = 1;
+            base[0x1034/4] = reg_packed;
         } else if (ae_wdr_mode == 1) {
-            /* WDR mode: write to 0x1000/0x1004 */
-            system_reg_write_ae(3, 0x1000, reg_packed);
-            system_reg_write_ae(3, 0x1004, reg_packed);
+            /* WDR mode: inline gate writes to 0x1000/0x1004 */
+            volatile u32 *base = (volatile u32 *)ourISPdev->core_regs;
+            base[0x1070/4] = 1;
+            base[0x1000/4] = reg_packed;
+            base[0x1070/4] = 1;
+            base[0x1004/4] = reg_packed;
         }
     }
 
@@ -4747,7 +4749,9 @@ static int tisp_event_push(void *event)
 
 static int system_reg_write_ae(int ae_id, uint32_t reg, uint32_t value)
 {
-    /* AE-specific register write - from Binary Ninja */
+    /* AE-specific register write - from Binary Ninja.
+     * Case 3 (GIB) uses the same barrier-free write as system_reg_write_gib
+     * because the 0x1070 write-gate requires no sync between gate and value. */
     switch (ae_id) {
         case 1:
             system_reg_write(0xa000, 1);
@@ -4756,8 +4760,9 @@ static int system_reg_write_ae(int ae_id, uint32_t reg, uint32_t value)
             system_reg_write(0xa800, 1);
             break;
         case 3:
-            system_reg_write(0x1070, 1);
-            break;
+            /* Use system_reg_write_gib for barrier-free GIB access */
+            system_reg_write_gib(1, reg, value);
+            return 0;
         default:
             pr_warn("Unknown AE ID: %d\n", ae_id);
             break;
@@ -5245,6 +5250,7 @@ int tisp_init(void *sensor_info_arg, char *param_name)
     tiziano_gamma_init(tisp_si_width(&sensor_params), tisp_si_height(&sensor_params),
                        tisp_si_fps(&sensor_params));
     tiziano_gib_init();
+    tisp_gb_init();  /* OEM calls GB init unconditionally — loads BLC params from tuning bin */
     tiziano_lsc_init();
     tiziano_ccm_init();
     tiziano_dmsc_init();
@@ -5290,6 +5296,10 @@ int tisp_init(void *sensor_info_arg, char *param_name)
     system_reg_write(0x1c, 8);
     system_reg_write(0x800, 1);  /* CRITICAL: This starts ISP processing */
     pr_info("*** tisp_init: ISP processing engine STARTED (reg 0x800=1) ***\n");
+
+    /* OEM-identical: NO post-engine GIB re-init. The OEM .ko (verified via
+     * objdump comparison) does not re-init GIB after 0x800=1 engine start.
+     * The tiziano_gib_init() call before engine start is sufficient. */
 
     /* Core register dump to compare with OEM for GIB investigation */
     pr_info("ISP_CORE: 0x00=%08x 0x04=%08x 0x08=%08x 0x0c=%08x\n",
@@ -6613,7 +6623,7 @@ static int apical_isp_core_ops_s_ctrl(struct tx_isp_dev *dev, struct isp_core_ct
             int mdns_en = (ctrl->value >= 0) ? 1 : 0;
             int mdns_sz = 0;
             tisp_mdns_param_array_set(0x180, &mdns_en, &mdns_sz);
-            new_bypass = tisp_apply_block_enable_whitelist(new_bypass);
+            /* OEM: no whitelist */
             new_bypass = tisp_apply_debug_top_bypass_overrides(new_bypass, __func__);
             system_reg_write(0xc, new_bypass);
             tuning->custom_mode = ctrl->value;
@@ -14842,6 +14852,7 @@ static void awb_history_average(uint32_t *gr, uint32_t *gb, uint32_t *ct)
 	u64 gb_sum = 0;
 	u64 ct_sum = 0;
 	u32 weight_sum = 0;
+	u32 window;
 	u32 start;
 	u32 weight;
 	int i;
@@ -14849,7 +14860,16 @@ static void awb_history_average(uint32_t *gr, uint32_t *gb, uint32_t *ct)
 	if (!gr || !gb || !ct || awb_history_count == 0)
 		return;
 
-	start = 15 - awb_history_count;
+	/* OEM uses _awb_cof[0] as window size, not full history.
+	 * With _awb_cof[0]=1, only the latest entry is used (no averaging).
+	 * This prevents over-smoothing that blocks AWB adaptation. */
+	window = _awb_cof[0];
+	if (window == 0)
+		window = 1;
+	if (window > awb_history_count)
+		window = awb_history_count;
+
+	start = 15 - window;
 	weight = start;
 	for (i = start; i < 15; ++i) {
 		weight++;
@@ -16397,10 +16417,11 @@ static int Tiziano_awb_fpga(const uint32_t *stats_r,
 			(live_gb - tgt_gb) : (tgt_gb - live_gb);
 		u32 total_diff = diff_gr + diff_gb;
 		u32 threshold;
-		/* OEM: step count ($s1) comes from _awb_mode[0], clamped 1-15.
+		/* OEM: step count ($s1) comes from _awb_cof[0], clamped 1-15.
+		 * _awb_cof[0]=1 means snap immediately (no ramping).
 		 * First frame after reset uses 1. */
 		u32 step_count = (awb_history_reset || awb_history_count <= 1)
-			? 1 : _awb_mode[0];
+			? 1 : _awb_cof[0];
 
 		if (step_count > 15)
 			step_count = 15;
@@ -16408,10 +16429,10 @@ static int Tiziano_awb_fpga(const uint32_t *stats_r,
 			step_count = 1;
 
 		/* OEM threshold for starting convergence ramp.
-		 * From decompilation: uses _awb_mode[1] as primary threshold;
-		 * falls through to _awb_parameter-based threshold if [1]==0.
-		 * Use _awb_mode[1] with sane default fallback. */
-		threshold = _awb_mode[1];
+		 * From decompilation: uses _awb_cof[1] as primary threshold;
+		 * _awb_cof[1]=4 means adapt when gain changes by 4 units.
+		 * Falls through to default if [1]==0. */
+		threshold = _awb_cof[1];
 		if (threshold == 0)
 			threshold = 8;
 
@@ -16639,22 +16660,17 @@ static int JZ_Isp_Awb(void)
 			if (awb_mode_flag == 1) {
 				awb_mode_flag = 0;
 				if (awb_frz == 0) {
-					/* OEM uses system_reg_write_awb(1,...) which writes
-					 * 0xb000=1 before each register. But this runs in the
-					 * event thread after awb_interrupt_static already
-					 * re-armed DMA via tiziano_awb_set_lum_th_freq.
-					 * The extra 0xb000=1 corrupts DMA mid-collection.
-					 * Write registers directly — AWB config is already
-					 * latched from the ISR's tiziano_awb_set_lum_th_freq. */
-					system_reg_write(0x0b028, normal_rg);
-					system_reg_write(0x0b02c, normal_bg);
+					/* OEM EXACT: uses system_reg_write_awb(1,...)
+					 * with 0xb000=1 latch for threshold changes. */
+					system_reg_write_awb(1, 0xb028, normal_rg);
+					system_reg_write_awb(1, 0xb02c, normal_bg);
 				}
 			}
 		} else if (awb_mode_flag == 0) {
 			awb_mode_flag = 1;
 			if (awb_frz == 0) {
-				system_reg_write(0x0b028, lowlight_rg);
-				system_reg_write(0x0b02c, 0x03ff0001);
+				system_reg_write_awb(1, 0xb028, lowlight_rg);
+				system_reg_write_awb(1, 0xb02c, 0x03ff0001);
 			}
 		}
 	}
@@ -16755,24 +16771,40 @@ int awb_interrupt_static(void)
 			awb_array_b[0], awb_array_p[0],
 			awb_array_r[112], awb_array_g[112],
 			awb_array_b[112], awb_array_p[112]);
+		/* Deep diagnostic on bank 3 (first zero bank) */
+		if (awb_irq_count == 3 || awb_irq_count == 60) {
+			u32 *buf = (u32 *)buffer_addr;
+			int nz = 0, nz_thr = 0, max_p = 0, max_z = -1;
+			int z;
+			for (z = 0; z < 225; z++) {
+				u32 w2 = buf[z * 4 + 2];
+				u32 w3 = buf[z * 4 + 3];
+				u32 p = ((w3 & 1) << 12) | (w2 >> 20);
+				if (p > 0) nz++;
+				if (p >= 25) nz_thr++;
+				if (p > (u32)max_p) { max_p = p; max_z = z; }
+			}
+			pr_info("AWB_DEEP[%u]: nz=%d nz_thr25=%d max_P=%d at_zone=%d (of 225)\n",
+				awb_irq_count, nz, nz_thr, max_p, max_z);
+			if (max_z >= 0) {
+				u32 w0 = buf[max_z*4], w1 = buf[max_z*4+1];
+				u32 w2 = buf[max_z*4+2], w3 = buf[max_z*4+3];
+				u32 r = w0 & 0x1fffff;
+				u32 g = ((w1 & 0x3ff) << 11) | (w0 >> 21);
+				u32 b = (w1 & 0x7ffffc00) >> 10;
+				u32 p = ((w3 & 1) << 12) | (w2 >> 20);
+				pr_info("AWB_DEEP[%u]: best_zone[%d] R=%u G=%u B=%u P=%u raw=[%08x %08x %08x %08x]\n",
+					awb_irq_count, max_z, r, g, b, p, w0, w1, w2, w3);
+			}
+		}
 	}
 
 	tiziano_awb_set_lum_th_freq();
-	/* OEM: 0xb000=1 is already written by system_reg_write_awb(1,...)
-	 * inside tiziano_awb_set_lum_th_freq. Do NOT write it again here —
-	 * a second 0xb000=1 re-arms the DMA mid-collection, corrupting
-	 * subsequent banks (all zeros after bank 0). */
 
-	/* OEM pushes event 9 (CT update) with _awb_ct BEFORE event 10.
-	 * This triggers tisp_ct_update() → BCSH saturation + CCM
-	 * interpolation at the runtime color temperature. Without this,
-	 * BCSH stays stuck at the init CT (9984) causing pink cast. */
-	{
-		struct tisp_event_record ct_event = {0};
-		ct_event.event_id = 9;
-		ct_event.args[0] = _awb_ct;
-		tisp_event_push(&ct_event);
-	}
+	/* OEM: only pushes event 10 from ISR. Event 9 (CT update) is pushed
+	 * from JZ_Isp_Awb (the event 10 handler) AFTER Tiziano_awb_fpga
+	 * updates _awb_ct. Do NOT push event 9 here — it's redundant and
+	 * the extra event processing in ISR context disrupts AWB DMA timing. */
 
 	event_data.event_id = 0xa;
 	tisp_event_push(&event_data);
@@ -17036,9 +17068,18 @@ static int tiziano_gib_params_refresh(void)
 
 /* OEM EXACT: tisp_gib_gain_interpolation — interpolate BLC offsets per Bayer pattern.
  * Reads register 0x8 to determine Bayer order, then remaps R/Gr/Gb/B/IR BLC
- * values to the correct register channels. */
+ * values to the correct register channels.
+ *
+ */
 static int tisp_gib_gain_interpolation(uint32_t gain)
 {
+    /* Per-frame writes to 0x1060-0x1068 kill AWB stats (proven with both
+     * function calls AND inline volatile stores). The init BLC values from
+     * tiziano_gib_init() match OEM and remain in HW. Skip per-frame updates
+     * until we resolve the write-during-active-processing timing issue. */
+    tisp_gib_blc_ag = gain;
+    return 0;
+
     uint32_t hi = gain >> 16;
     uint32_t lo = gain & 0xffff;
     uint32_t blc_r  = tisp_simple_intp(hi, lo, tiziano_gib_deirm_blc_r_linear);
@@ -17078,16 +17119,29 @@ static int tisp_gib_gain_interpolation(uint32_t gain)
         break;
     }
 
-    system_reg_write_gib(1, 0x1060, ch0);
-    system_reg_write_gib(1, 0x1064, (ch2 << 16) | ch1);
-    system_reg_write_gib(1, 0x1068, (ch4 << 16) | ch3);
+    /* INLINE gate writes — OEM compiler inlines system_reg_write_gib into
+     * direct volatile stores. Cross-file function calls add overhead that
+     * corrupts GIB HW. Back-to-back volatile stores match OEM behavior. */
+    {
+        volatile u32 *base = (volatile u32 *)ourISPdev->core_regs;
+        base[0x1070/4] = 1;
+        base[0x1060/4] = ch0;
+        base[0x1070/4] = 1;
+        base[0x1064/4] = (ch2 << 16) | ch1;
+        base[0x1070/4] = 1;
+        base[0x1068/4] = (ch4 << 16) | ch3;
+    }
     tisp_gib_blc_ag = gain;
     return 0;
 }
 
-/* OEM EXACT: tiziano_gib_lut_parameter — program GIB LUT registers */
+/* OEM EXACT: tiziano_gib_lut_parameter — program GIB LUT registers.
+ * OEM uses init.31779 static flag to write 0x1030/0x1034 only ONCE —
+ * after that, the AE digital gain path overwrites them every frame. */
 static int tiziano_gib_lut_parameter(void)
 {
+    static int gib_lut_init_done = 0;
+
     /* Register 0x1038: weight config */
     system_reg_write(0x1038, (GIB_CFG_WGT_HI << 16) | GIB_CFG_WGT_LO);
 
@@ -17095,30 +17149,35 @@ static int tiziano_gib_lut_parameter(void)
     system_reg_write(0x103c,
         (GIB_CFG_BLEND << 16) |
         (GIB_CFG_BLC_SHIFT << 14) |
-        (tiziano_gib_config_line[0] << 12) |  /* config_line[0] = first byte */
+        (tiziano_gib_config_line[0] << 12) |
         (GIB_CFG_EN_BLC << 10) |
         (GIB_CFG_GIB_MODE << 8) |
         (GIB_CFG_BLC_THR << 4) |
         (GIB_CFG_BLC_GAIN << 2));
 
-    /* Register 0x106c: DEIR enable/config */
-    system_reg_write_gib(1, 0x106c,
-        (GIB_CFG_DEIR_EN << 16) |
-        (GIB_CFG_DEIR_MODE << 3) |
-        GIB_CFG_DEIR_STR);
+    /* Register 0x106c + LUTs: inline gate writes */
+    {
+        volatile u32 *base = (volatile u32 *)ourISPdev->core_regs;
+        base[0x1070/4] = 1;
+        base[0x106c/4] = (GIB_CFG_DEIR_EN << 16) |
+                          (GIB_CFG_DEIR_MODE << 3) |
+                          GIB_CFG_DEIR_STR;
+    }
 
     /* Interpolate BLC offsets based on current gain */
     tisp_gib_gain_interpolation(tisp_gib_blc_ag);
 
-    /* Program R/G and B/IR linearization LUTs unconditionally.
-     * OEM guards this with a static flag (init.31779), but GCC's ISRA
-     * optimization eliminates the conditional and the writes entirely
-     * in the .isra.0 version, leaving 0x1030/0x1034 unprogrammed.
-     * Writing every call is harmless and matches OEM first-call behavior. */
-    system_reg_write_gib(1, 0x1030,
-        (tiziano_gib_r_g_linear[1] << 16) | tiziano_gib_r_g_linear[0]);
-    system_reg_write_gib(1, 0x1034,
-        (tiziano_gib_b_ir_linear[1] << 16) | tiziano_gib_b_ir_linear[0]);
+    /* OEM EXACT: Program R/G and B/IR linearization LUTs only on first call. */
+    if (!gib_lut_init_done) {
+        volatile u32 *base = (volatile u32 *)ourISPdev->core_regs;
+        base[0x1070/4] = 1;
+        base[0x1030/4] = (tiziano_gib_r_g_linear[1] << 16) | tiziano_gib_r_g_linear[0];
+        base[0x1070/4] = 1;
+        base[0x1034/4] = (tiziano_gib_b_ir_linear[1] << 16) | tiziano_gib_b_ir_linear[0];
+        gib_lut_init_done = 1;
+    }
+
+    /* gate auto-clears on vsync */
 
     return 0;
 }
@@ -20477,36 +20536,18 @@ int tiziano_mdns_init(uint32_t width, uint32_t height)
 
 	tiziano_mdns_params_refresh();
 
-	/* BISECT: Respect the user's isp_block_enable whitelist. If bit 16 (MDNS)
-	 * is NOT in the whitelist, skip the hardware enable so the user can
-	 * isolate MDNS from the rest of the pipeline. Previously this function
-	 * unconditionally self-authorized bit 16, ignoring the user's intent. */
-	if (!(isp_block_enable & 0x10000)) {
-		mdns_hw_enabled = 0;
-		pr_info("tiziano_mdns_init: SKIPPING MDNS enable (bit 16 not in isp_block_enable=0x%x)\n",
-			isp_block_enable);
-		return 0;
-	}
+	/* OEM: MDNS always initialized — no whitelist gating */
 
-	/* OEM EXACT: enable MDNS NOW, before 0x800=1 latches the ISP state.
-	 * tisp_mdns_par_refresh writes 0x7878-0x7aff (param config registers).
-	 * tisp_mdns_bypass(0) writes 0x7810 with sub-block enables and clears
-	 * the bypass via top_func_cfg(1). */
+	/* Configure MDNS parameters but DO NOT enable yet.
+	 * MDNS temporal denoise reads reference frames from DMA at 0x7840-0x786c.
+	 * Those registers aren't programmed until tx_isp_set_buf ioctl later.
+	 * If we enable MDNS now, it reads reference from uninitialized addresses
+	 * during the brief first stream (rvd stop/restart), poisoning the temporal
+	 * filter with corrupt chroma data that causes pink tint.
+	 * Defer actual enable to tisp_mdns_enable_after_dma(). */
 	tisp_mdns_par_refresh(0x10000, 0x10000);
-	tisp_mdns_bypass(0);
-
-	/* Mark as enabled so tisp_mdns_enable_after_dma is a no-op when
-	 * tx_isp_set_buf later tries to "complete" the deferred enable. */
-	mdns_hw_enabled = 1;
-
-	{
-		u32 bypass = system_reg_read(0xc);
-		bypass &= ~0x10000;
-		bypass = tisp_apply_block_enable_whitelist(bypass);
-		system_reg_write(0xc, bypass);
-	}
-
-	pr_info("tiziano_mdns_init: MDNS enabled OEM-style (in init, before 0x800=1)\n");
+	mdns_hw_enabled = 0;
+	pr_info("tiziano_mdns_init: MDNS params configured, enable deferred to after DMA setup\n");
 	return 0;
 }
 
@@ -20520,19 +20561,13 @@ int tiziano_mdns_init(uint32_t width, uint32_t height)
 void tisp_mdns_enable_after_dma(void)
 {
 	if (!mdns_hw_enabled) {
-		/* BISECT: Respect the user's isp_block_enable whitelist. If bit 16
-		 * (MDNS) is NOT in the whitelist, skip the deferred enable. */
-		if (!(isp_block_enable & 0x10000)) {
-			pr_info("tisp_mdns_enable_after_dma: SKIPPING MDNS enable (bit 16 not in isp_block_enable=0x%x)\n",
-				isp_block_enable);
-			return;
-		}
+		/* OEM: MDNS always enabled after DMA — no whitelist gating */
 		tisp_mdns_par_refresh(0x10000, 0x10000);
 		tisp_mdns_bypass(0);
 		{
 			u32 bypass = system_reg_read(0xc);
 			bypass &= ~0x10000;
-			bypass = tisp_apply_block_enable_whitelist(bypass);
+			/* OEM: no whitelist */
 			system_reg_write(0xc, bypass);
 		}
 		mdns_hw_enabled = 1;
@@ -24824,14 +24859,14 @@ static int tisp_gb_params_refresh(void)
         memcpy(tisp_gb_dgain_rgbir_s, p + GB_TBIN_DGAIN_RGBIR_S, 0x10);
         /* OEM reads BLC offset channels 4,3,2,1 from tuning blob (REVERSE order).
          * Channel 0 comes from tisp_gb_blc_ir BSS variable (zero init). */
-        memcpy(&tisp_gb_blc_offset[36], p + GB_TBIN_BLC_OFFSET_BASE,       0x24); /* ch4 */
-        memcpy(&tisp_gb_blc_offset[27], p + GB_TBIN_BLC_OFFSET_BASE + 0x24, 0x24); /* ch3 */
-        memcpy(&tisp_gb_blc_offset[18], p + GB_TBIN_BLC_OFFSET_BASE + 0x48, 0x24); /* ch2 */
-        memcpy(&tisp_gb_blc_offset[9],  p + GB_TBIN_BLC_OFFSET_BASE + 0x6C, 0x24); /* ch1 */
-        memset(&tisp_gb_blc_offset[0], 0, 9 * sizeof(uint32_t)); /* ch0: BSS zero */
-        tisp_gb_blc_min_en[0] = 0;
-        tisp_gb_blc_min_en[1] = 0;
-        memcpy(tisp_gb_blc_min, p + GB_TBIN_BLC_MIN, 0x24);
+        /* OEM loads R→Gr→Gb→B→IR sequentially into array[0..44] */
+        memcpy(&tisp_gb_blc_offset[0],  p + GB_TBIN_BLC_OFFSET_BASE,        0x24); /* ch0=R */
+        memcpy(&tisp_gb_blc_offset[9],  p + GB_TBIN_BLC_OFFSET_BASE + 0x24, 0x24); /* ch1=Gr */
+        memcpy(&tisp_gb_blc_offset[18], p + GB_TBIN_BLC_OFFSET_BASE + 0x48, 0x24); /* ch2=Gb */
+        memcpy(&tisp_gb_blc_offset[27], p + GB_TBIN_BLC_OFFSET_BASE + 0x6C, 0x24); /* ch3=B */
+        memcpy(&tisp_gb_blc_offset[36], p + GB_TBIN_BLC_OFFSET_BASE + 0x90, 0x24); /* ch4=IR */
+        memcpy(tisp_gb_blc_min_en,      p + GB_TBIN_BLC_MIN_EN,       0x08); /* 2 x u32 from tuning bin */
+        memcpy(tisp_gb_blc_min,         p + GB_TBIN_BLC_MIN,          0x24);
     } else {
         /* Fallback: use hardcoded defaults */
         tisp_gb_dgain_shift[0] = 0;
@@ -24935,7 +24970,7 @@ int tisp_s_wdr_en(int enable)
         reg_0c = (reg_0c & 0xb577ff7d) | 0x34000009;
     }
 
-	reg_0c = tisp_apply_block_enable_whitelist(reg_0c);
+	/* OEM: no whitelist */
 	reg_0c = tisp_apply_debug_top_bypass_overrides(reg_0c, __func__);
 
 	system_reg_write(0x804, enable ? 0x10 : 0x1c);
@@ -25835,15 +25870,19 @@ int tisp_tgain_update(uint32_t gain)
     if (mdns_diag_frame_count < 10) {
         mdns_diag_frame_count++;
         if (mdns_diag_frame_count == 10) {
-            pr_info("GIB_DIAG(frame10): gain=0x%x bypass=0x%08x\n", gain, system_reg_read(0xc));
-            pr_info("GIB_BLC: 0x1014=0x%08x 0x1018=0x%08x 0x101c=0x%08x 0x1020=0x%08x\n",
-                system_reg_read(0x1014), system_reg_read(0x1018),
-                system_reg_read(0x101c), system_reg_read(0x1020));
-            pr_info("GIB_REGS: 0x1038=0x%08x 0x103c=0x%08x 0x1060=0x%08x 0x1064=0x%08x 0x1068=0x%08x 0x106c=0x%08x 0x1070=0x%08x\n",
-                system_reg_read(0x1038), system_reg_read(0x103c),
+            {
+            u32 bypass = system_reg_read(0xc);
+            pr_info("GIB_DIAG(frame10): gain=0x%x bypass=0x%08x GIB_bit5=%s\n",
+                gain, bypass, (bypass & 0x20) ? "BYPASSED" : "ACTIVE");
+            pr_info("GIB_DG: 0x1030=0x%08x 0x1034=0x%08x (AE digital gain regs)\n",
+                system_reg_read(0x1030), system_reg_read(0x1034));
+            pr_info("GIB_CFG: 0x1038=0x%08x 0x103c=0x%08x\n",
+                system_reg_read(0x1038), system_reg_read(0x103c));
+            pr_info("GIB_BLC: 0x1060=0x%08x 0x1064=0x%08x 0x1068=0x%08x 0x106c=0x%08x 0x1070=0x%08x\n",
                 system_reg_read(0x1060), system_reg_read(0x1064),
                 system_reg_read(0x1068), system_reg_read(0x106c),
                 system_reg_read(0x1070));
+            }
             pr_info("MDNS_VERIFY(frame10): gain=0x%x bypass=0x%08x\n", gain, system_reg_read(0xc));
             pr_info("MDNS_TOP: 0x7810=0x%08x 0x7814=0x%08x 0x7808=0x%08x\n",
                 system_reg_read(0x7810), system_reg_read(0x7814), system_reg_read(0x7808));
@@ -27879,7 +27918,7 @@ int tisp_s_adr_enable(int enable)
         return -EINVAL;
     }
 
-	reg_val = tisp_apply_block_enable_whitelist(reg_val);
+	/* OEM: no whitelist */
 	reg_val = tisp_apply_debug_top_bypass_overrides(reg_val, __func__);
     system_reg_write(0xc, reg_val);
     return 0;
