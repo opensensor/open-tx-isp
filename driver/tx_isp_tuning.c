@@ -5117,10 +5117,9 @@ int tisp_init(void *sensor_info_arg, char *param_name)
     void *ae0_buffer = (void *)__get_free_pages(GFP_KERNEL | __GFP_ZERO, 3);
     if (ae0_buffer != NULL) {
         dma_addr_t ae0_phys = virt_to_phys(ae0_buffer);
-        /* Use KSEG1 (uncached) address so CPU reads see DMA-written data immediately.
-         * OEM's private_kmalloc with flags 0xd0 likely returns uncached memory.
-         * Without this, dma_cache_sync may not fully invalidate on MIPS T31. */
-        data_b2f3c = (uint32_t)CKSEG1ADDR((unsigned long)ae0_buffer);
+        /* OEM stores raw KSEG0 (cached) address. dma_cache_sync
+         * invalidates cache before reads, matching OEM pattern. */
+        data_b2f3c = (uint32_t)ae0_buffer;
         data_b2f48 = data_b2f3c + 0x4000;
         system_reg_write(0xa02c, ae0_phys);
         system_reg_write(0xa030, ae0_phys + 0x1000);
@@ -5138,7 +5137,7 @@ int tisp_init(void *sensor_info_arg, char *param_name)
     void *ae1_buffer = (void *)__get_free_pages(GFP_KERNEL | __GFP_ZERO, 3);
     if (ae1_buffer != NULL) {
         dma_addr_t ae1_phys = virt_to_phys(ae1_buffer);
-        data_b2f54 = (uint32_t)CKSEG1ADDR((unsigned long)ae1_buffer);
+        data_b2f54 = (uint32_t)ae1_buffer;
         data_b2f60 = data_b2f54 + 0x4000;
         system_reg_write(0xa82c, ae1_phys);
         system_reg_write(0xa830, ae1_phys + 0x1000);
@@ -5157,7 +5156,10 @@ int tisp_init(void *sensor_info_arg, char *param_name)
     if (awb_buffer != NULL) {
         dma_addr_t awb_phys = virt_to_phys(awb_buffer);
         data_a2f58 = 4;
-        data_a2f5c = (uint32_t)CKSEG1ADDR((unsigned long)awb_buffer);
+        /* OEM stores raw KSEG0 (cached) address, NOT CKSEG1ADDR.
+         * dma_cache_sync in awb_interrupt_static invalidates cache
+         * before reads, matching OEM's private_dma_cache_sync call. */
+        data_a2f5c = (uint32_t)awb_buffer;
         data_a2f60 = (uint32_t)awb_phys;
         system_reg_write(0xb03c, awb_phys);
         system_reg_write(0xb040, awb_phys + 0x1000);
