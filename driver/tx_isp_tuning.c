@@ -4744,11 +4744,21 @@ static int tisp_ae0_process_impl(void)
      * OEM: var_68=4, var_60=log2(total_gain), var_5c=0
      * Drives MDNS/sharpen/DPC/LSC gain-dependent interpolation. */
     {
+        static uint32_t tgain_force_frames = 30;
         uint32_t ef_idx = (EffectFrame + 1 < 16) ? EffectFrame + 1 : 0;
         uint32_t total_g = ad0_cache[ef_idx] << 6;
         total_gain_new = total_g;
 
-        if (total_g != total_gain_old || tisp_ae_ctrls[0] != 0) {
+        /* OEM: push event 4 only when gain changes.
+         * FIX: also force-push for first 30 frames after streaming starts.
+         * GIB hardware uses double-buffered registers latched by the 0x1070
+         * gate at vsync. If event 4 never fires post-streaming (because AE
+         * gain is stuck), the GIB registers never latch into the active set
+         * and the block runs with power-on defaults → R=G=B. */
+        if (total_g != total_gain_old || tisp_ae_ctrls[0] != 0
+            || tgain_force_frames > 0) {
+            if (tgain_force_frames > 0)
+                tgain_force_frames--;
             total_gain_old = total_g;
             uint32_t log2_tg = tisp_log2_fixed_to_fixed_tuning(total_g, 0x10, 0x10);
             struct tisp_event_record ev = {0};
@@ -25908,9 +25918,14 @@ static int mdns_diag_frame_count;
 
 int tisp_tgain_update(uint32_t gain)
 {
+    static uint32_t tgain_call_count;
     extern struct tx_isp_dev *ourISPdev;
     if (ourISPdev && ourISPdev->tuning_data)
         ourISPdev->tuning_data->total_gain = gain;
+
+    if (tgain_call_count < 5 || (tgain_call_count % 300) == 0)
+        pr_info("tisp_tgain_update[%u]: gain=0x%x\n", tgain_call_count, gain);
+    tgain_call_count++;
 
     /* OEM order: GIB, GB_BLC, DMSC, Sharpen, SDNS, DPC, LSC, YDNS, RDNS, MDNS.
      * OEM calls ALL refresh functions UNCONDITIONALLY — no gating on block enable.
