@@ -5841,7 +5841,7 @@ static int tisp_day_or_night_s_ctrl(uint32_t mode)
 	tiziano_dpc_dn_params_refresh();
 	tiziano_af_dn_params_refresh();
 	tiziano_bcsh_dn_params_refresh();
-	/* tiziano_rdns_dn_params_refresh(); — kills stats, disabled */
+	tiziano_rdns_dn_params_refresh();
 	tiziano_ydns_dn_params_refresh();
 
 	if (ourISPdev)
@@ -12946,7 +12946,7 @@ int tisp_cust_mode_s_ctrl(uint32_t mode)
     tiziano_dpc_dn_params_refresh();
     tiziano_af_dn_params_refresh();
     tiziano_bcsh_dn_params_refresh();
-    /* tiziano_rdns_dn_params_refresh(); — kills stats, disabled */
+    tiziano_rdns_dn_params_refresh();
     tiziano_ydns_dn_params_refresh();
     return 0;
 }
