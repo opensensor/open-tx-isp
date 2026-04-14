@@ -5769,12 +5769,6 @@ static int tisp_g_ev_attr(uint32_t *ev_buffer, struct isp_tuning_data *tuning)
     return 0;
 }
 
-// Day/Night mode parameters
-static struct tiziano_dn_params {
-    uint32_t day_params[0x20];   // Day mode params (0x84b50 in OEM)
-    uint32_t night_params[0x20]; // Night mode params
-} dn_params;
-
 static uint32_t tisp_day_or_night_g_ctrl(void)
 {
 	if (ourISPdev)
@@ -5797,11 +5791,6 @@ static int tisp_day_or_night_s_ctrl(uint32_t mode)
 		return -EINVAL;
 	}
 
-	if (tparams_day)
-		memcpy(dn_params.day_params, tparams_day, sizeof(dn_params.day_params));
-	if (tparams_night)
-		memcpy(dn_params.night_params, tparams_night, sizeof(dn_params.night_params));
-
 	if (!selected) {
 		selected = tparams_day ? tparams_day : tparams_night;
 		if (!selected) {
@@ -5814,6 +5803,10 @@ static int tisp_day_or_night_s_ctrl(uint32_t mode)
 	}
 
 	tparams_active = selected;
+
+	/* OEM sets day_night immediately after memcpy, before bypass computation */
+	if (ourISPdev)
+		ourISPdev->day_night = active_mode;
 
 	pr_info("%s: applying %s mode wdr=%u\n",
 		__func__, active_mode ? "night" : "day", !!data_b2e74);
@@ -5831,7 +5824,7 @@ static int tisp_day_or_night_s_ctrl(uint32_t mode)
 	}
 
 	/* OEM EXACT call order (decompiled at 0x62300): all 18 _dn_ variants.
-	 * BISECT: top half enabled, bottom half disabled to find stats killer. */
+	 * RDNS disabled: kills AWB/AE stats mid-stream (root cause TBD). */
 	tiziano_defog_dn_params_refresh();
 	tiziano_ae_dn_params_refresh();
 	tiziano_awb_dn_params_refresh();
@@ -5841,22 +5834,18 @@ static int tisp_day_or_night_s_ctrl(uint32_t mode)
 	tiziano_sdns_dn_params_refresh();
 	tiziano_gib_dn_params_refresh();
 	tiziano_lsc_dn_params_refresh();
-	/* BISECT round 2: bottom-half first 5 enabled, last 4 disabled */
 	tiziano_ccm_dn_params_refresh();
 	tiziano_clm_dn_params_refresh();
 	tiziano_gamma_dn_params_refresh();
 	tiziano_adr_dn_params_refresh();
 	tiziano_dpc_dn_params_refresh();
-	/* BISECT round 3: all 4 enabled — previous segfault was userspace, not DN */
 	tiziano_af_dn_params_refresh();
 	tiziano_bcsh_dn_params_refresh();
-	tiziano_rdns_dn_params_refresh();
+	/* tiziano_rdns_dn_params_refresh(); — kills stats, disabled */
 	tiziano_ydns_dn_params_refresh();
 
-	if (ourISPdev) {
-		ourISPdev->day_night = active_mode;
+	if (ourISPdev)
 		ourISPdev->custom_mode = 0;
-	}
 
 	/* OEM: set poll flag and wake up dumpQueue so libimp's poll() returns */
 	tispPollValue = 1;
@@ -12906,16 +12895,41 @@ int tisp_cust_mode_g_ctrl(void)
  * day/night/custom and refreshes all DN-dependent blocks. */
 int tisp_cust_mode_s_ctrl(uint32_t mode)
 {
-    /* OEM at 0x625ec. Switches tuning binary between day/night/custom,
-     * recomputes bypass, and refreshes all DN-dependent blocks.
-     * Simplified: custom tuning mode is rarely used; stub the memcpy
-     * since tparams addresses require OEM-exact BSS layout. */
-    cust_mode = mode;
+    if (!tparams_cust)
+        return -1;
 
-    /* Recompute and write bypass register */
-    tisp_compute_top_bypass_from_params(0 /* non-WDR */);
+    if (mode == 1) {
+        /* OEM: memcpy(0x84b10, tparams_cust, 0x137f0) — load custom params.
+         * We use pointer swap instead of fixed-buffer memcpy. */
+        tparams_active = tparams_cust;
+        cust_mode = 1;
+        /* OEM: day_night = (day_night is 0 or 2) ? 2 : 3 */
+        if (ourISPdev) {
+            uint32_t dn = ourISPdev->day_night;
+            ourISPdev->day_night = ((dn & ~2) == 0) ? 2 : 3;
+        }
+    } else if (mode == 0) {
+        /* OEM: restore day or night params based on current day_night state */
+        uint32_t dn = ourISPdev ? ourISPdev->day_night : 0;
+        if (dn == 1 || dn == 3)
+            tparams_active = tparams_night;
+        else if (dn == 0 || dn == 2)
+            tparams_active = tparams_day;
+        else {
+            pr_err("tisp_cust_mode_s_ctrl: unsupported mode %u\n", dn);
+            tparams_active = tparams_day;
+        }
+        cust_mode = 0;
+    }
 
-    /* Refresh all DN-dependent blocks */
+    /* OEM: recompute and write bypass register */
+    {
+        u32 new_bypass = tisp_compute_top_bypass_from_params(!!data_b2e74);
+        new_bypass = tisp_apply_debug_top_bypass_overrides(new_bypass, "cust_mode");
+        system_reg_write(0xc, new_bypass);
+    }
+
+    /* OEM EXACT call order: all 18 _dn_ refresh functions */
     tiziano_defog_dn_params_refresh();
     tiziano_ae_dn_params_refresh();
     tiziano_awb_dn_params_refresh();
@@ -12932,7 +12946,7 @@ int tisp_cust_mode_s_ctrl(uint32_t mode)
     tiziano_dpc_dn_params_refresh();
     tiziano_af_dn_params_refresh();
     tiziano_bcsh_dn_params_refresh();
-    tiziano_rdns_dn_params_refresh();
+    /* tiziano_rdns_dn_params_refresh(); — kills stats, disabled */
     tiziano_ydns_dn_params_refresh();
     return 0;
 }
@@ -26836,7 +26850,9 @@ static int tiziano_bcsh_dn_params_refresh(void)
 }
 
 /* OEM EXACT: tiziano_rdns_dn_params_refresh
- * Decompiled at 0x5964c: params_refresh + full reg refresh. */
+ * Decompiled at 0x5964c: params_refresh + full reg refresh.
+ * NOTE: calling this mid-stream kills AWB/AE stats — root cause unknown.
+ * Disabled in DN switch until fixed. */
 static int tiziano_rdns_dn_params_refresh(void)
 {
 	tiziano_rdns_params_refresh();
