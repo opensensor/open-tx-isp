@@ -1458,25 +1458,31 @@ void system_reg_write_clm(u32 arg1, u32 arg2, u32 arg3)
     system_reg_write(arg2, arg3);
 }
 
-/* system_reg_write_gb - EXACT Binary Ninja decompiled implementation.
- * OEM-identical: calls system_reg_write for both gate and value. */
+/* system_reg_write_gb - Gate write for GB double-buffered registers.
+ * Same 0x1070 gate as GIB — must use back-to-back volatile stores. */
 void system_reg_write_gb(u32 arg1, u32 arg2, u32 arg3)
 {
-    if (arg1 == 1)
-        system_reg_write(0x1070, 1);
+    volatile u32 *base = (volatile u32 *)ourISPdev->core_regs;
 
-    system_reg_write(arg2, arg3);
+    if (arg1 == 1)
+        base[0x1070 / 4] = 1;       /* open gate */
+
+    base[arg2 / 4] = arg3;          /* write value */
 }
 
-/* system_reg_write_gib - EXACT Binary Ninja decompiled implementation.
- * OEM-identical (verified via objdump: our Apr 6 .ko matches OEM byte-for-byte).
- * Calls system_reg_write for both the 0x1070 gate and the value. */
+/* system_reg_write_gib - Gate write for GIB double-buffered registers.
+ * The 0x1070 gate auto-closes within a few CPU cycles. The gate-open and
+ * value writes MUST be back-to-back volatile stores with no function call
+ * overhead in between. Using a cached base pointer ensures the compiler
+ * emits consecutive sw instructions (matching OEM compiled output). */
 void system_reg_write_gib(u32 arg1, u32 arg2, u32 arg3)
 {
-    if (arg1 == 1)
-        system_reg_write(0x1070, 1);
+    volatile u32 *base = (volatile u32 *)ourISPdev->core_regs;
 
-    system_reg_write(arg2, arg3);
+    if (arg1 == 1)
+        base[0x1070 / 4] = 1;       /* open gate */
+
+    base[arg2 / 4] = arg3;          /* write value — must follow gate immediately */
 }
 
 /* Forward declarations for sensor control functions */
