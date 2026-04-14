@@ -1701,13 +1701,20 @@ static int tisp_mdns_top_func_cfg(int enable)
     u32 top1;
 
     if (enable) {
+        /* MDNS UV processing disabled: UV temporal blending with stale
+         * reference chroma data creates persistent pink tint + block
+         * artifacts. Y-only temporal denoise preserves color while
+         * reducing luma noise. Re-enable UV when reference frame
+         * initialization is fixed (GIB dependency). */
         ctrl = 0x10001 |
                (mdns_y_sf_cur_en_array << 4) |
                (mdns_y_sf_ref_en_array << 8) |
-               (mdns_y_filter_en_array << 12) |
-               (mdns_uv_sf_cur_en_array << 20) |
-               (mdns_uv_sf_ref_en_array << 24) |
-               (mdns_uv_filter_en_array << 28);
+               (mdns_y_filter_en_array << 12);
+        /* Disabled UV bits:
+         *     (mdns_uv_sf_cur_en_array << 20) |
+         *     (mdns_uv_sf_ref_en_array << 24) |
+         *     (mdns_uv_filter_en_array << 28);
+         */
     }
 
     system_reg_write(0x7810, ctrl);
