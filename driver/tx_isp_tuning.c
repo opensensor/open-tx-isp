@@ -17120,8 +17120,8 @@ static int Tiziano_awb_fpga(const uint32_t *stats_r,
 	u32 *mf_words = (u32 *)_awb_mf_para;
 	u32 pp = _AwbPointPos[0];
 	u32 q = pp & 0x1f;
-	u32 cof_rg = _awb_cof[0];
-	u32 cof_bg = _awb_cof[1];
+	u32 cof_rg = _wb_static[0];  /* OEM: arg9 = _wb_static, NOT _awb_cof */
+	u32 cof_bg = _wb_static[1];
 	u32 cof_rg_q, cof_bg_q;
 	u64 rg_sum = 0;
 	u64 bg_sum = 0;
