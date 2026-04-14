@@ -12714,6 +12714,27 @@ int tisp_awb_get_zone(void *out_buf)
     return 0;
 }
 
+/* OEM EXACT: tisp_ae_state_get — return AE convergence state (0x54628).
+ * out[0] = convergence flag (1 if converged), out[1] = _ae_stat, out[2] = extra state */
+int tisp_ae_state_get(uint32_t *out)
+{
+    out[1] = _ae_stat.data[0];
+    out[0] = (IspAeFlag > 0) ? 1 : 0;
+    out[2] = 0; /* data_9fcb0 — additional state, zero for now */
+    return 0;
+}
+
+/* OEM EXACT: apical_isp_awb_zone_statis_g_attr — copy AWB zone stats to user (0x756c).
+ * Allocates temp buffer, gets zone data, copies 0x2a3 bytes to userspace. */
+int apical_isp_awb_zone_statis_g_attr(void __user *uptr)
+{
+    uint8_t buf[0x2a3];
+    tisp_awb_get_zone(buf);
+    if (copy_to_user(uptr, buf, 0x2a3))
+        return -EFAULT;
+    return 0;
+}
+
 int tisp_awb_ev_update(uint32_t ev)
 {
     awb_ev_data = ev;

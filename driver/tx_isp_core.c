@@ -940,6 +940,16 @@ void mbus_to_bayer_write(u32 mbus_code)
  * value 0xb5742249 which has ALL blocks enabled — including GIB(bit 5)
  * whose BLC component zeros AE/AWB stats data at high sensor gain.
  */
+/* OEM EXACT: check_state — validate subdev state (0xb68c).
+ * Returns 0 if subdev is NULL, 1 if state is valid for streaming. */
+int check_state(struct tx_isp_subdev *sd)
+{
+    if (!sd)
+        return 0;
+    /* Check if subdev is in a valid streaming state */
+    return (sd->state >= 3) ? 1 : 0;
+}
+
 void tisp_top_sel(void)
 {
 	extern u32 tisp_enforce_block_whitelist(u32 bypass_val);
