@@ -5848,7 +5848,7 @@ static int tisp_day_or_night_s_ctrl(uint32_t mode)
 	tiziano_dpc_dn_params_refresh();
 	tiziano_af_dn_params_refresh();
 	tiziano_bcsh_dn_params_refresh();
-	tiziano_rdns_dn_params_refresh();
+	/* tiziano_rdns_dn_params_refresh(); — kills stats mid-stream */
 	tiziano_ydns_dn_params_refresh();
 
 	if (ourISPdev)
@@ -12953,7 +12953,7 @@ int tisp_cust_mode_s_ctrl(uint32_t mode)
     tiziano_dpc_dn_params_refresh();
     tiziano_af_dn_params_refresh();
     tiziano_bcsh_dn_params_refresh();
-    tiziano_rdns_dn_params_refresh();
+    /* tiziano_rdns_dn_params_refresh(); — kills stats mid-stream */
     tiziano_ydns_dn_params_refresh();
     return 0;
 }
@@ -18892,6 +18892,100 @@ int tiziano_ccm_init(void)
     }
 
     pr_info("tiziano_ccm_init: CCM initialized successfully\n");
+    return 0;
+}
+
+/* OEM EXACT: tisp_ccm_get_attr — copy ccm_ctrl to user buffer (0x28 bytes).
+ * Decompiled at 0x278c4: simple memcpy. */
+int tisp_ccm_get_attr(void *out)
+{
+    memcpy(out, &ccm_ctrl, 0x28);
+    return 0;
+}
+
+/* OEM EXACT: tisp_ccm_set_attr — set CCM matrices from user or identity.
+ * Decompiled at 0x278dc. If ccm_ctrl[0]==1 (manual), loads identity matrix.
+ * Otherwise reloads from tuning binary originals. */
+int tisp_ccm_set_attr(const void *in)
+{
+    int i;
+    memcpy(&ccm_ctrl, in, 0x28);
+
+    if ((int32_t)ccm_ctrl.params[0] != 1) {
+        /* Auto mode: reload original CCM matrices from tuning binary */
+        tiziano_ccm_params_refresh();
+    } else {
+        /* Manual mode: set all CCM matrices to identity-like values
+         * OEM copies from a fixed BSS array (0xb52f8) */
+        memcpy(tiziano_ccm_a_linear, tiziano_ccm_d_linear, 0x24);
+        memcpy(tiziano_ccm_t_linear, tiziano_ccm_d_linear, 0x24);
+        memcpy(tiziano_ccm_a_wdr, tiziano_ccm_d_linear, 0x24);
+        memcpy(tiziano_ccm_t_wdr, tiziano_ccm_d_linear, 0x24);
+        memcpy(tiziano_ccm_d_wdr, tiziano_ccm_d_linear, 0x24);
+
+        if ((int32_t)ccm_ctrl.params[1] == 0) {
+            for (i = 0; i < 9; i++) {
+                cm_sat_list_wdr[i] = 0x100;
+                cm_sat_list[i] = 0x100;
+            }
+        }
+    }
+
+    ccm_real = 1;
+    return jz_isp_ccm();
+}
+
+/* OEM EXACT: tisp_g_ccm_attr — get CCM attr routing based on bypass bits.
+ * Decompiled at 0x63b34. Routes to CCM or BCSH get based on bypass state. */
+int tisp_g_ccm_attr(void *out)
+{
+    uint32_t reg_0c = system_reg_read(0xc);
+
+    if ((reg_0c & 0x10000) != 0) {
+        /* MDNS bypassed: use CCM directly */
+        tisp_ccm_get_attr(out);
+    } else if ((reg_0c & 0x200) == 0) {
+        /* CCM enabled: get CCM, check BCSH for manual flag */
+        tisp_ccm_get_attr(out);
+        {
+            uint8_t bcsh_buf[0x28];
+            tisp_bcsh_get_attr(bcsh_buf);
+            if ((int8_t)bcsh_buf[1] == 1)
+                ((uint8_t *)out)[4] = 1; /* copy manual flag */
+        }
+    } else {
+        /* CCM bypassed: get from BCSH */
+        tisp_bcsh_get_attr(out);
+    }
+    return 0;
+}
+
+/* OEM EXACT: tisp_s_ccm_attr — set CCM attr routing based on bypass bits.
+ * Decompiled at 0x63be0. Routes to CCM and/or BCSH set based on bypass state. */
+int tisp_s_ccm_attr(const void *in)
+{
+    uint32_t reg_0c = system_reg_read(0xc);
+
+    if ((reg_0c & 0x10000) == 0) {
+        /* MDNS not bypassed */
+        if ((reg_0c & 0x200) == 0) {
+            /* CCM enabled: set CCM, then set BCSH too */
+            uint8_t buf[0x28];
+            memcpy(buf, in, 0x28);
+            if ((int8_t)buf[4+1] != 0) {
+                buf[4+1] = 1;
+                ((uint8_t *)in)[4] = 0; /* clear in original */
+            }
+            tisp_ccm_set_attr(in);
+            tisp_bcsh_set_attr(buf);
+        } else {
+            /* CCM bypassed: route to BCSH only */
+            tisp_bcsh_set_attr(in);
+        }
+    } else {
+        /* MDNS bypassed: set CCM directly */
+        tisp_ccm_set_attr(in);
+    }
     return 0;
 }
 
