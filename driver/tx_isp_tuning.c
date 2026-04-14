@@ -6667,6 +6667,206 @@ static int apical_isp_core_ops_g_ctrl(struct tx_isp_dev *dev, struct isp_core_ct
         case 0x80000e7:  // ISP Custom Mode
             ctrl->value = tuning->custom_mode;
             break;
+
+        /* ---- OEM g_ctrl commands added for parity ---- */
+
+        case 0x8000008: { /* OEM: tisp_g_rgb_coefft — get RGB coefficients (6 bytes) */
+            int32_t rgb_buf[3];
+            tisp_g_rgb_coefft(rgb_buf);
+            if (copy_to_user((void __user *)(unsigned long)ctrl->value, rgb_buf, 6))
+                ret = -EFAULT;
+            break;
+        }
+
+        case 0x800000a: { /* OEM: tisp_g_awb_start — get AWB start gains (8 bytes) */
+            uint32_t awb_start[2];
+            tisp_g_awb_start(awb_start);
+            if (copy_to_user((void __user *)(unsigned long)ctrl->value, awb_start, 8))
+                ret = -EFAULT;
+            break;
+        }
+
+        case 0x800000b: /* OEM: apical_isp_awb_zone_statis_g_attr — AWB zone stats */
+            ret = apical_isp_awb_zone_statis_g_attr((void __user *)(unsigned long)ctrl->value);
+            break;
+
+        case 0x800000d: { /* OEM: tisp_g_wb_ct — get WB color temperature (4 bytes) */
+            uint32_t ct_val;
+            tisp_g_wb_ct(&ct_val);
+            if (copy_to_user((void __user *)(unsigned long)ctrl->value, &ct_val, 4))
+                ret = -EFAULT;
+            break;
+        }
+
+        case 0x800000e: { /* OEM: tisp_g_awb_cluster — get AWB cluster (0x28 bytes) */
+            uint32_t cluster_buf[0x28 / 4];
+            tisp_g_awb_cluster(cluster_buf);
+            if (copy_to_user((void __user *)(unsigned long)ctrl->value, cluster_buf, 0x28))
+                ret = -EFAULT;
+            break;
+        }
+
+        case 0x800000f: { /* OEM: tisp_g_awb_ct_trend — get AWB CT trend (0x18 bytes) */
+            uint32_t trend_buf[0x18 / 4];
+            tisp_g_awb_ct_trend(trend_buf);
+            if (copy_to_user((void __user *)(unsigned long)ctrl->value, trend_buf, 0x18))
+                ret = -EFAULT;
+            break;
+        }
+
+        case 0x800002a: { /* OEM: tisp_g_Hilightdepress */
+            uint32_t hl_val;
+            ret = tisp_g_Hilightdepress(&hl_val);
+            if (ret == 0)
+                ctrl->value = hl_val;
+            break;
+        }
+
+        case 0x800002b: /* OEM: apical_isp_gamma_g_attr — get gamma LUT */
+            ret = apical_isp_gamma_g_attr((void __user *)(unsigned long)ctrl->value);
+            break;
+
+        case 0x800002e: /* OEM: tisp_g_ae_hist — complex, stubbed */
+            ret = 0;
+            break;
+
+        case 0x800002f: { /* OEM: tisp_g_ae_min — get AE min (0x10 bytes) */
+            uint32_t ae_min[4] = {0};
+            if (copy_to_user((void __user *)(unsigned long)ctrl->value, ae_min, 0x10))
+                ret = -EFAULT;
+            break;
+        }
+
+        case 0x8000032: { /* OEM: tisp_g_ae_it_max */
+            uint32_t it_max = 0;
+            ctrl->value = it_max;
+            break;
+        }
+
+        case 0x8000036: { /* OEM: tisp_get_ae_state — AE state (0xc bytes) */
+            uint32_t ae_state[3];
+            tisp_ae_state_get(ae_state);
+            if (copy_to_user((void __user *)(unsigned long)ctrl->value, ae_state, 0xc))
+                ret = -EFAULT;
+            break;
+        }
+
+        case 0x8000037: { /* OEM: tisp_g_BacklightComp */
+            uint32_t bl_val;
+            ret = tisp_g_BacklightComp(&bl_val);
+            if (ret == 0)
+                ctrl->value = bl_val;
+            break;
+        }
+
+        case 0x8000038: { /* OEM: tisp_g_ae_at_list — get AE AT list (0x28 bytes) */
+            uint32_t at_buf[0x28 / 4] = {0};
+            if (copy_to_user((void __user *)(unsigned long)ctrl->value, at_buf, 0x28))
+                ret = -EFAULT;
+            break;
+        }
+
+        case 0x8000042: /* OEM: apical_isp_af_hist_g_attr — stubbed */
+            ret = 0;
+            break;
+
+        case 0x8000043: { /* OEM: tisp_g_af_metric (4 bytes) */
+            uint32_t af_metric = 0;
+            ctrl->value = af_metric;
+            break;
+        }
+
+        case 0x8000044: /* OEM: apical_isp_af_weight_g_attr — stubbed */
+            ret = 0;
+            break;
+
+        case 0x8000046: /* OEM: apical_isp_af_zone_g_ctrl — stubbed */
+            ret = 0;
+            break;
+
+        case 0x8000084: { /* OEM: tisp_g_ncuinfo (0x14 bytes) */
+            uint32_t ncu[5] = {0};
+            if (copy_to_user((void __user *)(unsigned long)ctrl->value, ncu, 0x14))
+                ret = -EFAULT;
+            break;
+        }
+
+        case 0x80000a5: { /* OEM: tisp_get_blc_attr (0x14 bytes) */
+            uint32_t blc[5] = {0};
+            if (copy_to_user((void __user *)(unsigned long)ctrl->value, blc, 0x14))
+                ret = -EFAULT;
+            break;
+        }
+
+        case 0x80000a6: /* OEM: tiziano_isp_csc_g_attr — stubbed */
+            ret = 0;
+            break;
+
+        case 0x80000e3: { /* OEM: tisp_g_fcrop_control (0x14 bytes) */
+            uint32_t fcrop[5] = {0};
+            if (copy_to_user((void __user *)(unsigned long)ctrl->value, fcrop, 0x14))
+                ret = -EFAULT;
+            break;
+        }
+
+        case 0x80000e4: { /* OEM: combined hvflip get */
+            uint32_t hf = tuning->hflip ? 2 : 0;
+            uint32_t vf = tuning->vflip ? 1 : 0;
+            ctrl->value = hf | vf;
+            break;
+        }
+
+        case 0x80000e5: /* OEM: apical_isp_mask_g_attr — stubbed */
+            ret = 0;
+            break;
+
+        case 0x80000ea: { /* OEM: tisp_get_wdr_output_mode (4 bytes) */
+            uint32_t wdr_mode = 0;
+            if (copy_to_user((void __user *)(unsigned long)ctrl->value, &wdr_mode, 4))
+                ret = -EFAULT;
+            break;
+        }
+
+        case 0x8000100: { /* OEM: tisp_g_ccm_attr — get CCM attr (0x28 bytes) */
+            uint32_t ccm_buf[0x28 / 4];
+            tisp_g_ccm_attr(ccm_buf);
+            if (copy_to_user((void __user *)(unsigned long)ctrl->value, ccm_buf, 0x28))
+                ret = -EFAULT;
+            break;
+        }
+
+        case 0x8000162: /* OEM: isp_frame_done_wait — deferred */
+            ret = 0;
+            break;
+
+        /* No-ops */
+        case 0x8000003:
+        case 0x8000006:
+        case 0x8000007:
+        case 0x8000020:
+        case 0x8000021:
+        case 0x8000040:
+        case 0x8000041:
+        case 0x8000082:
+        case 0x8000083:
+        case 0x80000a0:
+        case 0x80000a1:
+        case 0x80000c0:
+        case 0x80000c1:
+        case 0x80000c2:
+        case 0x8000120:
+        case 0x8000169:
+            ret = 0;
+            break;
+
+        case 0x98091f:
+            ctrl->value = 0;
+            break;
+
+        case 0x9a091a:
+            ctrl->value = 0;
+            break;
+
         default:
             pr_warn("Unknown m0 control get command: 0x%x\n", ctrl->cmd);
             ret = -EINVAL;
@@ -29608,6 +29808,22 @@ int tisp_s_adr_enable(int enable)
     return 0;
 }
 EXPORT_SYMBOL(tisp_s_adr_enable);
+
+/* OEM: tisp_g_Hilightdepress — get highlight depression level */
+static uint32_t hilightdepress_stored;
+int tisp_g_Hilightdepress(uint32_t *out)
+{
+    *out = hilightdepress_stored;
+    return 0;
+}
+
+/* OEM: tisp_g_BacklightComp — get backlight compensation level */
+static uint32_t backlightcomp_stored;
+int tisp_g_BacklightComp(uint32_t *out)
+{
+    *out = backlightcomp_stored;
+    return 0;
+}
 
 /* tisp_s_adr_str_internal - ADR strength internal control */
 int tisp_s_adr_str_internal(int strength)
