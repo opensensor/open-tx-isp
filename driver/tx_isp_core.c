@@ -1270,12 +1270,23 @@ int ispcore_video_s_stream(struct tx_isp_subdev *sd, int enable)
         s3_1 = &isp_dev->subdevs[0];
 
         if (v0_3 == 3) {
-            /* OEM BN: state 3→4 is the only action here.
-             * The subdev walk below calls vic_core_s_stream(1)
-             * which re-runs tx_isp_vic_start (VIC reset→config→run).
-             * AWB/AE stats DMA stays active across the cycle —
-             * OEM never re-arms 0xb000/0xa000 here. */
             isp_dev->state = 4;
+
+            /* Re-arm AWB stats DMA on stream restart.
+             * The AWB DMA engine may be single-shot: after cycling through
+             * all banks it stops. Re-writing 0xb04c re-triggers it.
+             * Without this, AWB stats go to zero after the first bank cycle. */
+            {
+                u32 awb_phys = system_reg_read(0xb03c);
+                if (awb_phys) {
+                    system_reg_write(0xb03c, awb_phys);
+                    system_reg_write(0xb040, awb_phys + 0x1000);
+                    system_reg_write(0xb044, awb_phys + 0x2000);
+                    system_reg_write(0xb048, awb_phys + 0x3000);
+                    system_reg_write(0xb04c, 3);
+                    pr_info("ispcore_s_stream: re-armed AWB DMA (phys=0x%08x)\n", awb_phys);
+                }
+            }
         }
     }
 
@@ -1363,9 +1374,15 @@ int ispcore_video_s_stream(struct tx_isp_subdev *sd, int enable)
         if (core_base) {
             if (enable == 0 || ispcore_bypass_enabled(isp_dev)) {
                 writel(0x00000000, core_base + 0xb0);
+                pr_info("ispcore_s_stream: reg[0xb0]=0x0 (disable, en=%d byp=%d)\n",
+                    enable, ispcore_bypass_enabled(isp_dev));
             } else {
                 writel(0xFFFFFFFF, core_base + 0xb0);
+                pr_info("ispcore_s_stream: reg[0xb0]=0xFFFFFFFF (enable, en=%d byp=%d) readback=0x%08x\n",
+                    enable, ispcore_bypass_enabled(isp_dev), readl(core_base + 0xb0));
             }
+        } else {
+            pr_err("ispcore_s_stream: core_base NULL, can't write 0xb0!\n");
         }
     }
     if (enable == 0 || ispcore_bypass_enabled(isp_dev)) {
@@ -1556,6 +1573,7 @@ irqreturn_t ispcore_interrupt_service_routine(int irq, void *dev_id)
     void __iomem *isp_regs;
     void __iomem *vic_regs;
     u32 interrupt_status;
+    u32 hw_interrupt_status; /* raw HW status before bit-0 forcing */
     u32 error_check;
     int i;
 
@@ -1588,10 +1606,10 @@ irqreturn_t ispcore_interrupt_service_routine(int irq, void *dev_id)
         writel(interrupt_status, isp_regs + 0xb8);
         wmb();
     }
-    /* Force bit 0 for reliable FIFO drain.  Hardware bit 0x1 does fire
-     * (confirmed at ISR[120]: int=0x1) but throughput is ~7fps due to
-     * bypass blocks.  Forced drain catches frames with less latency. */
-    interrupt_status |= 1;
+    hw_interrupt_status = interrupt_status;
+    /* OEM does NOT force bit 0. Previous forced bit-0 was corrupting
+     * AWB DMA bank cycling — banks 0-2 worked but bank 3 went dead,
+     * killing AWB stats from frame 4 onward. Let HW control bit 0. */
 
     /* Binary Ninja: if (($s1 & 0x3f8) == 0) */
     if ((interrupt_status & 0x3f8) == 0) {
@@ -1667,6 +1685,12 @@ irqreturn_t ispcore_interrupt_service_routine(int irq, void *dev_id)
     if (first_into == 1) {
         tisp_top_sel();
         first_into = 0;
+    }
+
+    /* OEM EXACT: Per-frame tuning event — calls isp_frame_done_wakeup(). */
+    if (interrupt_status & 1) {
+        extern void isp_frame_done_wakeup(void);
+        isp_frame_done_wakeup();
     }
 
     /* *** CHANNEL 0/1/2 FRAME COMPLETION PROCESSING ***

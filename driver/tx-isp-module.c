@@ -1459,30 +1459,27 @@ void system_reg_write_clm(u32 arg1, u32 arg2, u32 arg3)
 }
 
 /* system_reg_write_gb - Gate write for GB double-buffered registers.
- * Same 0x1070 gate as GIB — must use back-to-back volatile stores. */
+ * OEM uses same pattern as system_reg_write_gib: function calls, not direct stores. */
 void system_reg_write_gb(u32 arg1, u32 arg2, u32 arg3)
 {
-    volatile u32 *base = (volatile u32 *)ourISPdev->core_regs;
-
     if (arg1 == 1)
-        base[0x1070 / 4] = 1;       /* open gate */
+        system_reg_write(0x1070, 1);
 
-    base[arg2 / 4] = arg3;          /* write value */
+    system_reg_write(arg2, arg3);
 }
 
 /* system_reg_write_gib - Gate write for GIB double-buffered registers.
- * The 0x1070 gate auto-closes within a few CPU cycles. The gate-open and
- * value writes MUST be back-to-back volatile stores with no function call
- * overhead in between. Using a cached base pointer ensures the compiler
- * emits consecutive sw instructions (matching OEM compiled output). */
+ * OEM decompilation shows this calls system_reg_write() as a FUNCTION
+ * for both the gate open and the value write (with tail-call for the
+ * second). This provides natural delay between the two writes via
+ * function call overhead. Previous "back-to-back" direct stores may
+ * have been too fast for the hardware gate timing. */
 void system_reg_write_gib(u32 arg1, u32 arg2, u32 arg3)
 {
-    volatile u32 *base = (volatile u32 *)ourISPdev->core_regs;
-
     if (arg1 == 1)
-        base[0x1070 / 4] = 1;       /* open gate */
+        system_reg_write(0x1070, 1);
 
-    base[arg2 / 4] = arg3;          /* write value — must follow gate immediately */
+    system_reg_write(arg2, arg3);
 }
 
 /* Forward declarations for sensor control functions */

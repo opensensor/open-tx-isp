@@ -2558,16 +2558,17 @@ static u32 tisp_compute_top_bypass_from_params(int wdr_enable)
 		}
 	}
 
+	if (params && tuning_bin_loaded)
+		pr_info("tisp_compute_top_bypass: tparams[5](GIB)=%u [13](GB)=%u [16](MDNS)=%u\n",
+			params[5], params[13], params[16]);
 	pr_info("tisp_compute_top_bypass: oem_loop=0x%08x\n", bypass_val);
 
 	/* OEM EXACT: apply WDR-specific AND-mask then OR-mask. */
 	if (wdr_enable)
 		bypass_val = (bypass_val & 0xa1fffff6) | 0x00880002;
 	else
-		/* Force-bypass: GIB(5), GB(13), MDNS(16).
-		 * GIB register values verified correct (BLC ch0-4 match OEM,
-		 * IR=0, permutation correct for bayer=0). Equalization is
-		 * internal to GIB HW — activation sequence issue, not data. */
+		/* GIB(5)+GB(13)+MDNS(16) bypassed for stable image.
+		 * ISR now dispatches ISP_TUNING_EVENT_FRAME per OEM. */
 		bypass_val = (bypass_val & 0xb577fffd) | 0x34012029;
 
 	pr_info("tisp_compute_top_bypass: final=0x%08x\n", bypass_val);
@@ -5585,6 +5586,11 @@ int tisp_init(void *sensor_info_arg, char *param_name)
      * without it — the first tisp_tgain_update via event 4 fires too late. */
     tisp_tgain_update(0);
 
+    /* NOTE: GIB is bypassed (bit 5=1) due to HW equalization issue.
+     * When GIB is active, AWB stats show R=G=B regardless of register
+     * values. Tested: zero BLC, bit12=0, post-engine reprogram — all
+     * produce R=G=B. Root cause needs binary-level comparison vs OEM. */
+
     /* Core register dump to compare with OEM for GIB investigation */
     pr_info("ISP_CORE: 0x00=%08x 0x04=%08x 0x08=%08x 0x0c=%08x\n",
             system_reg_read(0x00), system_reg_read(0x04),
@@ -5904,7 +5910,6 @@ static int tisp_day_or_night_s_ctrl(uint32_t mode)
 
 static int isp_core_tuning_event(struct tx_isp_dev *dev, uint32_t event)
 {
-    pr_info("isp_core_tuning_event: event=0x%x\n", event);
     if (!dev)
         return -EINVAL;
 
@@ -5924,14 +5929,9 @@ static int isp_core_tuning_event(struct tx_isp_dev *dev, uint32_t event)
             break;
 
         case ISP_TUNING_EVENT_FRAME:
-            pr_info("*** ISP_TUNING_EVENT_FRAME: Starting frame processing ***\n");
-            /* CRITICAL: This is where frame processing should be triggered */
-            /* In the reference driver, this would start DMA transfer from sensor to buffer */
-            if (dev->core_regs) {
-                /* Trigger frame capture - write to frame control register */
-                writel(1, ourISPdev->core_regs + 0x9000);  /* Start frame capture */
-                pr_info("isp_core_tuning_event: Frame capture triggered\n");
-            }
+            /* OEM EXACT: 0x4000002 just calls isp_frame_done_wakeup().
+             * This wakes libimp's frame-sync wait (ioctl 0x8000162). */
+            isp_frame_done_wakeup();
             break;
 
         case ISP_TUNING_EVENT_FRAME_DONE:
@@ -12933,10 +12933,15 @@ int tisp_dpc_set_par_cfg(void *in_buf)
 int tisp_gib_set_par_cfg(void *in_buf)
 {
     int total = 0, sz = 0; char *p = (char *)in_buf;
+    static int gib_set_par_count;
+    gib_set_par_count++;
+    pr_info("tisp_gib_set_par_cfg: call #%d from libimp\n", gib_set_par_count);
     for (int i = 0x3e; i < 0x54; ++i) {
         if (tisp_gib_param_array_set(i, p, &sz) != 0) return -EINVAL;
         p += sz; total += sz;
     }
+    pr_info("tisp_gib_set_par_cfg: total=%d bytes, 0x103c=0x%08x 0x1060=0x%08x\n",
+        total, system_reg_read(0x103c), system_reg_read(0x1060));
     return 0;
 }
 int tisp_rdns_set_par_cfg(void *in_buf)
@@ -17842,8 +17847,15 @@ int awb_interrupt_static(void)
 	 * R=G=B values, which is exactly the symptom we observed when GIB was
 	 * enabled. Mask the index to keep reads inside the allocation. */
 	bank_idx = awb_status & 0x3;
+
+	/* 0xb04c=3 may mean "3 banks (0-2)". When 0xb050 returns 3, no valid
+	 * data is available — skip processing. Without this, reading the
+	 * uninitialized bank 3 buffer returns zeros, corrupting AWB state. */
+	if (bank_idx == 3)
+		return 1;  /* skip this IRQ, return "handled" */
+
 	if (awb_status >= 4 && awb_oob_warn < 5) {
-		pr_warn("AWB_BANK_OOB: 0xb050=0x%x out of range (4 banks), masked to %u\n",
+		pr_warn("AWB_BANK_OOB: 0xb050=0x%x out of range (3 banks), masked to %u\n",
 			awb_status, bank_idx);
 		awb_oob_warn++;
 	}

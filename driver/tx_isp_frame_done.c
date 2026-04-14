@@ -1,76 +1,53 @@
 /*
  * TX ISP Frame Done Wakeup Implementation
  *
- * This file implements the ISP frame done wakeup function
- * that is called by VIC when a frame is complete.
+ * OEM EXACT: isp_frame_done_wakeup at 0x8a10.
+ * Increments 64-bit frame counter, sets condition flag, wakes waitqueue.
+ * Called from ISR via ISP_TUNING_EVENT_FRAME (0x4000002) on every frame.
+ * libimp waits on this via ioctl 0x8000162 (isp_frame_done_wait).
  */
 
 #include <linux/kernel.h>
+#include <linux/sched.h>
 #include <linux/wait.h>
+#include <linux/jiffies.h>
 #include <linux/atomic.h>
-#include "include/tx-isp-debug.h"
-#include "include/tx_isp.h"
+#include <linux/errno.h>
+#include <linux/types.h>
 
-/* Defog per-frame hook */
-extern void tisp_defog_on_frame(void);
-
-
-/* Frame done tracking variables */
+/* Frame done tracking variables — OEM globals at 0xa2a30/0xa2a38 */
 static atomic64_t frame_done_cnt = ATOMIC64_INIT(0);
 static int frame_done_cond = 0;
 static DECLARE_WAIT_QUEUE_HEAD(frame_done_wait);
 
 /**
- * isp_frame_done_wakeup - Notify ISP core that a frame is ready
- * This function is called by VIC when a frame is complete
- * Based on Binary Ninja decompilation
+ * isp_frame_done_wakeup - OEM EXACT at 0x8a10
+ * Increment counter, set condition, wake waitqueue. Nothing else.
  */
 void isp_frame_done_wakeup(void)
 {
-    /* Increment frame done counter */
     atomic64_inc(&frame_done_cnt);
-
-    /* CRITICAL FIX: Also increment main ISP frame counter for /proc/jz/isp/isp-w02 */
-    extern struct tx_isp_dev *ourISPdev;
-    if (ourISPdev) {
-        ourISPdev->frame_count++;
-        pr_info("*** FRAME SYNC: ISP frame count = %u (internal count = %lld) ***\n",
-                ourISPdev->frame_count, atomic64_read(&frame_done_cnt));
-    }
-
-    /* Kick defog per-frame update; it will no-op if no provider is registered */
-    tisp_defog_on_frame();
-
-    /* Set condition flag */
     frame_done_cond = 1;
-
-    /* Wake up any processes waiting for frame completion */
     wake_up(&frame_done_wait);
-
-    pr_info("*** ISP FRAME DONE WAKEUP: Frame %lld ready for processing ***\n",
-             atomic64_read(&frame_done_cnt));
 }
 EXPORT_SYMBOL(isp_frame_done_wakeup);
 
 /**
- * isp_frame_done_wait - Wait for frame completion
- * This function allows processes to wait for frame done events
+ * isp_frame_done_wait - OEM EXACT at 0x79dc
+ * Wait for frame done with timeout, return counter values.
  */
 int isp_frame_done_wait(int timeout_ms)
 {
     int ret;
 
-    /* Wait for frame done condition with timeout */
     ret = wait_event_timeout(frame_done_wait,
                             frame_done_cond,
                             msecs_to_jiffies(timeout_ms));
 
     if (ret > 0) {
-        /* Frame done occurred, clear condition */
         frame_done_cond = 0;
         return 0;
     } else if (ret == 0) {
-        /* Timeout */
         return -ETIMEDOUT;
     }
 
@@ -78,12 +55,11 @@ int isp_frame_done_wait(int timeout_ms)
 }
 EXPORT_SYMBOL(isp_frame_done_wait);
 
-/* Extended wait that also returns counters like OEM (out[0]=internal, out[1]=isp->frame_count) */
+/* OEM EXACT: Extended wait returning counters (used by ioctl 0x8000162) */
 int isp_frame_done_wait_ex(int timeout_ms, u32 out[2])
 {
     int ret;
     u64 cnt;
-    extern struct tx_isp_dev *ourISPdev;
 
     if (!out)
         return -EINVAL;
@@ -93,12 +69,11 @@ int isp_frame_done_wait_ex(int timeout_ms, u32 out[2])
 
     cnt = atomic64_read(&frame_done_cnt);
     out[0] = (u32)cnt;
-    out[1] = (ourISPdev ? ourISPdev->frame_count : 0);
+    out[1] = (u32)(cnt >> 32);
 
     return (ret > 0) ? 0 : (ret == 0 ? -ETIMEDOUT : ret);
 }
 EXPORT_SYMBOL_GPL(isp_frame_done_wait_ex);
-
 
 /**
  * isp_frame_done_get_count - Get current frame done count
