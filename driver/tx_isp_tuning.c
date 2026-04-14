@@ -2564,10 +2564,10 @@ static u32 tisp_compute_top_bypass_from_params(int wdr_enable)
 	if (wdr_enable)
 		bypass_val = (bypass_val & 0xa1fffff6) | 0x00880002;
 	else
-		/* Force-bypass: GIB(5), LSC(4), GB(13), MDNS(16).
-		 * ADR(7) re-enabled — dynamic range compression.
-		 * 0x34012039 = base | GIB(0x20) | LSC(0x10) | GB(0x2000) | MDNS(0x10000) */
-		bypass_val = (bypass_val & 0xb577fffd) | 0x34012039;
+		/* Force-bypass: GIB(5), GB(13), MDNS(16).
+		 * LSC(4) + ADR(7) re-enabled.
+		 * 0x34012029 = base | GIB(0x20) | GB(0x2000) | MDNS(0x10000) */
+		bypass_val = (bypass_val & 0xb577fffd) | 0x34012029;
 
 	pr_info("tisp_compute_top_bypass: final=0x%08x\n", bypass_val);
 
