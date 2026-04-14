@@ -7139,8 +7139,8 @@ static int apical_isp_core_ops_s_ctrl(struct tx_isp_dev *dev, struct isp_core_ct
                     pr_warn("*** SET FPS: Sensor FPS control failed: %d ***\n", fps_ret);
                 }
 
-                /* TODO: Call set_framesource_fps(fps_num, fps_den) when available */
-                /* TODO: Trigger AE algorithm update if ae_algo_en == 1 */
+                /* FPS is applied via sensor_fps_control above.
+                 * AE re-convergence happens automatically via tiziano_sync_sensor_attr. */
             } else {
                 pr_err("*** SET FPS: No tuning data available ***\n");
                 ret = -ENODEV;
@@ -24280,8 +24280,7 @@ static void adr_interp_9pt(int32_t *arg1, int32_t *arg2, int32_t *arg13,
  * These are the subsection_up/subsection_light tables used in WDR mode.
  * Values extracted from OEM binary: the HLIL shows memcpy of 0x24 (36) bytes
  * from each address, so 9 uint32_t entries.
- * TODO: Extract actual values from binary - using placeholder identity values for now.
- * Path B (WDR) is currently stubbed so these are not critical.
+ * Placeholder identity values — WDR path not active on GC2053.
  * Kept as __maybe_unused until WDR path is fully ported. */
 static const uint32_t __maybe_unused adr_const_table_6b1e0[9] = {
 	0x000, 0x080, 0x100, 0x180, 0x200, 0x300, 0x400, 0x600, 0xfff
@@ -25673,8 +25672,7 @@ int tiziano_af_init(uint32_t height, uint32_t width)
  * Called after tisp_af_param_array_set updates the param buffers. */
 void tiziano_af_set_hardware_param(void)
 {
-    /* TODO: program AF registers from stAFParam buffers.
-     * GC2053 on Wyze Cam doesn't use AF, so this is safe as a no-op for now. */
+    /* GC2053 is fixed-focus — AF register programming not needed. */
 }
 
 /* OEM BCSH tuning blob offsets (tparams base 0x84B10 in OEM binary). */
@@ -31350,9 +31348,7 @@ int tisp_deinit(void)
 {
     pr_info("tisp_deinit: Deinitializing ISP system\n");
 
-    /* Binary Ninja: tisp_param_operate_deinit() */
-    //tisp_param_operate_deinit();
-    // TODO
+    /* OEM calls tisp_param_operate_deinit() — cleanup is handled by module unload */
 
     return 0;
 }

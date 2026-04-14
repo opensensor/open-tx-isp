@@ -1410,9 +1410,9 @@ int ispcore_sensor_ops_ioctl(struct tx_isp_dev *isp_dev)
 
         /* Update FPS from tuning data if available */
         if (isp_dev && isp_dev->tuning_data) {
-            /* Note: tuning_data structure access needs proper casting */
-            int new_fps = (25 << 16) | 1;  /* Default FPS for now - TODO: access actual tuning_data */
-            if (new_fps != fps_value) {
+            struct isp_tuning_data *td = isp_dev->tuning_data;
+            int new_fps = (td->fps_num << 16) | (td->fps_den & 0xffff);
+            if (new_fps && new_fps != fps_value) {
                 fps_value = new_fps;
                 pr_info("*** ispcore_sensor_ops_ioctl: Updated FPS to 0x%x from tuning data ***\n", fps_value);
             }

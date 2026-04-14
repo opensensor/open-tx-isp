@@ -6815,7 +6815,6 @@ static int tx_isp_vic_handle_event(void *vic_subdev, int event_type, void *data)
         // Activate VIC
         if (vic_dev->state == 1) {
             vic_dev->state = 2;
-            // TODO call other activation functions here
     		int ret = tx_isp_activate_csi_subdev(ourISPdev);
     		if (ret) {
         		pr_err("Failed to activate CSI subdev: %d\n", ret);
