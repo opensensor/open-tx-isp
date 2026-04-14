@@ -2564,7 +2564,7 @@ static u32 tisp_compute_top_bypass_from_params(int wdr_enable)
 	if (wdr_enable)
 		bypass_val = (bypass_val & 0xa1fffff6) | 0x00880002;
 	else
-		bypass_val = (bypass_val & 0xb577fffd) | 0x34000009;
+		bypass_val = (bypass_val & 0xb577fffd) | 0x34012029;
 
 	pr_info("tisp_compute_top_bypass: final=0x%08x\n", bypass_val);
 
