@@ -3216,6 +3216,8 @@ int ae0_interrupt_static(void);
 int ae1_interrupt_hist(void);
 int ae1_interrupt_static(void);
 int awb_interrupt_static(void);
+int af_interrupt_static(void);
+int tiziano_wdr_interrupt_static(void);
 
 static int JZ_Isp_Awb(void);
 static int JZ_Isp_Get_Awb_Statistics(void *buffer, uint32_t flags);
@@ -3270,6 +3272,20 @@ static uint32_t data_b2f60 = 0;  /* AE1 histogram buffer base */
 static uint32_t data_a2f58 = 0;  /* AWB DMA page count */
 static uint32_t data_a2f5c = 0;  /* AWB statistics buffer base */
 static uint32_t data_a2f60 = 0;  /* AWB statistics buffer phys */
+static uint32_t data_a2f80 = 0;  /* AF statistics buffer base (virt) */
+static uint32_t data_a2f84 = 0;  /* AF statistics buffer phys */
+static uint32_t data_a2f7c = 0;  /* AF DMA page count */
+
+/* AF stat output arrays — 15 zones per row, max 15 rows = 225 zones */
+#define AF_STATS_ZONES 225
+static uint32_t af_array_fird0[AF_STATS_ZONES];
+static uint32_t af_array_fird1[AF_STATS_ZONES];
+static uint32_t af_array_iird0[AF_STATS_ZONES];
+static uint32_t af_array_iird1[AF_STATS_ZONES];
+static uint32_t af_array_y_sum[AF_STATS_ZONES];
+static uint32_t af_array_high_luma_cnt[AF_STATS_ZONES];
+static uint8_t frame_num;
+
 static uint32_t data_b0e00 = 0;  /* AE0 interrupt flag */
 static uint32_t data_b0e10 = 0;  /* AE histogram flag */
 static uint32_t data_b0dfc = 0;  /* AE1 interrupt flag */
@@ -5426,6 +5442,9 @@ int tisp_init(void *sensor_info_arg, char *param_name)
     void *buf6 = (void *)__get_free_pages(GFP_KERNEL, 2);
     if (buf6 != NULL) {
         dma_addr_t buf6_phys = virt_to_phys(buf6);
+        data_a2f80 = (uint32_t)(unsigned long)buf6;
+        data_a2f84 = (uint32_t)buf6_phys;
+        data_a2f7c = 4;
         system_reg_write(0xb8a8, buf6_phys);
         system_reg_write(0xb8ac, buf6_phys + 0x1000);
         system_reg_write(0xb8b0, buf6_phys + 0x2000);
@@ -5514,27 +5533,12 @@ int tisp_init(void *sensor_info_arg, char *param_name)
     system_reg_write(0x800, 1);  /* CRITICAL: This starts ISP processing */
     pr_info("*** tisp_init: ISP processing engine STARTED (reg 0x800=1) ***\n");
 
-    /* GIB INVESTIGATION: Re-program ALL GIB registers after engine start.
-     * tiziano_gib_init() wrote config regs (0x1038,0x103c,0x106c,0x1030/0x1034)
-     * and DEIR LUTs (0x80000+) BEFORE 0x800=1. If those writes don't latch until
-     * the engine is running, GIB will use power-on defaults that corrupt data.
-     * The OEM doesn't do this explicitly, but may have different HW state at boot. */
-    pr_info("GIB_REINIT: Re-programming GIB after engine start\n");
-    pr_info("GIB_BEFORE: 0x1030=%08x 0x1034=%08x 0x1038=%08x 0x103c=%08x\n",
-        system_reg_read(0x1030), system_reg_read(0x1034),
-        system_reg_read(0x1038), system_reg_read(0x103c));
-    pr_info("GIB_BEFORE: 0x1060=%08x 0x1064=%08x 0x1068=%08x 0x106c=%08x 0x1070=%08x\n",
-        system_reg_read(0x1060), system_reg_read(0x1064),
-        system_reg_read(0x1068), system_reg_read(0x106c),
-        system_reg_read(0x1070));
-    tiziano_gib_init();
-    pr_info("GIB_AFTER: 0x1030=%08x 0x1034=%08x 0x1038=%08x 0x103c=%08x\n",
-        system_reg_read(0x1030), system_reg_read(0x1034),
-        system_reg_read(0x1038), system_reg_read(0x103c));
-    pr_info("GIB_AFTER: 0x1060=%08x 0x1064=%08x 0x1068=%08x 0x106c=%08x 0x1070=%08x\n",
-        system_reg_read(0x1060), system_reg_read(0x1064),
-        system_reg_read(0x1068), system_reg_read(0x106c),
-        system_reg_read(0x1070));
+    /* Post-engine-start gain refresh: ensures all gain-dependent blocks
+     * (GIB BLC, DMSC, sharpen, SDNS, DPC, LSC, YDNS, RDNS, MDNS) have
+     * their registers programmed while the ISP engine is running.
+     * OEM doesn't call this explicitly, but our stat engines lose data
+     * without it — the first tisp_tgain_update via event 4 fires too late. */
+    tisp_tgain_update(0);
 
     /* Core register dump to compare with OEM for GIB investigation */
     pr_info("ISP_CORE: 0x00=%08x 0x04=%08x 0x08=%08x 0x0c=%08x\n",
@@ -6408,6 +6412,8 @@ static int tisp_s_max_again(uint32_t value);
 static int tisp_s_max_isp_dgain(uint32_t value);
 int tiziano_ae_s_max_again(uint32_t value);
 int tiziano_ae_s_max_isp_dgain(uint32_t value);
+static void tisp_ydns_par_refresh(uint32_t gain);
+static int tisp_rdns_par_refresh(uint32_t gain, uint32_t threshold, int enable_write);
 static int tisp_get_ae_attr(void *out);
 static uint8_t tisp_ae_g_luma(uint8_t *result);
 static uint8_t tisp_get_ae_luma(uint8_t *result);
@@ -17134,6 +17140,80 @@ int awb_interrupt_static(void)
 	return 1;
 }
 
+/* OEM EXACT: tisp_af_get_statistics — unpack AF DMA buffer into stat arrays.
+ * Decompiled from OEM at 0x56240. Extracts fird0/fird1/iird0/iird1/y_sum/high_luma_cnt
+ * from packed 16-byte-per-zone DMA format. */
+static void tisp_af_get_statistics(void *buf, uint32_t rows, uint32_t cols)
+{
+    uint32_t *src = (uint32_t *)buf;
+    uint32_t row, col;
+    uint32_t dst_idx = 0;
+
+    for (row = 0; row < rows; row++) {
+        for (col = 0; col < cols; col++) {
+            uint32_t w0 = src[0], w1 = src[1], w2 = src[2], w3 = src[3];
+            af_array_fird0[dst_idx] = w0 & 0x3fffff;
+            af_array_fird1[dst_idx] = ((w1 & 0xfff) << 10) | (w0 >> 22);
+            af_array_iird0[dst_idx] = ((w2 & 3) << 20) | (w1 >> 12);
+            af_array_iird1[dst_idx] = (w2 >> 2) & 0xfffff;
+            af_array_y_sum[dst_idx] = ((w3 & 0x7fff) << 8) | ((w2 >> 24) & 0xff);
+            af_array_high_luma_cnt[dst_idx] = (w3 >> 15) & 0x7ffe;
+            dst_idx++;
+            src += 4;
+        }
+    }
+    frame_num = ((((uint8_t *)buf)[0x3f] & 0xc0)) |
+                ((((uint32_t *)buf)[0xb] >> 30) << 4) |
+                ((((uint32_t *)buf)[3] >> 30)) |
+                ((((uint32_t *)buf)[7] >> 30) << 2);
+}
+
+/* OEM EXACT: tisp_af_process_impl — process AF statistics.
+ * Decompiled from OEM at 0x5676c. Sets up pointers and calls Tiziano_af_fpga. */
+static int tisp_af_process_impl(void)
+{
+    /* AF processing requires Tiziano_af_fpga which is a complex algorithm.
+     * For non-AF sensors (GC2053), this is effectively a no-op since AF
+     * zones produce no meaningful data. The stat collection still runs
+     * for libimp compatibility. */
+    return 0;
+}
+
+/* OEM EXACT: af_interrupt_static — AF stats DMA handler.
+ * Decompiled from OEM at 0x56864. Reads AF bank, syncs DMA, unpacks stats. */
+int af_interrupt_static(void)
+{
+    uint32_t status;
+    void *buffer_addr;
+
+    if (data_a2f80 == 0)
+        return 0;
+
+    status = system_reg_read(0xb8b8);
+    buffer_addr = (void *)(unsigned long)(data_a2f80 + (status << 12));
+
+    private_dma_cache_sync(NULL, buffer_addr, 0x1000, 0);
+    /* OEM passes data_a136c (rows) and data_a1374 (cols) from AF zone config.
+     * Default 15x15 zone grid. */
+    tisp_af_get_statistics(buffer_addr, 15, 15);
+    tisp_af_process_impl();
+    return 1;
+}
+
+/* OEM EXACT: tiziano_wdr_interrupt_static — WDR stats handler.
+ * Decompiled from OEM at 0x5d2a0. Only relevant in WDR mode. */
+int tiziano_wdr_interrupt_static(void)
+{
+    /* WDR interrupt handler — not needed for non-WDR mode.
+     * The OEM reads WDR stat DMA buffer, rearranges data,
+     * calls tiziano_wdr_get_data, and pushes event 11.
+     * Stubbed for non-WDR operation. */
+    struct tisp_event_record ev = {0};
+    ev.event_id = 0xb;
+    tisp_event_push(&ev);
+    return 1;
+}
+
 int tiziano_awb_init(uint32_t height, uint32_t width)
 {
     pr_info("tiziano_awb_init: Initializing Auto White Balance (%dx%d)\n", width, height);
@@ -24732,6 +24812,8 @@ int tiziano_adr_init(uint32_t width, uint32_t height)
 int tiziano_af_init(uint32_t height, uint32_t width)
 {
     pr_info("tiziano_af_init: Initializing Auto Focus (%dx%d)\n", width, height);
+    /* OEM registers AF interrupt handler at IRQ index 0x1f */
+    system_irq_func_set(0x1f, af_interrupt_static);
     return 0;
 }
 
@@ -26286,31 +26368,6 @@ int tisp_tgain_update(uint32_t gain)
     if (tgain_call_count < 5 || (tgain_call_count % 300) == 0)
         pr_info("tisp_tgain_update[%u]: gain=0x%x\n", tgain_call_count, gain);
     tgain_call_count++;
-
-    /* GIB config register check: 0x1038/0x103c/0x106c are only written in
-     * tiziano_gib_init() (before engine start). If engine start resets them,
-     * GIB runs with wrong config. Re-program on first tgain_update call. */
-    {
-        static int gib_post_engine_init = 0;
-        if (!gib_post_engine_init) {
-            pr_info("GIB_CFG_CHECK: BEFORE re-init: 0x1038=%08x 0x103c=%08x 0x106c=%08x\n",
-                system_reg_read(0x1038), system_reg_read(0x103c), system_reg_read(0x106c));
-            pr_info("GIB_CFG_CHECK: 0x1030=%08x 0x1034=%08x 0x1060=%08x 0x1064=%08x 0x1068=%08x\n",
-                system_reg_read(0x1030), system_reg_read(0x1034),
-                system_reg_read(0x1060), system_reg_read(0x1064), system_reg_read(0x1068));
-            /* Re-program all GIB config + DEIR LUTs now that engine is running */
-            tiziano_gib_lut_parameter();
-            tiziano_gib_deir_reg(tiziano_gib_deir_r_m,
-                                  tiziano_gib_deir_g_m,
-                                  tiziano_gib_deir_b_m);
-            pr_info("GIB_CFG_CHECK: AFTER re-init: 0x1038=%08x 0x103c=%08x 0x106c=%08x\n",
-                system_reg_read(0x1038), system_reg_read(0x103c), system_reg_read(0x106c));
-            pr_info("GIB_CFG_CHECK: 0x1030=%08x 0x1034=%08x 0x1060=%08x 0x1064=%08x 0x1068=%08x\n",
-                system_reg_read(0x1030), system_reg_read(0x1034),
-                system_reg_read(0x1060), system_reg_read(0x1064), system_reg_read(0x1068));
-            gib_post_engine_init = 1;
-        }
-    }
 
     /* OEM order: GIB, GB_BLC, DMSC, Sharpen, SDNS, DPC, LSC, YDNS, RDNS, MDNS.
      * OEM calls ALL refresh functions UNCONDITIONALLY — no gating on block enable.
