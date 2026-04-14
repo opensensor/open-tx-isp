@@ -5405,6 +5405,7 @@ static int tx_isp_init(void)
 
     /* Initialize device structure */
     spin_lock_init(&ourISPdev->lock);
+    init_waitqueue_head(&ourISPdev->poll_wait);
     ourISPdev->refcnt = 0;
     ourISPdev->is_open = false;
     ourISPdev->active_link = -1;
