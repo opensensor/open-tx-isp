@@ -77,7 +77,7 @@ module_param_named(force_bypass_defog, tisp_force_bypass_defog, int, S_IRUGO | S
 MODULE_PARM_DESC(force_bypass_defog,
 			 "Debug isolate FOV issues by forcing Defog bypass (default: 0)");
 
-static int tisp_force_bypass_gib = 1; /* GIB: bypassed — BLC regs stuck at 0x3c defaults (write-gate 0x1070 fails) */
+static int tisp_force_bypass_gib = 0; /* GIB: enabled — write-gate 0x1070 issue TBD */
 module_param_named(force_bypass_gib, tisp_force_bypass_gib, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(force_bypass_gib,
 			 "Force GIB bypass (default: 1 — GIB equalizes R=G=B despite correct registers)");
