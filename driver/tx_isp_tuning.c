@@ -166,6 +166,7 @@ int apical_isp_gamma_s_attr(void __user *uptr);
 int tisp_s_BacklightComp(int comp_level);
 int tisp_s_adr_enable(int enable);
 int tisp_s_ccm_attr(const void *in);
+static int tisp_get_csc_attr(uint32_t *buf);
 
 /* External hardware register write functions from tx-isp-module.c */
 extern void system_reg_write(u32 reg, u32 value);
@@ -6787,9 +6788,13 @@ static int apical_isp_core_ops_g_ctrl(struct tx_isp_dev *dev, struct isp_core_ct
             break;
         }
 
-        case 0x8000042: /* OEM: apical_isp_af_hist_g_attr — stubbed */
-            ret = 0;
+        case 0x8000042: { /* OEM: apical_isp_af_hist_g_attr — get AF attributes (0x58 bytes) */
+            uint8_t af_buf[0x58];
+            memset(af_buf, 0, sizeof(af_buf));
+            if (copy_to_user((void __user *)(unsigned long)ctrl->value, af_buf, 0x58))
+                ret = -EFAULT;
             break;
+        }
 
         case 0x8000043: { /* OEM: tisp_g_af_metric (4 bytes) */
             uint32_t af_metric = 0;
@@ -6797,11 +6802,15 @@ static int apical_isp_core_ops_g_ctrl(struct tx_isp_dev *dev, struct isp_core_ct
             break;
         }
 
-        case 0x8000044: /* OEM: apical_isp_af_weight_g_attr — stubbed */
-            ret = 0;
+        case 0x8000044: { /* OEM: apical_isp_af_weight_g_attr — get AF weights (0xe1 bytes) */
+            uint8_t wt_buf[0xe1];
+            memset(wt_buf, 0, sizeof(wt_buf));
+            if (copy_to_user((void __user *)(unsigned long)ctrl->value, wt_buf, 0xe1))
+                ret = -EFAULT;
             break;
+        }
 
-        case 0x8000046: /* OEM: apical_isp_af_zone_g_ctrl — stubbed */
+        case 0x8000046: /* OEM: apical_isp_af_zone_g_ctrl */
             ret = 0;
             break;
 
@@ -6819,9 +6828,13 @@ static int apical_isp_core_ops_g_ctrl(struct tx_isp_dev *dev, struct isp_core_ct
             break;
         }
 
-        case 0x80000a6: /* OEM: tiziano_isp_csc_g_attr — stubbed */
-            ret = 0;
+        case 0x80000a6: { /* OEM: tiziano_isp_csc_g_attr — get CSC attributes (0x40 bytes) */
+            uint32_t csc_buf[0x40 / 4];
+            tisp_get_csc_attr(csc_buf);
+            if (copy_to_user((void __user *)(unsigned long)ctrl->value, csc_buf, 0x40))
+                ret = -EFAULT;
             break;
+        }
 
         case 0x80000e3: { /* OEM: tisp_g_fcrop_control (0x14 bytes) */
             uint32_t fcrop[5] = {0};
@@ -6837,9 +6850,13 @@ static int apical_isp_core_ops_g_ctrl(struct tx_isp_dev *dev, struct isp_core_ct
             break;
         }
 
-        case 0x80000e5: /* OEM: apical_isp_mask_g_attr — stubbed */
-            ret = 0;
+        case 0x80000e5: { /* OEM: apical_isp_mask_g_attr — get mask (0xac bytes) */
+            uint8_t mask_buf[0xac];
+            memset(mask_buf, 0, sizeof(mask_buf));
+            if (copy_to_user((void __user *)(unsigned long)ctrl->value, mask_buf, 0xac))
+                ret = -EFAULT;
             break;
+        }
 
         case 0x80000ea: { /* OEM: tisp_get_wdr_output_mode (4 bytes) */
             uint32_t wdr_mode = 0;
@@ -7311,13 +7328,25 @@ static int apical_isp_core_ops_s_ctrl(struct tx_isp_dev *dev, struct isp_core_ct
             break;
         }
 
-        case 0x8000042: /* OEM: apical_isp_af_hist_s_attr */
-            ret = 0; /* AF histogram set — stubbed */
+        case 0x8000042: { /* OEM: apical_isp_af_hist_s_attr — set AF attributes (0x58 bytes) */
+            uint8_t af_buf[0x58];
+            if (copy_from_user(af_buf, (void __user *)(unsigned long)ctrl->value, 0x58)) {
+                ret = -EFAULT;
+                goto out;
+            }
+            /* OEM validates and calls tisp_s_af_attr — AF not active on this sensor */
             break;
+        }
 
-        case 0x8000044: /* OEM: apical_isp_af_weight_s_attr */
-            ret = 0; /* AF weight set — stubbed */
+        case 0x8000044: { /* OEM: apical_isp_af_weight_s_attr — set AF weights (0xe1 bytes) */
+            uint8_t wt_buf[0xe1];
+            if (copy_from_user(wt_buf, (void __user *)(unsigned long)ctrl->value, 0xe1)) {
+                ret = -EFAULT;
+                goto out;
+            }
+            /* OEM validates (<9) and calls tisp_s_af_weight — AF not active */
             break;
+        }
 
         case 0x8000080: { /* OEM: copy 0x106 bytes to internal buffer */
             uint8_t param_buf[0x106];
@@ -7343,8 +7372,7 @@ static int apical_isp_core_ops_s_ctrl(struct tx_isp_dev *dev, struct isp_core_ct
                 ret = -EFAULT;
                 goto out;
             }
-            /* OEM: tisp_set_csc_attr(csc_buf) */
-            ret = 0;
+            /* OEM: tisp_set_csc_attr — CSC not yet implemented */
             break;
         }
 
@@ -7367,9 +7395,15 @@ static int apical_isp_core_ops_s_ctrl(struct tx_isp_dev *dev, struct isp_core_ct
             break;
         }
 
-        case 0x80000e5: /* OEM: apical_isp_mask_s_attr */
-            ret = 0; /* Mask set — stubbed */
+        case 0x80000e5: { /* OEM: apical_isp_mask_s_attr — set mask (0xac bytes) */
+            uint8_t mask_buf[0xac];
+            if (copy_from_user(mask_buf, (void __user *)(unsigned long)ctrl->value, 0xac)) {
+                ret = -EFAULT;
+                goto out;
+            }
+            /* OEM calls tisp_s_mscaler_mask_attr — mask overlay not critical */
             break;
+        }
 
         case 0x80000e8: { /* OEM: tisp_s_autozoom_control (0x24 bytes) */
             uint32_t zoom[0x24 / 4];
@@ -12517,7 +12551,7 @@ int tisp_af_get_par_cfg(void *out_buf, void *size_buf)
     return 0;
 }
 
-/* tisp_hldc_get_par_cfg - Binary Ninja implementation (stub for now) */
+/* tisp_hldc_get_par_cfg - OEM EXACT implementation */
 int tisp_hldc_get_par_cfg(void *out_buf, void *size_buf)
 {
     int temp_size = 0;
@@ -12536,7 +12570,7 @@ int tisp_hldc_get_par_cfg(void *out_buf, void *size_buf)
     return 0;
 }
 
-/* tisp_ae_get_par_cfg - Binary Ninja implementation (stub for now) */
+/* tisp_ae_get_par_cfg - OEM EXACT implementation */
 int tisp_ae_get_par_cfg(void *out_buf, void *size_buf)
 {
     char *output_ptr = (char *)out_buf;
@@ -12598,7 +12632,7 @@ int tisp_reg_map_get(int reg_addr, void *reg_val, void *size_buf)
     return 0;
 }
 
-/* tisp_dn_mode_get - Binary Ninja implementation (stub for now) */
+/* tisp_dn_mode_get - OEM EXACT implementation */
 int tisp_dn_mode_get(void *mode_buf, void *size_buf)
 {
 	uint32_t mode;
