@@ -4831,7 +4831,6 @@ static long tx_isp_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned 
     case 0x800856d4: { // TX_ISP_SET_BUF - Set buffer addresses and configure DMA
         // OEM-exact implementation: programs 0x7820-0x786c ISP frame buffer registers
         // Required for MDNS (3D noise reduction) temporal reference frames.
-        extern void tisp_mdns_enable_after_dma(void);
 
         struct isp_buf_setup {
             uint32_t addr;   // Physical buffer address
@@ -4980,8 +4979,8 @@ static long tx_isp_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned 
 
         pr_info("ISP DMA registers 0x7820-0x786c programmed successfully\n");
 
-        // Enable MDNS now that DMA registers are valid
-        tisp_mdns_enable_after_dma();
+        /* OEM enables MDNS during tiziano_mdns_init (before DMA setup).
+         * No deferred enable needed — MDNS HW waits for data. */
 
         return 0;
     }

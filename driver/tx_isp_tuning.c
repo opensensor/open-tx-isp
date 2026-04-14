@@ -20478,18 +20478,17 @@ int tiziano_mdns_init(uint32_t width, uint32_t height)
 
 	tiziano_mdns_params_refresh();
 
-	/* OEM: MDNS always initialized — no whitelist gating */
-
-	/* Configure MDNS parameters but DO NOT enable yet.
-	 * MDNS temporal denoise reads reference frames from DMA at 0x7840-0x786c.
-	 * Those registers aren't programmed until tx_isp_set_buf ioctl later.
-	 * If we enable MDNS now, it reads reference from uninitialized addresses
-	 * during the brief first stream (rvd stop/restart), poisoning the temporal
-	 * filter with corrupt chroma data that causes pink tint.
-	 * Defer actual enable to tisp_mdns_enable_after_dma(). */
+	/* OEM EXACT: enable MDNS immediately during init, no deferral.
+	 * The OEM calls tisp_mdns_bypass(0) here — BEFORE the ISP engine
+	 * starts (0x800=1) and BEFORE DMA addresses are programmed.
+	 * The MDNS hardware just sets its config and waits for data.
+	 * Our previous deferred-enable approach was wrong and caused the
+	 * temporal reference to contain stale data from the stop/start cycle. */
 	tisp_mdns_par_refresh(0x10000, 0x10000);
-	mdns_hw_enabled = 0;
-	pr_info("tiziano_mdns_init: MDNS params configured, enable deferred to after DMA setup\n");
+	if (!tisp_force_bypass_mdns)
+		tisp_mdns_bypass(0);
+	pr_info("tiziano_mdns_init: MDNS %s (OEM-exact init)\n",
+		tisp_force_bypass_mdns ? "BYPASSED (module param)" : "ENABLED");
 	return 0;
 }
 
