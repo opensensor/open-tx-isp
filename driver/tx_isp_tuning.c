@@ -77,15 +77,15 @@ module_param_named(force_bypass_defog, tisp_force_bypass_defog, int, S_IRUGO | S
 MODULE_PARM_DESC(force_bypass_defog,
 			 "Debug isolate FOV issues by forcing Defog bypass (default: 0)");
 
-static int tisp_force_bypass_gib = 0; /* GIB: 0=enabled, 1=bypassed */
+static int tisp_force_bypass_gib = 1; /* GIB: 0=enabled, 1=bypassed — causes R=G=B, root cause unknown */
 module_param_named(force_bypass_gib, tisp_force_bypass_gib, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(force_bypass_gib,
-			 "Force GIB bypass (default: 1 — GIB produces R=G=B stats)");
+			 "Force GIB bypass (default: 1 — GIB equalizes R=G=B in HW stats)");
 
 static int tisp_force_bypass_mdns = 0; /* MDNS: 0=enabled, 1=bypassed */
 module_param_named(force_bypass_mdns, tisp_force_bypass_mdns, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(force_bypass_mdns,
-			 "Force MDNS bypass (default: 1 — suspected R=G=B cause)");
+			 "Force MDNS bypass (default: 0 — MDNS provides temporal denoise)");
 
 extern uint32_t system_reg_read(u32 reg);
 
