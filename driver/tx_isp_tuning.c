@@ -27889,13 +27889,20 @@ static int tisp_mdns_top_func_cfg(int enable)
     static int top_func_diag_count;
 
     if (enable) {
+        /* MDNS UV processing disabled: UV temporal blending with stale
+         * reference chroma creates persistent pink tint + block artifacts.
+         * Y-only temporal denoise preserves color while reducing luma noise.
+         * Re-enable UV when GIB is fixed (GIB provides proper BLC data
+         * that MDNS UV processing depends on). */
         ctrl = 0x10001 |
                (mdns_y_sf_cur_en_array << 4) |
                (mdns_y_sf_ref_en_array << 8) |
-               (mdns_y_filter_en_array << 12) |
-               (mdns_uv_sf_cur_en_array << 20) |
-               (mdns_uv_sf_ref_en_array << 24) |
-               (mdns_uv_filter_en_array << 28);
+               (mdns_y_filter_en_array << 12);
+        /* UV disabled:
+         *     (mdns_uv_sf_cur_en_array << 20) |
+         *     (mdns_uv_sf_ref_en_array << 24) |
+         *     (mdns_uv_filter_en_array << 28);
+         */
     }
 
     /* PINK_DIAG: trace each top_func_cfg call to see what value is written
