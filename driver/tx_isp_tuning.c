@@ -2008,6 +2008,8 @@ static uint32_t adr_ratio = 0x80;  /* OEM default: 0x80 = neutral (no strength a
 static uint32_t adr_wdr_en = 0;
 static uint32_t ev_changed = 0;
 static uint32_t ev_now = 0;
+static uint32_t histSub_4096[0x24/4] = {0};      /* 9 gamma Y subdivision points */
+static uint32_t histSub_4096_out[0x24/4] = {0};  /* 9 inverse-gamma X results */
 static uint32_t histSub_4096_diff[0x20/4] = {0};
 static uint32_t *adr_mapb1_list_now = NULL;
 static uint32_t *adr_mapb2_list_now = NULL;
@@ -3843,6 +3845,11 @@ static uint32_t param_wdr_weightLUT12_array[0x80/4] = {0};
 static uint32_t param_wdr_weightLUT22_array[0x80/4] = {0};
 static uint32_t param_wdr_weightLUT21_array[0x80/4] = {0};
 static uint32_t param_wdr_gam_y_array[0x84/4] = {0};
+static uint8_t  wdr_gam_y129_array[0x102] = {0};   /* 129 × int16_t from gamma LUT */
+static uint32_t wdr_gam_y33_array[0x84/4] = {0};   /* 33 × u32 downsampled from 129 */
+static uint32_t param_wdr_gam_y_array_def[0x84/4] = {0}; /* WDR gamma working copy */
+static uint32_t data_a1584 = 0;  /* WDR gamma mode: 0=from LUT, 1=linear ramp */
+static uint32_t data_a22e8 = 0;  /* WDR gamma last entry */
 static uint32_t param_wdr_w_point_weight_x_array[0x10/4] = {0};
 static uint32_t param_wdr_w_point_weight_y_array[0x10/4] = {0};
 static uint32_t param_wdr_w_point_weight_pow_array[0xc/4] = {0};
@@ -22678,11 +22685,69 @@ static uint32_t height_def = 0;      /* Default height */
 static uint32_t data_ace54 = 0;      /* ADR calculation result */
 uint32_t param_adr_tool_control_array[0x38/4] = {0}; /* ADR control */
 
-/* tiziano_adr_gamma_refresh - stub (TODO: implement from OEM 0x4c41c)
- * OEM uses tisp_gamma_param_array_get, histSub_4096, param_adr_gam_y_array_def, etc. */
+/* OEM EXACT: tiziano_adr_gamma_refresh — inverse gamma lookup for ADR tone mapping.
+ * Decompiled at 0x4c41c. For each histogram subdivision point in histSub_4096,
+ * finds the corresponding gamma X value via inverse lookup through the gamma LUT,
+ * stores in adr_tm_base_lut, and computes diff array. */
 static int tiziano_adr_gamma_refresh(void)
 {
-    pr_warn_once("tiziano_adr_gamma_refresh: stub - not yet implemented\n");
+    int size = 0;
+    int i, j;
+    uint16_t *gam_y = (uint16_t *)param_adr_gam_y_array_def;
+    uint16_t *gam_x = (uint16_t *)param_adr_gam_x_array;
+    uint32_t gam_x_last = (uint32_t)(uint16_t)gam_x[0x80]; /* data_9f504 */
+    uint32_t gam_x_first = (uint32_t)(uint16_t)gam_x[0];
+
+    /* Get gamma LUT into param_adr_gam_y_array_def */
+    tisp_gamma_param_array_get(0x3c, param_adr_gam_y_array_def, &size);
+    if (size != 0x102) {
+        pr_err("get gamma error!!!\n");
+        return -1;
+    }
+
+    /* Inverse gamma: for each histSub_4096 value, find corresponding X */
+    for (i = 0; i < 9; i++) {
+        uint32_t target = histSub_4096[i];
+        uint32_t result;
+
+        /* Search gamma Y curve for target value */
+        for (j = 0; j < 0x81; j++) {
+            uint32_t y_val = (uint32_t)(uint16_t)gam_y[j];
+            if (y_val >= target) {
+                if (j != 0) {
+                    uint32_t x_prev = (uint32_t)(uint16_t)gam_x[j - 1];
+                    uint32_t x_curr = (uint32_t)(uint16_t)gam_x[j];
+                    uint32_t y_prev = (uint32_t)(uint16_t)gam_y[j - 1];
+                    uint32_t delta_target = (y_prev >= target) ?
+                        (y_prev - target) : (target - y_prev);
+                    uint32_t delta_range = (y_val >= y_prev) ?
+                        (y_val - y_prev) : (y_prev - y_val);
+
+                    if (delta_range == 0) delta_range = 1;
+
+                    if (x_curr >= x_prev)
+                        result = delta_target * (x_curr - x_prev) / delta_range + x_prev;
+                    else
+                        result = x_prev - delta_target * (x_prev - x_curr) / delta_range;
+                } else {
+                    result = gam_x_first;
+                }
+                break;
+            }
+            if (j == 0x80) {
+                result = gam_x_last;
+                break;
+            }
+        }
+
+        histSub_4096_out[i] = result;
+        adr_tm_base_lut[i] = result;
+    }
+
+    /* Compute diff array: histSub_4096_diff[i] = out[i+1] - out[i] */
+    for (i = 0; i < 8; i++)
+        histSub_4096_diff[i] = histSub_4096_out[i + 1] - histSub_4096_out[i];
+
     return 0;
 }
 
@@ -25405,6 +25470,87 @@ static void tisp_rdns_intp(uint32_t gain)
  *   0x30a8:        SL params
  *   0x30ac:        Commit trigger
  */
+
+/* OEM EXACT: individual RDNS register-write helpers */
+static int tisp_rdns_opt_cfg(void)
+{
+    const u32 *opt = (const u32 *)rdns_opt_cfg_array;
+    system_reg_write(0x3008, (opt[0] & 0x3) | ((opt[1] & 0x3) << 2) |
+                     ((opt[2] & 0x3) << 4) | ((opt[3] & 0x3) << 6) |
+                     ((opt[4] & 0x3) << 8) | (rdns_oe_num_intp << 16));
+    return 0;
+}
+
+static int tisp_rdns_slope_cfg(void)
+{
+    const u32 *slope = (const u32 *)rdns_slope_par_cfg_array;
+    system_reg_write(0x300c, ((rdns_out_opt_array[0] & 0xffff) << 16) |
+                     (rdns_gray_stren_intp & 0xffff));
+    system_reg_write(0x3010, (slope[1] << 16) | (slope[0] & 0xffff));
+    return 0;
+}
+
+static int tisp_rdns_thres_par_cfg(void)
+{
+    system_reg_write(0x3014, rdns_gray_std_thres_intp);
+    system_reg_write(0x3018, rdns_text_base_thres_intp);
+    system_reg_write(0x301c, (rdns_oe_thres_intp << 16) | (rdns_filter_sat_thres_intp & 0xffff));
+    system_reg_write(0x3020, (rdns_text_g_thres_intp << 16) | (rdns_flat_g_thres_intp & 0xffff));
+    system_reg_write(0x3024, (rdns_text_rb_thres_intp << 16) | (rdns_flat_rb_thres_intp & 0xffff));
+    return 0;
+}
+
+static int tisp_rdns_gray_np_par_cfg(void)
+{
+    const u32 *gnp = (const u32 *)rdns_gray_np_array;
+    int i;
+    for (i = 0; i < 4; i++)
+        system_reg_write(0x3028 + i * 4, (gnp[i*2+1] << 16) | (gnp[i*2] & 0xffff));
+    return 0;
+}
+
+static int tisp_rdns_text_np_par_cfg(void)
+{
+    const u32 *tnp = (const u32 *)rdns_text_np_array;
+    int i;
+    for (i = 0; i < 8; i++)
+        system_reg_write(0x3038 + i * 4, (tnp[i*2+1] << 16) | (tnp[i*2] & 0xffff));
+    return 0;
+}
+
+static int tisp_rdns_lum_np_par_cfg(void)
+{
+    const u32 *lnp = (const u32 *)rdns_lum_np_array;
+    int i;
+    for (i = 0; i < 8; i++)
+        system_reg_write(0x3058 + i * 4, (lnp[i*2+1] << 16) | (lnp[i*2] & 0xffff));
+    return 0;
+}
+
+static int tisp_rdns_std_np_par_cfg(void)
+{
+    const u32 *snp = (const u32 *)rdns_std_np_array;
+    int i;
+    for (i = 0; i < 8; i++)
+        system_reg_write(0x3078 + i * 4, (snp[i*2+1] << 16) | (snp[i*2] & 0xffff));
+    return 0;
+}
+
+static int tisp_rdns_sl_par_cfg(void)
+{
+    const u32 *sl = (const u32 *)rdns_sl_par_cfg;
+    system_reg_write(0x30a8, (sl[0] & 0x3f) | ((sl[1] & 0x3f) << 6) |
+                     (rdns_mv_text_thres_intp << 16));
+    return 0;
+}
+
+/* OEM EXACT: tisp_rdns_refresh — wrapper (decompiled at 0x59620). */
+static int tisp_rdns_refresh(u32 gain)
+{
+    tisp_rdns_par_refresh(gain, 0x100, 1);
+    return 0;
+}
+
 static void tisp_rdns_all_reg_refresh(uint32_t gain)
 {
     const u32 *awb = (const u32 *)rdns_awb_gain_par_cfg_array;
@@ -27155,11 +27301,36 @@ static int tiziano_wdr_get_data(void *buf)
     return 0;
 }
 
-/* OEM at 0x60368: Refresh WDR gamma LUT from tuning binary */
+/* OEM EXACT: tiziano_wdr_gamma_refresh — refresh WDR gamma LUT.
+ * Decompiled at 0x60368. Gets WDR gamma LUT (0x3d), downsamples
+ * 129→33 entries, copies to param_wdr_gam_y_array_def. */
 static int tiziano_wdr_gamma_refresh(void)
 {
-    /* Loads gamma curve and builds WDR gamma def array.
-     * Stubbed until WDR sensor testing. */
+    int size = 0;
+    int i;
+    uint16_t *y129 = (uint16_t *)wdr_gam_y129_array;
+
+    tisp_gamma_param_array_get(0x3d, wdr_gam_y129_array, &size);
+    if (size != 0x102) {
+        pr_err("get gamma error!!!\n");
+        return -1;
+    }
+
+    /* Downsample 129 → 33: take every 4th entry */
+    for (i = 0; i < 33; i++)
+        wdr_gam_y33_array[i] = (uint32_t)(uint16_t)y129[i * 4];
+
+    if (data_a1584 == 0) {
+        /* Normal: copy downsampled LUT */
+        for (i = 0; i < 33; i++)
+            param_wdr_gam_y_array_def[i] = wdr_gam_y33_array[i];
+    } else if (data_a1584 == 1) {
+        /* Linear ramp: 0, 0x80, 0x100, ..., 0x1000 */
+        for (i = 0; i < 33; i++)
+            param_wdr_gam_y_array_def[i] = i * 0x80;
+        data_a22e8 = 0xfff;
+    }
+
     return 0;
 }
 
@@ -29010,6 +29181,46 @@ int tisp_s_Gamma(void *gamma_data)
     return 0;
 }
 EXPORT_SYMBOL(tisp_s_Gamma);
+
+/* OEM EXACT: tisp_g_Gamma — get gamma LUT (decompiled at 0x6336c). */
+int tisp_g_Gamma(void *gamma_data)
+{
+    int size = 0;
+    tisp_gamma_param_array_get(0x3c, gamma_data, &size);
+    if (size == 0x102)
+        return 0;
+    pr_err("tisp_g_Gamma: Get Gamma failed (size=%d)\n", size);
+    return -1;
+}
+EXPORT_SYMBOL(tisp_g_Gamma);
+
+/* OEM EXACT: apical_isp_gamma_s_attr — ioctl helper (decompiled at 0x55c0).
+ * Copies 0x102 bytes from user, passes to tisp_s_Gamma. */
+int apical_isp_gamma_s_attr(void __user *uptr)
+{
+    int16_t gamma_buf[0x102 / 2];
+    if (!uptr)
+        return -1;
+    if (copy_from_user(gamma_buf, uptr, 0x102))
+        return -EFAULT;
+    tisp_s_Gamma(gamma_buf);
+    return 0;
+}
+
+/* OEM EXACT: apical_isp_gamma_g_attr — ioctl helper (decompiled at 0x7118).
+ * Gets gamma LUT, copies 0x102 bytes to user. */
+int apical_isp_gamma_g_attr(void __user *uptr)
+{
+    int16_t gamma_buf[0x102 / 2];
+    int ret = tisp_g_Gamma(gamma_buf);
+    if (ret == 0) {
+        if (copy_to_user(uptr, gamma_buf, 0x102))
+            return -EFAULT;
+    } else {
+        pr_err("apical_isp_gamma_g_attr: get control failed\n");
+    }
+    return ret;
+}
 
 /* tisp_s_adr_enable - ADR (Adaptive Dynamic Range) enable/disable */
 int tisp_s_adr_enable(int enable)
