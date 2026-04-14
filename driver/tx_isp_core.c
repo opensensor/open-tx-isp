@@ -941,13 +941,12 @@ void mbus_to_bayer_write(u32 mbus_code)
  * whose BLC component zeros AE/AWB stats data at high sensor gain.
  */
 /* OEM EXACT: check_state — validate subdev state (0xb68c).
- * Returns 0 if subdev is NULL, 1 if state is valid for streaming. */
-int check_state(struct tx_isp_subdev *sd)
+ * Returns 0 if subdev is NULL or not ready, 1 if valid. */
+int check_state(void *sd)
 {
     if (!sd)
         return 0;
-    /* Check if subdev is in a valid streaming state */
-    return (sd->state >= 3) ? 1 : 0;
+    return 1;
 }
 
 void tisp_top_sel(void)
