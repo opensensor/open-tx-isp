@@ -77,7 +77,7 @@ module_param_named(force_bypass_defog, tisp_force_bypass_defog, int, S_IRUGO | S
 MODULE_PARM_DESC(force_bypass_defog,
 			 "Debug isolate FOV issues by forcing Defog bypass (default: 0)");
 
-static int tisp_force_bypass_gib = 0; /* GIB: 0=enabled, 1=bypassed — testing DG nudge fix for R=G=B */
+static int tisp_force_bypass_gib = 0; /* GIB: 0=enabled, 1=bypassed */
 module_param_named(force_bypass_gib, tisp_force_bypass_gib, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(force_bypass_gib,
 			 "Force GIB bypass (default: 1 — GIB equalizes R=G=B in HW stats)");
@@ -526,6 +526,12 @@ static uint32_t bcsh_OffsetRGB[3] = { 0x0400, 0x0400, 0x0400 }; /* OEM: 0x9a6e0 
 static uint32_t bcsh_OffsetRGB_wdr[3] = { 0x0400, 0x0400, 0x0400 };
 static int bcsh_wdr_enabled;        /* 0=normal, 1=WDR */
 static int BCSH_real;                /* trigger immediate update on next EV/CT change */
+
+/* OEM globals for CCM chain — signed versions of D/T/A CCM matrices */
+static int32_t tisp_BCSH_as32CCMMatrix[9];     /* active signed CCM (output of ct_bcsh_interpolation) */
+static int32_t tisp_BCSH_as32CCMMatrix_d[9];   /* signed D CCM (output of Comp2Orig) */
+static int32_t tisp_BCSH_as32CCMMatrix_t[9];   /* signed T CCM */
+static int32_t tisp_BCSH_as32CCMMatrix_a[9];   /* signed A CCM */
 /* Extended BCSH tables — OEM data */
 static uint32_t bcsh_CCM_d[9] = {
 	0x0001, 0x0001, 0x0001, 0x0001, 0x0564, 0x3f21, 0x3f7b, 0x3e3e, 0x0793
@@ -568,8 +574,149 @@ static uint32_t bcsh_clip0_wdr[4], bcsh_clip1_wdr[4], bcsh_clip2_wdr[4];
 
 /* Matrices exposed via param IDs 0x3e3/0x3e4 - moved to top of file */
 
+/* ========================================================================
+ * OEM BCSH CCM chain — replaces custom tiziano_bcsh_build_HMatrix
+ * ======================================================================== */
 
-/* Build the HMatrix (RGB->YUV transform for BCSH) using OEM constant base
+/* OEM EXACT: tiziano_bcsh_reg2para — convert 9 register-format values to signed.
+ * Values >= 0x2000 are negative: val - 0x4000. */
+static void tiziano_bcsh_reg2para_array(int32_t *dst, const uint32_t *src)
+{
+    int i;
+    for (i = 0; i < 9; i++) {
+        int32_t val = (int32_t)src[i];
+        if (val >= 0x2000)
+            val -= 0x4000;
+        dst[i] = val;
+    }
+}
+
+/* OEM EXACT: tiziano_bcsh_para2reg — convert 9 signed values to 14-bit register format.
+ * Negative values get masked with 0x3fff. */
+static void tiziano_bcsh_para2reg(int32_t *dst, const int32_t *src)
+{
+    int i;
+    for (i = 0; i < 9; i++) {
+        int32_t val = src[i];
+        if (val < 0)
+            val &= 0x3fff;
+        dst[i] = val;
+    }
+}
+
+/* OEM EXACT: tiziano_bcsh_Tccm_Comp2Orig — convert D/T/A CCM from register format to signed.
+ * Decompiled from OEM at 0x2873c. */
+static void tiziano_bcsh_Tccm_Comp2Orig(void)
+{
+    const uint32_t *d_now = bcsh_wdr_enabled ? bcsh_CCM_d_wdr : bcsh_CCM_d;
+    const uint32_t *t_now = bcsh_wdr_enabled ? bcsh_CCM_t_wdr : bcsh_CCM_t;
+    const uint32_t *a_now = bcsh_wdr_enabled ? bcsh_CCM_a_wdr : bcsh_CCM_a;
+
+    tiziano_bcsh_reg2para_array(tisp_BCSH_as32CCMMatrix_d, d_now);
+    tiziano_bcsh_reg2para_array(tisp_BCSH_as32CCMMatrix_t, t_now);
+    tiziano_bcsh_reg2para_array(tisp_BCSH_as32CCMMatrix_a, a_now);
+}
+
+/* OEM EXACT: tiziano_ct_bcsh_interpolation — CT-based CCM interpolation.
+ * Decompiled from OEM at 0x28790. Interpolates between D/T/A signed CCMs based on CT.
+ * Result in tisp_BCSH_as32CCMMatrix[]. */
+static int tiziano_ct_bcsh_interpolation(uint32_t ct)
+{
+    static uint32_t ct_flag_bcsh;
+    static uint32_t ct_flag_bcsh_last;
+    int i;
+
+    /* Determine CT zone */
+    if (ct >= 0x1357)
+        ct_flag_bcsh = 0;         /* D zone */
+    else if (ct >= 0xF0B)
+        ct_flag_bcsh = 1;         /* D↔T interpolation */
+    else if (ct >= 0xEA7)
+        ct_flag_bcsh = 2;         /* T zone */
+    else if (ct >= 0xB23)
+        ct_flag_bcsh = 3;         /* T↔A interpolation */
+    else
+        ct_flag_bcsh = 4;         /* A zone */
+
+    /* OEM gating: skip if no zone change and not first-time (BCSH_real) */
+    if (BCSH_real == 0) {
+        if (ct_flag_bcsh == 0 && ct_flag_bcsh_last == 0)
+            return 0xb0000;
+        if ((ct_flag_bcsh == 2 || ct_flag_bcsh == 4) &&
+            ct_flag_bcsh_last == ct_flag_bcsh)
+            return 0xb0000;
+    }
+
+    ct_flag_bcsh_last = ct_flag_bcsh;
+
+    switch (ct_flag_bcsh) {
+    case 0: /* Pure D */
+        memcpy(tisp_BCSH_as32CCMMatrix, tisp_BCSH_as32CCMMatrix_d, 0x24);
+        break;
+    case 1: { /* D↔T interpolation */
+        uint32_t dist = (ct >= 0xF0A) ? (ct - 0xF0A) : (0xF0A - ct);
+        for (i = 0; i < 9; i++) {
+            int32_t vt = tisp_BCSH_as32CCMMatrix_t[i];
+            int32_t vd = tisp_BCSH_as32CCMMatrix_d[i];
+            if (vd >= vt)
+                tisp_BCSH_as32CCMMatrix[i] = (uint32_t)(vd - vt) * dist / 0x44C + vt;
+            else
+                tisp_BCSH_as32CCMMatrix[i] = vt - (uint32_t)(vt - vd) * dist / 0x44C;
+        }
+        break;
+    }
+    case 2: /* Pure T */
+        memcpy(tisp_BCSH_as32CCMMatrix, tisp_BCSH_as32CCMMatrix_t, 0x24);
+        break;
+    case 3: { /* T↔A interpolation */
+        uint32_t dist = (ct >= 0xB22) ? (ct - 0xB22) : (0xB22 - ct);
+        for (i = 0; i < 9; i++) {
+            int32_t va = tisp_BCSH_as32CCMMatrix_a[i];
+            int32_t vt = tisp_BCSH_as32CCMMatrix_t[i];
+            if (vt >= va)
+                tisp_BCSH_as32CCMMatrix[i] = (uint32_t)(vt - va) * dist / 0x384 + va;
+            else
+                tisp_BCSH_as32CCMMatrix[i] = va - (uint32_t)(va - vt) * dist / 0x384;
+        }
+        break;
+    }
+    case 4: /* Pure A */
+        memcpy(tisp_BCSH_as32CCMMatrix, tisp_BCSH_as32CCMMatrix_a, 0x24);
+        break;
+    }
+
+    return 0;
+}
+
+/* OEM EXACT: tiziano_bcsh_Tccm_RGB2YUV — build HMatrix from CCM.
+ * Decompiled from OEM at 0x292b4. Loads base constants, applies
+ * Tccm_RGBYUV transform, converts to register format via para2reg. */
+static void tiziano_bcsh_Tccm_RGB2YUV(int32_t *out_hmatrix, const int32_t *ccm)
+{
+    /* OEM .rodata constants at 0x6b894 — verified from binary */
+    static const int32_t rgb2yuv_base[9] = {
+        0x00000401, /* 1025  */
+        (int32_t)0xfffffe04, /* -508  */
+        (int32_t)0xfffffef3, /* -269  */
+        (int32_t)0xfffffffe, /* -2    */
+        0x00000905, /* 2309  */
+        0x0000015f, /* 351   */
+        (int32_t)0xfffffffe, /* -2    */
+        0x000002f1, /* 753   */
+        0x00000a9b  /* 2715  */
+    };
+
+    int32_t tmp[9];
+    memcpy(tmp, rgb2yuv_base, sizeof(tmp));
+
+    /* Apply M * CCM * Minv transform */
+    tiziano_bcsh_Tccm_RGBYUV(tmp, tiziano_MMatrix, ccm, tiziano_MinvMatrix);
+
+    /* Convert signed to 14-bit register format */
+    tiziano_bcsh_para2reg(out_hmatrix, tmp);
+}
+
+/* LEGACY: Build the HMatrix (RGB->YUV transform for BCSH) using OEM constant base
  * as in tiziano_bcsh_Tccm_RGB2YUV: memcpy(var_38, 0x7b8a4, 0x24), then the
  * OEM applies tiziano_bcsh_Tccm_RGBYUV and para2reg. We start by wiring the
  * exact OEM constant; para2reg is applied later in reg_apply.
@@ -1637,24 +1784,28 @@ static void tiziano_bcsh_reg_apply(struct isp_tuning_data *tuning)
     u32 *RGB  = bcsh_wdr_enabled ? bcsh_OffsetRGB_wdr : bcsh_OffsetRGB;
     u32 *Carr = bcsh_C; /* OEM uses shared C[] across linear/WDR */
 
-    /* Build HMatrix and compute slopes (Cslope0/1/2, HDPslope, HBPslope) */
-    int32_t H[9];
+    /* OEM BCSH chain: Comp2Orig → ct_bcsh_interpolation → Tccm_RGB2YUV.
+     * This replaces our custom tiziano_bcsh_build_HMatrix + inline para2reg. */
     int32_t Hreg[9];
     uint32_t cs0 = 0, cs1 = 0, cs2 = 0, hdp_s = 0, hbp_s = 0;
     int i_h;
     uint16_t svec1[4] = {0}, svec2[4] = {0}, svec3[4] = {0};
-    tiziano_bcsh_build_HMatrix(H);
-    /* Apply OEM para2reg sign/mask conversion: negative -> mask to 14-bit */
-    for (i_h = 0; i_h < 9; ++i_h) {
-        int32_t v = H[i_h];
-        Hreg[i_h] = (v < 0) ? (v & 0x3fff) : v;
+    {
+        uint32_t ct = 0x1357; /* default to Daylight */
+        if (ourISPdev && ourISPdev->tuning_data)
+            ct = ourISPdev->tuning_data->wb_temp;
+        tiziano_bcsh_Tccm_Comp2Orig();
+        tiziano_ct_bcsh_interpolation(ct);
+        tiziano_bcsh_Tccm_RGB2YUV(Hreg, tisp_BCSH_as32CCMMatrix);
     }
 
     {
         static int hlog;
         if (!hlog) {
-            pr_info("BCSH_DIAG: H_signed=[%d,%d,%d, %d,%d,%d, %d,%d,%d]\n",
-                    H[0], H[1], H[2], H[3], H[4], H[5], H[6], H[7], H[8]);
+            pr_info("BCSH_DIAG: CCM_signed=[%d,%d,%d, %d,%d,%d, %d,%d,%d]\n",
+                    tisp_BCSH_as32CCMMatrix[0], tisp_BCSH_as32CCMMatrix[1], tisp_BCSH_as32CCMMatrix[2],
+                    tisp_BCSH_as32CCMMatrix[3], tisp_BCSH_as32CCMMatrix[4], tisp_BCSH_as32CCMMatrix[5],
+                    tisp_BCSH_as32CCMMatrix[6], tisp_BCSH_as32CCMMatrix[7], tisp_BCSH_as32CCMMatrix[8]);
             pr_info("BCSH_DIAG: Hreg=[0x%x,0x%x,0x%x, 0x%x,0x%x,0x%x, 0x%x,0x%x,0x%x]\n",
                     Hreg[0], Hreg[1], Hreg[2], Hreg[3], Hreg[4], Hreg[5],
                     Hreg[6], Hreg[7], Hreg[8]);
@@ -4711,23 +4862,6 @@ static int tisp_ae0_process_impl(void)
         uint32_t dg_val = dg0_cache[EffectFrame < 15 ? EffectFrame : 0];
         uint32_t reg_packed = (dg_val << 16) | dg_val;
 
-        /* GIB R=G=B TEST: The OEM's DG registers evolve per-frame
-         * (0x400→0x4d3→0x43e...), but ours stay at 0x04000400.
-         * Theory: GIB hardware needs a VALUE CHANGE via the gate to
-         * transition from power-on defaults to active processing.
-         * Nudge the DG value slightly on the first frame so the
-         * hardware sees a transition. */
-        {
-            static int dg_nudge_count;
-            if (dg_nudge_count == 0 && dg_val == 0x400) {
-                reg_packed = (0x401 << 16) | 0x401;  /* Tiny nudge */
-                dg_nudge_count = 1;
-            } else if (dg_nudge_count == 1) {
-                /* Revert to real value on second frame */
-                dg_nudge_count = 2;
-            }
-        }
-
         if (ae_wdr_mode == 0) {
             /* Normal mode: OEM uses system_reg_write_gib for gate writes */
             system_reg_write_gib(1, 0x1030, reg_packed);
@@ -4761,21 +4895,12 @@ static int tisp_ae0_process_impl(void)
      * OEM: var_68=4, var_60=log2(total_gain), var_5c=0
      * Drives MDNS/sharpen/DPC/LSC gain-dependent interpolation. */
     {
-        static uint32_t tgain_force_frames = 30;
         uint32_t ef_idx = (EffectFrame + 1 < 16) ? EffectFrame + 1 : 0;
         uint32_t total_g = ad0_cache[ef_idx] << 6;
         total_gain_new = total_g;
 
-        /* OEM: push event 4 only when gain changes.
-         * FIX: also force-push for first 30 frames after streaming starts.
-         * GIB hardware uses double-buffered registers latched by the 0x1070
-         * gate at vsync. If event 4 never fires post-streaming (because AE
-         * gain is stuck), the GIB registers never latch into the active set
-         * and the block runs with power-on defaults → R=G=B. */
-        if (total_g != total_gain_old || tisp_ae_ctrls[0] != 0
-            || tgain_force_frames > 0) {
-            if (tgain_force_frames > 0)
-                tgain_force_frames--;
+        /* OEM: push event 4 only when gain changes or AE ctrl[0] != 0 */
+        if (total_g != total_gain_old || tisp_ae_ctrls[0] != 0) {
             total_gain_old = total_g;
             uint32_t log2_tg = tisp_log2_fixed_to_fixed_tuning(total_g, 0x10, 0x10);
             struct tisp_event_record ev = {0};
@@ -5339,7 +5464,10 @@ int tisp_init(void *sensor_info_arg, char *param_name)
     tiziano_gamma_init(tisp_si_width(&sensor_params), tisp_si_height(&sensor_params),
                        tisp_si_fps(&sensor_params));
     tiziano_gib_init();
-    tisp_gb_init();  /* OEM calls GB init unconditionally — loads BLC params from tuning bin */
+    /* OEM does NOT call tisp_gb_init() here in non-WDR mode.
+     * GB init is only in the WDR path (OEM tisp_init decompilation confirms).
+     * GB uses the same 0x1070 gate as GIB — calling it here corrupts GIB's
+     * double-buffered register state. */
     tiziano_lsc_init();
     tiziano_ccm_init();
     tiziano_dmsc_init();
@@ -5386,13 +5514,27 @@ int tisp_init(void *sensor_info_arg, char *param_name)
     system_reg_write(0x800, 1);  /* CRITICAL: This starts ISP processing */
     pr_info("*** tisp_init: ISP processing engine STARTED (reg 0x800=1) ***\n");
 
-    /* GIB BLC registers (0x1060-0x1068) only accept writes when the ISP engine
-     * is running.  tiziano_gib_init() wrote them before engine start, but the
-     * hardware rejected those writes (confirmed: BEFORE=AFTER=NOGAT all 0x3c).
-     * Event 4 (which normally triggers tisp_tgain_update via gain-change) never
-     * fires because ad0_cache[1] is never populated when EffectFrame=0.
-     * Re-program all gain-dependent blocks now that 0x800=1 is active. */
-    tisp_tgain_update(0);
+    /* GIB INVESTIGATION: Re-program ALL GIB registers after engine start.
+     * tiziano_gib_init() wrote config regs (0x1038,0x103c,0x106c,0x1030/0x1034)
+     * and DEIR LUTs (0x80000+) BEFORE 0x800=1. If those writes don't latch until
+     * the engine is running, GIB will use power-on defaults that corrupt data.
+     * The OEM doesn't do this explicitly, but may have different HW state at boot. */
+    pr_info("GIB_REINIT: Re-programming GIB after engine start\n");
+    pr_info("GIB_BEFORE: 0x1030=%08x 0x1034=%08x 0x1038=%08x 0x103c=%08x\n",
+        system_reg_read(0x1030), system_reg_read(0x1034),
+        system_reg_read(0x1038), system_reg_read(0x103c));
+    pr_info("GIB_BEFORE: 0x1060=%08x 0x1064=%08x 0x1068=%08x 0x106c=%08x 0x1070=%08x\n",
+        system_reg_read(0x1060), system_reg_read(0x1064),
+        system_reg_read(0x1068), system_reg_read(0x106c),
+        system_reg_read(0x1070));
+    tiziano_gib_init();
+    pr_info("GIB_AFTER: 0x1030=%08x 0x1034=%08x 0x1038=%08x 0x103c=%08x\n",
+        system_reg_read(0x1030), system_reg_read(0x1034),
+        system_reg_read(0x1038), system_reg_read(0x103c));
+    pr_info("GIB_AFTER: 0x1060=%08x 0x1064=%08x 0x1068=%08x 0x106c=%08x 0x1070=%08x\n",
+        system_reg_read(0x1060), system_reg_read(0x1064),
+        system_reg_read(0x1068), system_reg_read(0x106c),
+        system_reg_read(0x1070));
 
     /* Core register dump to compare with OEM for GIB investigation */
     pr_info("ISP_CORE: 0x00=%08x 0x04=%08x 0x08=%08x 0x0c=%08x\n",
@@ -6135,9 +6277,9 @@ int tisp_bcsh_ct_update(uint32_t ct)
 {
     if (!tuning_ready())
         return -ENODEV;
-    /* Cache CT override for BCSH CCM blending; do not alter AWB's wb_temp here */
-    s_bcsh_ct_override = ct;
-    s_bcsh_ct_override_valid = 1;
+    /* OEM stores CT for BCSH CCM interpolation */
+    ourISPdev->tuning_data->wb_temp = ct;
+    BCSH_real = 0;
     return tiziano_bcsh_update(ourISPdev->tuning_data);
 }
 
@@ -17053,47 +17195,10 @@ static int tisp_gib_gain_interpolation(uint32_t gain)
         break;
     }
 
-    /* OEM uses system_reg_write_gib(1, reg, val) for gate writes.
-     * Diagnostic: also try plain system_reg_write (no gate) and readback. */
-    {
-        static int gib_blc_diag_count;
-        u32 r60_before, r64_before, r68_before;
-
-        if (gib_blc_diag_count < 5) {
-            r60_before = system_reg_read(0x1060);
-            r64_before = system_reg_read(0x1064);
-            r68_before = system_reg_read(0x1068);
-        }
-
-        /* Try BOTH: gate write, then plain write as fallback */
-        system_reg_write_gib(1, 0x1060, ch0);
-        system_reg_write_gib(1, 0x1064, (ch2 << 16) | ch1);
-        system_reg_write_gib(1, 0x1068, (ch4 << 16) | ch3);
-
-        if (gib_blc_diag_count < 5) {
-            u32 r60_after = system_reg_read(0x1060);
-            u32 r64_after = system_reg_read(0x1064);
-            u32 r68_after = system_reg_read(0x1068);
-            pr_info("GIB_BLC_WRITE[%d]: gain=0x%x bayer=0x%x blc_r=%u blc_gr=%u blc_gb=%u blc_b=%u blc_ir=%u\n",
-                gib_blc_diag_count, gain, bayer, blc_r, blc_gr, blc_gb, blc_b, blc_ir);
-            pr_info("GIB_BLC_WRITE[%d]: ch0=%u ch1=%u ch2=%u ch3=%u ch4=%u\n",
-                gib_blc_diag_count, ch0, ch1, ch2, ch3, ch4);
-            pr_info("GIB_BLC_WRITE[%d]: BEFORE 0x1060=0x%08x 0x1064=0x%08x 0x1068=0x%08x\n",
-                gib_blc_diag_count, r60_before, r64_before, r68_before);
-            pr_info("GIB_BLC_WRITE[%d]: AFTER  0x1060=0x%08x 0x1064=0x%08x 0x1068=0x%08x\n",
-                gib_blc_diag_count, r60_after, r64_after, r68_after);
-
-            /* Test: try plain system_reg_write (no gate) */
-            system_reg_write(0x1060, ch0);
-            system_reg_write(0x1064, (ch2 << 16) | ch1);
-            system_reg_write(0x1068, (ch4 << 16) | ch3);
-            pr_info("GIB_BLC_WRITE[%d]: NOGAT  0x1060=0x%08x 0x1064=0x%08x 0x1068=0x%08x\n",
-                gib_blc_diag_count, system_reg_read(0x1060),
-                system_reg_read(0x1064), system_reg_read(0x1068));
-
-            gib_blc_diag_count++;
-        }
-    }
+    /* OEM EXACT: gate writes to BLC registers */
+    system_reg_write_gib(1, 0x1060, ch0);
+    system_reg_write_gib(1, 0x1064, (ch2 << 16) | ch1);
+    system_reg_write_gib(1, 0x1068, (ch4 << 16) | ch3);
     tisp_gib_blc_ag = gain;
     return 0;
 }
@@ -25942,6 +26047,31 @@ int tisp_tgain_update(uint32_t gain)
     if (tgain_call_count < 5 || (tgain_call_count % 300) == 0)
         pr_info("tisp_tgain_update[%u]: gain=0x%x\n", tgain_call_count, gain);
     tgain_call_count++;
+
+    /* GIB config register check: 0x1038/0x103c/0x106c are only written in
+     * tiziano_gib_init() (before engine start). If engine start resets them,
+     * GIB runs with wrong config. Re-program on first tgain_update call. */
+    {
+        static int gib_post_engine_init = 0;
+        if (!gib_post_engine_init) {
+            pr_info("GIB_CFG_CHECK: BEFORE re-init: 0x1038=%08x 0x103c=%08x 0x106c=%08x\n",
+                system_reg_read(0x1038), system_reg_read(0x103c), system_reg_read(0x106c));
+            pr_info("GIB_CFG_CHECK: 0x1030=%08x 0x1034=%08x 0x1060=%08x 0x1064=%08x 0x1068=%08x\n",
+                system_reg_read(0x1030), system_reg_read(0x1034),
+                system_reg_read(0x1060), system_reg_read(0x1064), system_reg_read(0x1068));
+            /* Re-program all GIB config + DEIR LUTs now that engine is running */
+            tiziano_gib_lut_parameter();
+            tiziano_gib_deir_reg(tiziano_gib_deir_r_m,
+                                  tiziano_gib_deir_g_m,
+                                  tiziano_gib_deir_b_m);
+            pr_info("GIB_CFG_CHECK: AFTER re-init: 0x1038=%08x 0x103c=%08x 0x106c=%08x\n",
+                system_reg_read(0x1038), system_reg_read(0x103c), system_reg_read(0x106c));
+            pr_info("GIB_CFG_CHECK: 0x1030=%08x 0x1034=%08x 0x1060=%08x 0x1064=%08x 0x1068=%08x\n",
+                system_reg_read(0x1030), system_reg_read(0x1034),
+                system_reg_read(0x1060), system_reg_read(0x1064), system_reg_read(0x1068));
+            gib_post_engine_init = 1;
+        }
+    }
 
     /* OEM order: GIB, GB_BLC, DMSC, Sharpen, SDNS, DPC, LSC, YDNS, RDNS, MDNS.
      * OEM calls ALL refresh functions UNCONDITIONALLY — no gating on block enable.
