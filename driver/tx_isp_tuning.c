@@ -2565,9 +2565,9 @@ static u32 tisp_compute_top_bypass_from_params(int wdr_enable)
 		bypass_val = (bypass_val & 0xa1fffff6) | 0x00880002;
 	else
 		/* Force-bypass: GIB(5), GB(13), MDNS(16).
-		 * GIB causes R=G=B even with identical BLC/unity gains.
-		 * 0x106c readback shows 0x3c0000 (not our written 0x0) —
-		 * possible write ordering or latch issue. */
+		 * GIB register values verified correct (BLC ch0-4 match OEM,
+		 * IR=0, permutation correct for bayer=0). Equalization is
+		 * internal to GIB HW — activation sequence issue, not data. */
 		bypass_val = (bypass_val & 0xb577fffd) | 0x34012029;
 
 	pr_info("tisp_compute_top_bypass: final=0x%08x\n", bypass_val);
@@ -18328,6 +18328,20 @@ static int tisp_gib_gain_interpolation(uint32_t gain)
         ch0 = ch1 = ch2 = ch3 = ch4 = 0;
         blc_r = 0;
         break;
+    }
+
+    /* Diagnostic: print interpolated values and channel mapping */
+    {
+        static int gib_interp_diag;
+        if (gib_interp_diag < 3) {
+            pr_info("GIB_INTERP: bayer=%u raw R=%u Gr=%u Gb=%u B=%u IR=%u\n",
+                bayer, blc_r, blc_gr, blc_gb, blc_b, blc_ir);
+            pr_info("GIB_INTERP: ch0=%u ch1=%u ch2=%u ch3=%u ch4=%u\n",
+                ch0, ch1, ch2, ch3, ch4);
+            pr_info("GIB_INTERP: 0x1060=%08x 0x1064=%08x 0x1068=%08x\n",
+                ch0, (ch2 << 16) | ch1, (ch4 << 16) | ch3);
+            gib_interp_diag++;
+        }
     }
 
     /* OEM EXACT: gate writes to BLC registers */
