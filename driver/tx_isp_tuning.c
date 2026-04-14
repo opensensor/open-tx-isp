@@ -77,12 +77,12 @@ module_param_named(force_bypass_defog, tisp_force_bypass_defog, int, S_IRUGO | S
 MODULE_PARM_DESC(force_bypass_defog,
 			 "Debug isolate FOV issues by forcing Defog bypass (default: 0)");
 
-static int tisp_force_bypass_gib = 0; /* GIB: 0=enabled, 1=bypassed */
+static int tisp_force_bypass_gib = 1; /* GIB: bypassed — R=G=B unsolved, HW registers correct but output equalized */
 module_param_named(force_bypass_gib, tisp_force_bypass_gib, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(force_bypass_gib,
-			 "Force GIB bypass (default: 1 — GIB equalizes R=G=B in HW stats)");
+			 "Force GIB bypass (default: 1 — GIB equalizes R=G=B despite correct registers)");
 
-static int tisp_force_bypass_mdns = 0; /* MDNS: 0=enabled, 1=bypassed */
+static int tisp_force_bypass_mdns = 1; /* MDNS: bypassed for clean baseline */
 module_param_named(force_bypass_mdns, tisp_force_bypass_mdns, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(force_bypass_mdns,
 			 "Force MDNS bypass (default: 0 — MDNS provides temporal denoise)");
@@ -6114,6 +6114,18 @@ int tisp_bcsh_g_rgb_coefft(int32_t *out)
     return out[2];
 }
 
+/* OEM EXACT: tisp_s_rgb_coefft / tisp_g_rgb_coefft — thin wrappers.
+ * OEM at 0x6642c / 0x6643c: tail-call to tisp_bcsh_s/g_rgb_coefft. */
+int tisp_s_rgb_coefft(const int32_t *coeff)
+{
+    return tisp_bcsh_s_rgb_coefft(coeff);
+}
+
+int tisp_g_rgb_coefft(int32_t *out)
+{
+    return tisp_bcsh_g_rgb_coefft(out);
+}
+
 /* Guard: tuning_data must be allocated AND fully initialized (state==1)
  * before any field or mutex access. Prevents NULL deref and crashes
  * from zeroed-but-uninit'd mutex (count=0 → locked → NULL wait_list). */
@@ -6394,6 +6406,8 @@ int tisp_mdns_param_array_get(int param_id, void *out_buf, int *size_buf);
 int tisp_mdns_param_array_set(int param_id, void *in_buf, int *size_buf);
 static int tisp_s_max_again(uint32_t value);
 static int tisp_s_max_isp_dgain(uint32_t value);
+int tiziano_ae_s_max_again(uint32_t value);
+int tiziano_ae_s_max_isp_dgain(uint32_t value);
 static int tisp_get_ae_attr(void *out);
 static uint8_t tisp_ae_g_luma(uint8_t *result);
 static uint8_t tisp_get_ae_luma(uint8_t *result);
@@ -12779,6 +12793,127 @@ int tisp_awb_algo_deinit(void)
     return tisp_awb_deinit();
 }
 
+/* OEM EXACT: tisp_rdns_awb_gain_par_cfg — write RDNS AWB gain registers.
+ * Decompiled from OEM at 0x58b14. */
+static int tisp_rdns_awb_gain_par_cfg(void)
+{
+    uint32_t *arr = (uint32_t *)rdns_awb_gain_par_cfg_array;
+    system_reg_write(0x3000, (arr[1] << 16) | arr[0]);
+    system_reg_write(0x3004, (arr[3] << 16) | arr[2]);
+    return 0;
+}
+
+/* OEM EXACT: JZ_Isp_Awb_Reg2par — unpack AWB HW register block into parameter struct.
+ * Decompiled from OEM at 0x17250. Complex bit-field extraction from AWB stat registers. */
+static int JZ_Isp_Awb_Reg2par(uint32_t *out, const uint32_t *regs)
+{
+    uint32_t r0 = regs[0];
+    int i, j;
+    uint32_t lo_vals[16], hi_vals[16];
+
+    /* Unpack 4 register pairs (regs[5..8]) into 16 7-bit values each */
+    for (i = 0; i < 4; i++) {
+        uint32_t lo_word = regs[i + 5 - 4]; /* regs[1..4] adjusted */
+        uint32_t hi_word = regs[i + 5];
+        for (j = 0; j < 4; j++) {
+            int shift = j * 8; /* 2-bit pairs, but 7-bit fields at 8-bit spacing */
+            lo_vals[i * 4 + j] = (lo_word >> shift) & 0x7f;
+            hi_vals[i * 4 + j] = (hi_word >> shift) & 0x7f;
+        }
+    }
+
+    out[3] = r0 >> 28;
+    out[0] = r0 & 0x7ff;
+    out[1] = (r0 >> 12) & 0xf;
+    out[2] = (r0 << 5) >> 21;
+
+    for (i = 0; i < 15; i++) {
+        out[4 + i] = lo_vals[i];
+        out[4 + 15 + i] = hi_vals[i];
+    }
+
+    out[0x26] = regs[0xb] & 0xffff;
+    out[0x28] = regs[0xc] & 0xffff;
+    out[0x22] = regs[9] & 0xfff;
+    out[0x23] = (regs[9] >> 16) & 0xfff;
+    out[0x24] = regs[0xa] & 0xfff;
+    out[0x25] = (regs[0xa] >> 16) & 0xfff;
+    out[0x27] = regs[0xb] >> 16;
+    out[0x29] = regs[0xc] >> 16;
+    out[0x2a] = regs[0xd] & 0xff;
+    out[0x2b] = (regs[0xd] >> 8) & 0xff;
+    out[0x2c] = (regs[0xd] >> 16) & 0xf;
+    return out[0x2c];
+}
+
+/* OEM EXACT: tisp_s_awb_ct_trend — set AWB CT trend.
+ * Decompiled from OEM at 0x63ac8. Thin wrapper. */
+int tisp_s_awb_ct_trend(void *arg1)
+{
+    tisp_awb_set_ct_trend(arg1);
+    return 0;
+}
+
+/* OEM EXACT: tisp_g_awb_ct_trend — get AWB CT trend.
+ * Decompiled from OEM at 0x63b0c. Thin wrapper. */
+int tisp_g_awb_ct_trend(void *arg1)
+{
+    tisp_awb_get_ct_trend(arg1);
+    return 0;
+}
+
+/* OEM EXACT: tisp_s_awb_cluster — set AWB cluster params.
+ * Decompiled from OEM at 0x63a30. */
+int tisp_s_awb_cluster(void *arg1, uint32_t arg2, uint32_t arg3)
+{
+    tisp_awb_set_cluster_awb_params(arg1, arg2, arg3);
+    return 0;
+}
+
+/* OEM EXACT: tisp_g_awb_cluster — get AWB cluster params.
+ * Decompiled from OEM at 0x63aa0. Thin wrapper. */
+int tisp_g_awb_cluster(void *arg1)
+{
+    tisp_awb_get_cluster_awb_params(arg1);
+    return 0;
+}
+
+/* OEM EXACT: tiziano_awb_dump — one-shot AWB register dump.
+ * Decompiled from OEM at 0x1789c. Dumps AWB stat registers 0xb000-0xb058. */
+static int tiziano_awb_dump(void)
+{
+    static int dump_done;
+    if (dump_done)
+        return 0;
+    dump_done = 1;
+
+    pr_info("-----awb regs dump-----\n");
+    pr_info("0xb000: 0x%08x\n", system_reg_read(0xb000));
+    pr_info("0xb004: 0x%08x\n", system_reg_read(0xb004));
+    pr_info("0xb008: 0x%08x\n", system_reg_read(0xb008));
+    pr_info("0xb00c: 0x%08x\n", system_reg_read(0xb00c));
+    pr_info("0xb010: 0x%08x\n", system_reg_read(0xb010));
+    pr_info("0xb014: 0x%08x\n", system_reg_read(0xb014));
+    pr_info("0xb018: 0x%08x\n", system_reg_read(0xb018));
+    pr_info("0xb01c: 0x%08x\n", system_reg_read(0xb01c));
+    pr_info("0xb020: 0x%08x\n", system_reg_read(0xb020));
+    pr_info("0xb024: 0x%08x\n", system_reg_read(0xb024));
+    pr_info("0xb028: 0x%08x\n", system_reg_read(0xb028));
+    pr_info("0xb02c: 0x%08x\n", system_reg_read(0xb02c));
+    pr_info("0xb030: 0x%08x\n", system_reg_read(0xb030));
+    pr_info("0xb034: 0x%08x\n", system_reg_read(0xb034));
+    pr_info("0xb038: 0x%08x\n", system_reg_read(0xb038));
+    pr_info("0xb03c: 0x%08x\n", system_reg_read(0xb03c));
+    pr_info("0xb040: 0x%08x\n", system_reg_read(0xb040));
+    pr_info("0xb044: 0x%08x\n", system_reg_read(0xb044));
+    pr_info("0xb048: 0x%08x\n", system_reg_read(0xb048));
+    pr_info("0xb04c: 0x%08x\n", system_reg_read(0xb04c));
+    pr_info("0xb050: 0x%08x\n", system_reg_read(0xb050));
+    pr_info("0xb054: 0x%08x\n", system_reg_read(0xb054));
+    pr_info("0xb058: 0x%08x\n", system_reg_read(0xb058));
+    return 0;
+}
+
 /* tisp_reg_map_set - Binary Ninja EXACT implementation */
 int tisp_reg_map_set(void *in_buf)
 {
@@ -13856,6 +13991,79 @@ int tisp_wdr_process(void)
 }
 EXPORT_SYMBOL(tisp_wdr_process);
 
+/* OEM EXACT: wdr_detail_para_rgb — WDR detail LUT interpolation.
+ * Decompiled from OEM at 0x1f6b8. Computes averaged curve values for
+ * two ranges defined by arg2[], using the 256-entry LUT in arg3[].
+ * Output: arg1[0]=avg_x1, arg1[1]=avg_y1, arg1[2]=slope between ranges. */
+static int wdr_detail_para_rgb(int32_t *arg1, const int32_t *arg2, const int32_t *arg3)
+{
+    int32_t center1 = arg2[0];
+    int32_t half1   = arg2[2];
+    int32_t center2 = arg2[3];
+    int32_t half2   = arg2[5];
+    int32_t lo1 = center1 - half1;
+    int32_t lo2 = center2 - half2;
+    int32_t x, count1, count2;
+    int32_t sum_x1 = 0, sum_y1 = 0;
+    int32_t sum_x2 = 0, sum_y2 = 0;
+
+    /* Range 1: [center1-half1 .. center1+half1] */
+    x = lo1;
+    count1 = 0;
+    while (x <= center1 + (int32_t)arg2[1]) {
+        int32_t y = arg3[0xff]; /* default to last entry */
+        int i;
+        for (i = 0x1f; i < 0x100f; i += 0x10) {
+            int32_t next = arg3[(i - 0x1f) / 0x10 + 1];
+            if (x < i) {
+                int32_t prev = arg3[(i - 0x1f) / 0x10];
+                y = ((next << 12) - (((next - prev) * (i - x)) << 12) / 0x10 + 0x800) / 0x1000;
+                break;
+            }
+        }
+        sum_x1 += x;
+        sum_y1 += y;
+        count1++;
+        x++;
+    }
+
+    /* Range 2: [center2-half2 .. center2+half2] */
+    x = lo2;
+    count2 = 0;
+    while (x <= center2 + (int32_t)arg2[4]) {
+        int32_t y = arg3[0xff]; /* default to last entry */
+        int i;
+        for (i = 0x1f; i < 0x100f; i += 0x10) {
+            int32_t next = arg3[(i - 0x1f) / 0x10 + 1];
+            if (x < i) {
+                int32_t prev = arg3[(i - 0x1f) / 0x10];
+                y = ((next << 12) - (((next - prev) * (i - x)) << 12) / 0x10 + 0x800) / 0x1000;
+                break;
+            }
+        }
+        sum_x2 += x;
+        sum_y2 += y;
+        count2++;
+        x++;
+    }
+
+    /* Compute averages */
+    int32_t avg_x1 = (sum_x1 + count1 / 2) / count1;
+    int32_t avg_y1 = (sum_y1 + count1 / 2) / count1;
+    int32_t avg_x2 = (sum_x2 + count2 / 2) / count2;
+    int32_t avg_y2 = (sum_y2 + count2 / 2) / count2;
+
+    /* Slope between the two averaged points */
+    int32_t dx = avg_x2 - avg_x1;
+    int32_t dy = avg_y2 - avg_y1;
+    int32_t slope = (dx != 0) ? ((dy << 12) + dx / 2) / dx : 0;
+
+    arg1[0] = avg_x1;
+    arg1[1] = avg_y1;
+    arg1[2] = slope;
+    return slope;
+}
+
 /* tiziano_wdr_init - WDR module initialization */
 int tiziano_wdr_init(uint32_t width, uint32_t height)
 {
@@ -13925,24 +14133,56 @@ static uint32_t ae_comp_default = 0x80;
 
 extern uint32_t tisp_math_exp2(uint32_t value, uint32_t precision, uint32_t shift);
 
-/* OEM: tisp_s_max_again → tiziano_ae_s_max_again
- * Converts log-scale max analog gain to Q10 fixed-point and stores it. */
+/* OEM: tisp_s_max_again calls tiziano_ae_s_max_again (defined below). */
 static int tisp_s_max_again(uint32_t value)
 {
-    /* OEM validation: data_a2e8c << 11 must be >= value.
-     * data_a2e8c is the sensor's raw max_again from tiziano_sync_sensor_attr.
-     * Skip validation for now — just clamp to reasonable range. */
+    return tiziano_ae_s_max_again(value);
+}
+
+/* OEM: tisp_s_max_isp_dgain calls tiziano_ae_s_max_isp_dgain (defined below). */
+static int tisp_s_max_isp_dgain(uint32_t value)
+{
+    return tiziano_ae_s_max_isp_dgain(value);
+}
+
+/* OEM EXACT: tiziano_ae_s_max_again — does the actual work.
+ * Decompiled from OEM at 0x52f40. tisp_s_max_again calls this. */
+int tiziano_ae_s_max_again(uint32_t value)
+{
     data_c46b0 = tisp_math_exp2(value, 5, 0xa);
     data_a0dfc = 0;
     return 0;
 }
 
-/* OEM: tisp_s_max_isp_dgain → tiziano_ae_s_max_isp_dgain
- * Converts log-scale max ISP digital gain to Q10 fixed-point. */
-static int tisp_s_max_isp_dgain(uint32_t value)
+/* OEM EXACT: tiziano_ae_s_max_isp_dgain — does the actual work.
+ * Decompiled from OEM at 0x52fb4. tisp_s_max_isp_dgain calls this. */
+int tiziano_ae_s_max_isp_dgain(uint32_t value)
 {
     data_c46bc = tisp_math_exp2(value, 5, 0xa);
     data_a0dfc = 0;
+    return 0;
+}
+
+/* OEM EXACT: tisp_ydns_gain_update — wrapper for YDNS gain refresh.
+ * Decompiled from OEM at 0x58420. */
+int tisp_ydns_gain_update(uint32_t gain)
+{
+    tisp_ydns_par_refresh(gain);
+    return 0;
+}
+
+/* OEM EXACT: tisp_set_sensor_digital_gain — wrapper for digital gain set.
+ * Decompiled from OEM at 0x4e990. Tail-calls tisp_set_sensor_digital_gain_short. */
+int tisp_set_sensor_digital_gain(int gain)
+{
+    return tisp_set_sensor_digital_gain_short(gain);
+}
+
+/* OEM EXACT: tisp_rdns_gain_update — wrapper for RDNS gain refresh.
+ * Decompiled from OEM at 0x59360. */
+int tisp_rdns_gain_update(uint32_t gain)
+{
+    tisp_rdns_par_refresh(gain, 0x100, 1);
     return 0;
 }
 
@@ -24920,9 +25160,8 @@ static void tisp_rdns_all_reg_refresh(uint32_t gain)
     /* OEM calls tisp_rdns_intp(gain) inside all_reg_refresh */
     tisp_rdns_intp(gain);
 
-    /* AWB gain config: 0x3000-0x3004 */
-    system_reg_write(0x3000, (awb[1] << 16) | (awb[0] & 0xffff));
-    system_reg_write(0x3004, (awb[3] << 16) | (awb[2] & 0xffff));
+    /* AWB gain config: 0x3000-0x3004 — OEM calls tisp_rdns_awb_gain_par_cfg() */
+    tisp_rdns_awb_gain_par_cfg();
 
     /* Opt config: 0x3008 */
     system_reg_write(0x3008, (opt[0] & 0x3) | ((opt[1] & 0x3) << 2) |
