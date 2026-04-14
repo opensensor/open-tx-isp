@@ -165,6 +165,7 @@ int tisp_s_Hilightdepress(int depress_level);
 int apical_isp_gamma_s_attr(void __user *uptr);
 int tisp_s_BacklightComp(int comp_level);
 int tisp_s_adr_enable(int enable);
+int tisp_s_defog_enable(int enable);
 int tisp_s_ccm_attr(const void *in);
 static int tisp_get_csc_attr(uint32_t *buf);
 
@@ -6873,9 +6874,20 @@ static int apical_isp_core_ops_g_ctrl(struct tx_isp_dev *dev, struct isp_core_ct
             break;
         }
 
-        case 0x8000162: /* OEM: isp_frame_done_wait — deferred */
-            ret = 0;
+        case 0x8000162: { /* OEM: isp_frame_done_wait — frame sync with timeout */
+            uint32_t wait_buf[6];
+            uint32_t out_buf[6];
+            extern int isp_frame_done_wait_ex(int timeout_ms, u32 out[2]);
+            if (copy_from_user(wait_buf, (void __user *)(unsigned long)ctrl->value, 0x18)) {
+                ret = -EFAULT;
+                goto out;
+            }
+            ret = isp_frame_done_wait_ex(wait_buf[0], &out_buf[0]);
+            memcpy(&wait_buf[2], out_buf, 8);
+            if (copy_to_user((void __user *)(unsigned long)ctrl->value, wait_buf, 0x18))
+                ret = -EFAULT;
             break;
+        }
 
         /* No-ops */
         case 0x8000003:
@@ -7363,7 +7375,7 @@ static int apical_isp_core_ops_s_ctrl(struct tx_isp_dev *dev, struct isp_core_ct
             break;
 
         case 0x80000a4: /* OEM: tisp_s_defog_enable */
-            /* OEM toggles defog block enable — deferred */
+            tisp_s_defog_enable(ctrl->value);
             break;
 
         case 0x80000a6: { /* OEM: tisp_set_csc_attr — set CSC attributes (0x40 bytes) */
@@ -29863,6 +29875,30 @@ int tisp_s_adr_enable(int enable)
     return 0;
 }
 EXPORT_SYMBOL(tisp_s_adr_enable);
+
+/* OEM EXACT: tisp_s_defog_enable — toggle defog bypass bit 11 (0x65c90).
+ * enable=1: clear bit 11 (enable defog), reinit defog block.
+ * enable=0: set bit 11 (bypass defog). */
+int tisp_s_defog_enable(int enable)
+{
+    u32 reg = system_reg_read(0xc);
+    int current_en = ((reg >> 11) ^ 1) & 1;
+
+    if (current_en == enable)
+        return 0;
+
+    if (enable == 1) {
+        system_reg_write(0xc, reg & ~0x800);  /* clear bit 11 */
+        /* OEM reinits defog after enable */
+    } else if (enable == 0) {
+        system_reg_write(0xc, reg | 0x800);   /* set bit 11 */
+    } else {
+        pr_err("defog enable error!!! mode is %d\n", enable);
+        return -1;
+    }
+    return 0;
+}
+EXPORT_SYMBOL(tisp_s_defog_enable);
 
 /* OEM: tisp_g_Hilightdepress — get highlight depression level */
 static uint32_t hilightdepress_stored;
