@@ -630,21 +630,43 @@ Input (Bayer) -> DPC -> LSC -> GIB -> [ADR] -> DMSC -> [Gamma] ->
 
 Block enable/bypass is computed in `tisp_compute_top_bypass_from_params()`:
 
-| Bit | Block | Purpose |
-|----:|-------|---------|
-| 2 | DPC | Defect Pixel Correction |
-| 4 | LSC | Lens Shading Correction |
-| 5 | GIB | Green Imbalance |
-| 7 | ADR | Adaptive Dynamic Range |
-| 8 | DMSC | Demosaic |
-| 10 | Gamma | Tone mapping LUT |
-| 11 | Defog | Haze removal |
-| 12 | CLM/BCSH | Color luminance / brightness-contrast-saturation-hue |
-| 14 | Sharpen | Detail enhancement |
-| 15 | SDNS | Spatial denoise |
-| 16 | MDNS | Motion denoise |
-| 17 | YDNS | Luma denoise |
-| 31 | Top sel | Set on first interrupt (`tisp_top_sel()`) to release processing |
+| Bit | Block | Purpose | Non-WDR | Init |
+|----:|-------|---------|---------|------|
+| 0 | BLC/DGain | Black-level correction / digital gain | Bypassed (forced) | - |
+| 1 | AE1 / 2nd Exposure | WDR short-frame capture path | Active (forced, inverted: CLR=off) | N/A non-WDR |
+| 2 | DPC | Defect Pixel Correction | Tunable | `tiziano_dpc_init` |
+| 3 | WDR | Wide Dynamic Range processing | Bypassed (forced) | - |
+| 4 | LSC (HW enable) | Lens Shading Correction block enable | Tunable | `tiziano_lsc_init` |
+| 5 | GIB | Green Imbalance Balance + BLC | Tunable | `tiziano_gib_init` |
+| 6 | LSC (LUT gate) | LSC LUT write gate | Tunable | `ip_done_interrupt_static` |
+| 7 | ADR | Adaptive Dynamic Range (DRC) | Tunable | `tiziano_adr_init` |
+| 8 | DMSC | Demosaic (Bayer to RGB) | Tunable | `tiziano_dmsc_init` |
+| 9 | CCM | Color Correction Matrix | Tunable | `tiziano_ccm_init` |
+| 10 | Gamma | Tone mapping LUT | Tunable | `tiziano_gamma_init` |
+| 11 | Defog | Haze removal | Tunable | `tiziano_defog_init` |
+| 12 | CLM/BCSH | Color luminance / brightness-contrast-saturation-hue | Tunable | `tiziano_clm_init`, `tiziano_bcsh_init` |
+| 13 | GB | Green Balance (WDR BLC) | Tunable | `tisp_gb_init` (WDR only) |
+| 14 | Sharpen | Detail enhancement | Tunable | `tiziano_sharpen_init` |
+| 15 | SDNS | Spatial denoise (2D-NR) | Tunable | `tiziano_sdns_init` |
+| 16 | MDNS | Motion denoise (3D-NR) | Tunable | `tiziano_mdns_init` |
+| 17 | YDNS | Luma denoise | Tunable | `tiziano_ydns_init` |
+| 18 | RDNS | Raw-domain denoise | Tunable | `tiziano_rdns_init` |
+| 19 | WDR Short-In | WDR short-exposure input mux | Active (forced, inverted: CLR=off) | N/A non-WDR |
+| 20 | AE1 Stats HW | AE1 statistics engine | Tunable | `tiziano_ae_init` |
+| 21 | HLDC | Highlight Compression | Tunable | `tiziano_hldc_init` |
+| 22 | AF Stats HW | AF statistics engine | Tunable | `tiziano_af_init` |
+| 23 | WDR LUT | WDR tone-mapping LUT path | Active (forced, inverted: CLR=off) | N/A non-WDR |
+| 24 | AE0 Stats DMA | AE0 statistics DMA engine | Active (forced) | DMA at `0xa02c` |
+| 25 | AWB Stats DMA | AWB statistics DMA engine | Active (forced) | DMA at `0xb03c` |
+| 26 | AE1 Stats DMA | AE1 zone stats DMA | Bypassed (forced) | - |
+| 27 | Defog Stats DMA | Defog histogram DMA engine | Active (forced) | DMA at `0x5b84` |
+| 28 | ADR Stats DMA | ADR histogram DMA | Bypassed (forced) | - |
+| 29 | WDR Stats DMA | WDR statistics DMA | Bypassed (forced) | - |
+| 30 | AF Stats DMA | AF statistics DMA engine | Active (forced) | DMA at `0xb8a8` |
+| 31 | Top sel | ISP initialized flag | Set by `tisp_top_sel()` on first IRQ | - |
+
+Non-WDR masks: `AND = 0xb577fffd` (force-clears bits 1,19,23,25,27,30), `OR = 0x34000009` (force-sets bits 0,3,26,28,29).
+Bits 1,19,23 have inverted polarity: CLR=disabled in non-WDR mode despite appearing "active."
 
 ### 7.3 ISP Processing Blocks
 
