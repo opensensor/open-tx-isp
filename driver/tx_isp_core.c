@@ -933,14 +933,24 @@ void mbus_to_bayer_write(u32 mbus_code)
  *
  * Sets bit 31 of ISP register 0xc.  Called exactly once on the first
  * interrupt after stream-on.
+ *
+ * CRITICAL FIX: Also re-enforce the block enable whitelist here.
+ * Between tisp_init() and the first frame, something (likely an ioctl
+ * from libimp.so or a day/night path) overwrites reg 0xc with the OEM
+ * value 0xb5742249 which has ALL blocks enabled — including GIB(bit 5)
+ * whose BLC component zeros AE/AWB stats data at high sensor gain.
  */
 void tisp_top_sel(void)
 {
+	extern u32 tisp_enforce_block_whitelist(u32 bypass_val);
 	u32 reg_val = system_reg_read(0xc);
+	u32 enforced = tisp_enforce_block_whitelist(reg_val);
 
-	system_reg_write(0xc, reg_val | 0x80000000);
-	pr_info("tisp_top_sel: reg[0xc] 0x%08x -> 0x%08x\n",
-		reg_val, reg_val | 0x80000000);
+	enforced |= 0x80000000;
+	system_reg_write(0xc, enforced);
+	pr_info("tisp_top_sel: reg[0xc] 0x%08x -> 0x%08x%s\n",
+		reg_val, enforced,
+		(enforced != (reg_val | 0x80000000)) ? " (whitelist enforced)" : "");
 }
 
 /* Core subdev operations implementations */
@@ -1241,32 +1251,22 @@ int ispcore_video_s_stream(struct tx_isp_subdev *sd, int enable)
                 }
             }
 
-            /* Reset VIC MDMA stream_state so the next frame channel STREAMON
-             * can re-enable with the correct active_buffer_count.
-             * Without this, the idempotency guard blocks re-configuration. */
-            if (vic_dev)
-                ispvic_frame_channel_s_stream(vic_dev, 0);
+            /* OEM does NOT do a blanket VIC streamoff here — it only
+             * stops individual channels via ispcore_frame_channel_streamoff.
+             * Our previous ispvic_frame_channel_s_stream(vic_dev, 0) was
+             * killing AWB/AE stats DMA, causing zero stats after restart
+             * and preventing AWB convergence (pink image). */
         }
     } else {
         s3_1 = &isp_dev->subdevs[0];
 
         if (v0_3 == 3) {
-	            /* OEM first-frame init is one-shot. Re-arm it on each fresh
-	             * stream enable so Bayer + top-select program against the live
-	             * sensor mode instead of stale boot-time state.
-	             */
-	            first_into = 1;
-	            bayer_write_pending = 1;
-            /* isp_dev->state = 4 gates re-entry: the second
-             * ispcore_video_s_stream(enable=1) sees state != 3
-             * and skips the subdev walk entirely.
-             */
+            /* OEM BN: state 3→4 is the only action here.
+             * The subdev walk below calls vic_core_s_stream(1)
+             * which re-runs tx_isp_vic_start (VIC reset→config→run).
+             * AWB/AE stats DMA stays active across the cycle —
+             * OEM never re-arms 0xb000/0xa000 here. */
             isp_dev->state = 4;
-            /* Do NOT touch vic_dev->state here — vic_core_s_stream
-             * manages its own state transitions. The isp_dev->state=4
-             * guard prevents re-entry into the subdev walk, which is
-             * sufficient to avoid the duplicate VIC re-arm timeout.
-             */
         }
     }
 
@@ -1363,13 +1363,8 @@ int ispcore_video_s_stream(struct tx_isp_subdev *sd, int enable)
         tx_isp_disable_irq(isp_dev);
     } else {
         tx_isp_enable_irq(isp_dev);
-
-        /* VIC IRQ enable only.  Do NOT call ispvic_frame_channel_s_stream(1)
-         * here — it starts MDMA before QBUF has programmed bank addresses,
-         * causing writes to addr 0 and triggering MSCA DMA auto-disable.
-         * The frame channel STREAMON event dispatch calls it after QBUF. */
-        if (vic_dev)
-            tx_vic_enable_irq(vic_dev);
+        /* OEM BN: only tx_isp_enable_irq here. VIC IRQ is already
+         * enabled by vic_core_s_stream(1) → tx_isp_vic_start path. */
     }
 
     /* Binary Ninja: if (result == 0xfffffdfd) return 0 */
@@ -1712,24 +1707,24 @@ irqreturn_t ispcore_interrupt_service_routine(int irq, void *dev_id)
         isr_log_counter++;
         if (isr_log_counter <= 5 || (isr_log_counter % 60) == 0) {
             u32 fifo_diag = readl(isp_regs + 0x997c);
-            pr_info("ISP ISR[%u]: int=0x%x fifo_ch0=0x%x fc=%u bypass=%d\n",
+            pr_debug("ISP ISR[%u]: int=0x%x fifo_ch0=0x%x fc=%u bypass=%d\n",
                     isr_log_counter, interrupt_status, fifo_diag,
                     isp_dev ? isp_dev->frame_count : 0,
                     isp_dev ? isp_dev->bypass_enabled : -1);
-            pr_info("MSCA diag: 0x9804=0x%x 0x9818=0x%x 0x9900=0x%x 0x9904=0x%x\n",
+            pr_debug("MSCA diag: 0x9804=0x%x 0x9818=0x%x 0x9900=0x%x 0x9904=0x%x\n",
                     readl(isp_regs + 0x9804), readl(isp_regs + 0x9818),
                     readl(isp_regs + 0x9900), readl(isp_regs + 0x9904));
             /* NOTE: Do NOT read 0x9974 here — it's the FIFO POP register,
              * reading it consumes entries! */
-            pr_info("MSCA diag: 0x996c=0x%x 0x997c=0x%x 0x9984=0x%x 0x9968=0x%x\n",
+            pr_debug("MSCA diag: 0x996c=0x%x 0x997c=0x%x 0x9984=0x%x 0x9968=0x%x\n",
                     readl(isp_regs + 0x996c),
                     readl(isp_regs + 0x997c), readl(isp_regs + 0x9984),
                     readl(isp_regs + 0x9968));
             /* ISP pipeline state: 0xc=bypass 0x20/0x24/0x28=processing state */
-            pr_info("ISP ctrl: 0x10=0x%x 0xc=0x%x 0x800=0x%x 0x804=0x%x\n",
+            pr_debug("ISP ctrl: 0x10=0x%x 0xc=0x%x 0x800=0x%x 0x804=0x%x\n",
                     readl(isp_regs + 0x10), readl(isp_regs + 0xc),
                     readl(isp_regs + 0x800), readl(isp_regs + 0x804));
-            pr_info("ISP pipe: 0x20=0x%x 0x24=0x%x 0x28=0x%x 0xb0=0x%x\n",
+            pr_debug("ISP pipe: 0x20=0x%x 0x24=0x%x 0x28=0x%x 0xb0=0x%x\n",
                     readl(isp_regs + 0x20), readl(isp_regs + 0x24),
                     readl(isp_regs + 0x28), readl(isp_regs + 0xb0));
         }
@@ -3051,6 +3046,7 @@ static long isp_tuning_ioctl(struct file *file, unsigned int cmd, unsigned long 
 
     // Check if this is a tuning command (0x74xx series from reference)
     if ((cmd >> 8 & 0xFF) == 0x74) {
+        pr_info("ISP_CORE_INTERCEPT: 0x74 cmd=0x%x (SHOULD GO TO M0!)\n", cmd);
         if ((cmd & 0xFF) < 0x33) {
             if ((cmd - ISP_TUNING_GET_PARAM) < 0xA) {
 

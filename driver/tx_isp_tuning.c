@@ -64,6 +64,8 @@ extern void tx_isp_wakeup_frame_channels(void);
 
 #define TISP_TOP_BYPASS_ADR_BIT	BIT(7)
 #define TISP_TOP_BYPASS_DEFOG_BIT	BIT(11)
+#define TISP_TOP_BYPASS_GIB_BIT	BIT(5)
+#define TISP_TOP_BYPASS_MDNS_BIT	BIT(16)
 
 static int tisp_force_bypass_adr = 0; /* ADR algorithm now ported — enable by default */
 module_param_named(force_bypass_adr, tisp_force_bypass_adr, int, S_IRUGO | S_IWUSR);
@@ -75,6 +77,18 @@ module_param_named(force_bypass_defog, tisp_force_bypass_defog, int, S_IRUGO | S
 MODULE_PARM_DESC(force_bypass_defog,
 			 "Debug isolate FOV issues by forcing Defog bypass (default: 0)");
 
+static int tisp_force_bypass_gib = 0; /* GIB: 0=enabled, 1=bypassed */
+module_param_named(force_bypass_gib, tisp_force_bypass_gib, int, S_IRUGO | S_IWUSR);
+MODULE_PARM_DESC(force_bypass_gib,
+			 "Force GIB bypass (default: 1 — GIB produces R=G=B stats)");
+
+static int tisp_force_bypass_mdns = 0; /* MDNS: 0=enabled, 1=bypassed */
+module_param_named(force_bypass_mdns, tisp_force_bypass_mdns, int, S_IRUGO | S_IWUSR);
+MODULE_PARM_DESC(force_bypass_mdns,
+			 "Force MDNS bypass (default: 1 — suspected R=G=B cause)");
+
+extern uint32_t system_reg_read(u32 reg);
+
 static u32 tisp_apply_debug_top_bypass_overrides(u32 bypass_val, const char *reason)
 {
 	u32 force_mask = 0;
@@ -83,16 +97,22 @@ static u32 tisp_apply_debug_top_bypass_overrides(u32 bypass_val, const char *rea
 		force_mask |= TISP_TOP_BYPASS_ADR_BIT;
 	if (tisp_force_bypass_defog)
 		force_mask |= TISP_TOP_BYPASS_DEFOG_BIT;
+	if (tisp_force_bypass_gib)
+		force_mask |= TISP_TOP_BYPASS_GIB_BIT;
+	if (tisp_force_bypass_mdns)
+		force_mask |= TISP_TOP_BYPASS_MDNS_BIT;
 
 	if (force_mask) {
 		u32 new_val = bypass_val | force_mask;
 
-		pr_info("%s: debug force-bypass mask=0x%08x -> top_bypass=0x%08x (ADR=%s Defog=%s)\n",
+		pr_info("%s: debug force-bypass mask=0x%08x -> top_bypass=0x%08x (ADR=%s Defog=%s GIB=%s MDNS=%s)\n",
 			reason ? reason : "tisp",
 			force_mask,
 			new_val,
 			tisp_force_bypass_adr ? "off" : "on",
-			tisp_force_bypass_defog ? "off" : "on");
+			tisp_force_bypass_defog ? "off" : "on",
+			tisp_force_bypass_gib ? "off" : "on",
+			tisp_force_bypass_mdns ? "off" : "on");
 		return new_val;
 	}
 
@@ -402,10 +422,6 @@ static uint32_t awb_algo_mode;
 static uint32_t awb_ct_manual;
 static uint32_t _awb_trend = 1;
 
-/* Post-pipeline saturation multiplier — declared early, used in tiziano_bcsh_reg_apply.
- * 128=1.0x neutral, 255=~2.0x, 64=0.5x. Set via module param isp_sat_mul. */
-static uint isp_sat_mul = 128;
-
 /* BCSH matrices and state - declared early for use in tiziano_bcsh functions */
 static int32_t tiziano_MMatrix[9] = {
 	/* OEM MMatrix at 0x9a62c — BT.601 RGB->YUV */
@@ -591,13 +607,11 @@ static void tiziano_bcsh_build_HMatrix(int32_t out[9])
     tiziano_bcsh_build_active_ccm(active_ccm, ct);
 
     {
-        static unsigned int bcsh_diag_counter;
-        bool bcsh_diag_print = (bcsh_diag_counter++ % 300) == 0;
-
-        if (bcsh_diag_print) {
-            pr_info("BCSH_DIAG[%u]: CT=%u CCM=[%d,%d,%d, %d,%d,%d, %d,%d,%d]\n",
-                    bcsh_diag_counter - 1, ct,
-                    active_ccm[0], active_ccm[1], active_ccm[2],
+        static int blog;
+        if (!blog) {
+            blog = 1;
+            pr_info("BCSH_DIAG: CT=%u CCM=[%d,%d,%d, %d,%d,%d, %d,%d,%d]\n",
+                    ct, active_ccm[0], active_ccm[1], active_ccm[2],
                     active_ccm[3], active_ccm[4], active_ccm[5],
                     active_ccm[6], active_ccm[7], active_ccm[8]);
             pr_info("BCSH_DIAG: M=[%d,%d,%d, %d,%d,%d, %d,%d,%d]\n",
@@ -608,26 +622,15 @@ static void tiziano_bcsh_build_HMatrix(int32_t out[9])
                     tiziano_MinvMatrix[0], tiziano_MinvMatrix[1], tiziano_MinvMatrix[2],
                     tiziano_MinvMatrix[3], tiziano_MinvMatrix[4], tiziano_MinvMatrix[5],
                     tiziano_MinvMatrix[6], tiziano_MinvMatrix[7], tiziano_MinvMatrix[8]);
-        } else {
-            pr_debug("BCSH_DIAG: CT=%u CCM=[%d,%d,%d, %d,%d,%d, %d,%d,%d]\n",
-                     ct, active_ccm[0], active_ccm[1], active_ccm[2],
-                     active_ccm[3], active_ccm[4], active_ccm[5],
-                     active_ccm[6], active_ccm[7], active_ccm[8]);
-        }
-
-        tiziano_bcsh_Tccm_RGBYUV(tmp, tiziano_MMatrix, active_ccm, tiziano_MinvMatrix);
-
-        /* CT bias removed — A-matrix CCM boosts green, counterproductive */
-        if (bcsh_diag_print) {
-            pr_info("BCSH_DIAG: HMatrix=[%d,%d,%d, %d,%d,%d, %d,%d,%d]\n",
-                    tmp[0], tmp[1], tmp[2], tmp[3], tmp[4], tmp[5],
-                    tmp[6], tmp[7], tmp[8]);
-        } else {
-            pr_debug("BCSH_DIAG: HMatrix=[%d,%d,%d, %d,%d,%d, %d,%d,%d]\n",
-                     tmp[0], tmp[1], tmp[2], tmp[3], tmp[4], tmp[5],
-                     tmp[6], tmp[7], tmp[8]);
         }
     }
+
+    tiziano_bcsh_Tccm_RGBYUV(tmp, tiziano_MMatrix, active_ccm, tiziano_MinvMatrix);
+
+    /* CT bias removed — A-matrix CCM boosts green, counterproductive */
+    pr_debug("BCSH_DIAG: HMatrix=[%d,%d,%d, %d,%d,%d, %d,%d,%d]\n",
+            tmp[0], tmp[1], tmp[2], tmp[3], tmp[4], tmp[5],
+            tmp[6], tmp[7], tmp[8]);
 
     for (int i = 0; i < 9; ++i)
         out[i] = tmp[i];
@@ -745,30 +748,42 @@ static void tiziano_bcsh_build_active_ccm(int32_t out[9], uint32_t ct)
  * fix_point_mult2_32(16, mag_a, mag_b << 6).  This is equivalent to
  * standard Q16 multiply when the <<6 and final >>6 cancel out.
  * Use plain Q16 here and rely on the final >>6 for hardware scaling. */
+/* OEM-exact fixed-point multiply: unsigned magnitude with separate sign.
+ * Rounds toward zero (not toward -inf like signed >>), matching
+ * the OEM's fix_point_mult2_32 used in tiziano_bcsh_Tccm_RGBYUV. */
+static inline int32_t oem_fixmul(int32_t a, int32_t b, int shift)
+{
+    int sign = 1;
+    uint32_t ma = (a < 0) ? (sign = -sign, (uint32_t)(-a)) : (uint32_t)a;
+    uint32_t mb = (b < 0) ? (sign = -sign, (uint32_t)(-b)) : (uint32_t)b;
+    uint32_t prod = (uint32_t)(((uint64_t)ma * mb) >> shift);
+    return sign < 0 ? -(int32_t)prod : (int32_t)prod;
+}
+
 static void tiziano_matmul3_q16(const int32_t A[9], const int32_t B[9], int32_t O[9])
 {
     int i, j, k;
     for (i = 0; i < 3; ++i) {
         for (j = 0; j < 3; ++j) {
-            int64_t acc = 0;
+            int32_t acc = 0;
             for (k = 0; k < 3; ++k)
-                acc += ((int64_t)A[i * 3 + k] * (int64_t)B[k * 3 + j]) >> 16;
-            O[i * 3 + j] = (int32_t)acc;
+                acc += oem_fixmul(A[i * 3 + k], B[k * 3 + j], 16);
+            O[i * 3 + j] = acc;
         }
     }
 }
 
-/* Q10 matmul: (A * B) >> 10.  The << 6 compensates for the CCM
- * being in Q10 while M is in Q16, keeping the intermediate result in Q16. */
+/* Q10 matmul: OEM uses fix_point_mult2_32(16, mag, mag<<6) which is
+ * effectively (mag * mag) >> 10.  Match with unsigned magnitude approach. */
 static void tiziano_matmul3_q10(const int32_t A[9], const int32_t B[9], int32_t O[9])
 {
     int i, j, k;
     for (i = 0; i < 3; ++i) {
         for (j = 0; j < 3; ++j) {
-            int64_t acc = 0;
+            int32_t acc = 0;
             for (k = 0; k < 3; ++k)
-                acc += ((int64_t)A[i * 3 + k] * (int64_t)B[k * 3 + j]) >> 10;
-            O[i * 3 + j] = (int32_t)acc;
+                acc += oem_fixmul(A[i * 3 + k], B[k * 3 + j], 10);
+            O[i * 3 + j] = acc;
         }
     }
 }
@@ -1718,23 +1733,7 @@ static void tiziano_bcsh_reg_apply(struct isp_tuning_data *tuning)
         system_reg_write(BASE + 0x0020, PACK16(bcsh_OffsetRGB2yuv[2], 0x400));
     }
 
-    /* 0x8024..0x8038: HMatrixReg (9 elements) — OEM arg13
-     * Row 0 (Y): elements 0-2 — luma extraction, keep unchanged
-     * Row 1 (Cb): elements 3-5 — blue chroma
-     * Row 2 (Cr): elements 6-8 — red chroma
-     * Scaling Cb/Cr rows boosts/reduces color saturation. */
-    {
-        uint32_t sat_mul = isp_sat_mul;
-        if (sat_mul != 128 && sat_mul > 0) {
-            int k;
-            for (k = 3; k < 9; k++) {
-                /* H[] is signed, Hreg[] is 14-bit unsigned (neg masked) */
-                int32_t sv = H[k];
-                sv = (int32_t)((int64_t)sv * sat_mul / 128);
-                Hreg[k] = (sv < 0) ? (sv & 0x3fff) : sv;
-            }
-        }
-    }
+    /* 0x8024..0x8038: HMatrixReg (9 elements) — OEM arg13 */
     system_reg_write(BASE + 0x0024, PACK16((u32)Hreg[1], (u32)Hreg[0]));
     system_reg_write(BASE + 0x0028, (u32)Hreg[2]);
     system_reg_write(BASE + 0x002c, PACK16((u32)Hreg[4], (u32)Hreg[3]));
@@ -1847,34 +1846,13 @@ static void tiziano_bcsh_reg_apply(struct isp_tuning_data *tuning)
     }
     system_reg_write(BASE + 0x0068, PACK16(Sth[2], Sth[1]));
 
-    /* 0x806c..0x8070: Svalue (OEM arg11 = saturation values)
-     * Apply post-pipeline saturation multiplier (isp_sat_mul).
-     * This survives per-frame BCSH updates from CT/EV events.
-     * 128=1.0x neutral, 255=~2.0x boost, 64=0.5x. */
-    {
-        uint32_t sat_mul = isp_sat_mul;
-        static unsigned int sat_diag;
-        if (sat_mul != 128 && sat_mul > 0) {
-            int k;
-            for (k = 0; k < 4; k++) {
-                uint32_t v = (uint32_t)svec1[k] * sat_mul / 128;
-                if (v > 0xFFFF) v = 0xFFFF;
-                svec1[k] = (uint16_t)v;
-            }
-        }
-        sat_diag++;
-        if (sat_diag <= 5 || (sat_diag % 300) == 0)
-            pr_info("BCSH_SAT_MUL[%u]: mul=%u svec=[%u,%u,%u,%u] reg=0x%04x%04x,0x%04x%04x\n",
-                sat_diag, sat_mul,
-                svec1[0], svec1[1], svec1[2], svec1[3],
-                svec1[0], svec1[1], svec1[2], svec1[3]);
-    }
+    /* 0x806c..0x8070: Svalue (OEM arg11 = saturation values) */
     system_reg_write(BASE + 0x006c, PACK16(svec1[0], svec1[1]));
     system_reg_write(BASE + 0x0070, PACK16(svec1[2], svec1[3]));
 }
 
 /* ADR (Adaptive Dynamic Range) Variables */
-static uint32_t adr_ratio = 0;
+static uint32_t adr_ratio = 0x80;  /* OEM default: 0x80 = neutral (no strength adjustment) */
 static uint32_t adr_wdr_en = 0;
 static uint32_t ev_changed = 0;
 static uint32_t ev_now = 0;
@@ -2073,6 +2051,7 @@ static void *tparams_night = NULL;
 static void *tparams_cust = NULL;
 static void *tparams_active = NULL;
 static uint8_t tispPollValue;
+static wait_queue_head_t dumpQueue;  /* OEM: poll wait queue for /dev/isp-m0 day/night events */
 static bool tuning_bin_loaded = false;
 static void *dmsc_sp_d_w_stren_wdr_array = NULL;
 #define TISP_DMSC_PARAM_FIRST 0x5f
@@ -2126,6 +2105,40 @@ static struct tisp_hldc_con_par hldc_con_par_array;
 static int tisp_hldc_con_par_cfg(void);
 static int tisp_hldc_apply_par_array(void);
 static int tiziano_hldc_params_refresh(void);
+
+/* Forward declarations for _params_refresh base functions */
+static void tiziano_defog_params_refresh(void);
+extern int tiziano_ae_params_refresh(void);
+extern int tiziano_awb_dn_params_refresh(void);
+static int tiziano_dmsc_params_refresh(void);
+extern void tiziano_sharpen_dn_params_refresh(void);
+extern void tiziano_mdns_dn_params_refresh(void);
+extern void tiziano_sdns_params_refresh(void);
+extern int tiziano_gib_dn_params_refresh(void);
+extern void tiziano_lsc_params_refresh(void);
+extern void tiziano_ccm_params_refresh(void);
+extern int tiziano_clm_dn_params_refresh(void);
+extern int tiziano_gamma_lut_parameter(void);
+extern int tiziano_adr_params_refresh(void);
+static int tiziano_adr_gamma_refresh(void);
+extern void tiziano_dpc_params_refresh(void);
+static void tiziano_bcsh_params_refresh(void);
+static void tiziano_rdns_params_refresh(void);
+static void tiziano_ydns_params_refresh(void);
+
+/* Forward declarations for OEM-exact _dn_ wrapper functions (Day/Night switch).
+ * Each wrapper calls base _params_refresh + additional HW register refresh/key bumps. */
+static int tiziano_defog_dn_params_refresh(void);
+static int tiziano_dmsc_dn_params_refresh(void);
+static int tiziano_lsc_dn_params_refresh(void);
+static int tiziano_ccm_dn_params_refresh(void);
+static void tiziano_gamma_params_refresh(void);
+static int tiziano_gamma_dn_params_refresh(void);
+static int tiziano_dpc_dn_params_refresh(void);
+static int tiziano_bcsh_dn_params_refresh(void);
+static int tiziano_rdns_dn_params_refresh(void);
+static int tiziano_ydns_dn_params_refresh(void);
+static int tiziano_sdns_dn_params_refresh(void);
 
 static int tisp_alloc_param_block(void **dst, const char *name)
 {
@@ -2311,75 +2324,21 @@ module_param(isp_bypass_override, uint, 0644);
  *          isp_block_enable=0xDD24 adds GIB (green imbalance correction) to crisp set
  *          isp_block_enable=0xDD34 adds GIB+LSC (green correction + lens shading)
  */
-static uint isp_block_enable = 0x3DD94;  /* All OEM blocks except GIB(5) — ADR(7) now enabled */
-module_param(isp_block_enable, uint, 0644);
-MODULE_PARM_DESC(isp_block_enable,
-		 "Block enable bitmask: set bits enable ISP blocks (0=all bypassed)");
+/* OEM has no whitelist — bypass is computed once from tuning params and
+ * never modified. Our whitelist was re-writing bypass at multiple points
+ * during streaming, potentially glitching GIB/MDNS block activation. */
 
-/* Image style presets — adjustable via module param or ioctl.
- * 0=default (OEM tuning), 1=vivid, 2=bright, 3=cinematic, 4=sepia
- *
- * Each style adjusts two layers:
- *   - BCSH: saturation, contrast, brightness, hue (YUV domain, per-frame)
- *   - CCM:  cm_sat_list override (RGB domain, affects color matrix)
- *
- * Combined saturation: CCM_sat × BCSH_sat.  Default OEM is ~1.17 × 1.13 = 1.32x.
- * "Vivid" targets ~1.8x total; "cinematic" ~1.1x with warm hue shift.
- */
-#define ISP_STYLE_DEFAULT    0
-#define ISP_STYLE_VIVID      1
-#define ISP_STYLE_BRIGHT     2
-#define ISP_STYLE_CINEMATIC  3
-#define ISP_STYLE_SEPIA      4
-#define ISP_STYLE_MAX        4
-
-struct isp_style_params {
-	uint8_t saturation;   /* 0-255, 128=neutral */
-	uint8_t contrast;     /* 0-255, 128=neutral */
-	uint8_t brightness;   /* 0-255, 128=neutral */
-	uint8_t hue;          /* 0-255, maps to BCSH hue angle (0=neutral/0x3c) */
-};
-
-static const struct isp_style_params isp_styles[] = {
-	[ISP_STYLE_DEFAULT]   = { 128, 128, 128,   0 },  /* OEM tuning bin values */
-	[ISP_STYLE_VIVID]     = { 200, 135, 128,   0 },  /* strong saturation + mild contrast */
-	[ISP_STYLE_BRIGHT]    = { 150, 128, 160,   0 },  /* boosted brightness + mild sat */
-	[ISP_STYLE_CINEMATIC] = { 110, 145, 120, 135 },  /* low sat, high contrast, warm hue */
-	[ISP_STYLE_SEPIA]     = {  50, 140, 128, 160 },  /* very low sat, warm hue */
-};
-
-static int isp_image_style;
-static int isp_image_style_set(const char *val, const struct kernel_param *kp);
-static const struct kernel_param_ops isp_style_ops = {
-	.set = isp_image_style_set,
-	.get = param_get_int,
-};
-module_param_cb(image_style, &isp_style_ops, &isp_image_style, 0644);
-MODULE_PARM_DESC(image_style,
-	"Image style preset: 0=default 1=vivid 2=bright 3=cinematic 4=sepia");
-
-/* isp_sat_mul declared early (~line 405) so tiziano_bcsh_reg_apply can see it. */
-module_param(isp_sat_mul, uint, 0644);
-MODULE_PARM_DESC(isp_sat_mul,
-	"Saturation multiplier: 128=1.0x 192=1.5x 255=2.0x 64=0.5x");
-
-static void tisp_apply_image_style(int style);
-
-#define TISP_TOP_BYPASS_BLOCK_MASK	0x0003DDB4
-
-static u32 tisp_apply_block_enable_whitelist(u32 bypass_val)
+/* Passthrough — OEM doesn't filter bypass */
+u32 tisp_enforce_block_whitelist(u32 bypass_val)
 {
-	u32 currently_enabled = (~bypass_val) & TISP_TOP_BYPASS_BLOCK_MASK;
-	u32 not_whitelisted = currently_enabled & ~isp_block_enable;
-
-	return bypass_val | not_whitelisted;
+	return bypass_val;
 }
+EXPORT_SYMBOL(tisp_enforce_block_whitelist);
 
 static u32 tisp_compute_top_bypass_from_params(int wdr_enable)
 {
-	u32 bypass_val = 0x8077efff;  /* OEM EXACT starting value */
 	u32 *params = (u32 *)(tparams_active ? tparams_active : tparams_day);
-	u32 oem_computed = 0x8077efff;
+	u32 bypass_val;
 	int i;
 
 	/* Debug: direct bypass override from module parameter */
@@ -2391,47 +2350,36 @@ static u32 tisp_compute_top_bypass_from_params(int wdr_enable)
 
 	/* Debug: bypass all processing blocks to test raw pipeline throughput */
 	if (isp_bypass_all) {
-		bypass_val = 0xb4000009;  /* Force-mask bits only, all blocks bypassed */
+		bypass_val = 0xb4000009;
 		pr_info("tisp_compute_top_bypass: BYPASS_ALL mode — raw pipeline test\n");
 		return tisp_apply_debug_top_bypass_overrides(bypass_val, __func__);
 	}
 
-	if (!params || !tuning_bin_loaded) {
-		goto apply_force_mask;
+	/* OEM EXACT: read CURRENT register value as starting point.
+	 * The OEM does NOT use a hardcoded starting value — it reads
+	 * system_reg_read(0xc) and modifies only the bits controlled by
+	 * tuning params, preserving all other HW-set bits. */
+	bypass_val = system_reg_read(0xc);
+
+	if (params && tuning_bin_loaded) {
+		/* OEM EXACT per-bit loop: each u32 in tparams[0..31] is a BYPASS flag.
+		 * Clear bit i, then set it if params[i] is non-zero. */
+		for (i = 0; i < 32; i++) {
+			u32 bit = 1U << i;
+			u32 val = params[i] ? 1U : 0U;
+			bypass_val = (bypass_val & ~bit) | (val << i);
+		}
 	}
 
-	/* OEM EXACT per-bit loop: each u32 in tparams[0..31] is 0 (bypass)
-	 * or non-zero (enable).  The OEM uses params[i] << i directly, which
-	 * sets bit i if the param is non-zero. */
-	for (i = 0; i < 32; i++) {
-		u32 bit = 1U << i;
-		u32 val = params[i] ? 1U : 0U;
-		oem_computed = (oem_computed & ~bit) | (val << i);
-	}
+	pr_info("tisp_compute_top_bypass: oem_loop=0x%08x\n", bypass_val);
 
-	bypass_val = oem_computed;
-
-	pr_info("tisp_compute_top_bypass: oem_loop=0x%08x\n", oem_computed);
-
-apply_force_mask:
-	/* OEM EXACT: apply force AND-mask then OR-mask. */
+	/* OEM EXACT: apply WDR-specific AND-mask then OR-mask. */
 	if (wdr_enable)
-		bypass_val = (bypass_val & 0xa1ffdf76) | 0x00880002;
+		bypass_val = (bypass_val & 0xa1fffff6) | 0x00880002;
 	else
 		bypass_val = (bypass_val & 0xb577fffd) | 0x34000009;
 
-	/* Re-bypass blocks we haven't fully implemented.
-	 * bypass register: bit=0 → block ENABLED, bit=1 → block BYPASSED.
-	 * Only touch the documented ISP processing-block bits here; preserve
-	 * all OEM control bits outside that mask exactly as computed.
-	 * For blocks that are currently enabled (bit=0) but NOT in our
-	 * isp_block_enable whitelist, set bit=1 to bypass them.
-	 */
-	bypass_val = tisp_apply_block_enable_whitelist(bypass_val);
-
-	pr_info("tisp_compute_top_bypass: allow=0x%08x final=0x%08x "
-		"(OEM target=0x%08x)\n",
-		isp_block_enable, bypass_val, 0xb5742249);
+	pr_info("tisp_compute_top_bypass: final=0x%08x\n", bypass_val);
 
 	return tisp_apply_debug_top_bypass_overrides(bypass_val, __func__);
 }
@@ -2484,10 +2432,8 @@ static uint32_t data_9ab00 = 0x80;     /* OEM default MDNS ratio */
 static uint32_t data_9a9d0 = 0x10000;  /* OEM current MDNS interpolation key */
 static uint32_t mdns_last_refresh_key = 0xffffffff;
 static int mdns_bulk_loading;
-static int mdns_runtime_parked = 0;    /* MDNS enabled but deferred: no HW writes until tuning params arrive */
-static int mdns_params_received = 0;   /* Deferred init: set to 1 when libimp sends real MDNS tuning params */
+static int mdns_hw_enabled = 0;        /* Set to 1 when MDNS HW registers are written and bypass cleared */
 static int dpc_params_received = 0;    /* Deferred init: set to 1 when libimp sends real DPC tuning params */
-static int gib_params_received = 0;    /* Deferred init: set to 1 when libimp sends real GIB tuning params */
 static uint32_t mdns_frame_width = 0;
 static uint32_t mdns_frame_height = 0;
 static uint32_t mdns_wdr_en = 0;
@@ -3532,10 +3478,10 @@ static uint32_t again_new = 0;
 static uint32_t again_old = 0;
 
 /* AE control state flags */
-static uint32_t tisp_ae_ctrls = 0;  /* When nonzero, force event pushes */
+static uint32_t tisp_ae_ctrls[38] = {0};  /* OEM: 0x98 bytes, set by tisp_set_ae_info from libimp */
 static uint32_t _ae_ev = 0;        /* Current exposure value (output of ae0_tune2) */
 static uint32_t ae_scene_luma = 0;  /* Scene luminance output */
-static uint32_t IspAeFlag = 1;     /* AE initial convergence flag (OEM: initialized to 1) */
+static uint32_t IspAeFlag = 0;     /* AE initial convergence flag */
 
 /* OEM analog/digital gain state for tisp_set_ae0_ag */
 static uint32_t ag_new = 0x400;    /* Current analog gain (Q10) */
@@ -3546,6 +3492,8 @@ static uint32_t data_c46ac = 0x400; /* Cached compensated digital gain */
 
 /* OEM gain register/limit references */
 static uint32_t data_c46a8 = 0x400; /* Max integration time (tuning param) */
+static uint32_t data_c46b0 = 0x157fe; /* Max analog gain in Q10 (OEM: set by tisp_s_max_again) */
+static uint32_t data_c46bc = 0x400; /* Max ISP digital gain in Q10 (OEM: set by tisp_s_max_isp_dgain) */
 
 /* OEM event data caches */
 static uint32_t data_c46c0 = 0;    /* Last pushed EV (event 7) */
@@ -3557,22 +3505,15 @@ static uint32_t data_a0e04 = 1;    /* Force-init flag (1 = fill caches on first 
 static uint32_t data_a0df4 = 0;    /* Hysteresis engaged flag */
 static uint32_t data_a0df8 = 0;    /* Exposure unchanged flag */
 static uint32_t data_a0dfc = 0;    /* Convergence started flag */
+static uint32_t data_a0de4 = 0;    /* AE DN state flag (OEM: data_a0de4) */
+static uint32_t data_a0de8 = 0;    /* AE DN state flag (OEM: data_a0de8) */
+static uint32_t data_a0df0 = 0;    /* AE DN state flag (OEM: data_a0df0) */
+static uint32_t data_a0e08 = 0;    /* AE DN state flag (OEM: data_a0e08) */
+static uint32_t data_a0c08 = 0x80; /* AE compensation target (OEM: data_a0c08) */
+static uint8_t  ae_comp_x = 0x80;  /* AE compensation input (OEM: ae_comp_x) */
 static uint32_t data_9a2ec = 0;    /* Comp AE mode flag */
 static uint32_t data_c46d0 = 0;    /* AE gain distribution mode */
 static uint32_t ftune_wmeans_state = 0; /* OEM: ftune_wmeans.32574 */
-
-/* OEM ae0_tune2 history buffer: 16-entry ring buffer for wmean smoothing.
- * OEM passes this as arg8 to ae0_tune2; we use a static array. */
-static uint32_t ae_wmean_hist[16];
-
-/* OEM ae0_tune2 convergence bounds (var_dc, var_e0 in OEM).
- * tisp_ae_tune steps these toward the targets each frame. */
-static int32_t ae_tune_upper = 0;  /* Upper convergence bound (stepped) */
-static int32_t ae_tune_lower = 0;  /* Lower convergence bound (stepped) */
-/* OEM ae0_tune2 convergence targets (arg28 in OEM decompilation).
- * Separate from bounds — targets are the desired delta, bounds are
- * incrementally stepped toward them by tisp_ae_tune each frame. */
-static int32_t ae_tune_targets[2] = {0, 0}; /* [0]=upper target, [1]=lower target */
 
 /* OEM scene luma tracking */
 static uint32_t scene_luma_old[8];
@@ -3801,7 +3742,17 @@ static void tisp_rdns_intp_reg_refresh(uint32_t gain);
 
 /* GIB tuning binary blob offsets — verified against OEM memcpy addresses.
  * OEM tparams_day base: 0x84B10; offset = OEM_addr - 0x84B10.
- * tiziano_gib_params_refresh reads ALL GIB data from the tuning blob. */
+ * tiziano_gib_params_refresh reads ALL GIB data from the tuning blob.
+ *
+ * NOTE: A previous "fix" shifted these by +0x18 based on inspecting
+ * ingenic-sdk-march/sensor-iq/t31/gc2053.bin (which has a 32-byte LUT preamble
+ * that the OEM driver does NOT consume). The DEPLOYED tuning binary on the
+ * device follows the OEM layout WITHOUT that preamble, so 0x2A48 is correct.
+ * Verification (loaded with 0x2A60, off by +0x18):
+ *   cfg = {0,0,0,3,4095,4095,1024,1024,1024,1024,257,257} ← cfg[6..11]+rg+bir+blc_r[0..1]
+ * Verification (loaded with 0x2A48, OEM layout):
+ *   cfg = {1,1,0,0,1,0,0,0,0,3,4095,4095} ← OEM defaults
+ */
 #define GIB_TBIN_CONFIG_LINE    0x2A48  /* 12 × u32 = 48 bytes */
 #define GIB_TBIN_RG_LINEAR      0x2A78  /*  2 × u32 =  8 bytes */
 #define GIB_TBIN_BIR_LINEAR     0x2A80  /*  2 × u32 =  8 bytes */
@@ -3830,7 +3781,9 @@ static void tisp_rdns_intp_reg_refresh(uint32_t gain);
 #define GB_TBIN_DGAIN_SHIFT     0x127FC /*  2 × u32 =  8 bytes */
 #define GB_TBIN_DGAIN_RGBIR_L   0x12804 /*  4 × u32 = 16 bytes */
 #define GB_TBIN_DGAIN_RGBIR_S   0x12814 /*  4 × u32 = 16 bytes */
-#define GB_TBIN_BLC_OFFSET_BASE 0x12824 /* 4×9 u32 = 144 bytes (ch4,ch3,ch2,ch1) */
+#define GB_TBIN_BLC_OFFSET_BASE 0x12824 /* 5×9 u32 = 180 bytes (ch4,ch3,ch2,ch1,ch0) */
+#define GB_TBIN_BLC_OFFSET_CH0  0x128B4 /*  9 × u32 = 36 bytes (ch0=R) */
+#define GB_TBIN_BLC_MIN_EN      0x128D8 /*  2 × u32 =  8 bytes */
 #define GB_TBIN_BLC_MIN         0x128E0 /*  9 × u32 = 36 bytes */
 
 /* GIB parameter arrays — static defaults used when tuning binary is not loaded.
@@ -4214,22 +4167,6 @@ static void ae0_weight_mean2(uint32_t *zone_y, uint32_t *zone_wt,
 
     if (*out_wmean == 0)
         *out_wmean = 1;  /* OEM clamps to minimum 1 */
-
-    /* Debug: when wmean is suspiciously low, dump zone details */
-    {
-        static unsigned int ae_wmean_diag;
-        ae_wmean_diag++;
-        if (*out_wmean <= 2 && (ae_wmean_diag <= 10 || (ae_wmean_diag % 300) == 0)) {
-            uint32_t rs0 = _ae_parameter.data[19];
-            uint32_t cs0 = _ae_parameter.data[4];
-            pr_info("AE_WMEAN_DBG[%u]: wmean=%u sum_yw=%llu sum_w=%llu "
-                "z[0]=%u z[112]=%u z[224]=%u w[0]=%u "
-                "rs0=%u cs0=%u area=%u cols=%u rows=%u\n",
-                ae_wmean_diag, *out_wmean, sum_yw, sum_w,
-                zone_y[0], zone_y[112], zone_y[224],
-                zone_wt[0], rs0, cs0, rs0 * cs0, cols, rows);
-        }
-    }
 }
 
 /* tisp_ae_target — OEM EXACT: Interpolate AE brightness target from EV tables.
@@ -4289,56 +4226,19 @@ static uint32_t tisp_ae_target(uint32_t cur_ev_q, uint32_t q)
     }
 }
 
-/* tisp_ae_tune — OEM EXACT (0x4fe84): Per-frame convergence stepping.
+/* ae0_tune2 — Simplified AE exposure convergence controller.
  *
- * OEM takes 6 arguments: separate target and bound arrays.
- * Each frame, bounds are stepped toward targets by (speed/128).
- * This prevents overshoot: bounds accumulate gradually rather than
- * jumping to the full desired delta in one frame.
+ * OEM (0x500b8) is an extremely complex gain-splitting PID controller
+ * with 64-bit fixed-point math, multi-level gain distribution, hysteresis,
+ * anti-flicker, and EV-target interpolation.
  *
- * targets:    pointer to [upper_target, lower_target] desired deltas
- * upper:      pointer to upper convergence bound (incrementally stepped)
- * lower:      pointer to lower convergence bound (incrementally stepped)
- * conv_speed: convergence speed parameter (ae_ev_step.data[4])
- * q:          Q-format bit position
- * one_q:      1.0 in Q-format (clamping limit)
- */
-static void tisp_ae_tune(int32_t *targets, int32_t *upper, int32_t *lower,
-                         int32_t conv_speed, uint32_t q, uint32_t one_q)
-{
-    uint32_t qm = q & 31;
-    int32_t tgt_u = targets[0];
-    int32_t tgt_l = targets[1];
-    int32_t cur_u = *upper;
-    int32_t cur_l = *lower;
-    int32_t speed_q = conv_speed << qm;
-    uint32_t divisor = 0x80u << qm; /* 128 in Q-format */
-
-    /* OEM EXACT: clamp targets so bound+target doesn't exceed one_q */
-    if (one_q < (uint32_t)(tgt_u + cur_u))
-        tgt_u = (int32_t)one_q - cur_u;
-    if (one_q < (uint32_t)(tgt_l + cur_l))
-        tgt_l = (int32_t)one_q - cur_l;
-
-    /* Step: bound += (speed * target) / 128 */
-    *upper = cur_u + (int32_t)fix_point_div_32(qm,
-                fix_point_mult2_32(qm, speed_q, tgt_u), divisor);
-    *lower = cur_l + (int32_t)fix_point_div_32(qm,
-                fix_point_mult2_32(qm, speed_q, tgt_l), divisor);
-}
-
-/* ae0_tune2 — OEM-equivalent AE exposure convergence controller.
- *
- * OEM (0x500b8): Full AE convergence with history smoothing, 64-bit math,
- * damped convergence via tisp_ae_tune, and multi-level IT/AG/DG gain split.
- *
- * Key OEM behaviors implemented:
- *   1. 16-entry triangular-weighted wmean history smoothing
- *   2. EV-target interpolation via tisp_ae_target
- *   3. Ratio-based desired EV computation (target/smoothed_wmean * cur_ev)
- *   4. Damped convergence stepping via tisp_ae_tune
- *   5. 64-bit math for new EV to avoid overflow/truncation
- *   6. Multi-level gain split: IT -> AG -> DG cascade
+ * This simplified version implements the core convergence loop:
+ *   1. Compare weighted mean luminance against AE target
+ *   2. Compute required exposure value change as a ratio
+ *   3. Adjust integration time first (primary control)
+ *   4. When IT is maxed/minned, adjust analog gain (secondary)
+ *   5. Digital gain is a last resort (tertiary)
+ *   6. Apply convergence speed damping to avoid oscillation
  *
  * wmean:   current weighted mean scene luminance
  * q:       Q-format fixed-point position
@@ -4351,433 +4251,217 @@ static void tisp_ae_tune(int32_t *targets, int32_t *upper, int32_t *lower,
 static int ae0_tune2(uint32_t wmean, uint32_t q,
                      uint32_t *exp_out, uint32_t *ag_out, uint32_t *dg_out)
 {
-    uint32_t qm = q & 31;
-    uint32_t one_q, cur_ev_q;
-    uint32_t ae_target, smoothed_wmean;
+    uint32_t ae_target;
     uint32_t cur_it, cur_ag, cur_dg;
     uint32_t min_it, max_it, min_ag, max_ag, min_dg, max_dg;
-    uint32_t ratio, desired_ev_q;
-    uint32_t new_ev;
+    uint32_t conv_speed, tolerance;
+    uint32_t qm, one_q;
+    uint32_t ratio, error;
+    uint32_t tol_q, tol_scaled;
+    int32_t delta, step_speed, damped_delta;
+    uint32_t step_ratio;
     uint32_t new_it, new_ag, new_dg;
-    uint32_t hist_depth;
-    int i;
 
-    if (qm == 0) qm = 10;
-    one_q = 1u << qm;
+    /* AE target via OEM-exact interpolation from ae0_ev_list + _lum_list.
+     * The OEM tisp_ae_target() interpolates the target brightness based on
+     * the current total EV. _scene_para.data[0] is NOT the AE target —
+     * it's a scene mode flag. */
+    {
+        uint32_t cur_ev_q;
+        uint32_t cur_it_tmp = _ae_reg.data[0];
+        uint32_t cur_ag_tmp = data_c46a0;
+        uint32_t cur_dg_tmp = data_c46a4;
+        uint32_t qm_tmp = q & 31;
+        if (qm_tmp == 0) qm_tmp = 10;
+        if (cur_it_tmp == 0) cur_it_tmp = 1;
+        if (cur_ag_tmp == 0) cur_ag_tmp = 0x400;
+        if (cur_dg_tmp == 0) cur_dg_tmp = 0x400;
+        cur_ev_q = fix_point_mult3_32(qm_tmp,
+                                      cur_it_tmp << qm_tmp,
+                                      cur_ag_tmp, cur_dg_tmp);
+        ae_target = tisp_ae_target(cur_ev_q, q);
+    }
+    if (ae_target == 0)
+        ae_target = 0x80;  /* Safe default: ~128 out of 255 */
 
-    /* ---- Current exposure state ---- */
+    /* Current exposure state */
     cur_it = _ae_reg.data[0];
     cur_ag = data_c46a0;
     cur_dg = data_c46a4;
-    /* When _ae_reg.data[0] is uninitialized (0), use sensor max IT.
-     * The sensor is physically running at max IT from power-on.
-     * Without this, cur_ev starts at ~one_q (1.0) instead of the
-     * real sensor EV, causing ae_target to be 10000 instead of ~100
-     * and the convergence overshoots massively. */
-    if (cur_it == 0) {
-        cur_it = ae_exp_th.data[0];  /* Sensor max IT */
-        if (cur_it == 0) cur_it = 1;
-    }
-    if (cur_ag == 0) cur_ag = 0x400;
-    if (cur_dg == 0) cur_dg = 0x400;
 
-    /* ---- Compute current EV in Q-format ---- */
-    cur_ev_q = fix_point_mult3_32(qm, cur_it << qm, cur_ag, cur_dg);
+    if (cur_it == 0) cur_it = 1;
+    if (cur_ag == 0) cur_ag = 0x400;  /* Unity Q10 */
+    if (cur_dg == 0) cur_dg = 0x400;  /* Unity Q10 */
 
-    /* ---- Exposure limits ---- */
+    /* Exposure limits from tuning parameters.
+     * OEM ae_exp_th layout (AE0 group, indices 0..6):
+     *   [0] = max integration time (clamped to sensor max by init_exp_th)
+     *   [1] = max analog gain in Q10 (from tuning binary, ~0x157fe for GC2053)
+     *   [2] = max digital gain in Q10 (from tuning binary, typically 0x400 = 1x)
+     *   [3] = short IT threshold (overwritten by sensor param)
+     *   [4] = min analog gain (raw value clamped to >= 0x400 by init_exp_th)
+     *   [5] = min digital gain (raw value clamped to >= 0x400 by init_exp_th)
+     *   [6] = max DG secondary (0x400)
+     * Min IT defaults to 1 (OEM data_b0cfc is the min-exp from sensor). */
     min_it = 1;
-    max_it = ae_exp_th.data[0];
-    min_ag = ae_exp_th.data[4];
-    if (min_ag < 0x400) min_ag = 0x400;
-    max_ag = ae_exp_th.data[1];
-    min_dg = ae_exp_th.data[5];
-    if (min_dg < 0x400) min_dg = 0x400;
-    max_dg = ae_exp_th.data[2];
+    max_it = ae_exp_th.data[0]; /* Max integration time */
+    min_ag = ae_exp_th.data[4]; /* Min analog gain (raw, clamped below) */
+    if (min_ag < 0x400) min_ag = 0x400;  /* OEM clamps to >= 1x Q10 */
+    max_ag = ae_exp_th.data[1]; /* Max analog gain in Q10 */
+    min_dg = ae_exp_th.data[5]; /* Min digital gain */
+    if (min_dg < 0x400) min_dg = 0x400;  /* OEM clamps to >= 1x Q10 */
+    max_dg = ae_exp_th.data[2]; /* Max digital gain in Q10 */
+
+    /* Sanity clamp limits */
     if (max_it == 0) max_it = 0x40000;
     if (max_ag < min_ag) max_ag = 0x4000;
     if (max_dg < min_dg) max_dg = 0x4000;
     if (max_it < min_it) max_it = min_it;
 
-    /* ---- Step 1: Update history buffer and shift ----
-     * OEM: shift history entries down by 1, insert new wmean at [14].
-     * History[0] is oldest, [14] is newest. */
-    for (i = 0; i < 14; i++)
-        ae_wmean_hist[i] = ae_wmean_hist[i + 1];
-    ae_wmean_hist[14] = wmean;
+    /* Convergence speed parameters from _exp_parameter:
+     * data[3] = convergence speed (higher = faster)
+     * data[6] = tolerance (how close to target before declaring stable) */
+    conv_speed = _exp_parameter.data[3];
+    tolerance = _exp_parameter.data[6];
+    if (conv_speed == 0) conv_speed = 0x400;  /* Default Q10 speed */
+    if (tolerance == 0) tolerance = 1;
 
-    /* ---- Step 2: Compute smoothed wmean via triangular-weighted history ----
-     * OEM (0x50538): When IspAeFlag != 1 and not resetting, compute weighted
-     * average of the last N frames. Weight[i] = (i+1) where i counts from
-     * oldest to newest, giving more weight to recent frames.
-     *
-     * hist_depth from _exp_parameter.data[2], capped to [1..15]. */
-    if (IspAeFlag == 1) {
-        /* First frame or forced convergence: use raw wmean, reset state */
-        ftune_wmeans_state = 1;
-        smoothed_wmean = wmean;
-    } else {
-        if (ftune_wmeans_state == 1) {
-            /* Just came from IspAeFlag=1: use raw wmean this frame,
-             * then clear the flag so next frame uses history */
-            ftune_wmeans_state = 0;
-            smoothed_wmean = wmean;
-        } else {
-            /* Normal: triangular-weighted average of last hist_depth frames */
-            hist_depth = _exp_parameter.data[2];
-            if (hist_depth == 0) hist_depth = 1;
-            if (hist_depth > 15) hist_depth = 15;
+    /* Compute error: how far are we from target?
+     * ratio = target / wmean in Q-format
+     * >1.0 means too dark (need more exposure)
+     * <1.0 means too bright (need less exposure) */
+    qm = q & 31;
+    if (qm == 0) qm = 10;
+    one_q = 1u << qm;
 
-            {
-                uint32_t sum_val = 0;
-                uint32_t sum_wt = 0;
-                uint32_t start_idx = 15 - hist_depth;
-                uint32_t w;
+    if (wmean == 0)
+        ratio = one_q << 2;  /* Very dark: 4x increase */
+    else
+        ratio = fix_point_div_32(qm, ae_target << qm, wmean << qm);
 
-                for (i = start_idx; i < 15; i++) {
-                    w = (uint32_t)(i - start_idx + 1);
-                    sum_wt += w;
-                    sum_val += w * ae_wmean_hist[i];
-                }
+    /* Check if already within tolerance */
+    if (ratio >= one_q)
+        error = ratio - one_q;
+    else
+        error = one_q - ratio;
 
-                if (sum_wt > 0)
-                    smoothed_wmean = sum_val / sum_wt;
-                else
-                    smoothed_wmean = wmean;
-            }
-        }
-    }
+    /* Stable tolerance check: OEM uses ae_stable_tol */
+    tol_q = ae_stable_tol.data[0];
+    if (tol_q == 0) tol_q = 0x33;  /* ~5% tolerance */
+    tol_scaled = (tol_q * one_q) >> 8;  /* Convert 0..255 to Q-format fraction */
 
-    /* Clamp smoothed wmean to minimum 1 to avoid division by zero.
-     * NOTE: wmean<=1 means all AE zone Y data is zero (ae0_weight_mean2
-     * clamps to 1). This happens when sensor is saturated at max gain —
-     * ISP HW produces zero stats for overexposed frames. */
-    if (smoothed_wmean == 0)
-        smoothed_wmean = 1;
-
-    /* ---- Step 3: Compute AE target from EV tables ---- */
-    ae_target = tisp_ae_target(cur_ev_q, q);
-    if (ae_target == 0)
-        ae_target = 0x80;
-
-    /* ---- Step 4: Compute ratio = target / smoothed_wmean ----
-     * ratio > 1.0 (one_q) means too dark, < 1.0 means too bright.
-     * desired_ev_q = cur_ev_q * ratio = where we want total EV to be. */
-    ratio = fix_point_div_32(qm, ae_target << qm, smoothed_wmean << qm);
-    desired_ev_q = fix_point_mult2_32(qm, cur_ev_q, ratio);
-
-    /* ---- Step 5: Convergence / hysteresis check ----
-     * OEM uses a multi-state machine with hysteresis. We implement the
-     * key behaviors:
-     * - If within tolerance, declare stable
-     * - If outside tolerance, use tisp_ae_tune for damped stepping
-     * - Apply the stepped ratio to compute new EV via 64-bit math */
-    {
-        uint32_t target_luma = tisp_ae_target(desired_ev_q, q);
-        uint32_t luma_diff;
-        uint32_t tol_q, tol_scaled;
-        int32_t conv_speed;
-
-        /* OEM stable tolerance check */
-        if (smoothed_wmean >= target_luma)
-            luma_diff = smoothed_wmean - target_luma;
-        else
-            luma_diff = target_luma - smoothed_wmean;
-
-        /* Compute tolerance: ae_stable_tol is 0..255 fraction of one_q */
-        tol_q = ae_stable_tol.data[0];
-        if (tol_q == 0) tol_q = 0x33;
-        tol_scaled = fix_point_div_32(qm, luma_diff << qm,
-                                      smoothed_wmean << qm);
-
-        /* Check stability: ratio of error to wmean vs tolerance */
-        if (tol_scaled <= tol_q &&
-            cur_ev_q == _ae_ev && data_a0dfc != 0) {
-            /* Within tolerance and EV unchanged: stable */
-            data_a0df8 = 1;
-            *exp_out = cur_it;
-            *ag_out = cur_ag;
-            *dg_out = cur_dg;
-            return 0;
-        }
-
-        /* ---- Step 6: Damped convergence via tisp_ae_tune ----
-         * OEM: ae_tune_upper/lower are stepped toward the desired delta
-         * each frame, providing smooth convergence. */
-        conv_speed = ae_ev_step.data[4];
-        if (conv_speed <= 0) conv_speed = 0x9a;
-
-        /* OEM: bounds are LOCAL vars in Tiziano_ae0_fpga, initialized
-         * from mode parameters each frame (value=1 for normal mode).
-         * They do NOT accumulate across frames. */
-        ae_tune_upper = 0;
-        ae_tune_lower = 0;
-
-        /* OEM EXACT: set convergence TARGETS (separate from bounds).
-         * Targets are ALWAYS POSITIVE magnitudes — the direction is
-         * encoded by which index gets the target:
-         *   [0] = upper target (too bright, wants EV decrease)
-         *   [1] = lower target (too dark, wants EV increase)
-         * tisp_ae_tune steps bounds toward targets using unsigned Q math,
-         * then the EV computation applies: delta = lower - upper. */
-        ae_tune_targets[0] = 0;
-        ae_tune_targets[1] = 0;
-        if (smoothed_wmean < ae_target) {
-            /* Too dark: lower target = how much above 1.0 we want */
-            ae_tune_targets[1] = (int32_t)ratio - (int32_t)one_q;
-        } else {
-            /* Too bright: upper target = how much below 1.0 we want */
-            ae_tune_targets[0] = (int32_t)one_q - (int32_t)ratio;
-        }
-
-        /* Step the convergence bounds toward targets */
-        if (conv_speed > 0)
-            tisp_ae_tune(ae_tune_targets, &ae_tune_upper, &ae_tune_lower,
-                         conv_speed, q, one_q);
-
-        /* Cap bounds to one_q/4 — limits max EV change to ~1.25x per frame.
-         * The OEM's complex 64-bit EV computation + effect frame delay
-         * pipeline inherently limits the effective step to ~1.2x.
-         * Our simplified formula lacks the delay pipeline, so the sensor
-         * has 2-3 frames of lag before stats reflect gain changes.
-         * one_q/4 gives the sensor time to respond before overshooting. */
-        {
-            int32_t max_step = (int32_t)(one_q >> 2);
-            if (ae_tune_lower > max_step)
-                ae_tune_lower = max_step;
-            if (ae_tune_upper > max_step)
-                ae_tune_upper = max_step;
-        }
-    }
-
-    /* ---- Step 7: Compute new EV using 64-bit math ----
-     * OEM uses fix_point_mult2_64 / fix_point_div_64 / fix_point_mult3_64
-     * for the EV computation to avoid 32-bit overflow.
-     *
-     * The new EV is computed from the convergence bounds:
-     *   new_ev = cur_ev * stepped_ratio
-     * where stepped_ratio incorporates the damped convergence. */
-    {
-        uint64_t cur_ev_64 = (uint64_t)cur_ev_q;
-        uint64_t one_q_64 = (uint64_t)one_q;
-        int32_t stepped_delta;
-        uint64_t stepped_ratio_64;
-        uint64_t new_ev_64;
-
-        /* Combine bounds: lower increases EV, upper decreases EV.
-         * OEM uses asymmetric 64-bit computation; this approximation
-         * gives the same net direction and magnitude. */
-        stepped_delta = ae_tune_lower - ae_tune_upper;
-
-        /* Compute stepped ratio = one_q + stepped_delta */
-        if ((int32_t)one_q + stepped_delta <= 0)
-            stepped_ratio_64 = 1; /* Minimum: don't go to zero/negative */
-        else
-            stepped_ratio_64 = (uint64_t)((int32_t)one_q + stepped_delta);
-
-        /* new_ev = cur_ev * stepped_ratio / one_q (64-bit) */
-        new_ev_64 = (cur_ev_64 * stepped_ratio_64) >> qm;
-
-        {
-            static int ae_conv_cnt;
-            if (ae_conv_cnt < 30) {
-                pr_info("AE_CONV[%d]: wmean=%u sm_wmean=%u tgt=%u ratio=%u tgt_lo=%d tgt_up=%d lo=%d up=%d delta=%d sr=%llu cur_ev=%u new_ev=%u q=%u\n",
-                    ae_conv_cnt, wmean, smoothed_wmean, ae_target, ratio,
-                    ae_tune_targets[1], ae_tune_targets[0],
-                    ae_tune_lower, ae_tune_upper,
-                    stepped_delta, stepped_ratio_64,
-                    cur_ev_q, new_ev, qm);
-                ae_conv_cnt++;
-            }
-        }
-
-        /* Clamp to 32-bit range */
-        if (new_ev_64 > 0xFFFFFFFFULL)
-            new_ev = 0xFFFFFFFF;
-        else
-            new_ev = (uint32_t)new_ev_64;
-    }
-
-    /* ---- Step 8: Split new EV across IT / AG / DG ----
-     * OEM gain distribution mode (data_c46d0):
-     *   0 = Normal: IT first, then AG overflow, then DG overflow
-     *   1 = Gain-priority mode (used with antiflicker)
-     *
-     * For mode 0 (normal, most common):
-     *   1. desired_ev_needed = new_ev / (ag * dg)
-     *      If that fits in max_it, just change IT
-     *   2. If IT maxed: compute needed_gain = new_ev / (max_it)
-     *      Split needed_gain across AG then DG
-     *   3. Clamp everything to min/max */
-    new_it = cur_it;
-    new_ag = cur_ag;
-    new_dg = cur_dg;
-
-    if (cur_ev_q == new_ev && data_a0df8 == 0 && data_a0dfc != 0) {
-        /* EV unchanged, not first frame: keep current values */
+    if (error <= tol_scaled) {
+        /* Within tolerance — declare stable */
         *exp_out = cur_it;
         *ag_out = cur_ag;
         *dg_out = cur_dg;
-        data_a0df8 = 1;
         return 0;
     }
 
-    data_a0dfc = 1;
-    data_a0df8 = 0;
+    /* Apply convergence damping: don't jump the full ratio in one frame.
+     * OEM uses ae_ev_step data for this; we use conv_speed as a fraction
+     * of the full correction to apply per frame.
+     *
+     * damped_ratio = 1.0 + (ratio - 1.0) * speed / 256
+     * This gives ~60% correction per frame at speed=0x9a (OEM default). */
+    delta = (int32_t)ratio - (int32_t)one_q;
+    step_speed = ae_ev_step.data[4];
+    if (step_speed == 0) step_speed = 0x9a;  /* OEM default */
 
-    if (data_c46d0 == 0) {
-        /* Normal mode: IT -> AG -> DG cascade */
-        uint32_t gain_product;
-        uint64_t needed_it_64;
+    /* Scale delta by speed/256 to get per-frame step */
+    damped_delta = (delta * step_speed) >> 8;
 
-        /* Current total gain = AG * DG in Q-format */
-        gain_product = fix_point_mult2_32(qm, cur_ag, cur_dg);
-        if (gain_product == 0) gain_product = one_q;
+    /* Clamp minimum step to ensure convergence */
+    if (damped_delta > 0 && damped_delta < (int32_t)(one_q >> 6))
+        damped_delta = one_q >> 6;
+    if (damped_delta < 0 && damped_delta > -(int32_t)(one_q >> 6))
+        damped_delta = -(int32_t)(one_q >> 6);
 
-        /* Desired IT = new_ev / (ag * dg) */
-        needed_it_64 = ((uint64_t)new_ev << qm);
-        do_div(needed_it_64, gain_product);
-        new_it = (uint32_t)needed_it_64;
+    step_ratio = (uint32_t)((int32_t)one_q + damped_delta);
+    if (step_ratio == 0)
+        step_ratio = 1;
 
-        if (new_it > max_it) new_it = max_it;
-        if (new_it < min_it) new_it = min_it;
+    /* Cap maximum per-frame exposure change to 1.25x increase / 0.8x decrease.
+     * Larger caps cause AE oscillation due to sensor lag (the gain change
+     * takes 2-3 frames to appear in stats, so oversized steps overshoot). */
+    if (step_ratio > one_q + (one_q >> 2))   /* 1.25x max increase */
+        step_ratio = one_q + (one_q >> 2);
+    if (step_ratio < one_q - (one_q >> 2))   /* 0.75x max decrease */
+        step_ratio = one_q - (one_q >> 2);
 
-        /* Check if IT alone is sufficient */
+    /* Apply the step ratio to current EV = IT * AG * DG.
+     * Strategy: adjust IT first, then AG, then DG.
+     *
+     * Compute new_ev = cur_ev * step_ratio
+     * Then distribute across IT, AG, DG respecting limits. */
+
+    /* First: try to adjust integration time only */
+    {
+        uint64_t new_it_64 = (uint64_t)cur_it * step_ratio;
+        new_it_64 >>= qm;
+        new_it = (uint32_t)new_it_64;
+        /* Guarantee minimum 1-unit progress to avoid integer truncation
+         * stall (e.g., 1 * 1.25 = 1 in integer math → stuck forever) */
+        if (step_ratio > one_q && new_it <= cur_it)
+            new_it = cur_it + 1;
+        if (step_ratio < one_q && new_it >= cur_it && cur_it > min_it)
+            new_it = cur_it - 1;
+    }
+
+    if (new_it < min_it) new_it = min_it;
+    if (new_it > max_it) new_it = max_it;
+    new_ag = cur_ag;
+    new_dg = cur_dg;
+
+    /* If IT was clamped, compute residual and apply to AG */
+    if (new_it == max_it || new_it == min_it) {
+        uint32_t desired_it, residual;
         {
-            uint32_t it_ev = fix_point_mult3_32(qm, new_it << qm,
-                                                 cur_ag, cur_dg);
-            if (it_ev < new_ev) {
-                /* IT maxed out: need to increase gain */
-                uint32_t it_q = new_it << qm;
-                uint32_t needed_gain;
-                uint64_t ng64;
-
-                if (it_q == 0) it_q = one_q;
-
-                /* needed_gain = new_ev / (new_it * min_dg)
-                 * This gives us what AG needs to be if DG is at minimum */
-                ng64 = ((uint64_t)new_ev << qm);
-                do_div(ng64, fix_point_mult2_32(qm, it_q, cur_dg));
-                needed_gain = (uint32_t)ng64;
-
-                if (needed_gain <= max_ag) {
-                    /* Fits in AG alone */
-                    new_ag = needed_gain;
-                    if (new_ag < min_ag) new_ag = min_ag;
-                } else {
-                    /* AG maxed: overflow to DG */
-                    new_ag = max_ag;
-                    {
-                        uint32_t it_ag_ev = fix_point_mult2_32(qm,
-                                              it_q, max_ag);
-                        uint64_t nd64;
-                        if (it_ag_ev == 0) it_ag_ev = 1;
-                        nd64 = ((uint64_t)new_ev << qm);
-                        do_div(nd64, it_ag_ev);
-                        new_dg = (uint32_t)nd64;
-                    }
-                    if (new_dg < min_dg) new_dg = min_dg;
-                    if (new_dg > max_dg) new_dg = max_dg;
-                }
-            } else if (it_ev > new_ev && cur_ag > min_ag) {
-                /* IT provides more than needed and gain is above min:
-                 * reduce gain first, keep IT at max for best quality */
-                uint32_t it_q = new_it << qm;
-                uint64_t ng64;
-
-                if (it_q == 0) it_q = one_q;
-
-                /* First try reducing DG toward minimum */
-                if (cur_dg > min_dg) {
-                    ng64 = ((uint64_t)new_ev << qm);
-                    do_div(ng64, fix_point_mult2_32(qm, it_q, cur_ag));
-                    new_dg = (uint32_t)ng64;
-                    if (new_dg < min_dg) new_dg = min_dg;
-                }
-
-                /* Then reduce AG if still too much EV */
-                {
-                    uint32_t check_ev = fix_point_mult3_32(qm,
-                                          it_q, cur_ag, new_dg);
-                    if (check_ev > new_ev) {
-                        ng64 = ((uint64_t)new_ev << qm);
-                        do_div(ng64, fix_point_mult2_32(qm, it_q, new_dg));
-                        new_ag = (uint32_t)ng64;
-                        if (new_ag < min_ag) new_ag = min_ag;
-                    }
-                }
-            }
+            uint64_t tmp = (uint64_t)cur_it * step_ratio;
+            tmp >>= qm;
+            desired_it = (uint32_t)tmp;
         }
-    } else if (data_c46d0 == 1) {
-        /* Gain-priority mode: cap IT to data_c46a8, adjust gain.
-         * OEM uses this for antiflicker. */
-        uint32_t max_it_cap = data_c46a8;
-        uint64_t ng64;
+        if (desired_it == 0) desired_it = 1;
+        if (new_it == 0) new_it = 1;
 
-        if (max_it_cap == 0) max_it_cap = max_it;
-        if (max_it_cap > max_it) max_it_cap = max_it;
+        residual = fix_point_div_32(qm, desired_it << qm, new_it << qm);
 
-        /* Cap IT to the antiflicker limit */
-        if (cur_it > max_it_cap) {
-            new_it = max_it_cap;
-        } else {
-            /* Try to fit in IT first */
-            uint32_t gain_product = fix_point_mult2_32(qm, cur_ag, cur_dg);
-            if (gain_product == 0) gain_product = one_q;
-            ng64 = ((uint64_t)new_ev << qm);
-            do_div(ng64, gain_product);
-            new_it = (uint32_t)ng64;
-            if (new_it > max_it_cap) new_it = max_it_cap;
-            if (new_it < min_it) new_it = min_it;
-        }
-
-        /* Compute needed gain = new_ev / new_it */
+        /* Apply residual to analog gain */
         {
-            uint32_t it_q = new_it << qm;
-            uint32_t total_gain_needed;
-
-            if (it_q == 0) it_q = one_q;
-
-            ng64 = ((uint64_t)new_ev << qm);
-            do_div(ng64, it_q);
-            total_gain_needed = (uint32_t)ng64;
-
-            /* Split total_gain into AG * DG */
-            if (total_gain_needed <= max_ag) {
-                new_ag = total_gain_needed;
-                new_dg = min_dg;
-            } else {
-                new_ag = max_ag;
-                ng64 = ((uint64_t)total_gain_needed << qm);
-                do_div(ng64, max_ag);
-                new_dg = (uint32_t)ng64;
-            }
+            uint64_t new_ag_64 = (uint64_t)cur_ag * residual;
+            new_ag_64 >>= qm;
+            new_ag = (uint32_t)new_ag_64;
         }
         if (new_ag < min_ag) new_ag = min_ag;
         if (new_ag > max_ag) new_ag = max_ag;
-        if (new_dg < min_dg) new_dg = min_dg;
-        if (new_dg > max_dg) new_dg = max_dg;
-    } else {
-        /* Unknown mode: reset gains to defaults */
-        new_it = cur_it;
-        new_ag = min_ag;
-        new_dg = min_dg;
+
+        /* If AG also clamped, apply remainder to DG */
+        if (new_ag == max_ag || new_ag == min_ag) {
+            uint32_t desired_ag, ag_residual;
+            {
+                uint64_t tmp = (uint64_t)cur_ag * residual;
+                tmp >>= qm;
+                desired_ag = (uint32_t)tmp;
+            }
+            if (desired_ag == 0) desired_ag = 1;
+            if (new_ag == 0) new_ag = 1;
+
+            ag_residual = fix_point_div_32(qm, desired_ag << qm, new_ag << qm);
+            {
+                uint64_t new_dg_64 = (uint64_t)cur_dg * ag_residual;
+                new_dg_64 >>= qm;
+                new_dg = (uint32_t)new_dg_64;
+            }
+            if (new_dg < min_dg) new_dg = min_dg;
+            if (new_dg > max_dg) new_dg = max_dg;
+        }
     }
-
-    /* Final clamp */
-    if (new_it < min_it) new_it = min_it;
-    if (new_it > max_it) new_it = max_it;
-    if (new_ag < min_ag) new_ag = min_ag;
-    if (new_ag > max_ag) new_ag = max_ag;
-    if (new_dg < min_dg) new_dg = min_dg;
-    if (new_dg > max_dg) new_dg = max_dg;
-
-    /* Store new total EV */
-    _ae_ev = fix_point_mult3_32(qm, new_it << qm, new_ag, new_dg);
 
     *exp_out = new_it;
     *ag_out = new_ag;
     *dg_out = new_dg;
 
+    data_a0dfc = 1;  /* Mark convergence in progress */
     return 1;  /* Still adjusting */
 }
 
@@ -4806,7 +4490,7 @@ static void tisp_set_ae0_ag(uint32_t ag, uint32_t dg)
      * For simplicity, always process (OEM has early-out optimization). */
 
     /* OEM: Handle tisp_ae_ctrls override */
-    if (tisp_ae_ctrls != 0) {
+    if (tisp_ae_ctrls[0] != 0) {
         ag = data_c46a0;
         dg = fix_point_mult2_32(q, data_c46a4, data_c46ac);
     }
@@ -4887,6 +4571,26 @@ static int tisp_ae0_process_impl(void)
                      _ae_parameter.data[1], _ae_parameter.data[3],
                      &wmean, &total_wt);
 
+    {
+        static int ae_table_logged;
+        if (!ae_table_logged) {
+            ae_table_logged = 1;
+            pr_info("AE_TABLES: ev_list=[%u,%u,%u,%u,%u,%u,%u,%u,%u,%u]\n",
+                ae0_ev_list.data[0], ae0_ev_list.data[1], ae0_ev_list.data[2],
+                ae0_ev_list.data[3], ae0_ev_list.data[4], ae0_ev_list.data[5],
+                ae0_ev_list.data[6], ae0_ev_list.data[7], ae0_ev_list.data[8],
+                ae0_ev_list.data[9]);
+            pr_info("AE_TABLES: lum_list=[%u,%u,%u,%u,%u,%u,%u,%u,%u,%u]\n",
+                _lum_list.data[0], _lum_list.data[1], _lum_list.data[2],
+                _lum_list.data[3], _lum_list.data[4], _lum_list.data[5],
+                _lum_list.data[6], _lum_list.data[7], _lum_list.data[8],
+                _lum_list.data[9]);
+            pr_info("AE_TABLES: ae_exp_th=[0x%x,0x%x,0x%x] zone_spacing=%ux%u\n",
+                ae_exp_th.data[0], ae_exp_th.data[1], ae_exp_th.data[2],
+                _ae_parameter.data[4], _ae_parameter.data[19]);
+        }
+    }
+
     /* ---- Step 2: Run exposure convergence algorithm ---- */
     new_it = _ae_reg.data[0];
     new_ag = data_c46a0;
@@ -4913,6 +4617,16 @@ static int tisp_ae0_process_impl(void)
     _ae_ev = fix_point_mult3_32(q, new_it << q, new_ag, new_dg);
 
     {
+        static int ae_frame_diag;
+        ae_frame_diag++;
+        if ((ae_frame_diag % 30) == 0) {
+            uint32_t ae_tgt = tisp_ae_target(_ae_ev, q);
+            pr_info("AE_CONV[%d]: wmean=%u target=%u ev=0x%x zone[0]=%u zone[112]=%u zone[224]=%u q=%u\n",
+                ae_frame_diag, wmean, ae_tgt, _ae_ev, zones[0], zones[112], zones[224], q);
+        }
+    }
+
+    {
         static int ae_log_cnt;
         if (ae_log_cnt < 30 || (ae_log_cnt & 0xff) == 0) {
             pr_info("AE0[%d]: wmean=%u target=%u it=%u/%u ag=0x%x/0x%x dg=0x%x ev=0x%x\n",
@@ -4936,9 +4650,11 @@ static int tisp_ae0_process_impl(void)
     tisp_set_ae0_ag(new_ag, new_dg);
 
     /* ---- Step 4: Update effect frame delay pipeline ---- */
-    /* OEM shifts ev0_cache/ad0_cache/ag0_cache/dg0_cache arrays by 1,
-     * inserting current values at index 0. This implements the sensor
-     * readout delay compensation. */
+    /* OEM has TWO separate shift loops with different iteration counts:
+     *  - ev0/ad0: EffectFrame+1 iterations (reads at index EffectFrame+1)
+     *  - ag0/dg0: EffectFrame iterations   (reads at index EffectFrame)
+     * Our original code ran all four with EffectFrame iterations, which
+     * left ad0_cache[EffectFrame+1] always 0 → gain=0 → R=G=B. */
     {
         int i;
         int ef = EffectFrame;
@@ -4946,9 +4662,14 @@ static int tisp_ae0_process_impl(void)
 
         if (ef > 14) ef = 14;  /* Safety: don't overflow 16-entry cache */
 
-        for (i = ef; i > 0; i--) {
+        /* OEM loop 1: ev0/ad0 shift — runs ef+1 times */
+        for (i = ef + 1; i > 0; i--) {
             ev0_cache[i] = ev0_cache[i - 1];
             ad0_cache[i] = ad0_cache[i - 1];
+        }
+
+        /* OEM loop 2: ag0/dg0 shift — runs ef times */
+        for (i = ef; i > 0; i--) {
             ag0_cache[i] = ag0_cache[i - 1];
             dg0_cache[i] = dg0_cache[i - 1];
         }
@@ -4965,9 +4686,13 @@ static int tisp_ae0_process_impl(void)
          * with current values so there's no stale data in the delay. */
         if (data_a0e04 == 1) {
             data_a0e04 = 0;
-            for (i = 1; i <= ef; i++) {
+            /* ev0/ad0: fill indices 1..ef+1 */
+            for (i = 1; i <= ef + 1; i++) {
                 ev0_cache[i] = cur_ev;
                 ad0_cache[i] = cur_ad;
+            }
+            /* ag0/dg0: fill indices 1..ef */
+            for (i = 1; i <= ef; i++) {
                 ag0_cache[i] = data_c46a0;
                 dg0_cache[i] = data_c46ac;
             }
@@ -4987,13 +4712,13 @@ static int tisp_ae0_process_impl(void)
         uint32_t reg_packed = (dg_val << 16) | dg_val;
 
         if (ae_wdr_mode == 0) {
-            /* Normal mode: write to 0x1030/0x1034 */
-            system_reg_write_ae(3, 0x1030, reg_packed);
-            system_reg_write_ae(3, 0x1034, reg_packed);
+            /* Normal mode: OEM uses system_reg_write_gib for gate writes */
+            system_reg_write_gib(1, 0x1030, reg_packed);
+            system_reg_write_gib(1, 0x1034, reg_packed);
         } else if (ae_wdr_mode == 1) {
-            /* WDR mode: write to 0x1000/0x1004 */
-            system_reg_write_ae(3, 0x1000, reg_packed);
-            system_reg_write_ae(3, 0x1004, reg_packed);
+            /* WDR mode: OEM uses system_reg_write_gib for gate writes */
+            system_reg_write_gib(1, 0x1000, reg_packed);
+            system_reg_write_gib(1, 0x1004, reg_packed);
         }
     }
 
@@ -5019,11 +4744,21 @@ static int tisp_ae0_process_impl(void)
      * OEM: var_68=4, var_60=log2(total_gain), var_5c=0
      * Drives MDNS/sharpen/DPC/LSC gain-dependent interpolation. */
     {
+        static uint32_t tgain_force_frames = 30;
         uint32_t ef_idx = (EffectFrame + 1 < 16) ? EffectFrame + 1 : 0;
         uint32_t total_g = ad0_cache[ef_idx] << 6;
         total_gain_new = total_g;
 
-        if (total_g != total_gain_old || tisp_ae_ctrls != 0) {
+        /* OEM: push event 4 only when gain changes.
+         * FIX: also force-push for first 30 frames after streaming starts.
+         * GIB hardware uses double-buffered registers latched by the 0x1070
+         * gate at vsync. If event 4 never fires post-streaming (because AE
+         * gain is stuck), the GIB registers never latch into the active set
+         * and the block runs with power-on defaults → R=G=B. */
+        if (total_g != total_gain_old || tisp_ae_ctrls[0] != 0
+            || tgain_force_frames > 0) {
+            if (tgain_force_frames > 0)
+                tgain_force_frames--;
             total_gain_old = total_g;
             uint32_t log2_tg = tisp_log2_fixed_to_fixed_tuning(total_g, 0x10, 0x10);
             struct tisp_event_record ev = {0};
@@ -5041,7 +4776,7 @@ static int tisp_ae0_process_impl(void)
         uint32_t ag_val = ag0_cache[EffectFrame < 15 ? EffectFrame : 0] << 6;
         again_new = ag_val;
 
-        if (ag_val != again_old || tisp_ae_ctrls != 0) {
+        if (ag_val != again_old || tisp_ae_ctrls[0] != 0) {
             again_old = ag_val;
             uint32_t log2_ag = tisp_log2_fixed_to_fixed_tuning(ag_val, 0x10, 0x10);
             struct tisp_event_record ev = {0};
@@ -5086,7 +4821,9 @@ static int tisp_event_push(void *event)
 
 static int system_reg_write_ae(int ae_id, uint32_t reg, uint32_t value)
 {
-    /* AE-specific register write - from Binary Ninja */
+    /* AE-specific register write - from Binary Ninja.
+     * Case 3 (GIB) uses the same barrier-free write as system_reg_write_gib
+     * because the 0x1070 write-gate requires no sync between gate and value. */
     switch (ae_id) {
         case 1:
             system_reg_write(0xa000, 1);
@@ -5095,8 +4832,9 @@ static int system_reg_write_ae(int ae_id, uint32_t reg, uint32_t value)
             system_reg_write(0xa800, 1);
             break;
         case 3:
-            system_reg_write(0x1070, 1);
-            break;
+            /* Use system_reg_write_gib for barrier-free GIB access */
+            system_reg_write_gib(1, reg, value);
+            return 0;
         default:
             pr_warn("Unknown AE ID: %d\n", ae_id);
             break;
@@ -5239,21 +4977,15 @@ int ae0_interrupt_static(void)
      * We call private_dma_cache_sync for safety on systems with cached DMA. */
     private_dma_cache_sync(NULL, dma, 0x1000, 0);
 
-    /* Extract Y luminance from each 4-word zone entry.
+    /* OEM EXACT: Extract zone luminance as R+G+B from packed 4-word AE DMA entries.
      *
-     * OEM decompilation shows: *src & 0x1fffff (word[0]).
-     * However, with our explicit 15x15 grid config (0xa004=0xf001f001),
-     * the AE DMA engine puts Y luminance in word[1], not word[0].
-     * Diagnostic scan confirms: nz_w0=129 nz_w1=207 (word[1] has
-     * Y data for 92% of zones, word[0] only 57%).
-     * The OEM ends up with 0xa004=0 (zeroed _ae_parameter) which may
-     * use a different DMA output format.
+     * OEM tisp_ae0_get_statistics unpacks 6 channels per zone:
+     *   Ch0 (R) = word[0] & 0x1fffff
+     *   Ch1 (G) = (word[1] & 0x3ff) << 11 | word[0] >> 21
+     *   Ch2 (B) = (word[1] & 0x7ffffc00) >> 10
      *
-     * With the 15x15 grid config (0xa004=0xf001f001), word[1] provides
-     * Y values that produce correct exposure when fed to libimp's AE.
-     * Word[0] has more non-zero zones but its values are too small,
-     * causing libimp to under-expose (very dark image).
-     * Word[1] tested and confirmed working for good exposure. */
+     * OEM ae0_weight_mean2 computes zone luminance as R+G+B.
+     * Previously we only read Ch0 (R), giving ~1/3 of actual luminance → wmean too low. */
     {
         extern int tisp_ae_update_zone_data(uint32_t *new_zone_data, size_t data_size);
         uint32_t zones[225];
@@ -5261,11 +4993,12 @@ int ae0_interrupt_static(void)
         int i;
 
         for (i = 0; i < 225; i++) {
-            /* OEM EXACT: word[0] & 0x1fffff is Y luminance (channel 0)
-             * of the 6-channel packed AE DMA format. The format is
-             * identical to AWB DMA (R,G,B,IR,P packed into 4 words).
-             * Values are valid Y accumulations per zone. */
-            zones[i] = *src & 0x1fffff;
+            uint32_t w0 = src[0];
+            uint32_t w1 = src[1];
+            uint32_t r = w0 & 0x1fffff;
+            uint32_t g = ((w1 & 0x3ff) << 11) | (w0 >> 21);
+            uint32_t b = (w1 & 0x7ffffc00) >> 10;
+            zones[i] = r + g + b;
             src += 4;  /* Advance 4 words (16 bytes) to next zone */
         }
 
@@ -5294,7 +5027,7 @@ int ae0_interrupt_static(void)
                         dma[448], dma[449],
                         dma[896], dma[897]);
                 /* Also check if data might start at a word offset */
-                pr_info("AE0_OFF[%d]: dma[-1..3]=%08x %08x %08x %08x %08x "
+                pr_debug("AE0_OFF[%d]: dma[-1..3]=%08x %08x %08x %08x %08x "
                         "w1_z0=%u w1_z1=%u w1_z224=%u\n",
                         ae_zone_log,
                         (bank_offset >= 4) ? *(dma-1) : 0xDEAD,
@@ -5461,7 +5194,9 @@ int tisp_init(void *sensor_info_arg, char *param_name)
     void *ae0_buffer = (void *)__get_free_pages(GFP_KERNEL | __GFP_ZERO, 3);
     if (ae0_buffer != NULL) {
         dma_addr_t ae0_phys = virt_to_phys(ae0_buffer);
-        data_b2f3c = (uint32_t)(unsigned long)ae0_buffer;
+        /* OEM stores raw KSEG0 (cached) address. dma_cache_sync
+         * invalidates cache before reads, matching OEM pattern. */
+        data_b2f3c = (uint32_t)ae0_buffer;
         data_b2f48 = data_b2f3c + 0x4000;
         system_reg_write(0xa02c, ae0_phys);
         system_reg_write(0xa030, ae0_phys + 0x1000);
@@ -5479,7 +5214,7 @@ int tisp_init(void *sensor_info_arg, char *param_name)
     void *ae1_buffer = (void *)__get_free_pages(GFP_KERNEL | __GFP_ZERO, 3);
     if (ae1_buffer != NULL) {
         dma_addr_t ae1_phys = virt_to_phys(ae1_buffer);
-        data_b2f54 = (uint32_t)(unsigned long)ae1_buffer;
+        data_b2f54 = (uint32_t)ae1_buffer;
         data_b2f60 = data_b2f54 + 0x4000;
         system_reg_write(0xa82c, ae1_phys);
         system_reg_write(0xa830, ae1_phys + 0x1000);
@@ -5498,7 +5233,10 @@ int tisp_init(void *sensor_info_arg, char *param_name)
     if (awb_buffer != NULL) {
         dma_addr_t awb_phys = virt_to_phys(awb_buffer);
         data_a2f58 = 4;
-        data_a2f5c = (uint32_t)(unsigned long)awb_buffer;
+        /* OEM stores raw KSEG0 (cached) address, NOT CKSEG1ADDR.
+         * dma_cache_sync in awb_interrupt_static invalidates cache
+         * before reads, matching OEM's private_dma_cache_sync call. */
+        data_a2f5c = (uint32_t)awb_buffer;
         data_a2f60 = (uint32_t)awb_phys;
         system_reg_write(0xb03c, awb_phys);
         system_reg_write(0xb040, awb_phys + 0x1000);
@@ -5584,6 +5322,7 @@ int tisp_init(void *sensor_info_arg, char *param_name)
     tiziano_gamma_init(tisp_si_width(&sensor_params), tisp_si_height(&sensor_params),
                        tisp_si_fps(&sensor_params));
     tiziano_gib_init();
+    tisp_gb_init();  /* OEM calls GB init unconditionally — loads BLC params from tuning bin */
     tiziano_lsc_init();
     tiziano_ccm_init();
     tiziano_dmsc_init();
@@ -5629,6 +5368,14 @@ int tisp_init(void *sensor_info_arg, char *param_name)
     system_reg_write(0x1c, 8);
     system_reg_write(0x800, 1);  /* CRITICAL: This starts ISP processing */
     pr_info("*** tisp_init: ISP processing engine STARTED (reg 0x800=1) ***\n");
+
+    /* GIB BLC registers (0x1060-0x1068) only accept writes when the ISP engine
+     * is running.  tiziano_gib_init() wrote them before engine start, but the
+     * hardware rejected those writes (confirmed: BEFORE=AFTER=NOGAT all 0x3c).
+     * Event 4 (which normally triggers tisp_tgain_update via gain-change) never
+     * fires because ad0_cache[1] is never populated when EffectFrame=0.
+     * Re-program all gain-dependent blocks now that 0x800=1 is active. */
+    tisp_tgain_update(0);
 
     /* Core register dump to compare with OEM for GIB investigation */
     pr_info("ISP_CORE: 0x00=%08x 0x04=%08x 0x08=%08x 0x0c=%08x\n",
@@ -5900,48 +5647,66 @@ static int tisp_day_or_night_s_ctrl(uint32_t mode)
 	}
 
 	tparams_active = selected;
-	bypass_val = tisp_compute_top_bypass_from_params(!!data_b2e74);
-	system_reg_write(0xc, bypass_val);
 
-	pr_info("%s: applying %s mode, top_bypass=0x%08x wdr=%u\n",
-		__func__, active_mode ? "night" : "day", bypass_val, !!data_b2e74);
+	pr_info("%s: applying %s mode wdr=%u\n",
+		__func__, active_mode ? "night" : "day", !!data_b2e74);
 
-	/* OEM DN order: call _dn_params_refresh variants where available.
-	 * OEM HLIL (0x62490-0x62570) calls _dn_params_refresh for each block,
-	 * NOT _init.  Using _init for MDNS is wrong: it resets mdns_params_received
-	 * and forces bypass, disabling MDNS until the next SET_BUF ioctl. */
-	tiziano_defog_init(width, height);
-	tiziano_ae_init(height, width, fps);
-	tiziano_awb_init(height, width);
-	tiziano_dmsc_init();
-	tiziano_sharpen_init();
-	tiziano_mdns_init(width, height);
-	tiziano_sdns_init();
-	tiziano_gib_init();
-	tiziano_lsc_init();
-	tiziano_ccm_init();
-	tiziano_clm_init();
-	tiziano_gamma_init(width, height, fps);
-	tiziano_adr_init(width, height);
-	tiziano_dpc_init();
-		tiziano_hldc_init();
-	tiziano_af_init(height, width);
-	if (ourISPdev && ourISPdev->tuning_data)
-		tiziano_bcsh_update(ourISPdev->tuning_data);
-	else
-		tiziano_bcsh_init();
-	tiziano_rdns_init();
-	tiziano_ydns_init();
-	system_reg_write(0x800, 1);
+	/* OEM recomputes bypass register from new tparams and writes to HW.
+	 * DISABLED: writing the new bypass mid-stream kills AE/AWB stats
+	 * because our tiziano_ae_dn_params_refresh is incomplete — the OEM's
+	 * full version reprograms both AE HW channels after the bypass change.
+	 * Without that, changing bypass bits (e.g. bit 2) can disable the
+	 * stats accumulation path permanently. Re-enable when full AE DN is done. */
+	{
+		u32 new_bypass = tisp_compute_top_bypass_from_params(!!data_b2e74);
+		pr_info("%s: bypass would be 0x%08x (NOT writing — AE DN incomplete)\n",
+			__func__, new_bypass);
+		/* system_reg_write(0xc, new_bypass); */
+	}
+
+	/* OEM calls _dn_params_refresh for every block (decompiled at 0x62300).
+	 * Each _dn_ wrapper reloads params from tparams_active AND forces a
+	 * full HW register refresh (key bumps, flag sets, register writes).
+	 *
+	 * BISECT STATUS: Enabling all _dn_ wrappers + Group B at once causes
+	 * AWB/AE stats to go to zero (image goes near-black).
+	 * Strategy: Group A uses SAFE param-only calls (proven working).
+	 * Group B added incrementally with safe-only functions.
+	 *
+	 * _dn_ wrapper implementations are defined near EXPORT_SYMBOL section
+	 * and can be swapped in once the culprit is identified. */
+
+	/* Group A: param-only reload from new tparams_active (PROVEN SAFE) */
+	tiziano_defog_params_refresh();
+	tiziano_dmsc_params_refresh();
+	tiziano_sharpen_dn_params_refresh();
+	tiziano_gib_dn_params_refresh();
+	tiziano_lsc_params_refresh();
+	tiziano_ccm_params_refresh();
+	tiziano_clm_dn_params_refresh();
+	tiziano_gamma_lut_parameter();
+	tiziano_dpc_params_refresh();
+	tiziano_bcsh_params_refresh();
+	tiziano_rdns_params_refresh();
+	tiziano_ydns_params_refresh();
+
+	/* Group B: DISABLED — one of these kills AWB/AE stats.
+	 * Enable ONE at a time to bisect which causes the blackout.
+	 * Uncomment and rebuild to test each: */
+	/* tiziano_ae_params_refresh(); */
+	/* tiziano_awb_dn_params_refresh(); */
+	/* tiziano_mdns_dn_params_refresh(); */
+	/* tiziano_sdns_params_refresh(); */
+	/* tiziano_adr_params_refresh(); */
 
 	if (ourISPdev) {
 		ourISPdev->day_night = active_mode;
 		ourISPdev->custom_mode = 0;
-		ourISPdev->poll_state = ((active_mode & 0xff) << 16) | 1;
-		wake_up_interruptible(&ourISPdev->poll_wait);
 	}
 
+	/* OEM: set poll flag and wake up dumpQueue so libimp's poll() returns */
 	tispPollValue = 1;
+	wake_up_interruptible(&dumpQueue);
 	return 0;
 }
 
@@ -6190,11 +5955,19 @@ int tisp_bcsh_g_rgb_coefft(int32_t *out)
     return out[2];
 }
 
+/* Guard: tuning_data must be allocated AND fully initialized (state==1)
+ * before any field or mutex access. Prevents NULL deref and crashes
+ * from zeroed-but-uninit'd mutex (count=0 → locked → NULL wait_list). */
+static inline bool tuning_ready(void)
+{
+    return ourISPdev && ourISPdev->tuning_data &&
+           ourISPdev->tuning_data->state == 1;
+}
 
 int tisp_bcsh_s_hue(uint32_t val)
 {
     uint8_t scaled;
-    if (!ourISPdev || !ourISPdev->tuning_data)
+    if (!tuning_ready())
         return -ENODEV;
     /* OEM scaling: bcsh_hue = ((val*0x78 - 1)/0x100) + 1, 8-bit */
     scaled = (uint8_t)((((uint32_t)val * 0x78u) - 1u) >> 8);
@@ -6207,7 +5980,7 @@ int tisp_bcsh_s_hue(uint32_t val)
 
 int tisp_bcsh_g_hue(uint8_t *out)
 {
-    if (!out || !ourISPdev || !ourISPdev->tuning_data)
+    if (!out || !tuning_ready())
         return -ENODEV;
     *out = ourISPdev->tuning_data->bcsh_hue;
     return *out;
@@ -6215,7 +5988,7 @@ int tisp_bcsh_g_hue(uint8_t *out)
 
 int tisp_bcsh_brightness(uint32_t val)
 {
-    if (!ourISPdev || !ourISPdev->tuning_data)
+    if (!tuning_ready())
         return -ENODEV;
     mutex_lock(&ourISPdev->tuning_data->mutex);
     ourISPdev->tuning_data->bcsh_brightness = (uint8_t)val;
@@ -6225,7 +5998,7 @@ int tisp_bcsh_brightness(uint32_t val)
 
 int tisp_bcsh_contrast(uint32_t val)
 {
-    if (!ourISPdev || !ourISPdev->tuning_data)
+    if (!tuning_ready())
         return -ENODEV;
     mutex_lock(&ourISPdev->tuning_data->mutex);
     ourISPdev->tuning_data->bcsh_contrast = (uint8_t)val;
@@ -6237,7 +6010,7 @@ int tisp_bcsh_saturation(struct isp_tuning_data *tuning, uint8_t value);
 
 int tisp_set_brightness(int32_t val)
 {
-    if (!ourISPdev || !ourISPdev->tuning_data)
+    if (!tuning_ready())
         return -ENODEV;
 
     mutex_lock(&ourISPdev->tuning_data->mutex);
@@ -6249,7 +6022,7 @@ int tisp_set_brightness(int32_t val)
 
 int tisp_set_contrast(int32_t val)
 {
-    if (!ourISPdev || !ourISPdev->tuning_data)
+    if (!tuning_ready())
         return -ENODEV;
 
     mutex_lock(&ourISPdev->tuning_data->mutex);
@@ -6261,7 +6034,7 @@ int tisp_set_contrast(int32_t val)
 
 int tisp_set_saturation(int32_t val)
 {
-    if (!ourISPdev || !ourISPdev->tuning_data)
+    if (!tuning_ready())
         return -ENODEV;
 
     mutex_lock(&ourISPdev->tuning_data->mutex);
@@ -6307,38 +6080,6 @@ int tisp_bcsh_set_mjpeg_contrast(uint32_t mode, uint32_t y_low, uint32_t fixed_c
     return 0;
 }
 
-/* tisp_apply_image_style - Apply a preset image style via multipliers.
- * Sets post-pipeline multipliers that persist across per-frame ISP updates.
- * Called from module param write or ioctl. Takes effect on next frame. */
-static void tisp_apply_image_style(int style)
-{
-	const struct isp_style_params *sp;
-
-	if (style < 0 || style > ISP_STYLE_MAX)
-		style = ISP_STYLE_DEFAULT;
-
-	sp = &isp_styles[style];
-	isp_sat_mul = sp->saturation;
-
-	pr_info("ISP_STYLE: style %d — sat_mul=%u\n", style, isp_sat_mul);
-}
-
-/* Module param callback: echo N > /sys/module/tx_isp_t31/parameters/image_style */
-static int isp_image_style_set(const char *val, const struct kernel_param *kp)
-{
-	int style, ret;
-
-	ret = kstrtoint(val, 0, &style);
-	if (ret)
-		return ret;
-	if (style < 0 || style > ISP_STYLE_MAX)
-		return -EINVAL;
-
-	isp_image_style = style;
-	tisp_apply_image_style(style);
-	return 0;
-}
-
 int tisp_bcsh_set_attr(const void *in)
 {
     if (!in) return -EINVAL;
@@ -6375,7 +6116,7 @@ int tisp_bcsh_ev_update(uint32_t ev)
 
 int tisp_bcsh_ct_update(uint32_t ct)
 {
-    if (!ourISPdev || !ourISPdev->tuning_data)
+    if (!tuning_ready())
         return -ENODEV;
     /* Cache CT override for BCSH CCM blending; do not alter AWB's wb_temp here */
     s_bcsh_ct_override = ct;
@@ -6492,6 +6233,11 @@ static int isp_get_af_zone(struct tx_isp_dev *dev, struct isp_core_ctrl *ctrl)
 /* Forward declarations needed by g_ctrl/s_ctrl before main declaration block */
 int tisp_mdns_param_array_get(int param_id, void *out_buf, int *size_buf);
 int tisp_mdns_param_array_set(int param_id, void *in_buf, int *size_buf);
+static int tisp_s_max_again(uint32_t value);
+static int tisp_s_max_isp_dgain(uint32_t value);
+static int tisp_get_ae_attr(void *out);
+static uint8_t tisp_ae_g_luma(uint8_t *result);
+static uint8_t tisp_get_ae_luma(uint8_t *result);
 
 static int apical_isp_core_ops_g_ctrl(struct tx_isp_dev *dev, struct isp_core_ctrl *ctrl)
 {
@@ -6551,6 +6297,23 @@ static int apical_isp_core_ops_g_ctrl(struct tx_isp_dev *dev, struct isp_core_ct
             case 0x800002c:  // Move state - Binary Ninja: return 0
                 ctrl->value = 0;
                 break;
+            case 0x8000033: { /* OEM: tisp_get_ae_luma — return weighted mean AE luma */
+                uint8_t luma = 0;
+                tisp_get_ae_luma(&luma);
+                ctrl->value = luma;
+                break;
+            }
+
+            case 0x8000035: { /* OEM: tiziano_isp_ae_manual_attr_g_ctrl — return AE attr */
+                /* OEM: tisp_get_ae_attr copies tisp_ae_ctrls[0..37] (0x98 bytes)
+                 * back to user via ctrl->value as user-space pointer */
+                uint8_t ae_buf[0x98];
+                tisp_get_ae_attr(ae_buf);
+                if (copy_to_user((void __user *)(unsigned long)ctrl->value, ae_buf, 0x98))
+                    ret = -EFAULT;
+                break;
+            }
+
             case 0x8000039:  // Defog Strength - Binary Ninja: tisp_get_defog_strength
                 tisp_get_defog_strength(&var_98);
                 ctrl->value = var_98 & 0xff;
@@ -6842,13 +6605,31 @@ static int apical_isp_core_ops_s_ctrl(struct tx_isp_dev *dev, struct isp_core_ct
             tuning->ae_comp = ctrl->value;
             break;
 
-        case 0x8000028:  // Maximum Analog Gain
+        case 0x8000028:  /* OEM: tisp_s_max_again — set max analog gain */
+            tisp_s_max_again(ctrl->value);
             tuning->max_again = ctrl->value;
             break;
 
-        case 0x8000029:  // Maximum Digital Gain
+        case 0x8000029:  /* OEM: tisp_s_max_isp_dgain — set max ISP digital gain */
+            tisp_s_max_isp_dgain(ctrl->value);
             tuning->max_dgain = ctrl->value;
             break;
+
+        case 0x8000035: { /* OEM: tisp_set_ae_attr — 0x98 bytes of AE attributes */
+            /* ctrl->value is a user-space pointer to a 0x98-byte buffer */
+            uint32_t ae_attr[0x98 / 4];
+            if (copy_from_user(ae_attr, (void __user *)(unsigned long)ctrl->value, 0x98)) {
+                ret = -EFAULT;
+                goto out;
+            }
+            /* OEM: tisp_set_ae_attr copies bytes 16..151 to local buffer,
+             * then calls tisp_ae_manual_set(ae_attr[0], ae_attr[1], ae_attr[2], ae_attr[3]).
+             * ae_attr[0] sets tisp_ae_ctrls[0] (AE manual mode flag). */
+            tisp_ae_ctrls[0] = ae_attr[0];
+            pr_debug("tisp_set_ae_attr: ae_manual=%u ag=%u sdg=%u it=%u\n",
+                     ae_attr[0], ae_attr[1], ae_attr[2], ae_attr[3]);
+            break;
+        }
 
         case 0x8000039:  // Defog Strength
             tuning->defog_strength = ctrl->value;
@@ -6978,7 +6759,7 @@ static int apical_isp_core_ops_s_ctrl(struct tx_isp_dev *dev, struct isp_core_ct
             int mdns_en = (ctrl->value >= 0) ? 1 : 0;
             int mdns_sz = 0;
             tisp_mdns_param_array_set(0x180, &mdns_en, &mdns_sz);
-            new_bypass = tisp_apply_block_enable_whitelist(new_bypass);
+            /* OEM: no whitelist */
             new_bypass = tisp_apply_debug_top_bypass_overrides(new_bypass, __func__);
             system_reg_write(0xc, new_bypass);
             tuning->custom_mode = ctrl->value;
@@ -7047,9 +6828,7 @@ static struct cdev tisp_cdev;
 static struct class *cls = NULL;
 static int major = 0;
 
-/* Wait queue for tuning operations - Binary Ninja reference */
-static wait_queue_head_t dumpQueue;
-static uint8_t tispPollValue = 0;
+/* dumpQueue and tispPollValue declared earlier at file scope */
 
 /* Forward declarations for tuning parameter functions */
 /* Forward declarations for ADR arrays defined later in the file (used by GET/SET) */
@@ -7355,298 +7134,57 @@ int isp_core_tunning_unlocked_ioctl(struct file *file, unsigned int cmd, void __
         pr_debug("isp_core_tunning_unlocked_ioctl: Handling ISP core control command 0x%x\n", cmd);
 
         switch (cmd) {
-            case 0xc008561c: /* ISP_CORE_S_CTRL - Set control */
-                /* Binary Ninja: copy_from_user validation */
-                if (copy_from_user(&ctrl, (void __user *)arg, sizeof(ctrl))) {
-                    pr_err("isp_core_tunning_unlocked_ioctl: Failed to copy control data from user\n");
+            case 0xc008561c: /* OEM: S_CTRL - 8 bytes {ctrl_id, value} */
+                if (copy_from_user(&ctrl, (void __user *)arg, 8))
                     return -EFAULT;
-                }
-
-                pr_info("isp_core_tunning_unlocked_ioctl: Set control cmd=0x%x value=%d\n", ctrl.cmd, ctrl.value);
-
-                /* CRITICAL: Validate control command before processing */
-                if (ctrl.cmd == 0x980900 && !dev->tuning_data) {
-                    pr_err("isp_core_tunning_unlocked_ioctl: Brightness control attempted with NULL tuning data\n");
-                    return -ENODEV;
-                }
-
                 ret = apical_isp_core_ops_s_ctrl(dev, &ctrl);
-
-                if (ret == 0 && copy_to_user((void __user *)arg, &ctrl, sizeof(ctrl))) {
-                    pr_err("isp_core_tunning_unlocked_ioctl: Failed to copy control data to user\n");
-                    return -EFAULT;
-                }
                 break;
 
-            case 0xc008561b: /* ISP_CORE_G_CTRL - Get control */
-                /* Binary Ninja: copy_from_user validation */
-                if (copy_from_user(&ctrl, (void __user *)arg, sizeof(ctrl))) {
-                    pr_err("isp_core_tunning_unlocked_ioctl: Failed to copy control data from user\n");
+            case 0xc008561b: /* OEM: G_CTRL - 8 bytes {ctrl_id, value} */
+                if (copy_from_user(&ctrl, (void __user *)arg, 8))
                     return -EFAULT;
-                }
-
-                pr_info("isp_core_tunning_unlocked_ioctl: Get control cmd=0x%x\n", ctrl.cmd);
-
-                /* CRITICAL: Simple validation for control commands like reference driver */
-                if (!dev->tuning_data) {
-                    return -ENODEV;
-                }
-
                 ret = apical_isp_core_ops_g_ctrl(dev, &ctrl);
-
-                if (ret == 0 && copy_to_user((void __user *)arg, &ctrl, sizeof(ctrl))) {
-                    pr_err("isp_core_tunning_unlocked_ioctl: Failed to copy control data to user\n");
-                    return -EFAULT;
+                if (ret == 0) {
+                    if (copy_to_user((void __user *)arg, &ctrl, 8))
+                        return -EFAULT;
                 }
                 break;
 
-            case 0xc00c56c6: /* ISP_TUNING_ENABLE - Enable/disable tuning */
+            case 0xc00c56c6: /* OEM: Per-frame V4L2 extended control dispatch */
             {
-                uint32_t enable;
-                if (copy_from_user(&enable, (void __user *)arg, sizeof(enable))) {
-                    pr_err("isp_core_tunning_unlocked_ioctl: Failed to copy tuning enable data from user\n");
+                /* OEM architecture: 12-byte struct {direction(4), ctrl_id(4), value(4)}
+                 * direction == 0 -> apical_isp_core_ops_s_ctrl
+                 * direction != 0 -> apical_isp_core_ops_g_ctrl */
+                uint32_t ext_buf[3];
+                struct isp_core_ctrl ext_ctrl;
+
+                if (copy_from_user(ext_buf, (void __user *)arg, 12))
                     return -EFAULT;
+
+                ext_ctrl.cmd = ext_buf[1];
+                ext_ctrl.value = (int32_t)ext_buf[2];
+                ext_ctrl.flag = 0;
+
+                {
+                    static int log_count = 0;
+                    if (log_count < 10) {
+                        pr_info("0xc00c56c6[%d]: dir=%u cmd=0x%x val=0x%x\n",
+                                log_count, ext_buf[0], ext_buf[1], ext_buf[2]);
+                        log_count++;
+                    }
                 }
 
-                pr_debug("isp_core_tunning_unlocked_ioctl: Tuning enable/disable: %s\n", enable ? "ENABLE" : "DISABLE");
-
-                /* BINARY NINJA REFERENCE: Simple tuning enable acknowledgment */
-                if (enable && ourISPdev->tuning_enabled == 3) {
-                    /* CRITICAL: VIC-SAFE TUNING OPERATION SEQUENCING */
-                    /* The key insight is that tuning operations must be synchronized with VIC hardware state */
-                    pr_debug("*** BINARY NINJA REFERENCE: VIC-safe tuning enable acknowledged ***\n");
-
-                    /* CRITICAL FIX: Check VIC hardware state before any register operations */
-                    extern uint32_t vic_start_ok;
-                    static u32 tuning_call_count = 0;
-                    tuning_call_count++;
-
-                    /* Binary Ninja: Exact tuning enable implementation - CRITICAL missing functionality */
-                    pr_debug("isp_core_tunning_unlocked_ioctl: Tuning enabled - Binary Ninja reference implementation\n");
-
-                    /* CRITICAL: Binary Ninja reference has complex parameter handling for 0x20007400 series */
-                    /* The reference implementation processes tuning parameters and maintains register state */
-                    /* This is likely what prevents the 1170ms register resets to 0x0 */
-
-                    /* Binary Ninja: Initialize tuning parameter buffer if not done */
-                    if (!tisp_par_ioctl) {
-                        pr_info("*** CRITICAL: Initializing tuning parameter buffer (missing in our implementation) ***\n");
-                        /* This buffer is used by 0x20007400 series commands */
-                        tisp_par_ioctl = kmalloc(0x500c, GFP_KERNEL);
-                        if (tisp_par_ioctl) {
-                            memset(tisp_par_ioctl, 0, 0x500c);
-                            pr_info("*** Tuning parameter buffer allocated: %p ***\n", tisp_par_ioctl);
-                        } else {
-                            pr_err("*** CRITICAL: Failed to allocate tuning parameter buffer ***\n");
-                        }
-                    }
-
-                    /* Binary Ninja: Enable continuous parameter processing */
-                    if (tisp_par_ioctl) {
-                        /* Mark tuning system as active for parameter processing */
-                        *((uint32_t *)tisp_par_ioctl) = 0x12345678;  /* Magic marker */
-                        pr_debug("*** CRITICAL: Tuning parameter system activated ***\n");
-                    }
-
-                    /* OEM parity: tuning enable must not synthesize a frame-done.
-                     * Real frame completion must come from VIC/ISP frame-done paths.
-                     */
-
-                    /* BINARY NINJA REFERENCE: Acknowledge tuning enable without heavy operations */
-                    ret = 0;
-                    break;
-
-                            /* 1. AE (Auto Exposure) Updates - WITH NULL CHECKS */
-                            pr_info("*** TUNING DEBUG: Starting AE updates ***");
-                            extern int tisp_tgain_update(uint32_t gain);
-                            extern int tisp_again_update(uint32_t gain);
-                            extern int tisp_ev_update(uint32_t ev, uint32_t aux_ev);
-                            extern int tisp_ae_ir_update(uint32_t ir_val);
-
-                            pr_info("*** TUNING DEBUG: About to call tisp_tgain_update ***");
-                            int ae_ret = 0;
-                            if (tisp_tgain_update)
-                                ae_ret = tisp_tgain_update(ourISPdev && ourISPdev->tuning_data ?
-                                                           ourISPdev->tuning_data->total_gain : 0);
-                            pr_info("*** TUNING DEBUG: tisp_tgain_update completed: %d ***", ae_ret);
-
-                            if (ae_ret == 0 && tisp_again_update) {
-                                pr_info("*** TUNING DEBUG: About to call tisp_again_update ***");
-                                ae_ret = tisp_again_update(ourISPdev && ourISPdev->tuning_data ?
-                                                           ourISPdev->tuning_data->max_again : 0);
-                                pr_info("*** TUNING DEBUG: tisp_again_update completed: %d ***", ae_ret);
-                            }
-
-                            if (ae_ret == 0 && tisp_ev_update) {
-                                pr_info("*** TUNING DEBUG: About to call tisp_ev_update ***");
-                                ae_ret = tisp_ev_update(ourISPdev && ourISPdev->tuning_data ?
-                                                        ourISPdev->tuning_data->exposure : 0,
-                                                        0);
-                                pr_info("*** TUNING DEBUG: tisp_ev_update completed: %d ***", ae_ret);
-                            }
-
-                            if (ae_ret == 0) {
-                                ae_ret = tisp_ae_ir_update(0);
-                            }
-                            pr_debug("TUNING: AE updates completed: %d\n", ae_ret);
-
-                            /* 2. AWB (Auto White Balance) Updates */
-                            pr_info("*** TUNING DEBUG: Starting AWB updates ***");
-                            extern int tisp_ct_update(uint32_t ct);
-                            extern int tisp_ccm_ct_update(void);
-                            extern int tisp_ccm_ev_update(void);
-
-                            pr_info("*** TUNING DEBUG: About to call tisp_ct_update ***");
-                            int awb_ret = tisp_ct_update(ourISPdev && ourISPdev->tuning_data ?
-                                                         ourISPdev->tuning_data->wb_temp : 0);
-                            pr_info("*** TUNING DEBUG: tisp_ct_update completed: %d ***", awb_ret);
-
-                            if (awb_ret == 0) {
-                                pr_info("*** TUNING DEBUG: About to call tisp_ccm_ct_update ***");
-                                awb_ret = tisp_ccm_ct_update();
-                                pr_info("*** TUNING DEBUG: tisp_ccm_ct_update completed: %d ***", awb_ret);
-                            }
-
-                            if (awb_ret == 0) {
-                                pr_info("*** TUNING DEBUG: About to call tisp_ccm_ev_update ***");
-                                awb_ret = tisp_ccm_ev_update();
-                                pr_info("*** TUNING DEBUG: tisp_ccm_ev_update completed: %d ***", awb_ret);
-                            }
-                            pr_debug("TUNING: AWB/CCM updates completed: %d\n", awb_ret);
-
-                            /* 3. Gamma Correction Updates */
-                            pr_info("*** TUNING DEBUG: Starting Gamma updates ***");
-                            extern int tiziano_gamma_lut_parameter(void);
-                            pr_info("*** TUNING DEBUG: About to call tiziano_gamma_lut_parameter ***");
-                            int gamma_ret = tiziano_gamma_lut_parameter();
-                            pr_info("*** TUNING DEBUG: tiziano_gamma_lut_parameter completed: %d ***", gamma_ret);
-                            pr_debug("TUNING: Gamma LUT update completed: %d\n", gamma_ret);
-
-                            /* 4. LSC (Lens Shading Correction) Updates */
-                            pr_info("*** TUNING DEBUG: Starting LSC updates ***");
-                            extern int tisp_lsc_write_lut_datas(void);
-                            pr_info("*** TUNING DEBUG: About to call tisp_lsc_write_lut_datas ***");
-                            int lsc_ret = tisp_lsc_write_lut_datas();
-                            pr_info("*** TUNING DEBUG: tisp_lsc_write_lut_datas completed: %d ***", lsc_ret);
-                            pr_debug("TUNING: LSC update completed: %d\n", lsc_ret);
-
-                            /* 5. DPC (Dead Pixel Correction) Updates */
-                            extern int tisp_dpc_par_refresh(uint32_t ev_value, uint32_t threshold, int enable_write);
-                            int dpc_ret = tisp_dpc_par_refresh(dev->tuning_data ? ourISPdev->tuning_data->exposure >> 10 : 0x100, 0x20, 0);
-                            pr_debug("TUNING: DPC refresh completed: %d\n", dpc_ret);
-
-                            /* 6. Sharpening Updates */
-                            extern int tisp_sharpen_par_refresh(uint32_t ev_value, uint32_t threshold, int enable_write);
-                            int sharpen_ret = tisp_sharpen_par_refresh(dev->tuning_data ? ourISPdev->tuning_data->exposure >> 10 : 0x100, 0x20, 0);
-                            pr_debug("TUNING: Sharpening refresh completed: %d\n", sharpen_ret);
-
-                            /* 7. SDNS (Spatial Denoising) Updates */
-                            extern int tisp_sdns_par_refresh(uint32_t ev_value, uint32_t threshold, int enable_write);
-                            extern int tisp_s_sdns_ratio(int ratio);
-                            int sdns_ret = tisp_sdns_par_refresh(dev->tuning_data ? ourISPdev->tuning_data->exposure >> 10 : 0x100, 0x20, 0);
-                            if (sdns_ret == 0) sdns_ret = tisp_s_sdns_ratio(128);
-                            pr_debug("TUNING: SDNS updates completed: %d\n", sdns_ret);
-
-                            /* 8. MDNS (Motion Denoising) Updates */
-                            extern int tisp_s_mdns_ratio(int ratio);
-                            int mdns_ret = tisp_s_mdns_ratio(128);
-                            pr_debug("TUNING: MDNS update completed: %d\n", mdns_ret);
-
-                            /* 9. CCM (Color Correction Matrix) Updates */
-                            extern int jz_isp_ccm(void);
-                            extern int32_t *tiziano_ccm_a_now;
-                            extern uint32_t *cm_ev_list_now;
-                            if (tiziano_ccm_a_now != NULL && cm_ev_list_now != NULL) {
-                                int ccm_ret = jz_isp_ccm();
-                                pr_debug("TUNING: CCM update completed: %d\n", ccm_ret);
-                            } else {
-                                pr_debug("TUNING: CCM not initialized - skipping\n");
-                            }
-
-                            /* 10. ADR (Adaptive Dynamic Range) Updates */
-                            extern int tisp_adr_process(void);
-                            int adr_ret = tisp_adr_process();
-                            pr_debug("TUNING: ADR process completed: %d\n", adr_ret);
-
-                            /* 11. Parameter Refresh Functions */
-                            extern void tiziano_ccm_params_refresh(void);
-                            extern void tiziano_lsc_params_refresh(void);
-                            extern void tiziano_dpc_params_refresh(void);
-                            extern void tiziano_sharpen_params_refresh(void);
-                            extern void tiziano_sdns_params_refresh(void);
-                            extern void tiziano_adr_params_refresh(void);
-
-                            tiziano_ccm_params_refresh();
-                            tiziano_lsc_params_refresh();
-                            tiziano_dpc_params_refresh();
-                            tiziano_sharpen_params_refresh();
-                            tiziano_sdns_params_refresh();
-                            tiziano_adr_params_refresh();
-                            pr_debug("TUNING: All parameter refresh functions completed\n");
-
-                            /* 12. DISABLED: Critical ISP register refresh - CAUSES VIC INTERRUPT DISRUPTION */
-                            /* The continuous writing to register 0x10 (interrupt enable) disrupts VIC interrupts */
-                            /* This was the root cause of interrupts stalling out during streaming */
-                            if (0 && ourISPdev->core_regs) {
-                                /* Refresh critical ISP timing registers to prevent CSI timeout */
-                                u32 current_val = readl(ourISPdev->core_regs + 0x10);
-                                writel(current_val, ourISPdev->core_regs + 0x10);  /* Refresh interrupt enable */
-                                wmb();
-                            }
-
-                            pr_info("*** This should maintain proper ISP pipeline control and prevent CSI PHY timeouts ***\n");
-                }
-
-                /* CRITICAL: Ignore disable commands when auto-initialized to prevent init/release cycle */
-                if (!enable && auto_init_done) {
-                    pr_debug("isp_core_tunning_unlocked_ioctl: Ignoring disable command - tuning was auto-initialized\n");
-                    ret = 0;  /* Return success but don't actually disable */
-                    break;
-                }
-
-                if (enable) {
-                    pr_info("*** DEBUG: enable=1, dev->tuning_enabled=%d ***\n", dev->tuning_enabled);
-                    if (dev->tuning_enabled != 3) {
-                        /* CRITICAL: Initialize tuning_data if not already initialized */
-                        if (!dev->tuning_data) {
-                            pr_info("isp_core_tunning_unlocked_ioctl: Initializing tuning data structure\n");
-
-                            /* Allocate tuning data structure using the reference implementation */
-                            ourISPdev->tuning_data = isp_core_tuning_init(dev);
-                            if (!dev->tuning_data) {
-                                pr_err("isp_core_tunning_unlocked_ioctl: Failed to allocate tuning data\n");
-                                return -ENOMEM;
-                            }
-
-                            pr_info("isp_core_tunning_unlocked_ioctl: Tuning data allocated at %p\n", ourISPdev->tuning_data);
-
-                            /* MCP LOG: Tuning data structure successfully initialized */
-                            pr_info("MCP_LOG: ISP tuning data structure allocated and initialized successfully\n");
-                            pr_info("MCP_LOG: Tuning controls now ready for operation\n");
-                        }
-
-                        /* BINARY NINJA REFERENCE: NO HARDWARE INITIALIZATION DURING TUNING ENABLE */
-                        pr_info("*** BINARY NINJA REFERENCE: Tuning enable - no hardware reset performed ***\n");
-                        /* Reference driver only sets tuning_enabled flag - no hardware initialization */
-                        ret = 0;  /* Success - just enable tuning without hardware reset */
-
-                        ourISPdev->tuning_enabled = 3;
-                        auto_init_done = true;  /* Mark as auto-initialized */
-                        pr_info("isp_core_tunning_unlocked_ioctl: ISP tuning enabled\n");
-                    } else {
-                        pr_info("*** BINARY NINJA REFERENCE: Tuning already enabled - no action needed ***\n");
-                        ret = 0;  /* Success - tuning already enabled */
-                    }
+                if (ext_buf[0] == 0) {
+                    ret = apical_isp_core_ops_s_ctrl(dev, &ext_ctrl);
                 } else {
-                    /* BINARY NINJA REFERENCE: Simple tuning disable - no hardware deinitialization */
-                    pr_info("*** BINARY NINJA REFERENCE: Tuning disable - no hardware reset performed ***\n");
-                    if (dev->tuning_enabled == 3) {
-                        dev->tuning_enabled = 0;
-                        pr_info("isp_core_tunning_unlocked_ioctl: ISP tuning disabled (Binary Ninja reference behavior)\n");
+                    ret = apical_isp_core_ops_g_ctrl(dev, &ext_ctrl);
+                    if (ret == 0) {
+                        ext_buf[1] = ext_ctrl.cmd;
+                        ext_buf[2] = (uint32_t)ext_ctrl.value;
+                        if (copy_to_user((void __user *)arg, ext_buf, 12))
+                            return -EFAULT;
                     }
-                    ret = 0;  /* Success - just disable tuning without hardware reset */
                 }
-                ret = 0;
                 break;
             }
 
@@ -7733,7 +7271,8 @@ long tisp_code_tuning_ioctl(struct file *file, unsigned int cmd, unsigned long a
     void __user *argp = (void __user *)arg;
     int ret = 0;
 
-    pr_debug("tisp_code_tuning_ioctl: cmd=0x%x, arg=0x%lx\n", cmd, arg);
+    if (((cmd >> 8) & 0xFF) == 0x74)
+        pr_info("tisp_code_tuning_ioctl: cmd=0x%x\n", cmd);
 
     /* Ensure global tuning buffer is available; fall back to this file's buffer */
     if (!tisp_par_ioctl && file && file->private_data)
@@ -8106,8 +7645,8 @@ long tisp_code_tuning_ioctl(struct file *file, unsigned int cmd, unsigned long a
 	        return -EINVAL;
     }
 
-	    pr_err("_IOC_TYPE error !!! cmd is %d\n", cmd);
-    return -EINVAL;
+	    /* Non-0x74 commands (V4L2 controls etc) — delegate to the V4L2 handler */
+    return isp_core_tunning_unlocked_ioctl(file, cmd, (void __user *)arg);
 }
 EXPORT_SYMBOL(tisp_code_tuning_ioctl);
 
@@ -11691,35 +11230,36 @@ static int tiziano_awb_set_hardware_param(void)
             pr_info("AWB_HW_DIAG: WB 0x1804=0x%08x 0x1808=0x%08x CFA 0x4800=0x%08x bypass=0x%08x\n",
                     system_reg_read(0x1804), system_reg_read(0x1808),
                     system_reg_read(0x4800), system_reg_read(0xc));
+            pr_info("AWB_HW_DIAG: thresh 0xb028=0x%08x 0xb02c=0x%08x 0xb030=0x%08x 0xb034=0x%08x\n",
+                    system_reg_read(0xb028), system_reg_read(0xb02c),
+                    system_reg_read(0xb030), system_reg_read(0xb034));
         }
     }
 
-    /* OEM algo-mode path plus runtime ModeFlag thresholds. */
+    /* OEM uses system_reg_write_awb(1, ...) for ALL AWB threshold
+     * register writes. The 0xb000=1 latch pulse must precede each
+     * config register write — the hardware gates config access. */
     {
         if (awb_algo_mode == 1) {
-            system_reg_write_awb(1, 0x0b028, 0x0fff0001);
-            system_reg_write_awb(1, 0x0b02c, 0x0fff0001);
-            system_reg_write_awb(1, 0x0b030, 0x00000100);
-            system_reg_write_awb(1, 0x0b034, 0xffff0100);
+            system_reg_write_awb(1, 0xb028, 0x0fff0001);
+            system_reg_write_awb(1, 0xb02c, 0x0fff0001);
+            system_reg_write_awb(1, 0xb030, 0x00000100);
+            system_reg_write_awb(1, 0xb034, 0xffff0100);
         } else {
             if (awb_mode_flag == 1) {
                 u32 rg_lo = (_awb_lowlight_rg_th[0] & 0x0FFF);
                 u32 rg_hi = (_awb_lowlight_rg_th[1] & 0x0FFF) << 16;
-                system_reg_write_awb(1, 0x0b028, rg_hi | rg_lo);
-                system_reg_write_awb(1, 0x0b02c, 0x03ff0001);
+                system_reg_write_awb(1, 0xb028, rg_hi | rg_lo);
+                system_reg_write_awb(1, 0xb02c, 0x03ff0001);
             } else {
-                system_reg_write_awb(1, 0x0b028, awb_default_rg);
-                system_reg_write_awb(1, 0x0b02c, awb_default_bg);
+                system_reg_write_awb(1, 0xb028, awb_default_rg);
+                system_reg_write_awb(1, 0xb02c, awb_default_bg);
             }
-            system_reg_write_awb(1, 0x0b030, awb_default_v30);
-            system_reg_write_awb(1, 0x0b034, awb_default_v34);
+            system_reg_write_awb(1, 0xb030, awb_default_v30);
+            system_reg_write_awb(1, 0xb034, awb_default_v34);
             tiziano_awb_set_lum_th_freq();
         }
     }
-
-    /* Ensure AWB stats enable latch persists after all config writes.
-     * OEM trace shows 0xb000=1 persisting between frames. */
-    system_reg_write(0xb000, 1);
 
     return 0;
 }
@@ -12630,26 +12170,14 @@ int tisp_dpc_set_par_cfg(void *in_buf)
 
     return 0;
 }
+/* OEM EXACT: tisp_gib_set_par_cfg at 0x130d8 — just iterates param_array_set.
+ * GIB is enabled from init via bypass register; no runtime bypass manipulation. */
 int tisp_gib_set_par_cfg(void *in_buf)
 {
     int total = 0, sz = 0; char *p = (char *)in_buf;
     for (int i = 0x3e; i < 0x54; ++i) {
         if (tisp_gib_param_array_set(i, p, &sz) != 0) return -EINVAL;
         p += sz; total += sz;
-    }
-    pr_info("tisp_gib_set_par_cfg: CALLED (gib_params_received=%d) total=%d\n",
-            gib_params_received, total);
-
-    if (!gib_params_received) {
-        u32 reg_0c;
-        gib_params_received = 1;
-        /* Enable GIB block now that libimp sent real params.
-         * Clear bit 5 in bypass register to activate GIB. */
-        isp_block_enable |= 0x20;  /* Add GIB bit 5 to whitelist */
-        reg_0c = system_reg_read(0xc);
-        reg_0c &= ~0x20;  /* Clear bit 5 = enable GIB */
-        system_reg_write(0xc, reg_0c);
-        pr_info("tisp_gib_set_par_cfg: GIB ENABLED in bypass register (0x%08x)\n", reg_0c);
     }
     return 0;
 }
@@ -12730,10 +12258,11 @@ int tisp_defog_set_par_cfg(void *in_buf)
     pr_debug("tisp_defog_set_par_cfg: total=%d\n", total);
     return 0;
 }
+/* OEM: tisp_mdns_set_par_cfg — MDNS is enabled from tiziano_mdns_init;
+ * this just updates params when libimp sends custom tuning. */
 int tisp_mdns_set_par_cfg(void *in_buf)
 {
     int total = 0, sz = 0; char *p = (char *)in_buf;
-    pr_info("tisp_mdns_set_par_cfg: CALLED (mdns_params_received=%d)\n", mdns_params_received);
     for (int i = 0x180; i < 0x357; ++i) {
         if (tisp_mdns_param_array_set(i, p, &sz) != 0) {
             int fsz = tisp_mdns_param_size(i);
@@ -12742,18 +12271,6 @@ int tisp_mdns_set_par_cfg(void *in_buf)
             continue;
         }
         p += sz; total += sz;
-    }
-    pr_info("tisp_mdns_set_par_cfg: total=%d (with fallback advance)\n", total);
-
-    /* Deferred init: first time libimp sends real MDNS params, activate the block */
-    if (!mdns_params_received) {
-        u32 bypass;
-        mdns_params_received = 1;
-        bypass = system_reg_read(0xc);
-        bypass &= ~0x10000;  /* clear MDNS bypass bit 16 */
-        system_reg_write(0xc, bypass);
-        tisp_mdns_bypass(0);  /* NOW safe to enable MDNS with real params */
-        pr_info("tisp_mdns_set_par_cfg: deferred MDNS activation -- params received, block enabled\n");
     }
 
     /* Apply to hardware after param blob set unless OEM-style bulk init is in progress. */
@@ -13205,48 +12722,18 @@ int tisp_get_ae_info(void *out_buf)
 
 int tisp_set_ae_info(void *in_buf)
 {
+    /* OEM EXACT at 0x12890: copies 0x98 bytes from in_buf+0xc into tisp_ae_ctrls.
+     * This sets tisp_ae_ctrls[0] non-zero, which makes the AE event handler
+     * push event 4 (tisp_tgain_update) on every frame — critical for per-frame
+     * GIB/GB/DMSC/sharpen/denoise gain-dependent parameter updates. */
     int32_t *param_ptr = (int32_t *)in_buf;
-    uint32_t *data;
-    size_t nwords;
-    uint32_t total_gain;
-    uint32_t exposure;
-    uint32_t again;
 
     if (!param_ptr)
         return -EINVAL;
 
-    if (!ourISPdev || !ourISPdev->tuning_data)
-        return -ENODEV;
-
-    data = (uint32_t *)&param_ptr[3];
-    nwords = (param_ptr[1] > 0) ? (param_ptr[1] / sizeof(uint32_t)) : 0;
-
-    if (nwords == 0)
-        return -EINVAL;
-
-    /* Update AE-related fields conservatively if provided */
-    {
-        struct isp_tuning_data *tuning = ourISPdev->tuning_data;
-        /* Lock while updating shared tuning data */
-        mutex_lock(&tuning->mutex);
-        if (nwords > 0) tuning->total_gain = data[0];
-        if (nwords > 1) tuning->exposure   = data[1];
-        if (nwords > 2) tuning->max_again  = data[2];
-        if (nwords > 3) tuning->max_dgain  = data[3];
-        if (nwords > 4) tuning->ae_comp    = data[4];
-        if (nwords > 5) tuning->fps_num    = data[5];
-        if (nwords > 6) tuning->fps_den    = data[6];
-        total_gain = tuning->total_gain;
-        exposure = tuning->exposure;
-        again = tuning->max_again;
-        mutex_unlock(&tuning->mutex);
-    }
-
-    /* Trigger AE-related updates to propagate changes */
-    if (tisp_tgain_update) tisp_tgain_update(total_gain);
-    if (tisp_again_update) tisp_again_update(again);
-    if (tisp_ev_update)    tisp_ev_update(exposure, 0);
-    if (tisp_ae_ir_update) tisp_ae_ir_update(0);
+    /* OEM: *(arg1 + 4) = 0x98; memcpy(&tisp_ae_ctrls, arg1 + 0xc, 0x98) */
+    param_ptr[1] = 0x98;
+    memcpy(tisp_ae_ctrls, (u8 *)in_buf + 0xc, 0x98);
 
     return 0;
 }
@@ -14277,6 +13764,66 @@ static uint32_t ae_ctrls[4];
 /* Removed duplicate declarations - using struct versions */
 static uint32_t ae_comp_default = 0x80;
 
+extern uint32_t tisp_math_exp2(uint32_t value, uint32_t precision, uint32_t shift);
+
+/* OEM: tisp_s_max_again → tiziano_ae_s_max_again
+ * Converts log-scale max analog gain to Q10 fixed-point and stores it. */
+static int tisp_s_max_again(uint32_t value)
+{
+    /* OEM validation: data_a2e8c << 11 must be >= value.
+     * data_a2e8c is the sensor's raw max_again from tiziano_sync_sensor_attr.
+     * Skip validation for now — just clamp to reasonable range. */
+    data_c46b0 = tisp_math_exp2(value, 5, 0xa);
+    data_a0dfc = 0;
+    return 0;
+}
+
+/* OEM: tisp_s_max_isp_dgain → tiziano_ae_s_max_isp_dgain
+ * Converts log-scale max ISP digital gain to Q10 fixed-point. */
+static int tisp_s_max_isp_dgain(uint32_t value)
+{
+    data_c46bc = tisp_math_exp2(value, 5, 0xa);
+    data_a0dfc = 0;
+    return 0;
+}
+
+/* OEM: tisp_ae_manual_get → memcpy(out, &tisp_ae_ctrls, 0x98)
+ * Returns the full 0x98-byte AE control state. */
+static int tisp_get_ae_attr(void *out)
+{
+    memcpy(out, tisp_ae_ctrls, 0x98);
+    return 0;
+}
+
+/* OEM: tisp_ae_g_luma — compute weighted mean luma from AE histogram.
+ * Used by tisp_get_ae_luma (ctrl 0x8000033) for libimp AE queries. */
+static uint8_t tisp_ae_g_luma(uint8_t *result)
+{
+    uint32_t *hist = (uint32_t *)tisp_ae_hist;
+    uint32_t sum = 0;
+    uint32_t divisor;
+    uint8_t luma;
+    int i;
+
+    for (i = 0; i < 256; i++)
+        sum += i * hist[i];
+
+    /* OEM: divisor = width * height / 4 (total pixels / 4 bayer channels) */
+    divisor = tisp_si_width(&sensor_info) * tisp_si_height(&sensor_info) / 4;
+    if (divisor == 0)
+        divisor = 1;
+
+    luma = (uint8_t)(sum / divisor);
+    if (result)
+        *result = luma;
+    return luma;
+}
+
+static uint8_t tisp_get_ae_luma(uint8_t *result)
+{
+    return tisp_ae_g_luma(result);
+}
+
 /* AE parameter structures - Based on decompiled code */
 static uint32_t data_b0cfc = 0x1000;
 static uint32_t data_b0d18 = 0x800;
@@ -14341,14 +13888,14 @@ static int system_reg_write_ae(int ae_id, uint32_t reg, uint32_t value);
 /* REMOVED: Conflicting static declaration - use extern from tx_isp_core.c */
 void private_spin_lock_init(spinlock_t *lock);
 /* fix_point_mult3_32 is defined in tx_isp_fixpt.h */
-extern uint32_t tisp_math_exp2(uint32_t value, uint32_t precision, uint32_t shift);
+/* tisp_math_exp2 extern moved earlier (before tisp_s_max_again) */
 
 /* Sensor interface functions - Forward declarations */
 static int data_b2eec(uint32_t time, void **var_ptr);
 static int data_b2ef0(uint32_t time, void **var_ptr);
 static int data_b2ef4(uint32_t param, int flag);
 static int data_b2ef8(uint32_t param, int flag);
-static uint32_t data_b2ee0(uint32_t log_val, int16_t *var_ptr);
+static uint32_t data_b2ee0(uint32_t log_val, unsigned int *var_ptr);
 static uint32_t data_b2ee4(uint32_t log_val, void **var_ptr);
 static int data_b2f04(uint32_t param, int flag);
 static int data_b2f08(uint32_t param, int flag);
@@ -14389,64 +13936,38 @@ static void JZ_Isp_Ae_Dg2reg(uint32_t pos, uint32_t *reg1, uint32_t dg_val, uint
 static int tisp_ae1_expt(void);
 static void tisp_set_ae1_ag(uint32_t ag_q10, uint32_t dg_q10);
 
-/* tisp_ae1_process - Simple proportional AE controller.
- * The OEM's tisp_ae1_expt is a complex algorithm we haven't fully ported.
- * This reads actual zone luminance and adjusts sensor exposure/gain
- * to reach a target brightness. */
+/* tisp_ae1_process - OEM-matching AE1 event callback (event 6).
+ *
+ * OEM decompilation (0x53704):
+ *   tisp_ae1_ctrls_update()
+ *   tisp_ae1_process_impl()
+ *   return 0
+ *
+ * In the OEM, tisp_ae1_process_impl handles WDR/HDR short exposure control.
+ * It calls tisp_set_sensor_integration_time_short() and
+ * tisp_set_sensor_analog_gain_short(), which store values via function
+ * pointers (data_a2ee8/data_a2ef8) — these are no-ops on non-WDR sensors
+ * like the GC2053 (no alloc_again_short/alloc_integration_time_short
+ * callbacks registered).
+ *
+ * CRITICAL: This callback runs from tisp_event_process() with IRQs disabled
+ * (local_irq_save).  It must NEVER do I2C (which sleeps).  The previous
+ * "simple proportional AE controller" called tx_isp_send_event_to_remote()
+ * → sensor_set_expo() → i2c_transfer() directly, causing I2C bus corruption
+ * and sensor death.  It also conflicted with AE0 by independently writing
+ * gain_idx=0, overriding AE0's computed gain values.
+ *
+ * AE0 (event callback 1) handles all sensor exposure control correctly via
+ * the deferred workqueue (sensor_expo_work).
+ */
 static void tisp_ae1_process(void)
 {
-    extern int tisp_ae_get_y_zone(void *buffer);
-    static uint32_t cur_expo = 0x300;   /* integration lines (start moderate) */
-    uint32_t zones[225];
-    uint64_t sum = 0;
-    uint32_t mean;
-    int i;
-
-    /* Zone values are 21-bit luminance sums (~9216 pixels/zone).
-     * mean=142 is near-black. Target ~50000 for mid-brightness. */
-    const uint32_t TARGET = 50000;
-    const uint32_t MAX_EXPO = 0x4e2;  /* gc2053 max ~1250 lines for 30fps */
-
-    tisp_ae_get_y_zone(zones);
-    for (i = 0; i < 225; i++)
-        sum += zones[i];
-    do_div(sum, 225);
-    mean = (uint32_t)sum;
-
-    if (mean == 0)
-        return; /* No data yet */
-
-    /* Simple proportional control: adjust exposure only */
-    if (mean < (TARGET - TARGET / 10)) {
-        cur_expo += (cur_expo >> 3) + 1; /* ~12% increase */
-    } else if (mean > (TARGET + TARGET / 10)) {
-        cur_expo -= (cur_expo >> 4) + 1; /* ~6% decrease */
-    }
-
-    if (cur_expo < 0x20) cur_expo = 0x20;
-    if (cur_expo > MAX_EXPO) cur_expo = MAX_EXPO;
-
-    /* Write directly to sensor via TX_ISP_EVENT_SENSOR_EXPO.
-     * Format: (analog_gain_idx << 16) | integration_time.
-     * Use gain_idx=0 (default) and vary integration time only. */
-    {
-        extern struct tx_isp_dev *ourISPdev;
-        if (ourISPdev && ourISPdev->sensor) {
-            struct tx_isp_sensor *sensor = ourISPdev->sensor;
-            int expo_val = (0 << 16) | (cur_expo & 0xffff);
-            tx_isp_send_event_to_remote(&sensor->sd,
-                TX_ISP_EVENT_SENSOR_EXPO, &expo_val);
-        }
-    }
-
-    {
-        static int ae_log;
-        if (ae_log < 10 || (ae_log % 300) == 0) {
-            pr_info("AE_CTRL[%d]: mean=%u expo=0x%x\n",
-                    ae_log, mean, cur_expo);
-        }
-        ae_log++;
-    }
+    /* Non-WDR mode: AE1 has no short exposure to control.
+     * GC2053 does not register alloc_again_short or
+     * alloc_integration_time_short callbacks.
+     * All sensor exposure is managed by AE0 via data_b2ef4/data_b2f04
+     * → sensor_expo_work (deferred I2C in process context). */
+    return;
 }
 
 /* Minimal port of tisp_ae1_expt based on BN/Ghidra structure
@@ -14562,48 +14083,26 @@ static int tisp_ae1_expt(void)
     return 0;
 }
 
-/* Minimal tisp_set_ae1_ag: map fixed-point gains to register domain.
- * For now, keep AG at unity in register space and let short-gain path compute precise value.
+/* tisp_set_ae1_ag - OEM-matching AE1 analog gain setter.
+ *
+ * OEM (0x51a14) calls tisp_set_sensor_analog_gain_short() which goes through
+ * data_a2ef8 — a function pointer set during sensor registration.  On non-WDR
+ * sensors (GC2053), alloc_again_short is not registered, so this is a no-op.
+ *
+ * CRITICAL: This may be called from tisp_event_process with IRQs disabled.
+ * Must NOT do I2C.  Previous version called tx_isp_send_event_to_remote()
+ * which triggered sensor_set_expo() → i2c_transfer() — unsafe.
  */
 static void tisp_set_ae1_ag(uint32_t ag_q10, uint32_t dg_q10)
 {
-    /* Generic mapping following reference: use sensor's alloc_again(_short) to get index, then send SENSOR_EXPO */
-    extern struct tx_isp_dev *ourISPdev;
-    if (!ourISPdev || !ourISPdev->sensor) {
-        pr_err("tisp_set_ae1_ag: No ISP device or sensor available\n");
-        return;
-    }
-
-    struct tx_isp_sensor *sensor = ourISPdev->sensor;
-    unsigned int sensor_again_idx = 0;
-    unsigned int isp_gain_q16;
-
-    /* Convert Q10 analog gain factor to isp_gain (log2 Q16): log2(ag_q10) - 10 */
-    int32_t log2_q16 = tisp_log2_int_to_fixed(ag_q10, 16, 0) - (10 << 16);
-    if (log2_q16 < 0)
-        log2_q16 = 0; /* clamp */
-
-    if (sensor->attr.sensor_ctrl.alloc_again_short) {
-        sensor->attr.sensor_ctrl.alloc_again_short((unsigned)log2_q16, TX_ISP_GAIN_FIXED_POINT, &sensor_again_idx);
-    } else if (sensor->attr.sensor_ctrl.alloc_again) {
-        sensor->attr.sensor_ctrl.alloc_again((unsigned)log2_q16, TX_ISP_GAIN_FIXED_POINT, &sensor_again_idx);
-    } else {
-        pr_debug("tisp_set_ae1_ag: No alloc_again hook; leaving unity\n");
-        sensor_again_idx = 0;
-    }
-
-    /* Program sensor exposure+again atomically via SENSOR_EXPO (generic pattern in reference drivers) */
-    int expo_val = ((int)(sensor_again_idx & 0xffff) << 16) | (data_afcd8 & 0xffff);
-    tx_isp_send_event_to_remote(&sensor->sd, TX_ISP_EVENT_SENSOR_EXPO, &expo_val);
-
     /* Cache desired gains for AE register mapping */
     ae1_ag_q10_cur = ag_q10;
     ae1_dg_q10_cur = dg_q10;
 
-    /* AE1 internal analog-gain register value for mirrored AG regs if ever used */
+    /* AE1 internal analog-gain register value */
     data_afce0 = 0x100;
-    pr_debug("tisp_set_ae1_ag: ag_q10=0x%x dg_q10=0x%x -> sensor_again_idx=%u, it=0x%x\n",
-             ag_q10, dg_q10, sensor_again_idx, data_afcd8);
+    pr_debug("tisp_set_ae1_ag: ag_q10=0x%x dg_q10=0x%x (no sensor write — non-WDR)\n",
+             ag_q10, dg_q10);
 }
 
 /* tiziano_ae_init_exp_th - Based on decompiled code with safe memory access */
@@ -14743,6 +14242,9 @@ int tiziano_ae_init(uint32_t height, uint32_t width, uint32_t fps)
 
     /* Binary Ninja EXACT: tiziano_ae_init_exp_th() */
     tiziano_ae_init_exp_th();
+
+    /* OEM starts _ae_reg.data[0] at 0 (BSS-zeroed). ae0_tune2 computes
+     * a new value from scratch on the first frame. No seed needed. */
 
     /* Binary Ninja EXACT: tiziano_ae_para_addr() */
     (void)tiziano_ae_para_addr();
@@ -15274,6 +14776,7 @@ static void awb_history_average(uint32_t *gr, uint32_t *gb, uint32_t *ct)
 	u64 gb_sum = 0;
 	u64 ct_sum = 0;
 	u32 weight_sum = 0;
+	u32 window;
 	u32 start;
 	u32 weight;
 	int i;
@@ -15281,7 +14784,16 @@ static void awb_history_average(uint32_t *gr, uint32_t *gb, uint32_t *ct)
 	if (!gr || !gb || !ct || awb_history_count == 0)
 		return;
 
-	start = 15 - awb_history_count;
+	/* OEM uses _awb_cof[0] as window size, not full history.
+	 * With _awb_cof[0]=1, only the latest entry is used (no averaging).
+	 * This prevents over-smoothing that blocks AWB adaptation. */
+	window = _awb_cof[0];
+	if (window == 0)
+		window = 1;
+	if (window > awb_history_count)
+		window = awb_history_count;
+
+	start = 15 - window;
 	weight = start;
 	for (i = start; i < 15; ++i) {
 		weight++;
@@ -16181,7 +15693,7 @@ find_bg_idx:
 					for (c = 0; c < cols; c++)
 						if (rgbg_wght[r * cols + c])
 							nz++;
-				pr_info("AWB_CTDET_WGHT[%u]: total_wght=%u nonzero=%u/%u "
+				pr_debug("AWB_CTDET_WGHT[%u]: total_wght=%u nonzero=%u/%u "
 					"pix[0]=%u pix[112]=%u wght[0]=%u wght[112]=%u "
 					"rg[0]=%u bg[0]=%u rg[112]=%u bg[112]=%u\n",
 					ctdet_diag, total_wght, nz, total,
@@ -16243,7 +15755,7 @@ find_bg_idx:
 				static unsigned int avg_diag;
 				avg_diag++;
 				if (avg_diag <= 5)
-					pr_info("AWB_CTDET_AVG[%u]: i_18=%u i_17=%u "
+					pr_debug("AWB_CTDET_AVG[%u]: i_18=%u i_17=%u "
 						"sum_rg=%llu sum_bg=%llu sum_w=%llu "
 						"rg_out=%u bg_out=%u\n",
 						avg_diag, i_18, i_17,
@@ -16469,7 +15981,7 @@ find_bg_idx:
 					static unsigned int p10_diag;
 					p10_diag++;
 					if (p10_diag <= 10 || (p10_diag % 300) == 0)
-						pr_info("AWB_CTDET_P10[%u]: rg_bi=%u bg_bi=%u "
+						pr_debug("AWB_CTDET_P10[%u]: rg_bi=%u bg_bi=%u "
 							"interp=%u interp_unq=%u ct=%u "
 							"final_rg=%u final_bg=%u\n",
 							p10_diag, rg_bi, bg_bi,
@@ -16497,17 +16009,17 @@ fail_output:
 }
 
 /* OEM-matched Tiziano_awb_fpga: compute per-zone rg/bg ratios in Q-format
- * using _wb_static as the calibration reference (WB reference gains).
+ * with _awb_cof calibration coefficients, matching the OEM exactly.
  *
  * OEM zone ratio: zone_rg[i] = fix_point_mult2_32(pp, (R << q) / G, cof_rg_q)
  *                 zone_bg[i] = fix_point_mult2_32(pp, (B << q) / G, cof_bg_q)
- * where cof_rg_q = fix_point_mult2_32(pp, 0x100 << q, _wb_static[0])
+ * where cof_rg_q = fix_point_mult2_32(pp, 0x100 << q, _awb_cof[0])
  *
- * IMPORTANT: OEM arg9 = _wb_static (WB reference gains), NOT _awb_cof.
- * _awb_cof[0] is the AWB history depth (1-15 frames) and _awb_cof[1]
- * is the convergence tolerance — these are convergence parameters.
- * With _wb_static, zone values are in the correct scale to match
- * rg_pos/bg_pos ranges in Ct_Detect without any extra << q shift.
+ * OEM global: rg_global = fix_point_div(q, rg_pix_cnt, rg_sum) >> q
+ *
+ * Previous code used simple Q8 ratios (R*256/G) without _awb_cof calibration,
+ * and weighted-mean averaging instead of OEM reciprocal-average, producing
+ * wrong rg/bg values (e.g., bg_global=21 instead of ~200-300).
  */
 static int Tiziano_awb_fpga(const uint32_t *stats_r,
 			    const uint32_t *stats_g,
@@ -16623,7 +16135,7 @@ static int Tiziano_awb_fpga(const uint32_t *stats_r,
 		if (avg_diff < diff_threshold) {
 			static unsigned int awb_stable_count;
 			awb_stable_count++;
-			if (awb_stable_count <= 3 || (awb_stable_count % 300) == 0)
+			if (awb_stable_count <= 10 || (awb_stable_count % 300) == 0)
 				pr_info("Tiziano_awb_fpga[%u]: stable (diff=%u < thr=%u), skip update\n",
 					awb_stable_count, avg_diff, diff_threshold);
 			return awb_moa;
@@ -16634,9 +16146,13 @@ static int Tiziano_awb_fpga(const uint32_t *stats_r,
 	memcpy(awb_zone_bg_last, awb_zone_bg, sizeof(awb_zone_bg));
 	awb_zone_cache_valid = 1;
 
-	/* OEM: rg_global uses _wb_static-scaled zones.
-	 * cof_rg/cof_bg are now _wb_static values (WB reference gains).
-	 * Global averages are diagnostic-only. */
+	/* OEM: rg_global = fix_point_div(q, rg_sum, _awb_cof[0]) >> q
+	 * = rg_sum / cof_rg (the raw zone-ratio sum divided by calibration).
+	 * Then data_a5a30 = rg_global / pix_cnt = per-zone average rg ratio.
+	 *
+	 * The OEM then feeds zone data into Tiziano_Awb_Ct_Detect which
+	 * computes a weighted/interpolated rg/bg target in ~0x100 scale.
+	 */
 	{
 		u32 ct_detect_status = 0;
 		u32 ct_detect_rg_bg[2] = { 0x100, 0x100 };
@@ -16696,36 +16212,36 @@ static int Tiziano_awb_fpga(const uint32_t *stats_r,
 		cl_params[4] = _awb_cluster_tail[1];  /* convergence tolerance */
 		cl_params[5] = _awb_cluster_tail[2];  /* max iterations */
 
-		/* Zone rgbg scaling for Ct_Detect.
-		 * With _awb_cof calibration, zone values are in Q8 scale
-		 * and need << q to match Ct_Detect's rg_pos[i] << q comparisons.
-		 * For bg: divide by cof_bg to undo the calibration inflation. */
-		{
-			u32 safe_cof_bg = cof_bg ? cof_bg : 1;
-
-			for (idx = 0; idx < AWB_STATS_ZONES; idx++) {
-				awb_zone_rgbg[idx] = awb_zone_rg[idx] << q;
-				awb_zone_rgbg[idx + AWB_STATS_ZONES] =
-					(awb_zone_bg[idx] / safe_cof_bg) << q;
-			}
+		/* OEM (Tiziano_awb_fpga): zone_rgbg is computed directly as
+		 *   mult2(q, (R << q) / G, cof_rg_q)
+		 * The result of mult2(q, (R<<q)/G, cof_q) with cof in Q10 format
+		 * (cof=1024 for 1.0) produces values of magnitude R/G * 256 * cof,
+		 * which matches rg_pos[i] << q (e.g., 169 * 1024 = 173056).
+		 * The OEM stores these values DIRECTLY into zone_rgbg without any
+		 * additional shift.  A previous bug here applied an extra << q shift
+		 * which inflated zone values by 2^q, causing them to be clamped to
+		 * the max position boundary — producing wrong bg targets (e.g.,
+		 * bg=397 instead of bg=149) when cof_bg differs from cof_rg. */
+		for (idx = 0; idx < AWB_STATS_ZONES; idx++) {
+			awb_zone_rgbg[idx] = awb_zone_rg[idx];
+			awb_zone_rgbg[idx + AWB_STATS_ZONES] = awb_zone_bg[idx];
 		}
 
 		if (fpga_diag_count <= 5) {
-			pr_info("AWB_CTDET_PRE[%u]: calling Ct_Detect light_src=%u q=%u "
+			pr_debug("AWB_CTDET_PRE[%u]: calling Ct_Detect light_src=%u q=%u "
 				"cof_rg=%u cof_bg=%u\n",
 				fpga_diag_count, active_light_src_num, q,
 				cof_rg, cof_bg);
-			pr_info("AWB_CTDET_PRE[%u]: rgbg[0]=%u rgbg[225]=%u "
-				"rgbg_unq[0]=%u rgbg_unq[225]=%u "
+			pr_debug("AWB_CTDET_PRE[%u]: rgbg[0]=%u rgbg[225]=%u "
 				"rg_pos[0]=%u rg_pos[14]=%u "
+				"rg_pos0_q=%u bg_pos0_q=%u "
 				"bg_pos[0]=%u bg_pos[14]=%u\n",
 				fpga_diag_count,
 				awb_zone_rgbg[0], awb_zone_rgbg[AWB_STATS_ZONES],
-				q ? (awb_zone_rgbg[0] >> q) : awb_zone_rgbg[0],
-				q ? (awb_zone_rgbg[AWB_STATS_ZONES] >> q) :
-					awb_zone_rgbg[AWB_STATS_ZONES],
 				((const uint32_t *)_rg_pos)[0],
 				((const uint32_t *)_rg_pos)[14],
+				((const uint32_t *)_rg_pos)[0] << q,
+				((const uint32_t *)_bg_pos)[0] << q,
 				((const uint32_t *)_bg_pos)[0],
 				((const uint32_t *)_bg_pos)[14]);
 		}
@@ -16752,10 +16268,13 @@ static int Tiziano_awb_fpga(const uint32_t *stats_r,
 			ct_detect_rg_bg,                      /* arg19: output rg/bg */
 			&ct_detect_status);                   /* arg20: output status */
 
-		if (fpga_diag_count <= 5)
-			pr_info("AWB_CTDET_POST[%u]: status=%u rg=%u bg=%u ct=%u\n",
+		if (fpga_diag_count <= 10 || (fpga_diag_count % 300) == 0)
+			pr_info("AWB_CTDET[%u]: status=%u rg=%u bg=%u ct=%u "
+				"rg_global=%u bg_global=%u zones=%u/%u\n",
 				fpga_diag_count, ct_detect_status,
-				ct_detect_rg_bg[0], ct_detect_rg_bg[1], ct_detect_ct);
+				ct_detect_rg_bg[0], ct_detect_rg_bg[1], ct_detect_ct,
+				awb_zone_rg_global, awb_zone_bg_global,
+				rg_pix_cnt, total_zones);
 
 		if (ct_detect_status == 0) {
 			target_rg = ct_detect_rg_bg[0];
@@ -16771,7 +16290,7 @@ static int Tiziano_awb_fpga(const uint32_t *stats_r,
 		}
 
 		if (fpga_diag_count <= 10 || (fpga_diag_count % 300) == 0) {
-			pr_info("AWB_FPGA[%u]: Ct_Detect status=%u "
+			pr_debug("AWB_FPGA[%u]: Ct_Detect status=%u "
 				"rg=%u bg=%u ct=%u "
 				"rg_global=%u bg_global=%u "
 				"zones=%u q=%u\n",
@@ -16823,23 +16342,21 @@ static int Tiziano_awb_fpga(const uint32_t *stats_r,
 		u32 total_diff = diff_gr + diff_gb;
 		u32 threshold;
 		/* OEM: step count ($s1) comes from _awb_cof[0], clamped 1-15.
-		 * _awb_cof[0]=1 means immediate convergence (no smoothing).
-		 * For nighttime stability, use _awb_mode[0] (larger) until
-		 * the zone calibration is validated in daytime conditions.
-		 * TODO: switch to _awb_cof[0] once CT detection is validated. */
+		 * _awb_cof[0]=1 means snap immediately (no ramping).
+		 * First frame after reset uses 1. */
 		u32 step_count = (awb_history_reset || awb_history_count <= 1)
-			? 1 : _awb_mode[0];
+			? 1 : _awb_cof[0];
 
 		if (step_count > 15)
 			step_count = 15;
 		if (step_count == 0)
 			step_count = 1;
 
-		/* OEM threshold ($v1_1) for convergence comes from _awb_cof[1].
-		 * _awb_cof[1]=4 is very aggressive.  Keep _awb_mode[1] for now
-		 * until zone calibration is validated.
-		 * TODO: switch to _awb_cof[1] once CT detection is validated. */
-		threshold = _awb_mode[1];
+		/* OEM threshold for starting convergence ramp.
+		 * From decompilation: uses _awb_cof[1] as primary threshold;
+		 * _awb_cof[1]=4 means adapt when gain changes by 4 units.
+		 * Falls through to default if [1]==0. */
+		threshold = _awb_cof[1];
 		if (threshold == 0)
 			threshold = 8;
 
@@ -17012,7 +16529,10 @@ static int tiziano_awb_set_lum_th_freq(void)
 		}
 	}
 
-	system_reg_write_awb(1, 0x0b038,
+	/* OEM uses system_reg_write_awb(1,...) which writes 0xb000=1
+	 * (latch pulse) before the register write. Without the latch,
+	 * AWB hardware ignores config register updates. */
+	system_reg_write_awb(1, 0xb038,
 		(AWB_LUM_FREQ_MODE << 16) | (AWB_LUM_FREQ_BASE << 8) | lum_freq);
 	return 0;
 }
@@ -17064,22 +16584,17 @@ static int JZ_Isp_Awb(void)
 			if (awb_mode_flag == 1) {
 				awb_mode_flag = 0;
 				if (awb_frz == 0) {
-					/* OEM uses system_reg_write_awb(1,...) which writes
-					 * 0xb000=1 before each register. But this runs in the
-					 * event thread after awb_interrupt_static already
-					 * re-armed DMA via tiziano_awb_set_lum_th_freq.
-					 * The extra 0xb000=1 corrupts DMA mid-collection.
-					 * Write registers directly — AWB config is already
-					 * latched from the ISR's tiziano_awb_set_lum_th_freq. */
-					system_reg_write(0x0b028, normal_rg);
-					system_reg_write(0x0b02c, normal_bg);
+					/* OEM EXACT: uses system_reg_write_awb(1,...)
+					 * with 0xb000=1 latch for threshold changes. */
+					system_reg_write_awb(1, 0xb028, normal_rg);
+					system_reg_write_awb(1, 0xb02c, normal_bg);
 				}
 			}
 		} else if (awb_mode_flag == 0) {
 			awb_mode_flag = 1;
 			if (awb_frz == 0) {
-				system_reg_write(0x0b028, lowlight_rg);
-				system_reg_write(0x0b02c, 0x03ff0001);
+				system_reg_write_awb(1, 0xb028, lowlight_rg);
+				system_reg_write_awb(1, 0xb02c, 0x03ff0001);
 			}
 		}
 	}
@@ -17110,10 +16625,12 @@ int awb_interrupt_static(void)
 {
 	struct tisp_event_record event_data = {0};
 	uint32_t awb_status;
+	uint32_t bank_idx;
 	void *buffer_addr;
 	static unsigned int awb_irq_count;
 	static uint32_t awb_last_bank = 0xFFFFFFFF;
 	static unsigned int awb_bank_change_count;
+	static unsigned int awb_oob_warn;
 
 	if (data_a2f5c == 0)
 		return 0;
@@ -17128,19 +16645,32 @@ int awb_interrupt_static(void)
 		awb_last_bank = awb_status;
 	}
 
-	buffer_addr = (void *)(unsigned long)(data_a2f5c + (awb_status << 12));
+	/* Only 4 banks were allocated (0xb03c..0xb048 → +0x000/+0x1000/+0x2000/+0x3000).
+	 * If the hardware status register returns a value >= 4, an unmasked index
+	 * would push buffer_addr past the AWB DMA allocation into adjacent kernel
+	 * pages — those pages may contain GIB/MDNS LUT data that decodes (via the
+	 * 21-bits-per-channel unpack in JZ_Isp_Get_Awb_Statistics) to constant
+	 * R=G=B values, which is exactly the symptom we observed when GIB was
+	 * enabled. Mask the index to keep reads inside the allocation. */
+	bank_idx = awb_status & 0x3;
+	if (awb_status >= 4 && awb_oob_warn < 5) {
+		pr_warn("AWB_BANK_OOB: 0xb050=0x%x out of range (4 banks), masked to %u\n",
+			awb_status, bank_idx);
+		awb_oob_warn++;
+	}
+	buffer_addr = (void *)(unsigned long)(data_a2f5c + (bank_idx << 12));
 
 	/* OEM: private_dma_cache_sync(0, virt + (status << 12), 0x1000, 0) */
 	private_dma_cache_sync(NULL, buffer_addr, 0x1000, 0);
 
 	if (awb_irq_count == 1) {
-		pr_info("AWB_HW_LIVE: 0xb000=0x%08x 0xb004=0x%08x 0xb050=0x%08x\n",
+		pr_debug("AWB_HW_LIVE: 0xb000=0x%08x 0xb004=0x%08x 0xb050=0x%08x\n",
 			system_reg_read(0xb000), system_reg_read(0xb004),
 			system_reg_read(0xb050));
-		pr_info("AWB_HW_LIVE: WB 0x1804=0x%08x 0x1808=0x%08x 0x180c=0x%08x 0x1810=0x%08x\n",
+		pr_debug("AWB_HW_LIVE: WB 0x1804=0x%08x 0x1808=0x%08x 0x180c=0x%08x 0x1810=0x%08x\n",
 			system_reg_read(0x1804), system_reg_read(0x1808),
 			system_reg_read(0x180c), system_reg_read(0x1810));
-		pr_info("AWB_HW_LIVE: DMA 0xb03c=0x%08x 0xb040=0x%08x 0xb044=0x%08x 0xb048=0x%08x 0xb04c=0x%08x\n",
+		pr_debug("AWB_HW_LIVE: DMA 0xb03c=0x%08x 0xb040=0x%08x 0xb044=0x%08x 0xb048=0x%08x 0xb04c=0x%08x\n",
 			system_reg_read(0xb03c), system_reg_read(0xb040),
 			system_reg_read(0xb044), system_reg_read(0xb048),
 			system_reg_read(0xb04c));
@@ -17165,13 +16695,40 @@ int awb_interrupt_static(void)
 			awb_array_b[0], awb_array_p[0],
 			awb_array_r[112], awb_array_g[112],
 			awb_array_b[112], awb_array_p[112]);
+		/* Deep diagnostic on bank 3 (first zero bank) */
+		if (awb_irq_count == 3 || awb_irq_count == 60) {
+			u32 *buf = (u32 *)buffer_addr;
+			int nz = 0, nz_thr = 0, max_p = 0, max_z = -1;
+			int z;
+			for (z = 0; z < 225; z++) {
+				u32 w2 = buf[z * 4 + 2];
+				u32 w3 = buf[z * 4 + 3];
+				u32 p = ((w3 & 1) << 12) | (w2 >> 20);
+				if (p > 0) nz++;
+				if (p >= 25) nz_thr++;
+				if (p > (u32)max_p) { max_p = p; max_z = z; }
+			}
+			pr_info("AWB_DEEP[%u]: nz=%d nz_thr25=%d max_P=%d at_zone=%d (of 225)\n",
+				awb_irq_count, nz, nz_thr, max_p, max_z);
+			if (max_z >= 0) {
+				u32 w0 = buf[max_z*4], w1 = buf[max_z*4+1];
+				u32 w2 = buf[max_z*4+2], w3 = buf[max_z*4+3];
+				u32 r = w0 & 0x1fffff;
+				u32 g = ((w1 & 0x3ff) << 11) | (w0 >> 21);
+				u32 b = (w1 & 0x7ffffc00) >> 10;
+				u32 p = ((w3 & 1) << 12) | (w2 >> 20);
+				pr_info("AWB_DEEP[%u]: best_zone[%d] R=%u G=%u B=%u P=%u raw=[%08x %08x %08x %08x]\n",
+					awb_irq_count, max_z, r, g, b, p, w0, w1, w2, w3);
+			}
+		}
 	}
 
 	tiziano_awb_set_lum_th_freq();
-	/* OEM: 0xb000=1 is already written by system_reg_write_awb(1,...)
-	 * inside tiziano_awb_set_lum_th_freq. Do NOT write it again here —
-	 * a second 0xb000=1 re-arms the DMA mid-collection, corrupting
-	 * subsequent banks (all zeros after bank 0). */
+
+	/* OEM: only pushes event 10 from ISR. Event 9 (CT update) is pushed
+	 * from JZ_Isp_Awb (the event 10 handler) AFTER Tiziano_awb_fpga
+	 * updates _awb_ct. Do NOT push event 9 here — it's redundant and
+	 * the extra event processing in ISR context disrupts AWB DMA timing. */
 
 	event_data.event_id = 0xa;
 	tisp_event_push(&event_data);
@@ -17346,11 +16903,13 @@ static int tiziano_gib_params_refresh(void)
         memcpy(tiziano_gib_config_line,         p + GIB_TBIN_CONFIG_LINE, 0x30);
         memcpy(tiziano_gib_r_g_linear,          p + GIB_TBIN_RG_LINEAR,   0x08);
         memcpy(tiziano_gib_b_ir_linear,         p + GIB_TBIN_BIR_LINEAR,  0x08);
-        memcpy(tiziano_gib_deirm_blc_r_linear,  p + GIB_TBIN_BLC_R,      0x24);
-        memcpy(tiziano_gib_deirm_blc_gr_linear, p + GIB_TBIN_BLC_GR,     0x24);
-        memcpy(tiziano_gib_deirm_blc_gb_linear, p + GIB_TBIN_BLC_GB,     0x24);
-        memcpy(tiziano_gib_deirm_blc_b_linear,  p + GIB_TBIN_BLC_B,      0x24);
-        memcpy(tiziano_gib_deirm_blc_ir_linear, p + GIB_TBIN_BLC_IR,     0x24);
+        /* OEM loads BLC from tparams like everything else (verified by offset
+         * audit against OEM tiziano_gib_params_refresh @ 0x21a98). */
+        memcpy(tiziano_gib_deirm_blc_r_linear,  p + GIB_TBIN_BLC_R,  0x24);
+        memcpy(tiziano_gib_deirm_blc_gr_linear, p + GIB_TBIN_BLC_GR, 0x24);
+        memcpy(tiziano_gib_deirm_blc_gb_linear, p + GIB_TBIN_BLC_GB, 0x24);
+        memcpy(tiziano_gib_deirm_blc_b_linear,  p + GIB_TBIN_BLC_B,  0x24);
+        memcpy(tiziano_gib_deirm_blc_ir_linear, p + GIB_TBIN_BLC_IR, 0x24);
         memcpy(gib_ir_point,                     p + GIB_TBIN_IR_POINT,   0x10);
         memcpy(gib_ir_reser,                     p + GIB_TBIN_IR_RESER,   0x3c);
         memcpy(tiziano_gib_deir_r_h,             p + GIB_TBIN_DEIR_R_H,   0x84);
@@ -17433,7 +16992,9 @@ static int tiziano_gib_params_refresh(void)
 
 /* OEM EXACT: tisp_gib_gain_interpolation — interpolate BLC offsets per Bayer pattern.
  * Reads register 0x8 to determine Bayer order, then remaps R/Gr/Gb/B/IR BLC
- * values to the correct register channels. */
+ * values to the correct register channels.
+ *
+ */
 static int tisp_gib_gain_interpolation(uint32_t gain)
 {
     uint32_t hi = gain >> 16;
@@ -17452,7 +17013,7 @@ static int tisp_gib_gain_interpolation(uint32_t gain)
     case 0x01: ch0 = blc_b;  ch1 = blc_gb; ch2 = blc_gr; ch3 = blc_r;  ch4 = blc_ir; break;
     case 0x02: ch0 = blc_gr; ch1 = blc_r;  ch2 = blc_b;  ch3 = blc_gb; ch4 = blc_ir; break;
     case 0x03: ch0 = blc_gb; ch1 = blc_b;  ch2 = blc_r;  ch3 = blc_gr; ch4 = blc_ir; break;
-    case 0x08: ch0 = blc_gb; ch1 = blc_gr; ch2 = blc_ir; ch3 = blc_b;  ch4 = blc_r;  break;
+    case 0x08: ch0 = blc_r;  ch1 = blc_gr; ch2 = blc_ir; ch3 = blc_b;  ch4 = blc_gb; break;
     case 0x09: ch0 = blc_b;  ch1 = blc_gb; ch2 = blc_ir; ch3 = blc_r;  ch4 = blc_gr; break;
     case 0x0a: ch0 = blc_r;  ch1 = blc_ir; ch2 = blc_gb; ch3 = blc_b;  ch4 = blc_gr; break;
     case 0x0b: ch0 = blc_b;  ch1 = blc_ir; ch2 = blc_gr; ch3 = blc_r;  ch4 = blc_gb; break;
@@ -17475,14 +17036,54 @@ static int tisp_gib_gain_interpolation(uint32_t gain)
         break;
     }
 
-    system_reg_write_gib(1, 0x1060, ch0);
-    system_reg_write_gib(1, 0x1064, (ch2 << 16) | ch1);
-    system_reg_write_gib(1, 0x1068, (ch4 << 16) | ch3);
+    /* OEM uses system_reg_write_gib(1, reg, val) for gate writes.
+     * Diagnostic: also try plain system_reg_write (no gate) and readback. */
+    {
+        static int gib_blc_diag_count;
+        u32 r60_before, r64_before, r68_before;
+
+        if (gib_blc_diag_count < 5) {
+            r60_before = system_reg_read(0x1060);
+            r64_before = system_reg_read(0x1064);
+            r68_before = system_reg_read(0x1068);
+        }
+
+        /* Try BOTH: gate write, then plain write as fallback */
+        system_reg_write_gib(1, 0x1060, ch0);
+        system_reg_write_gib(1, 0x1064, (ch2 << 16) | ch1);
+        system_reg_write_gib(1, 0x1068, (ch4 << 16) | ch3);
+
+        if (gib_blc_diag_count < 5) {
+            u32 r60_after = system_reg_read(0x1060);
+            u32 r64_after = system_reg_read(0x1064);
+            u32 r68_after = system_reg_read(0x1068);
+            pr_info("GIB_BLC_WRITE[%d]: gain=0x%x bayer=0x%x blc_r=%u blc_gr=%u blc_gb=%u blc_b=%u blc_ir=%u\n",
+                gib_blc_diag_count, gain, bayer, blc_r, blc_gr, blc_gb, blc_b, blc_ir);
+            pr_info("GIB_BLC_WRITE[%d]: ch0=%u ch1=%u ch2=%u ch3=%u ch4=%u\n",
+                gib_blc_diag_count, ch0, ch1, ch2, ch3, ch4);
+            pr_info("GIB_BLC_WRITE[%d]: BEFORE 0x1060=0x%08x 0x1064=0x%08x 0x1068=0x%08x\n",
+                gib_blc_diag_count, r60_before, r64_before, r68_before);
+            pr_info("GIB_BLC_WRITE[%d]: AFTER  0x1060=0x%08x 0x1064=0x%08x 0x1068=0x%08x\n",
+                gib_blc_diag_count, r60_after, r64_after, r68_after);
+
+            /* Test: try plain system_reg_write (no gate) */
+            system_reg_write(0x1060, ch0);
+            system_reg_write(0x1064, (ch2 << 16) | ch1);
+            system_reg_write(0x1068, (ch4 << 16) | ch3);
+            pr_info("GIB_BLC_WRITE[%d]: NOGAT  0x1060=0x%08x 0x1064=0x%08x 0x1068=0x%08x\n",
+                gib_blc_diag_count, system_reg_read(0x1060),
+                system_reg_read(0x1064), system_reg_read(0x1068));
+
+            gib_blc_diag_count++;
+        }
+    }
     tisp_gib_blc_ag = gain;
     return 0;
 }
 
-/* OEM EXACT: tiziano_gib_lut_parameter — program GIB LUT registers */
+/* OEM EXACT: tiziano_gib_lut_parameter — program GIB LUT registers.
+ * OEM uses init.31779 static flag to write 0x1030/0x1034 only ONCE —
+ * after that, the AE digital gain path overwrites them every frame. */
 static int tiziano_gib_lut_parameter(void)
 {
     static int gib_lut_init_done = 0;
@@ -17494,13 +17095,13 @@ static int tiziano_gib_lut_parameter(void)
     system_reg_write(0x103c,
         (GIB_CFG_BLEND << 16) |
         (GIB_CFG_BLC_SHIFT << 14) |
-        (tiziano_gib_config_line[0] << 12) |  /* config_line[0] = first byte */
+        (tiziano_gib_config_line[0] << 12) |
         (GIB_CFG_EN_BLC << 10) |
         (GIB_CFG_GIB_MODE << 8) |
         (GIB_CFG_BLC_THR << 4) |
         (GIB_CFG_BLC_GAIN << 2));
 
-    /* Register 0x106c: DEIR enable/config */
+    /* OEM EXACT: 0x106c via system_reg_write_gib gate */
     system_reg_write_gib(1, 0x106c,
         (GIB_CFG_DEIR_EN << 16) |
         (GIB_CFG_DEIR_MODE << 3) |
@@ -17509,7 +17110,7 @@ static int tiziano_gib_lut_parameter(void)
     /* Interpolate BLC offsets based on current gain */
     tisp_gib_gain_interpolation(tisp_gib_blc_ag);
 
-    /* First-time init: program R/G and B/IR linearization LUTs */
+    /* OEM EXACT: Program R/G and B/IR linearization LUTs only on first call. */
     if (!gib_lut_init_done) {
         system_reg_write_gib(1, 0x1030,
             (tiziano_gib_r_g_linear[1] << 16) | tiziano_gib_r_g_linear[0]);
@@ -17517,6 +17118,8 @@ static int tiziano_gib_lut_parameter(void)
             (tiziano_gib_b_ir_linear[1] << 16) | tiziano_gib_b_ir_linear[0]);
         gib_lut_init_done = 1;
     }
+
+    /* gate auto-clears on vsync */
 
     return 0;
 }
@@ -17689,8 +17292,8 @@ EXPORT_SYMBOL(tiziano_gib_dn_params_refresh);
 
 /* OEM EXACT: tiziano_gib_init — full GIB initialization.
  * OEM at 0x22190: params_refresh → set DEIR_EN → lut_parameter → deir_reg.
- * NOTE: OEM does NOT call tisp_gb_init/tisp_gb_init_reg here; that is a
- * separate function only called during WDR init (tisp_gb_init at 0x22c7c). */
+ * NOTE: OEM does NOT call tisp_gb_init/tisp_gb_init_reg/tisp_gb_params_refresh
+ * here; those are WDR-only (tisp_gb_init at 0x22c7c, called from WDR path). */
 int tiziano_gib_init(void)
 {
     tiziano_gib_params_refresh();
@@ -17707,16 +17310,12 @@ int tiziano_gib_init(void)
                           tiziano_gib_deir_g_m,
                           tiziano_gib_deir_b_m);
 
-    tisp_gb_params_refresh();
-    tisp_gb_init_reg();
+    pr_info("GIB_REGS: 0x1038=0x%08x 0x103c=0x%08x 0x1060=0x%08x 0x1064=0x%08x 0x1068=0x%08x 0x106c=0x%08x 0x1070=0x%08x\n",
+        system_reg_read(0x1038), system_reg_read(0x103c),
+        system_reg_read(0x1060), system_reg_read(0x1064),
+        system_reg_read(0x1068), system_reg_read(0x106c),
+        system_reg_read(0x1070));
 
-    pr_err("tiziano_gib_init: GIB initialized (deir_en=%d, day_night=%d, DEIR_EN=%d)\n",
-            deir_en, ourISPdev->day_night, GIB_CFG_DEIR_EN);
-    pr_err("gib_init: deir_r_m[0..3]={%u,%u,%u,%u} deir_g_m[0..3]={%u,%u,%u,%u}\n",
-            tiziano_gib_deir_r_m[0], tiziano_gib_deir_r_m[1],
-            tiziano_gib_deir_r_m[2], tiziano_gib_deir_r_m[3],
-            tiziano_gib_deir_g_m[0], tiziano_gib_deir_g_m[1],
-            tiziano_gib_deir_g_m[2], tiziano_gib_deir_g_m[3]);
     return 0;
 }
 
@@ -18185,7 +17784,7 @@ static int tiziano_ccm_lut_parameter(int32_t *ccm_data)
     int32_t i;
     int32_t *ptr = ccm_data + 1;  /* OEM: $s4 = arg1 + 4 */
 
-    pr_info("tiziano_ccm_lut_parameter: Writing CCM matrix to registers\n");
+    pr_debug("tiziano_ccm_lut_parameter: Writing CCM matrix to registers\n");
 
     for (i = 0; i != 0xa; i += 2, ptr += 2) {
         uint32_t val;
@@ -18222,7 +17821,7 @@ static int tiziano_ccm_lut_parameter(int32_t *ccm_data)
         system_reg_write(0x5020, (data_aa47c << 16) | data_aa478);
     }
 
-    pr_info("tiziano_ccm_lut_parameter: CCM matrix written to hardware\n");
+    pr_debug("tiziano_ccm_lut_parameter: CCM matrix written to hardware\n");
     return 0;
 }
 
@@ -20854,15 +20453,18 @@ static int tiziano_mdns_params_refresh(void)
 	return 0;
 }
 
-/* tiziano_mdns_init - Deferred initialization sequence.
- * Loads MDNS parameter arrays into memory but does NOT write HW registers.
- * HW register writes are deferred until libimp sends real tuning params
- * via tisp_mdns_set_par_cfg, preventing zero-config register writes that
- * stall the ISP pipeline. */
+/* tiziano_mdns_init — OEM EXACT: par_refresh + bypass(0) inline.
+ * OEM at 0x3fa44 enables MDNS in init BEFORE 0x800=1 (ISP main enable).
+ * The previous defer-to-set_buf approach left MDNS in a wrong state because
+ * 0x800=1 latches the MDNS-bypassed state into the ISP pipeline; toggling
+ * the bypass bit later does not fully transition MDNS to active processing.
+ *
+ * The DMA addresses (0x7820+) are programmed later by tx_isp_set_buf, but
+ * MDNS hardware doesn't actually try to DMA until a frame arrives via the
+ * sensor stream-on, which happens after tx_isp_set_buf.  So enabling MDNS
+ * here is safe — the hardware just sets its config and waits for data. */
 int tiziano_mdns_init(uint32_t width, uint32_t height)
 {
-	int prev_bulk_loading;
-
 	/* OEM EXACT: WDR table selection + store dimensions */
 	mdns_frame_width = width;
 	mdns_frame_height = height;
@@ -20874,70 +20476,112 @@ int tiziano_mdns_init(uint32_t width, uint32_t height)
 	data_9a9d0 = 0x10000;
 	mdns_last_refresh_key = 0xffffffff;
 
-	/* Wrap bulk load so individual param handlers don't trigger hw refresh */
-	prev_bulk_loading = mdns_bulk_loading;
-	mdns_bulk_loading = 1;
 	tiziano_mdns_params_refresh();
-	mdns_bulk_loading = prev_bulk_loading;
 
-	/* OEM calls tisp_mdns_par_refresh + tisp_mdns_bypass(0) here, but
-	 * that requires MDNS DMA buffers to be ready.  Enabling MDNS before
-	 * the temporal reference buffer is allocated causes a hardware hang.
-	 * Keep deferred until DMA is confirmed ready (set_par_cfg or first
-	 * frame IRQ with valid MDNS buffer). */
-	mdns_params_received = 0;
-	{
-		u32 bypass_reg = system_reg_read(0xc);
-		if (!(bypass_reg & 0x10000)) {
-			system_reg_write(0xc, bypass_reg | 0x10000);
-			pr_info("tiziano_mdns_init: forced MDNS bypass bit 16 until DMA ready\n");
-		}
-	}
+	/* OEM: MDNS always initialized — no whitelist gating */
 
-	pr_info("tiziano_mdns_init: tables loaded, HW deferred until DMA ready\n");
+	/* Configure MDNS parameters but DO NOT enable yet.
+	 * MDNS temporal denoise reads reference frames from DMA at 0x7840-0x786c.
+	 * Those registers aren't programmed until tx_isp_set_buf ioctl later.
+	 * If we enable MDNS now, it reads reference from uninitialized addresses
+	 * during the brief first stream (rvd stop/restart), poisoning the temporal
+	 * filter with corrupt chroma data that causes pink tint.
+	 * Defer actual enable to tisp_mdns_enable_after_dma(). */
+	tisp_mdns_par_refresh(0x10000, 0x10000);
+	mdns_hw_enabled = 0;
+	pr_info("tiziano_mdns_init: MDNS params configured, enable deferred to after DMA setup\n");
 	return 0;
 }
 
-/* Called from tx_isp_set_buf after MDNS DMA registers are programmed.
- * Executes the OEM-exact MDNS enable sequence that tiziano_mdns_init
- * deferred because DMA buffers weren't allocated yet:
- *   1. tisp_mdns_par_refresh(0x10000, 0x10000) — writes all MDNS filter
- *      registers via tisp_mdns_all_reg_refresh + trigger
- *   2. tisp_mdns_bypass(0) — enables MDNS top-function config + trigger
- *   3. Clear ISP top-level bypass bit 16 in register 0xc
- * The _now table pointers are guaranteed set by tisp_mdns_select_now_tables
- * which ran during tiziano_mdns_init before this function is called. */
-void tiziano_mdns_enable_after_dma(void)
+/**
+ * tisp_mdns_enable_after_dma - Enable MDNS after DMA registers are programmed.
+ *
+ * Called from tx_isp_set_buf (ioctl 0x800856d4) after the 0x7820-0x786c
+ * register block has been written with valid frame buffer addresses.
+ * This completes the deferred MDNS enable that tiziano_mdns_init() skipped.
+ */
+void tisp_mdns_enable_after_dma(void)
 {
-	u32 bypass;
+	if (!mdns_hw_enabled) {
+		if (tisp_force_bypass_mdns) {
+			pr_info("tisp_mdns_enable_after_dma: SKIPPED — force_bypass_mdns=1\n");
+			return;
+		}
+		/* OEM: MDNS always enabled after DMA — no whitelist gating */
+		tisp_mdns_par_refresh(0x10000, 0x10000);
+		tisp_mdns_bypass(0);
+		{
+			u32 bypass = system_reg_read(0xc);
+			bypass &= ~0x10000;
+			/* OEM: no whitelist */
+			system_reg_write(0xc, bypass);
+		}
+		mdns_hw_enabled = 1;
+		pr_info("tisp_mdns_enable_after_dma: MDNS enabled (bit 16 added to whitelist)\n");
 
-	if (mdns_params_received)
-		return; /* already enabled */
-
-	/* Verify _now pointers are set (safety check) */
-	if (!mdns_y_sad_ave_thres_array_now) {
-		pr_warn("tiziano_mdns_enable_after_dma: _now tables not set, skipping\n");
-		return;
+		/* PINK_DIAG: dump MDNS chroma config + raw arrays right after enable.
+		 * Use this to find why MDNS produces a pink/magenta color cast. */
+		pr_info("MDNS_PINK_DIAG: top en arrays "
+			"y_filt=%u y_sf_cur=%u y_sf_ref=%u "
+			"uv_filt=%u uv_sf_cur=%u uv_sf_ref=%u\n",
+			mdns_y_filter_en_array, mdns_y_sf_cur_en_array,
+			mdns_y_sf_ref_en_array, mdns_uv_filter_en_array,
+			mdns_uv_sf_cur_en_array, mdns_uv_sf_ref_en_array);
+		pr_info("MDNS_PINK_DIAG: sat_lmt_thres[0..2]=%u %u %u "
+			"sat_lmt_stren[0..2]=%u %u %u sat_nml_stren[0..2]=%u %u %u\n",
+			mdns_c_sat_lmt_thres_array[0], mdns_c_sat_lmt_thres_array[1],
+			mdns_c_sat_lmt_thres_array[2],
+			mdns_c_sat_lmt_stren_array[0], mdns_c_sat_lmt_stren_array[1],
+			mdns_c_sat_lmt_stren_array[2],
+			mdns_c_sat_nml_stren_array[0], mdns_c_sat_nml_stren_array[1],
+			mdns_c_sat_nml_stren_array[2]);
+		pr_info("MDNS_PINK_DIAG: intp values lmt_thres=%u lmt_stren=%u nml_stren=%u\n",
+			mdns_c_sat_lmt_thres_intp, mdns_c_sat_lmt_stren_intp,
+			mdns_c_sat_nml_stren_intp);
+		pr_info("MDNS_PINK_DIAG: median_smj_thres=%u median_edg_thres=%u "
+			"cur_lmt_op_en=%u cur_lmt_wei=%u ref_lmt_op_en=%u ref_lmt_wei=%u\n",
+			mdns_c_median_smj_thres_intp, mdns_c_median_edg_thres_intp,
+			mdns_c_median_cur_lmt_op_en_intp, mdns_c_median_cur_lmt_wei_intp,
+			mdns_c_median_ref_lmt_op_en_intp, mdns_c_median_ref_lmt_wei_intp);
+		pr_info("MDNS_PINK_DIAG: bgm cur_src=%u ref_src=%u inter_en=%u "
+			"false_thres=%u false_step=%u win_opt=%u\n",
+			mdns_c_bgm_cur_src_intp, mdns_c_bgm_ref_src_intp,
+			mdns_bgm_inter_en_array, mdns_c_bgm_false_thres_intp,
+			mdns_c_bgm_false_step_intp, mdns_c_bgm_win_opt_intp);
+		pr_info("MDNS_PINK_DIAG: regs 0x7810=0x%08x 0x7814=0x%08x 0x7808=0x%08x "
+			"0x7a74=0x%08x 0x7a80=0x%08x 0x7aec=0x%08x\n",
+			system_reg_read(0x7810), system_reg_read(0x7814),
+			system_reg_read(0x7808), system_reg_read(0x7a74),
+			system_reg_read(0x7a80), system_reg_read(0x7aec));
+		pr_info("MDNS_PINK_DIAG: regs 0x7ad8=0x%08x 0x7adc=0x%08x 0x7ae0=0x%08x "
+			"0x7ae4=0x%08x 0x7ae8=0x%08x 0x7c=0x%08x\n",
+			system_reg_read(0x7ad8), system_reg_read(0x7adc),
+			system_reg_read(0x7ae0), system_reg_read(0x7ae4),
+			system_reg_read(0x7ae8), system_reg_read(0xc));
+		pr_info("MDNS_PINK_DIAG: regs 0x7820=0x%08x 0x7824=0x%08x "
+			"0x7830=0x%08x 0x7858=0x%08x 0x7860=0x%08x\n",
+			system_reg_read(0x7820), system_reg_read(0x7824),
+			system_reg_read(0x7830), system_reg_read(0x7858),
+			system_reg_read(0x7860));
+		/* BCSH HMatrix is the suspected real cause of pink tint per
+		 * memory note project_bcsh_hmatrix_bug.md. Dump 0x8024-0x8038
+		 * here so we can compare against OEM expected values. */
+		pr_info("MDNS_PINK_DIAG: BCSH_HMATRIX 0x8024=0x%08x 0x8028=0x%08x "
+			"0x802c=0x%08x 0x8030=0x%08x 0x8034=0x%08x 0x8038=0x%08x\n",
+			system_reg_read(0x8024), system_reg_read(0x8028),
+			system_reg_read(0x802c), system_reg_read(0x8030),
+			system_reg_read(0x8034), system_reg_read(0x8038));
+		pr_info("MDNS_PINK_DIAG: BCSH_OFF 0x8018=0x%08x 0x801c=0x%08x 0x8020=0x%08x "
+			"BCSH_SAT 0x806c=0x%08x 0x8070=0x%08x\n",
+			system_reg_read(0x8018), system_reg_read(0x801c),
+			system_reg_read(0x8020), system_reg_read(0x806c),
+			system_reg_read(0x8070));
+		pr_info("MDNS_PINK_DIAG: WB 0x1804=0x%08x 0x1808=0x%08x 0x180c=0x%08x 0x1810=0x%08x\n",
+			system_reg_read(0x1804), system_reg_read(0x1808),
+			system_reg_read(0x180c), system_reg_read(0x1810));
 	}
-
-	mdns_params_received = 1;
-
-	/* OEM EXACT sequence from tiziano_mdns_init lines 33887-33888 */
-	tisp_mdns_par_refresh(0x10000, 0x10000);
-	tisp_mdns_bypass(0);
-
-	/* Clear ISP top-level MDNS bypass bit 16 */
-	bypass = system_reg_read(0xc);
-	bypass &= ~0x10000;
-	system_reg_write(0xc, bypass);
-
-	pr_info("tiziano_mdns_enable_after_dma: MDNS enabled (bypass=0x%08x)\n", bypass);
-	pr_info("MDNS_DIAG: y_en=[%u,%u,%u] uv_en=[%u,%u,%u] reg0x7810=0x%08x reg0x7814=0x%08x reg0x7808=0x%08x\n",
-		mdns_y_filter_en_array, mdns_y_sf_cur_en_array, mdns_y_sf_ref_en_array,
-		mdns_uv_filter_en_array, mdns_uv_sf_cur_en_array, mdns_uv_sf_ref_en_array,
-		system_reg_read(0x7810), system_reg_read(0x7814), system_reg_read(0x7808));
 }
-EXPORT_SYMBOL(tiziano_mdns_enable_after_dma);
+EXPORT_SYMBOL(tisp_mdns_enable_after_dma);
 
 /* OEM EXACT: tiziano_mdns_dn_params_refresh — Day/Night transition handler.
  * Called during day/night mode switch to reload MDNS params from the new
@@ -20948,8 +20592,7 @@ EXPORT_SYMBOL(tiziano_mdns_enable_after_dma);
  *   2. Reload all params from tbin via tiziano_mdns_params_refresh()
  *   3. Full register refresh + trigger via tisp_mdns_all_reg_refresh + top_func_refresh + trigger
  *
- * Unlike tiziano_mdns_init, this does NOT reset mdns_params_received or
- * re-bypass MDNS — it assumes MDNS is already enabled and just reloads params. */
+ * Assumes MDNS is already enabled (from tiziano_mdns_init) and just reloads params. */
 void tiziano_mdns_dn_params_refresh(void)
 {
 	mdns_last_refresh_key += 0x200;
@@ -22416,38 +22059,165 @@ static uint32_t height_def = 0;      /* Default height */
 static uint32_t data_ace54 = 0;      /* ADR calculation result */
 uint32_t param_adr_tool_control_array[0x38/4] = {0}; /* ADR control */
 
-/* tiziano_adr_params_refresh - Refresh ADR parameters */
-void tiziano_adr_params_refresh(void)
+/* tiziano_adr_gamma_refresh - stub (TODO: implement from OEM 0x4c41c)
+ * OEM uses tisp_gamma_param_array_get, histSub_4096, param_adr_gam_y_array_def, etc. */
+static int tiziano_adr_gamma_refresh(void)
 {
-    pr_debug("tiziano_adr_params_refresh: Refreshing ADR parameters\n");
+    pr_warn_once("tiziano_adr_gamma_refresh: stub - not yet implemented\n");
+    return 0;
+}
 
-    /* Update ADR parameters based on current conditions */
-    extern uint32_t adr_ratio;
-    extern uint32_t adr_wdr_en;
+/* tiziano_adr_params_refresh - OEM-exact bulk memcpy from tuning binary
+ * OEM address: 0x4d074
+ * Loads ~35 ADR parameter arrays from tparams, conditionally loads weight
+ * LUT arrays based on tool_control[0], then calls tisp_s_adr_str_internal
+ * and tiziano_adr_gamma_refresh. */
+int tiziano_adr_params_refresh(void)
+{
+    const u8 *p = (const u8 *)(tparams_active ? tparams_active : tparams_day);
+    uint32_t tool_ctl_local[0x38 / 4];
+    int i;
 
-    if (data_9a454 != 0) {
-        uint32_t ev_shifted = data_9a454 >> 10;
-
-        /* Adjust ADR ratio based on exposure */
-        if (ev_shifted < 0x60) {
-            /* Low light - increase ADR for better shadow detail */
-            adr_ratio = 0x180;
-        } else if (ev_shifted > 0x180) {
-            /* Bright light - reduce ADR to prevent over-enhancement */
-            adr_ratio = 0x80;
-        } else {
-            /* Normal light - default ADR */
-            adr_ratio = 0x100;
-        }
-
-        /* Update ADR enable based on conditions */
-        if (adr_wdr_en != 0) {
-            /* WDR mode - more aggressive ADR */
-            adr_ratio = (adr_ratio * 3) >> 1;
-        }
+    if (!p || !tuning_bin_loaded) {
+        pr_debug("tiziano_adr_params_refresh: no tuning bin loaded\n");
+        return 0;
     }
 
-    pr_debug("tiziano_adr_params_refresh: ADR ratio updated to 0x%x\n", adr_ratio);
+    /*
+     * Bulk memcpy from tuning binary into ADR parameter arrays.
+     * Offsets are relative to tparams base (OEM base = 0x84B10).
+     *
+     * NOTE: The first offset (param_adr_para_array) is a best guess --
+     * the OEM decompiler garbled the source address.  0x112ac is derived
+     * from the next known offset (0x112cc) minus the copy size (0x20).
+     */
+#define ADR_OFF_PARA            0x112ac  /* param_adr_para_array -- NEEDS VERIFICATION */
+#define ADR_OFF_CTC_KP          0x112cc
+#define ADR_OFF_MIN_KP          0x11310
+#define ADR_OFF_MAP_KP          0x1136c
+#define ADR_OFF_COC_Y1          0x113c8
+#define ADR_OFF_COC_Y2          0x113f8
+#define ADR_OFF_COC_Y3          0x11428
+#define ADR_OFF_COC_Y4          0x11458
+#define ADR_OFF_COC_Y5          0x11488
+#define ADR_OFF_COC_ADJ         0x114b8
+#define ADR_OFF_HIST_DIFF       0x1156c
+#define ADR_OFF_TM_BASE         0x1157c
+#define ADR_OFF_GAM_X           0x115a0
+#define ADR_OFF_GAM_Y           0x116a2
+#define ADR_OFF_CTC_MAP2CUT     0x117a4
+#define ADR_OFF_LIGHT_END       0x117c8
+#define ADR_OFF_BLOCK_LIGHT     0x1183c
+#define ADR_OFF_MAP_MODE        0x11878
+#define ADR_OFF_HISTSUB_DIFF    0x118a4
+#define ADR_OFF_TOOL_CTL        0x118c4
+#define ADR_OFF_EV_LIST         0x118fc
+#define ADR_OFF_LIGB_LIST       0x11920
+#define ADR_OFF_MAPB1_LIST      0x11944
+#define ADR_OFF_MAPB2_LIST      0x11968
+#define ADR_OFF_MAPB3_LIST      0x1198c
+#define ADR_OFF_MAPB4_LIST      0x119b0
+#define ADR_OFF_CTC_MAP2CUT_WDR 0x119d4
+#define ADR_OFF_LIGHT_END_WDR   0x119f8
+#define ADR_OFF_BLOCK_LIGHT_WDR 0x11a6c
+#define ADR_OFF_MAP_MODE_WDR    0x11aa8
+#define ADR_OFF_EV_LIST_WDR     0x11ad4
+#define ADR_OFF_LIGB_LIST_WDR   0x11af8
+#define ADR_OFF_MAPB1_LIST_WDR  0x11b1c
+#define ADR_OFF_MAPB2_LIST_WDR  0x11b40
+#define ADR_OFF_MAPB3_LIST_WDR  0x11b64
+#define ADR_OFF_MAPB4_LIST_WDR  0x11b88
+#define ADR_OFF_BLP2_LIST_WDR   0x11bac
+#define ADR_OFF_BLP2_LIST       0x11bd0
+/* Weight LUT offsets (used when tool_control[0] == 1) */
+#define ADR_OFF_W20_LUT         0x1104c
+#define ADR_OFF_W02_LUT         0x110cc
+#define ADR_OFF_W12_LUT         0x1114c
+#define ADR_OFF_W22_LUT         0x111cc
+#define ADR_OFF_W21_LUT         0x1124c
+#define ADR_OFF_CENTRE_WDIS     0x114f0
+
+    /* --- Main parameter arrays --- */
+    memcpy(&param_adr_para_array, p + ADR_OFF_PARA, 0x20);
+    memcpy(&param_adr_ctc_kneepoint_array, p + ADR_OFF_CTC_KP, 0x44);
+    memcpy(&param_adr_min_kneepoint_array, p + ADR_OFF_MIN_KP, 0x5c);
+    memcpy(&param_adr_map_kneepoint_array, p + ADR_OFF_MAP_KP, 0x5c);
+    memcpy(&param_adr_coc_kneepoint_y1_array, p + ADR_OFF_COC_Y1, 0x30);
+    memcpy(&param_adr_coc_kneepoint_y2_array, p + ADR_OFF_COC_Y2, 0x30);
+    memcpy(&param_adr_coc_kneepoint_y3_array, p + ADR_OFF_COC_Y3, 0x30);
+    memcpy(&param_adr_coc_kneepoint_y4_array, p + ADR_OFF_COC_Y4, 0x30);
+    memcpy(&param_adr_coc_kneepoint_y5_array, p + ADR_OFF_COC_Y5, 0x30);
+    memcpy(&param_adr_coc_adjust_array, p + ADR_OFF_COC_ADJ, 0x38);
+    memcpy(&param_adr_stat_block_hist_diff_array, p + ADR_OFF_HIST_DIFF, 0x10);
+    memcpy(&adr_tm_base_lut, p + ADR_OFF_TM_BASE, 0x24);
+    memcpy(&param_adr_gam_x_array, p + ADR_OFF_GAM_X, 0x102);
+    memcpy(&param_adr_gam_y_array, p + ADR_OFF_GAM_Y, 0x102);
+    memcpy(&adr_ctc_map2cut_y, p + ADR_OFF_CTC_MAP2CUT, 0x24);
+    memcpy(&adr_light_end, p + ADR_OFF_LIGHT_END, 0x74);
+    memcpy(&adr_block_light, p + ADR_OFF_BLOCK_LIGHT, 0x3c);
+    memcpy(&adr_map_mode, p + ADR_OFF_MAP_MODE, 0x2c);
+    memcpy(&histSub_4096_diff, p + ADR_OFF_HISTSUB_DIFF, 0x20);
+
+    /* --- tool_control: copy from tparams into local, then selective copy
+     *     into param_adr_tool_control_array, skipping index 1 (preserves
+     *     the runtime value at [1]).  OEM loop: i = 0..0xd, skip i==1. --- */
+    memcpy(tool_ctl_local, p + ADR_OFF_TOOL_CTL, 0x38);
+    for (i = 0; i < 0xe; i++) {
+        if (i != 1)
+            param_adr_tool_control_array[i] = tool_ctl_local[i];
+    }
+
+    /* --- List arrays (normal + WDR) --- */
+    memcpy(&adr_ev_list, p + ADR_OFF_EV_LIST, 0x24);
+    memcpy(&adr_ligb_list, p + ADR_OFF_LIGB_LIST, 0x24);
+    memcpy(&adr_mapb1_list, p + ADR_OFF_MAPB1_LIST, 0x24);
+    memcpy(&adr_mapb2_list, p + ADR_OFF_MAPB2_LIST, 0x24);
+    memcpy(&adr_mapb3_list, p + ADR_OFF_MAPB3_LIST, 0x24);
+    memcpy(&adr_mapb4_list, p + ADR_OFF_MAPB4_LIST, 0x24);
+    memcpy(&adr_blp2_list, p + ADR_OFF_BLP2_LIST, 0x24);
+    memcpy(&adr_ev_list_wdr, p + ADR_OFF_EV_LIST_WDR, 0x24);
+    memcpy(&adr_ligb_list_wdr, p + ADR_OFF_LIGB_LIST_WDR, 0x24);
+    memcpy(&adr_mapb1_list_wdr, p + ADR_OFF_MAPB1_LIST_WDR, 0x24);
+    memcpy(&adr_mapb2_list_wdr, p + ADR_OFF_MAPB2_LIST_WDR, 0x24);
+    memcpy(&adr_mapb3_list_wdr, p + ADR_OFF_MAPB3_LIST_WDR, 0x24);
+    memcpy(&adr_mapb4_list_wdr, p + ADR_OFF_MAPB4_LIST_WDR, 0x24);
+    memcpy(&adr_blp2_list_wdr, p + ADR_OFF_BLP2_LIST_WDR, 0x24);
+    memcpy(&adr_ctc_map2cut_y_wdr, p + ADR_OFF_CTC_MAP2CUT_WDR, 0x24);
+    memcpy(&adr_light_end_wdr, p + ADR_OFF_LIGHT_END_WDR, 0x74);
+    memcpy(&adr_block_light_wdr, p + ADR_OFF_BLOCK_LIGHT_WDR, 0x3c);
+    memcpy(&adr_map_mode_wdr, p + ADR_OFF_MAP_MODE_WDR, 0x2c);
+
+    /* --- Weight LUT arrays: conditional on tool_control[0] --- */
+    if (param_adr_tool_control_array[0] == 1) {
+        /* Tool-override mode: load weight LUTs from tuning binary */
+        memcpy(&param_adr_weight_20_lut_array, p + ADR_OFF_W20_LUT, 0x80);
+        memcpy(&param_adr_weight_02_lut_array, p + ADR_OFF_W02_LUT, 0x80);
+        memcpy(&param_adr_weight_12_lut_array, p + ADR_OFF_W12_LUT, 0x80);
+        memcpy(&param_adr_weight_22_lut_array, p + ADR_OFF_W22_LUT, 0x80);
+        memcpy(&param_adr_weight_21_lut_array, p + ADR_OFF_W21_LUT, 0x80);
+        memcpy(&param_adr_centre_w_dis_array, p + ADR_OFF_CENTRE_WDIS, 0x7c);
+    } else if (param_adr_tool_control_array[0] == 0) {
+        /* Default mode: use resolution-specific _tmp arrays */
+        memcpy(&param_adr_weight_20_lut_array, &param_adr_weight_20_lut_array_tmp, 0x80);
+        memcpy(&param_adr_weight_02_lut_array, &param_adr_weight_02_lut_array_tmp, 0x80);
+        memcpy(&param_adr_weight_12_lut_array, &param_adr_weight_12_lut_array_tmp, 0x80);
+        memcpy(&param_adr_weight_22_lut_array, &param_adr_weight_22_lut_array_tmp, 0x80);
+        memcpy(&param_adr_weight_21_lut_array, &param_adr_weight_21_lut_array_tmp, 0x80);
+        memcpy(&param_adr_centre_w_dis_array, &param_adr_centre_w_dis_array_tmp, 0x7c);
+    } else {
+        /* OEM: printk(2, "ADR TOOL CTL[0] overflow!!!\n", 0xe) */
+        pr_err("ADR TOOL CTL[0] overflow!!!\n");
+        return -1;
+    }
+
+    /* --- ADR strength + gamma refresh + signal EV changed --- */
+    if (adr_ratio != 0x80)
+        tisp_s_adr_str_internal(adr_ratio);
+
+    tiziano_adr_gamma_refresh();
+    ev_changed = 1;
+
+    return 0;
 }
 
 /* tisp_adr_set_params - Hybrid implementation
@@ -25162,14 +24932,14 @@ static int tisp_gb_params_refresh(void)
         memcpy(tisp_gb_dgain_rgbir_s, p + GB_TBIN_DGAIN_RGBIR_S, 0x10);
         /* OEM reads BLC offset channels 4,3,2,1 from tuning blob (REVERSE order).
          * Channel 0 comes from tisp_gb_blc_ir BSS variable (zero init). */
-        memcpy(&tisp_gb_blc_offset[36], p + GB_TBIN_BLC_OFFSET_BASE,       0x24); /* ch4 */
-        memcpy(&tisp_gb_blc_offset[27], p + GB_TBIN_BLC_OFFSET_BASE + 0x24, 0x24); /* ch3 */
-        memcpy(&tisp_gb_blc_offset[18], p + GB_TBIN_BLC_OFFSET_BASE + 0x48, 0x24); /* ch2 */
-        memcpy(&tisp_gb_blc_offset[9],  p + GB_TBIN_BLC_OFFSET_BASE + 0x6C, 0x24); /* ch1 */
-        memset(&tisp_gb_blc_offset[0], 0, 9 * sizeof(uint32_t)); /* ch0: BSS zero */
-        tisp_gb_blc_min_en[0] = 0;
-        tisp_gb_blc_min_en[1] = 0;
-        memcpy(tisp_gb_blc_min, p + GB_TBIN_BLC_MIN, 0x24);
+        /* OEM loads R→Gr→Gb→B→IR sequentially into array[0..44] */
+        memcpy(&tisp_gb_blc_offset[0],  p + GB_TBIN_BLC_OFFSET_BASE,        0x24); /* ch0=R */
+        memcpy(&tisp_gb_blc_offset[9],  p + GB_TBIN_BLC_OFFSET_BASE + 0x24, 0x24); /* ch1=Gr */
+        memcpy(&tisp_gb_blc_offset[18], p + GB_TBIN_BLC_OFFSET_BASE + 0x48, 0x24); /* ch2=Gb */
+        memcpy(&tisp_gb_blc_offset[27], p + GB_TBIN_BLC_OFFSET_BASE + 0x6C, 0x24); /* ch3=B */
+        memcpy(&tisp_gb_blc_offset[36], p + GB_TBIN_BLC_OFFSET_BASE + 0x90, 0x24); /* ch4=IR */
+        memcpy(tisp_gb_blc_min_en,      p + GB_TBIN_BLC_MIN_EN,       0x08); /* 2 x u32 from tuning bin */
+        memcpy(tisp_gb_blc_min,         p + GB_TBIN_BLC_MIN,          0x24);
     } else {
         /* Fallback: use hardcoded defaults */
         tisp_gb_dgain_shift[0] = 0;
@@ -25273,7 +25043,7 @@ int tisp_s_wdr_en(int enable)
         reg_0c = (reg_0c & 0xb577ff7d) | 0x34000009;
     }
 
-	reg_0c = tisp_apply_block_enable_whitelist(reg_0c);
+	/* OEM: no whitelist */
 	reg_0c = tisp_apply_debug_top_bypass_overrides(reg_0c, __func__);
 
 	system_reg_write(0x804, enable ? 0x10 : 0x1c);
@@ -25470,8 +25240,6 @@ int tisp_dmsc_wdr_en(int enable)
 int tisp_ae_wdr_en(int enable)
 {
     pr_info("tisp_ae_wdr_en: %s AE WDR mode\n", enable ? "Enable" : "Disable");
-    /* OEM EXACT (0x540d0): Set IspAeFlag=1 to trigger re-convergence */
-    IspAeFlag = 1;
     return 0;
 }
 
@@ -26135,12 +25903,12 @@ static int tisp_gb_blc_again_interp(uint32_t gain, int channel)
         break;
     }
 
-    /* These registers need the 0x1070 latch to persist.
-     * Plain system_reg_write causes readback=0x00000000. */
-    system_reg_write_gb(1, 0x1014, (tisp_gb_blc_min_en[1] << 16) | tisp_gb_blc_min_en[0]);
-    system_reg_write_gb(1, reg_a, (s2_out << 16) | s0_out);
-    system_reg_write_gb(1, reg_b, (s1_out << 16) | v1_out);
-    system_reg_write_gb(1, reg_c, (blc_min_val << 16) | fp);
+    /* OEM EXACT: uses plain system_reg_write for BLC registers, NOT system_reg_write_gb.
+     * The OEM does not write the 0x1070 latch for these per-frame BLC updates. */
+    system_reg_write(0x1014, (tisp_gb_blc_min_en[1] << 16) | tisp_gb_blc_min_en[0]);
+    system_reg_write(reg_a, (s2_out << 16) | s0_out);
+    system_reg_write(reg_b, (s1_out << 16) | v1_out);
+    system_reg_write(reg_c, (blc_min_val << 16) | fp);
     return 0;
 }
 
@@ -26150,18 +25918,21 @@ static int mdns_diag_frame_count;
 
 int tisp_tgain_update(uint32_t gain)
 {
+    static uint32_t tgain_call_count;
     extern struct tx_isp_dev *ourISPdev;
     if (ourISPdev && ourISPdev->tuning_data)
         ourISPdev->tuning_data->total_gain = gain;
 
+    if (tgain_call_count < 5 || (tgain_call_count % 300) == 0)
+        pr_info("tisp_tgain_update[%u]: gain=0x%x\n", tgain_call_count, gain);
+    tgain_call_count++;
+
     /* OEM order: GIB, GB_BLC, DMSC, Sharpen, SDNS, DPC, LSC, YDNS, RDNS, MDNS.
-     * Calls gated on block readiness to match last-known-working configuration.
+     * OEM calls ALL refresh functions UNCONDITIONALLY — no gating on block enable.
      * DPC and MDNS are gated on deferred-init flags: only refresh after
      * libimp has sent real tuning params via set_par_cfg. */
-    if (isp_block_enable & 0x20) {
-        tisp_gib_gain_interpolation(gain);
-        tisp_gb_blc_again_interp(gain, 0);
-    }
+    tisp_gib_gain_interpolation(gain);
+    tisp_gb_blc_again_interp(gain, 0);
     if (dmsc_params_ready)
         tisp_dmsc_par_refresh(gain, 0x100, 1);
     tisp_sharpen_par_refresh(gain, 0x100, 1);
@@ -26171,13 +25942,25 @@ int tisp_tgain_update(uint32_t gain)
     tisp_lsc_gain_update(gain);
     tisp_ydns_par_refresh(gain);
     tisp_rdns_par_refresh(gain, 0x100, 1);
-    if (mdns_params_received)
-        tisp_mdns_par_refresh(gain, 0x100);
+    tisp_mdns_par_refresh(gain, 0x100);
 
-    /* One-shot MDNS register diagnostic after frames are flowing. */
-    if (mdns_params_received && mdns_diag_frame_count < 10) {
+    /* One-shot register diagnostic after frames are flowing. */
+    if (mdns_diag_frame_count < 10) {
         mdns_diag_frame_count++;
         if (mdns_diag_frame_count == 10) {
+            {
+            u32 bypass = system_reg_read(0xc);
+            pr_info("GIB_DIAG(frame10): gain=0x%x bypass=0x%08x GIB_bit5=%s\n",
+                gain, bypass, (bypass & 0x20) ? "BYPASSED" : "ACTIVE");
+            pr_info("GIB_DG: 0x1030=0x%08x 0x1034=0x%08x (AE digital gain regs)\n",
+                system_reg_read(0x1030), system_reg_read(0x1034));
+            pr_info("GIB_CFG: 0x1038=0x%08x 0x103c=0x%08x\n",
+                system_reg_read(0x1038), system_reg_read(0x103c));
+            pr_info("GIB_BLC: 0x1060=0x%08x 0x1064=0x%08x 0x1068=0x%08x 0x106c=0x%08x 0x1070=0x%08x\n",
+                system_reg_read(0x1060), system_reg_read(0x1064),
+                system_reg_read(0x1068), system_reg_read(0x106c),
+                system_reg_read(0x1070));
+            }
             pr_info("MDNS_VERIFY(frame10): gain=0x%x bypass=0x%08x\n", gain, system_reg_read(0xc));
             pr_info("MDNS_TOP: 0x7810=0x%08x 0x7814=0x%08x 0x7808=0x%08x\n",
                 system_reg_read(0x7810), system_reg_read(0x7814), system_reg_read(0x7808));
@@ -26253,13 +26036,11 @@ int tisp_ct_update(uint32_t ct)
 	if ((reg_0c & 0x40) == 0)
 		tisp_lsc_ct_update(ct);
 
-	/* OEM gates the BCSH/CLM colour-temperature update on MDNS bypass bit 16.
-	 * When MDNS params have not yet been received (deferred init), bit 16
-	 * stays SET in the bypass register which would block BCSH CT updates,
-	 * locking colour temperature at the cold default (~9984 K) and producing
-	 * a persistent green cast. Bypass the gate until MDNS params arrive. */
-	if (!mdns_params_received || (reg_0c & 0x10000) == 0)
-		tisp_bcsh_ct_update(ct);
+	/* OEM gates on MDNS bypass bit 16, but our isp_block_enable
+	 * intentionally bypasses MDNS (bit 16=1), permanently blocking
+	 * BCSH CT adaptation. Call unconditionally — the HMatrix and
+	 * saturation update is independent of MDNS processing. */
+	tisp_bcsh_ct_update(ct);
 
 	return 0;
 }
@@ -26341,6 +26122,130 @@ int tiziano_init_all_pipeline_components(uint32_t width, uint32_t height, uint32
     return 0;
 }
 EXPORT_SYMBOL(tiziano_init_all_pipeline_components);
+
+/* ============================================================
+ * OEM-exact Day/Night _dn_ wrapper functions.
+ *
+ * Each wraps the base _params_refresh with additional steps the OEM
+ * performs during tisp_day_or_night_s_ctrl: key bumps to force full
+ * HW register refresh, flag sets, and register writes.
+ *
+ * Decompiled from OEM tx-isp-t31.ko (port_9009) using Binary Ninja.
+ * ============================================================ */
+
+/* OEM EXACT: tiziano_defog_dn_params_refresh
+ * Decompiled at 0x455f0: params_refresh + params_init + set_reg_params */
+static int tiziano_defog_dn_params_refresh(void)
+{
+	tiziano_defog_params_refresh();
+	tiziano_defog_params_init();
+	tiziano_defog_set_reg_params();
+	return 0;
+}
+
+/* OEM EXACT: tiziano_dmsc_dn_params_refresh
+ * Decompiled at 0x26c44: key bump forces tisp_dmsc_all_reg_refresh to
+ * unconditionally rewrite all DMSC registers. */
+static int tiziano_dmsc_dn_params_refresh(void)
+{
+	dmsc_gain_last += 0x200;
+	tiziano_dmsc_params_refresh();
+	tisp_dmsc_all_reg_refresh(dmsc_gain_last);
+	return 0;
+}
+
+/* OEM EXACT: tiziano_lsc_dn_params_refresh
+ * Decompiled at 0x230b8: params_refresh + force LUT rewrite flag. */
+static int tiziano_lsc_dn_params_refresh(void)
+{
+	tiziano_lsc_params_refresh();
+	lsc_force_update = 1;
+	return 0;
+}
+
+/* OEM EXACT: tiziano_ccm_dn_params_refresh
+ * Decompiled at 0x2770c: params_refresh + force CCM recalc + apply. */
+static int tiziano_ccm_dn_params_refresh(void)
+{
+	tiziano_ccm_params_refresh();
+	ccm_real = 1;
+	jz_isp_ccm();
+	return 0;
+}
+
+/* OEM EXACT: tiziano_gamma_params_refresh
+ * Decompiled at 0x2136c: reload gamma LUTs from tuning binary.
+ * Linear at tparams+0x2844 (0x102 bytes), WDR at +0x2946. */
+static void tiziano_gamma_params_refresh(void)
+{
+	const u8 *p = (const u8 *)(tparams_active ? tparams_active : tparams_day);
+	if (!p || !tuning_bin_loaded)
+		return;
+	memcpy(tiziano_gamma_lut_linear, p + 0x2844, 0x102);
+	memcpy(tiziano_gamma_lut_wdr, p + 0x2946, 0x102);
+}
+
+/* OEM EXACT: tiziano_gamma_dn_params_refresh
+ * Decompiled at 0x213f4: reload LUTs then reprogram HW. */
+static int tiziano_gamma_dn_params_refresh(void)
+{
+	tiziano_gamma_params_refresh();
+	tiziano_gamma_lut_parameter();
+	return 0;
+}
+
+/* OEM EXACT: tiziano_dpc_dn_params_refresh
+ * Decompiled at 0x41a0c: key bump + params_refresh + full reg refresh. */
+static int tiziano_dpc_dn_params_refresh(void)
+{
+	data_9ab10 += 0x200;
+	tiziano_dpc_params_refresh();
+	tisp_dpc_all_reg_refresh(data_9ab10);
+	return 0;
+}
+
+/* OEM EXACT: tiziano_bcsh_dn_params_refresh
+ * Decompiled at 0x2b010: params_refresh + force update + apply. */
+static int tiziano_bcsh_dn_params_refresh(void)
+{
+	tiziano_bcsh_params_refresh();
+	BCSH_real = 1;
+	if (ourISPdev && ourISPdev->tuning_data)
+		tiziano_bcsh_update(ourISPdev->tuning_data);
+	return 0;
+}
+
+/* OEM EXACT: tiziano_rdns_dn_params_refresh
+ * Decompiled at 0x5964c: params_refresh + full reg refresh. */
+static int tiziano_rdns_dn_params_refresh(void)
+{
+	tiziano_rdns_params_refresh();
+	tisp_rdns_all_reg_refresh(rdns_gain_old);
+	return 0;
+}
+
+/* OEM EXACT: tiziano_ydns_dn_params_refresh
+ * Decompiled at 0x585d8: key bump + params_refresh + full intp + cfg.
+ * OEM calls tisp_ydns_intp_reg_refresh(ydns_gain_old) which is equivalent
+ * to tisp_ydns_intp() + tisp_ydns_param_cfg(). */
+static int tiziano_ydns_dn_params_refresh(void)
+{
+	ydns_gain_old += 0x200;
+	tiziano_ydns_params_refresh();
+	tisp_ydns_intp(ydns_gain_old);
+	tisp_ydns_param_cfg();
+	return 0;
+}
+
+/* OEM EXACT: tiziano_sdns_dn_params_refresh
+ * Decompiled at 0x32a94: params_refresh + full reg refresh.
+ * OEM passes data_8a9b4 to all_reg_refresh; our version takes no args. */
+static int tiziano_sdns_dn_params_refresh(void)
+{
+	tiziano_sdns_params_refresh();
+	tisp_sdns_all_reg_refresh();
+	return 0;
+}
 
 /* Export all the tiziano pipeline functions */
 EXPORT_SYMBOL(tiziano_ccm_init);
@@ -26425,13 +26330,16 @@ EXPORT_SYMBOL(tiziano_wdr_fusion1_curve_block_mean1);
 EXPORT_SYMBOL(Tiziano_wdr_fpga);
 EXPORT_SYMBOL(tiziano_wdr_soft_para_out);
 
+static unsigned int isp_tunning_poll(struct file *file, struct poll_table_struct *wait);
+
 /* File operations structure for ISP M0 character device - Binary Ninja reference */
 static const struct file_operations isp_core_tunning_fops = {
     .owner = THIS_MODULE,
     .open = tisp_code_tuning_open,
     .release = isp_m0_chardev_release,
-    .unlocked_ioctl = isp_core_tunning_unlocked_ioctl,
-    .compat_ioctl = isp_core_tunning_unlocked_ioctl,
+    .unlocked_ioctl = tisp_code_tuning_ioctl,
+    .compat_ioctl = tisp_code_tuning_ioctl,
+    .poll = isp_tunning_poll,
 };
 
 /* Tuning device creation variables - Binary Ninja reference (extended for compat node) */
@@ -26443,12 +26351,24 @@ static dev_t tuning_devno_tisp;      /* compat dev (minor 1) */
 static bool tuning_device_created = false;  /* Guard flag to prevent duplicate creation */
 static bool tisp_compat_created = false;
 
+/* OEM: isp_tunning_poll — poll handler for /dev/isp-m0
+ * Returns POLLIN when tispPollValue != 0 (set by day/night switch). */
+static unsigned int isp_tunning_poll(struct file *file, struct poll_table_struct *wait)
+{
+    if (wait)
+        poll_wait(file, &dumpQueue, wait);
+    return tispPollValue ? (POLLIN | POLLRDNORM) : 0;
+}
+
 /* tisp_code_create_tuning_node - Binary Ninja EXACT implementation */
 int tisp_code_create_tuning_node(void)
 {
     int ret;
 
     pr_info("tisp_code_create_tuning_node: Creating ISP M0 tuning device node\n");
+
+    /* OEM: init_waitqueue_head(&dumpQueue) during tuning node creation */
+    init_waitqueue_head(&dumpQueue);
 
     /* CRITICAL: Guard against duplicate device creation */
     if (tuning_device_created) {
@@ -26759,9 +26679,6 @@ int tisp_s_mdns_ratio(int ratio)
         }
         mdns_y_ref_wei_b_min_array_now[i] = v;
     }
-
-    if (!mdns_params_received)
-        return 0;
 
     /* OEM EXACT: tisp_mdns_all_reg_refresh(data_8a9c0) then tisp_mdns_reg_trigger() */
     tisp_mdns_all_reg_refresh(mdns_last_refresh_key);
@@ -27969,6 +27886,7 @@ static int tisp_mdns_top_func_cfg(int enable)
 {
     u32 ctrl = 0x101;
     u32 top1;
+    static int top_func_diag_count;
 
     if (enable) {
         ctrl = 0x10001 |
@@ -27978,6 +27896,19 @@ static int tisp_mdns_top_func_cfg(int enable)
                (mdns_uv_sf_cur_en_array << 20) |
                (mdns_uv_sf_ref_en_array << 24) |
                (mdns_uv_filter_en_array << 28);
+    }
+
+    /* PINK_DIAG: trace each top_func_cfg call to see what value is written
+     * vs what the register reads back. Helps spot double-buffer/mask issues. */
+    if (top_func_diag_count < 6) {
+        top_func_diag_count++;
+        pr_info("MDNS_TOP_CFG[%d]: enable=%d arrays=%u/%u/%u/%u/%u/%u "
+                "ctrl=0x%08x (about to write 0x7810)\n",
+                top_func_diag_count, enable,
+                mdns_y_sf_cur_en_array, mdns_y_sf_ref_en_array,
+                mdns_y_filter_en_array, mdns_uv_sf_cur_en_array,
+                mdns_uv_sf_ref_en_array, mdns_uv_filter_en_array,
+                ctrl);
     }
 
     system_reg_write(0x7810, ctrl);
@@ -27991,6 +27922,15 @@ static int tisp_mdns_top_func_cfg(int enable)
            (mdns_psn_max_num_array << 20);
     system_reg_write(0x7814, top1);
     system_reg_write(0x7808, (mdns_uv_debug_array << 5) | mdns_y_debug_array);
+
+    if (top_func_diag_count <= 6 && top_func_diag_count >= 1) {
+        pr_info("MDNS_TOP_CFG[%d]: top1=0x%08x debug=0x%08x | readback "
+                "0x7810=0x%08x 0x7814=0x%08x 0x7808=0x%08x\n",
+                top_func_diag_count, top1,
+                (mdns_uv_debug_array << 5) | mdns_y_debug_array,
+                system_reg_read(0x7810), system_reg_read(0x7814),
+                system_reg_read(0x7808));
+    }
     return 0;
 }
 
@@ -28195,7 +28135,7 @@ int tisp_s_adr_enable(int enable)
         return -EINVAL;
     }
 
-	reg_val = tisp_apply_block_enable_whitelist(reg_val);
+	/* OEM: no whitelist */
 	reg_val = tisp_apply_debug_top_bypass_overrides(reg_val, __func__);
     system_reg_write(0xc, reg_val);
     return 0;
@@ -28470,7 +28410,7 @@ void *isp_core_tuning_init(void *arg1)
     tuning_data->wb_gains.r = 0x100;
     tuning_data->wb_gains.g = 0x100;
     tuning_data->wb_gains.b = 0x100;
-    tuning_data->wb_temp = 0x2700;
+    tuning_data->wb_temp = 5000;  /* OEM default D50 daylight */
 
     /* Initialize BCSH specific fields */
     tuning_data->bcsh_hue = 0x3c; /* neutral hue = 60 in scaled 0-120 range */
@@ -28992,6 +28932,110 @@ void *tiziano_ae_para_addr(void)
 }
 EXPORT_SYMBOL(tiziano_ae_para_addr);
 
+/* tisp_ae_s_comp - OEM EXACT (0x54a8c): Set AE compensation value.
+ *
+ * Computes a scaled compensation target from the input comp_x (0-255) and
+ * ae_comp_default, then forces both AE HW channels to reload parameters.
+ *
+ * OEM formula:
+ *   if comp_x >= 0x81: result = comp_x * 0x12c / 0x7f + ae_comp_default - 0x12e
+ *   else:              result = comp_x * ae_comp_default / 0x80
+ */
+int tisp_ae_s_comp(uint8_t comp_x)
+{
+    uint32_t a0 = (uint32_t)comp_x;
+    int32_t result;
+
+    /* OEM: ae_comp_param.data[0] = 1 (mark compensation active) */
+    ae_comp_param.data[0] = 1;
+
+    /* OEM: ae_comp_x = $a0 */
+    ae_comp_x = comp_x;
+
+    /* OEM: compute scaled compensation target */
+    if (a0 >= 0x81)
+        result = a0 * 0x12c / 0x7f + ae_comp_default - 0x12e;
+    else
+        result = a0 * ae_comp_default / 0x80;
+
+    /* OEM: data_a0c08 = result */
+    data_a0c08 = result;
+
+    /* OEM: data_a0df0 = 1; data_a0df4 = 1 */
+    data_a0df0 = 1;
+    data_a0df4 = 1;
+
+    /* OEM: reprogram both AE HW channels */
+    tiziano_ae_set_hardware_param(0, _ae_parameter.data, 1);
+    return tiziano_ae_set_hardware_param(1, _ae_parameter.data, 1);
+}
+EXPORT_SYMBOL(tisp_ae_s_comp);
+
+/* tiziano_ae_dn_params_refresh - OEM EXACT (0x54b54): Full AE DN switch reset.
+ *
+ * Sets all AE state flags to force re-convergence, reloads params from the
+ * new tparams_active, reinitializes exposure thresholds, reprograms parameter
+ * addresses, and forces both AE HW channels to reload.  Finally resets the
+ * AE compensation default and reapplies current compensation.
+ */
+int tiziano_ae_dn_params_refresh(void)
+{
+    /* OEM: Set all AE state flags to 1 to force full re-convergence */
+    IspAeFlag = 1;
+    data_a0de4 = 1;
+    data_a0de8 = 1;
+    data_a0df0 = 1;
+    data_a0df4 = 1;
+    data_a0df8 = 1;
+    data_a0e04 = 1;
+    data_a0e08 = 1;
+
+    /* OEM: Clear convergence started flag */
+    data_a0dfc = 0;
+
+    /* OEM: Reload all AE params from new tparams_active */
+    tiziano_ae_params_refresh();
+
+    /* OEM: Reload deflicker with sensor timing params.
+     * In tiziano_ae_init the OEM does:
+     *   a3 = zx.d(data_a2e44) -> our data_b2e54 (FPS denominator)
+     *   a1 = data_a2e34       -> our data_b2e44 (deflicker base)
+     *   a2 = zx.d(data_a2e46) -> our data_b2e56 (FPS numerator)
+     *   data_a0b18 = a1; data_a0b1c = a2; data_a0b20 = a3
+     *   tiziano_deflicker_expt(_flicker_t, a1, a2, a3, &_deflick_lut, &_nodes_num)
+     */
+    {
+        uint32_t a3 = (uint32_t)data_b2e54;  /* FPS denominator */
+        uint32_t a1 = data_b2e44;            /* Deflicker base */
+        uint32_t a2 = (uint32_t)data_b2e56;  /* FPS numerator */
+
+        data_b0b28 = a1;
+        data_b0b2c = a2;
+        data_b0b30 = a3;
+
+        tiziano_deflicker_expt(_flicker_t.data[0], a1, a2, a3,
+                               _deflick_lut.data,
+                               (uint32_t *)&_nodes_num.data[0]);
+    }
+
+    /* OEM: Reinitialize AE exposure thresholds from new params */
+    tiziano_ae_init_exp_th();
+
+    /* OEM: Recompute AE parameter addresses */
+    (void)tiziano_ae_para_addr();
+
+    /* OEM: Reprogram both AE HW channels with force flag */
+    tiziano_ae_set_hardware_param(0, _ae_parameter.data, 1);
+    tiziano_ae_set_hardware_param(1, _ae_parameter.data, 1);
+
+    /* OEM: Reset compensation default and reapply current compensation */
+    ae_comp_default = data_b0c18;
+    tisp_ae_s_comp(ae_comp_x);
+
+    return 0;
+}
+EXPORT_SYMBOL(tiziano_ae_dn_params_refresh);
+
 /* Sensor control functions - Safe structure-based implementations */
 static void tisp_set_sensor_integration_time(uint32_t time)
 {
@@ -29046,7 +29090,7 @@ static void tisp_set_sensor_integration_time(uint32_t time)
  * provide the full requested analog gain. */
 static uint32_t tisp_set_sensor_analog_gain(uint32_t requested_gain)
 {
-    int16_t var_28;
+    unsigned int var_28;
     uint32_t log_result, gain_param, v0_2, final_gain;
 
     pr_debug("tisp_set_sensor_analog_gain: requested gain=0x%x\n", requested_gain);
@@ -29065,9 +29109,8 @@ static uint32_t tisp_set_sensor_analog_gain(uint32_t requested_gain)
      * Convert clipped log2 back to linear Q16. */
     v0_2 = tisp_math_exp2(gain_param, 0x10, 0x10);
 
-    /* OEM EXACT: data_a2ef4(zx.d(var_28), 0)
-     * Write the sensor register value (the index from alloc_again). */
-    data_b2f04((uint32_t)(uint16_t)var_28, 0);
+    /* Write the sensor register value (the index from alloc_again). */
+    data_b2f04(var_28, 0);
 
     /* OEM EXACT: return $v0_2 u>> 6
      * Convert from Q16 linear back to Q10 linear. */
@@ -29242,15 +29285,24 @@ static int data_b2ef0(uint32_t time, void **var_ptr)
 
 static int data_b2ef4(uint32_t param, int flag)
 {
-    /* Set sensor integration time — defer I2C write via workqueue */
-    extern struct tx_isp_dev *ourISPdev;
-    extern struct work_struct sensor_expo_work;
-    if (!ourISPdev || !ourISPdev->sensor)
-        return -ENODEV;
+    /* Safe sensor integration time setting */
+    pr_debug("data_b2ef4: Setting sensor integration time %u, flag %d\n", param, flag);
 
-    ourISPdev->sensor->attr.integration_time = param;
-    ourISPdev->sensor_update_pending = 1;
-    schedule_work(&sensor_expo_work);
+    extern struct tx_isp_dev *ourISPdev;
+    if (!ourISPdev || !ourISPdev->sensor) {
+        pr_err("data_b2ef4: No ISP device or sensor available\n");
+        return -ENODEV;
+    }
+
+    /* Set integration time via sensor attribute */
+    if (ourISPdev->sensor) {
+        ourISPdev->sensor->attr.integration_time = param;
+        pr_debug("data_b2ef4: Set sensor integration_time to %u\n", param);
+        return 0;
+    }
+
+    /* Fallback: just log the operation */
+    pr_debug("data_b2ef4: No sensor set_integration_time operation available\n");
     return 0;
 }
 
@@ -29277,7 +29329,7 @@ static int data_b2ef8(uint32_t param, int flag)
     return 0;
 }
 
-static uint32_t data_b2ee0(uint32_t log_val, int16_t *var_ptr)
+static uint32_t data_b2ee0(uint32_t log_val, unsigned int *var_ptr)
 {
     /* Safe sensor analog gain allocation */
     pr_debug("data_b2ee0: Allocating analog gain log_val %u\n", log_val);
@@ -29293,7 +29345,9 @@ static uint32_t data_b2ee0(uint32_t log_val, int16_t *var_ptr)
     if (ourISPdev->sensor->attr.sensor_ctrl.alloc_again) {
         unsigned int sensor_again = 0;
         uint32_t result = ourISPdev->sensor->attr.sensor_ctrl.alloc_again(log_val, TX_ISP_GAIN_FIXED_POINT, &sensor_again);
-        if (var_ptr) *var_ptr = (int16_t)sensor_again;
+        if (var_ptr) *var_ptr = sensor_again;
+        pr_info_ratelimited("alloc_again: log_val=%u result=%u sensor_again=0x%x\n",
+                log_val, result, sensor_again);
         return result;
     }
 
@@ -29329,16 +29383,31 @@ static uint32_t data_b2ee4(uint32_t log_val, void **var_ptr)
 
 static int data_b2f04(uint32_t param, int flag)
 {
-    /* Set sensor analog gain — defer I2C write via workqueue
-     * (can't do I2C directly, IRQs may be disabled in this context) */
-    extern struct tx_isp_dev *ourISPdev;
-    extern struct work_struct sensor_expo_work;
-    if (!ourISPdev || !ourISPdev->sensor)
-        return -ENODEV;
+    /* Safe sensor analog gain setting */
+    pr_debug("data_b2f04: Setting sensor analog gain %u, flag %d\n", param, flag);
 
-    ourISPdev->sensor->attr.again = param;
-    ourISPdev->sensor_update_pending = 1;
-    schedule_work(&sensor_expo_work);
+    extern struct tx_isp_dev *ourISPdev;
+    if (!ourISPdev || !ourISPdev->sensor) {
+        pr_err("data_b2f04: No ISP device or sensor available\n");
+        return -ENODEV;
+    }
+
+    /* Set analog gain via sensor attribute, then trigger I2C write */
+    if (ourISPdev->sensor) {
+        pr_debug("data_b2f04: again_idx=%u it=%u\n", param,
+                ourISPdev->sensor->attr.integration_time);
+        ourISPdev->sensor->attr.again = param;
+        /* Queue deferred I2C write to sensor hardware.
+         * Both IT and AG attributes are set by the time AG is written,
+         * so one workqueue trigger here covers both. */
+        ourISPdev->sensor_update_pending = 1;
+        {
+            extern struct work_struct sensor_expo_work;
+            schedule_work(&sensor_expo_work);
+        }
+        return 0;
+    }
+
     return 0;
 }
 

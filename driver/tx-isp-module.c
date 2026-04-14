@@ -74,34 +74,39 @@ EXPORT_SYMBOL(sensor_expo_work);
 
 static void sensor_expo_work_func(struct work_struct *work)
 {
+    int ret;
+    unsigned int again, it;
+
     if (!ourISPdev || !ourISPdev->sensor || !ourISPdev->sensor_update_pending)
         return;
     if (stored_sensor_ops.original_ops &&
         stored_sensor_ops.original_ops->sensor &&
         stored_sensor_ops.original_ops->sensor->ioctl &&
         stored_sensor_ops.sensor_sd) {
-        int packed = ((int)ourISPdev->sensor->attr.again << 16) |
-                     ((int)ourISPdev->sensor->attr.integration_time & 0xffff);
-        stored_sensor_ops.original_ops->sensor->ioctl(
-            stored_sensor_ops.sensor_sd, TX_ISP_EVENT_SENSOR_EXPO, &packed);
+        again = ourISPdev->sensor->attr.again;
+        it = ourISPdev->sensor->attr.integration_time;
+
+        /* The sensor driver's set_again iterates its own LUT with
+         * bounds checking against sensor_attr.max_again — no need
+         * to clamp here.  The LUT size is sensor-specific (e.g.,
+         * 29 for GC2053, 162 for SC2336). */
+        if (it == 0) {
+            pr_warn("sensor_expo_work: integration_time=0, skipping write\n");
+            ourISPdev->sensor_update_pending = 0;
+            return;
+        }
+
+        {
+            int packed = ((int)again << 16) | ((int)it & 0xffff);
+            pr_info_ratelimited("sensor_expo_work: again=%u it=%u packed=0x%08x\n", again, it, packed);
+            ret = stored_sensor_ops.original_ops->sensor->ioctl(
+                stored_sensor_ops.sensor_sd, TX_ISP_EVENT_SENSOR_EXPO, &packed);
+            if (ret)
+                pr_err("sensor_expo_work: ioctl returned %d\n", ret);
+        }
     }
     ourISPdev->sensor_update_pending = 0;
 }
-
-/* Exported for tx_isp_tuning.c — write exposure+gain to sensor via I2C */
-int tx_isp_sensor_write_expo(int gain_index, int integration_time)
-{
-    if (stored_sensor_ops.original_ops &&
-        stored_sensor_ops.original_ops->sensor &&
-        stored_sensor_ops.original_ops->sensor->ioctl &&
-        stored_sensor_ops.sensor_sd) {
-        int packed = (gain_index << 16) | (integration_time & 0xffff);
-        return stored_sensor_ops.original_ops->sensor->ioctl(
-            stored_sensor_ops.sensor_sd, TX_ISP_EVENT_SENSOR_EXPO, &packed);
-    }
-    return -ENODEV;
-}
-EXPORT_SYMBOL(tx_isp_sensor_write_expo);
 
 static int tx_isp_sensor_has_usable_attachment(struct tx_isp_sensor *sensor)
 {
@@ -197,7 +202,6 @@ DEFINE_MUTEX(sensor_list_mutex);
 int sensor_count = 0;
 static int current_sensor_index = -1;
 extern int isp_memopt; /* defined in tx_isp_core.c, exposed as module_param */
-extern void tiziano_mdns_enable_after_dma(void); /* defined in tx_isp_tuning.c */
 
 /* CRITICAL: VIC interrupt control flag - Binary Ninja reference */
 /* This is now declared as extern - the actual definition is in tx_isp_vic.c */
@@ -1155,70 +1159,22 @@ int ispvic_frame_channel_s_stream(struct tx_isp_vic_device *vic_dev, int enable)
 static int tx_isp_hardware_init(struct tx_isp_dev *isp_dev);
 void system_reg_write(u32 reg, u32 value);
 
-static void __iomem *tx_isp_get_system_reg_base(u32 reg, const char *op)
-{
-    if (!ourISPdev) {
-        pr_warn("system_reg_%s: ourISPdev is NULL for reg=0x%x\n", op, reg);
-        return NULL;
-    }
-
-    /* Prefer the explicit ISP core mapping established by tx_isp_core.c. */
-    if (ourISPdev->core_regs)
-        return ourISPdev->core_regs;
-
-    /*
-     * Last resort: derive the core base only from the PRIMARY VIC window.
-     * Do not use ourISPdev->vic_regs here: tx_isp_core.c maps that field to the
-     * secondary/control bank at 0x10023000, so subtracting 0xe0000 from it is wrong.
-     */
-    if (ourISPdev->vic_dev && ourISPdev->vic_dev->vic_regs) {
-        pr_warn_ratelimited("system_reg_%s: falling back to vic_dev->vic_regs-derived core base for reg=0x%x\n",
-                            op, reg);
-        return ourISPdev->vic_dev->vic_regs - 0xe0000;
-    }
-
-    pr_warn_ratelimited("system_reg_%s: no valid ISP core base for reg=0x%x (core_regs=%p vic_dev=%p)\n",
-                        op, reg, ourISPdev->core_regs, ourISPdev->vic_dev);
-    return NULL;
-}
-
-/* system_reg_write - Helper function to write ISP registers safely */
+/* system_reg_write - OEM-lean implementation.
+ * OEM objdump shows just 6 instructions: load ourISPdev, load core_regs,
+ * add offset, store value, return. NO null checks, NO logging, NO wmb().
+ * Our previous 75-instruction version caused the 0x1070 write-gate to
+ * auto-close before the value write arrived, breaking GIB/GB. */
 void system_reg_write(u32 reg, u32 value)
 {
-    void __iomem *isp_regs = tx_isp_get_system_reg_base(reg, "write");
-
-    if (!isp_regs) {
-        pr_warn("system_reg_write: No ISP core base available for reg=0x%x val=0x%x\n", reg, value);
-        return;
-    }
-
-    /* CRITICAL: Log all writes to critical registers to find source of 0x0 writes */
-    if ((reg >= 0x100 && reg <= 0x10c) || (reg >= 0xb054 && reg <= 0xb078)) {
-        pr_warn("*** CRITICAL REG WRITE: reg=0x%x value=0x%x ***\n", reg, value);
-        if (value == 0x0) {
-            pr_err("*** FOUND 0x0 WRITE: reg=0x%x - THIS IS THE PROBLEM! ***\n", reg);
-        }
-    }
-
-    pr_debug("system_reg_write: Writing ISP reg[0x%x] = 0x%x\n", reg, value);
-
-    /* Write to ISP register with proper offset */
-    writel(value, isp_regs + reg);
-    wmb();
+    volatile u32 *addr = (volatile u32 *)(ourISPdev->core_regs + reg);
+    *addr = value;
 }
 
-
-/* system_reg_read - Helper function to read ISP registers safely (paired with system_reg_write) */
+/* system_reg_read - OEM-lean implementation (mirrors system_reg_write). */
 u32 system_reg_read(u32 reg)
 {
-    void __iomem *isp_regs = tx_isp_get_system_reg_base(reg, "read");
-
-    if (!isp_regs) {
-        pr_warn("system_reg_read: No ISP core base available for reg=0x%x\n", reg);
-        return 0;
-    }
-
-    return readl(isp_regs + reg);
+    volatile u32 *addr = (volatile u32 *)(ourISPdev->core_regs + reg);
+    return *addr;
 }
 EXPORT_SYMBOL_GPL(system_reg_read);
 
@@ -1502,39 +1458,24 @@ void system_reg_write_clm(u32 arg1, u32 arg2, u32 arg3)
     system_reg_write(arg2, arg3);
 }
 
-/* system_reg_write_gb - EXACT Binary Ninja decompiled implementation */
+/* system_reg_write_gb - EXACT Binary Ninja decompiled implementation.
+ * OEM-identical: calls system_reg_write for both gate and value. */
 void system_reg_write_gb(u32 arg1, u32 arg2, u32 arg3)
 {
-    /* Binary Ninja decompiled code:
-     * if (arg1 == 1)
-     *     system_reg_write(0x1070, 1)
-     *
-     * return system_reg_write(arg2, arg3) __tailcall
-     */
+    if (arg1 == 1)
+        system_reg_write(0x1070, 1);
 
-    if (arg1 == 1) {
-        system_reg_write(0x1070, 1);  /* Enable GB block */
-    }
-
-    /* Tailcall to system_reg_write with remaining args */
     system_reg_write(arg2, arg3);
 }
 
-/* system_reg_write_gib - EXACT Binary Ninja decompiled implementation */
+/* system_reg_write_gib - EXACT Binary Ninja decompiled implementation.
+ * OEM-identical (verified via objdump: our Apr 6 .ko matches OEM byte-for-byte).
+ * Calls system_reg_write for both the 0x1070 gate and the value. */
 void system_reg_write_gib(u32 arg1, u32 arg2, u32 arg3)
 {
-    /* Binary Ninja decompiled code:
-     * if (arg1 == 1)
-     *     system_reg_write(0x1070, 1)
-     *
-     * return system_reg_write(arg2, arg3) __tailcall
-     */
+    if (arg1 == 1)
+        system_reg_write(0x1070, 1);
 
-    if (arg1 == 1) {
-        system_reg_write(0x1070, 1);  /* Enable GIB block */
-    }
-
-    /* Tailcall to system_reg_write with remaining args */
     system_reg_write(arg2, arg3);
 }
 
@@ -2304,6 +2245,8 @@ static int tx_isp_ispcore_activate_module_complete(struct tx_isp_dev *isp_dev)
         return ret;
     }
 
+    pr_info("*** CSI_ACTIVATE_DEBUG: isp_dev=%p csi_dev=%p ourISPdev=%p ourISPdev->csi_dev=%p ***\n",
+            isp_dev, isp_dev->csi_dev, ourISPdev, ourISPdev ? ourISPdev->csi_dev : NULL);
     csi_sd = isp_dev->csi_dev ? &((struct tx_isp_csi_device *)isp_dev->csi_dev)->sd : NULL;
     if (csi_sd) {
         pr_info("*** tx_isp_ispcore_activate_module_complete: ensuring CSI subdev is activated ***\n");
@@ -2326,7 +2269,24 @@ static int tx_isp_ispcore_activate_module_complete(struct tx_isp_dev *isp_dev)
         return ret;
     }
 
+    /* Re-resolve csi_sd in case it was NULL earlier but set during core init */
+    if (!csi_sd)
+        csi_sd = isp_dev->csi_dev ? &((struct tx_isp_csi_device *)isp_dev->csi_dev)->sd : NULL;
+
     if (csi_sd) {
+        /* OEM enables CSI clocks in tx_isp_csi_activate_subdev before
+         * csi_core_ops_init.  Ensure clocks are enabled so CSI PHY
+         * registers are accessible (without this, reads return zero). */
+        if (csi_sd->clks && csi_sd->clk_num > 0) {
+            int ci;
+            for (ci = 0; ci < csi_sd->clk_num; ci++) {
+                if (csi_sd->clks[ci])
+                    clk_enable(csi_sd->clks[ci]);
+            }
+            pr_info("*** tx_isp_ispcore_activate_module_complete: enabled %d CSI clock(s) ***\n",
+                    csi_sd->clk_num);
+        }
+
         pr_info("*** tx_isp_ispcore_activate_module_complete: calling csi_core_ops_init(on=1) after core init ***\n");
         ret = csi_core_ops_init(csi_sd, 1);
         if (ret != 0 && ret != -ENOIOCTLCMD) {
@@ -2852,7 +2812,7 @@ static irqreturn_t isp_vic_interrupt_service_routine(int irq, void *dev_id)
         if (v1_7 || v1_10) {
             static unsigned int vic_isr_count;
             if ((vic_isr_count++ % 30) == 0)
-                pr_info("VIC ISR[%u]: v1_7=0x%x v1_10=0x%x stream_state=%d\n",
+                pr_debug("VIC ISR[%u]: v1_7=0x%x v1_10=0x%x stream_state=%d\n",
                         vic_isr_count, v1_7, v1_10,
                         vic_dev->stream_state);
         }
@@ -3634,9 +3594,9 @@ long frame_channel_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned 
         if (copy_from_user(&reqbuf, argp, sizeof(reqbuf)))
             return -EFAULT;
 
-        pr_debug("*** Channel %d: REQBUFS - MEMORY-AWARE implementation ***\n", channel);
-        pr_debug("Channel %d: Request %d buffers, type=%d memory=%d\n",
-                 channel, reqbuf.count, reqbuf.type, reqbuf.memory);
+        pr_info("*** Channel %d: REQBUFS - MEMORY-AWARE implementation ***\n", channel);
+        pr_info("Channel %d: Request %d buffers, type=%d memory=%d\n",
+                channel, reqbuf.count, reqbuf.type, reqbuf.memory);
 
         /* CRITICAL: Check available memory before allocation */
         if (reqbuf.count > 0) {
@@ -3659,8 +3619,8 @@ long frame_channel_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned 
             if (reqbuf.memory == 1) { /* V4L2_MEMORY_MMAP - driver allocates */
                 total_memory_needed = reqbuf.count * buffer_size;
 
-                pr_debug("Channel %d: MMAP mode - need %u bytes for %d buffers\n",
-                        channel, total_memory_needed, reqbuf.count);
+                pr_info("Channel %d: MMAP mode - need %u bytes for %d buffers\n",
+                       channel, total_memory_needed, reqbuf.count);
 
                 /* CRITICAL: Memory pressure detection */
                 if (total_memory_needed > available_memory) {
@@ -3681,8 +3641,8 @@ long frame_channel_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned 
                 /* Additional safety: Limit to 4 buffers max for memory efficiency */
                 reqbuf.count = min(reqbuf.count, 4U);
 
-                pr_debug("Channel %d: MMAP allocation - %d buffers of %u bytes each\n",
-                        channel, reqbuf.count, buffer_size);
+                pr_info("Channel %d: MMAP allocation - %d buffers of %u bytes each\n",
+                       channel, reqbuf.count, buffer_size);
 
                 /* CRITICAL FIX: Don't allocate any actual buffers in driver! */
                 /* The client (libimp) will allocate buffers and pass them via QBUF */
@@ -3725,22 +3685,22 @@ long frame_channel_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned 
                     .channel_id = channel,
                     .buffer_count = reqbuf.count
                 };
-                pr_debug("*** REQBUFS: Channel %d sending 0x3000008 with buffer_count=%d ***\n",
-                         channel, reqbuf.count);
+                pr_info("*** REQBUFS: Channel %d sending 0x3000008 with buffer_count=%d ***\n",
+                        channel, reqbuf.count);
                 {
                     int er = tx_isp_send_event_to_remote(remote_sd, 0x3000008, &event_data);
                     if (er == 0) {
-                        pr_debug("*** REQBUFS: 0x3000008 SUCCESS ***\n");
+                        pr_info("*** REQBUFS: 0x3000008 SUCCESS ***\n");
                     } else if (er == 0xfffffdfd) {
-                        pr_debug("*** REQBUFS: 0x3000008 has no callback (ignored) ***\n");
+                        pr_info("*** REQBUFS: 0x3000008 has no callback (ignored) ***\n");
                     } else {
                         pr_warn("*** REQBUFS: 0x3000008 returned: 0x%x ***\n", er);
                     }
                 }
             }
 
-            pr_debug("*** Channel %d: MEMORY-AWARE REQBUFS SUCCESS - %d buffers ***\n",
-                    channel, state->buffer_count);
+            pr_info("*** Channel %d: MEMORY-AWARE REQBUFS SUCCESS - %d buffers ***\n",
+                   channel, state->buffer_count);
 
         } else {
             /* Free existing buffers */
@@ -3791,7 +3751,7 @@ long frame_channel_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned 
         pr_debug("*** Channel %d: QBUF - Queue buffer index=%d ***\n", channel, buffer.index);
         if (!state->streaming || !state->capture_active) {
             pr_debug("*** Channel %d: QBUF accepted before active streaming - staging buffer for later delivery ***\n",
-                     channel);
+                    channel);
         }
 
 
@@ -3826,7 +3786,7 @@ long frame_channel_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned 
         }
 
 	        pr_debug("*** Channel %d: QBUF - Buffer %d: phys_addr=0x%x, sizeimage=%u, memory=%d, userptr=0x%lx ***\n",
-                 channel, buffer.index, buffer_phys_addr, buffer_size, buffer.memory, buffer.m.userptr);
+                channel, buffer.index, buffer_phys_addr, buffer_size, buffer.memory, buffer.m.userptr);
 
         if (frame_channel_track_buffer(fcd, &buffer) == 0) {
             state->current_buffer.index = buffer.index;
@@ -3905,7 +3865,7 @@ long frame_channel_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned 
                 attr_words[8] = 0;       /* scaler mode */
 
                 pr_debug("QBUF ch%d: auto-configuring MSCA scaler for %ux%u\n",
-                         channel, w, h);
+                        channel, w, h);
                 tisp_channel_attr_set(channel, attr_words);
                 tisp_channel_start(channel, NULL);
                 state->msca_configured = true;
@@ -4811,44 +4771,55 @@ static long tx_isp_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned 
         return 0;
     }
     case 0x800856d5: { // TX_ISP_GET_BUF - Calculate required buffer size
+        /* OEM EXACT buffer size calculation from Binary Ninja HLIL at 0xe960.
+         * Computes space for: NV12 (Y+UV) + R-plane reference banks (for MDNS
+         * temporal noise reduction) + UV reference banks + tiny planes. */
         struct isp_buf_result {
-            uint32_t addr;   // Physical address (usually 0)
+            uint32_t addr;   // Physical address (always 0)
             uint32_t size;   // Calculated buffer size
         } buf_result;
-        uint32_t width = 1920;   // Default HD width
-        uint32_t height = 1080;  // Default HD height
-        uint32_t stride_factor;
-        uint32_t main_buf;
-        uint32_t total_main;
-        uint32_t yuv_stride;
+        uint32_t width, height;
+        uint32_t stride8, h8, y_full, nv12_size;
+        uint32_t r_factor, r_lines, r_block;
         uint32_t total_size;
 
-        pr_info("ISP buffer calculation: width=%d height=%d memopt=%d\n",
-                width, height, isp_memopt);
+        /* Get dimensions from ISP device */
+        width = isp_dev->sensor_width;
+        height = isp_dev->sensor_height;
+        if (!width) width = 1920;
+        if (!height) height = 1080;
 
-        // CRITICAL FIX: Use correct RAW10 buffer calculation instead of YUV
-        // RAW10 format: 10 bits per pixel = 1.25 bytes per pixel
-        // Formula: width * height * 1.25 (with proper alignment)
+        /* OEM EXACT formula:
+         * stride8 = (width+7)/8, h8 = height*8
+         * y_full = stride8 * h8 = stride * height
+         * nv12 = y_full * 1.5
+         * r_block = small reference plane
+         * Then add UV/tiny planes depending on isp_memopt */
+        stride8 = (width + 7) >> 3;
+        h8 = height << 3;
+        y_full = stride8 * h8;               /* = stride * height */
+        nv12_size = y_full + (y_full >> 1);   /* NV12 = Y + UV/2 */
 
-        pr_info("*** BUFFER FIX: Using RAW10 calculation instead of incorrect YUV calculation ***\n");
+        r_factor = (((width + 0x1f) >> 5) + 7) >> 3;
+        r_lines = (((height + 0xf) >> 4) + 1) << 3;
+        r_block = r_factor * r_lines;
 
-        // RAW10: 10 bits per pixel, packed format
-        // Each 4 pixels = 5 bytes (4 * 10 bits = 40 bits = 5 bytes)
-        // So: (width * height * 5) / 4
-        uint32_t raw10_pixels = width * height;
-        uint32_t raw10_bytes = (raw10_pixels * 5) / 4;  // 10 bits per pixel = 1.25 bytes
+        if (isp_memopt == 0) {
+            /* Full buffer mode: 4 R-plane banks + UV + UV/2 + tiny */
+            uint32_t uv_factor = ((width >> 1) + 7) >> 3;
+            uint32_t uv_block = uv_factor * h8;
+            uint32_t tiny_factor = ((width >> 5) + 7) >> 3;
+            uint32_t tiny_size = (tiny_factor * h8) >> 5;
+            total_size = nv12_size + (r_block << 2) + uv_block
+                       + (uv_block >> 1) + tiny_size;
+        } else {
+            /* Memory optimized: single R-plane bank, no extra UV */
+            total_size = nv12_size + r_block;
+        }
 
-        // Add alignment padding (align to 64-byte boundaries for DMA)
-        uint32_t aligned_size = (raw10_bytes + 63) & ~63;
+        pr_info("ISP buffer calculation: %ux%u memopt=%d -> %u bytes (0x%x)\n",
+                width, height, isp_memopt, total_size, total_size);
 
-        total_size = aligned_size;
-
-        pr_info("*** RAW10 BUFFER: %d pixels -> %d bytes -> %d aligned ***\n",
-                raw10_pixels, raw10_bytes, aligned_size);
-
-        pr_info("ISP calculated buffer size: %d bytes (0x%x)\n", total_size, total_size);
-
-        // Set result: address=0, size=calculated
         buf_result.addr = 0;
         buf_result.size = total_size;
 
@@ -4858,54 +4829,173 @@ static long tx_isp_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned 
         return 0;
     }
     case 0x800856d4: { // TX_ISP_SET_BUF - Set buffer addresses and configure DMA
+        // OEM-exact implementation: programs 0x7820-0x786c ISP frame buffer registers
+        // Required for MDNS (3D noise reduction) temporal reference frames.
+        extern void tisp_mdns_enable_after_dma(void);
+
         struct isp_buf_setup {
             uint32_t addr;   // Physical buffer address
             uint32_t size;   // Buffer size
         } buf_setup;
-        uint32_t width = 1920;
-        uint32_t height = 1080;
-        uint32_t stride;
-        uint32_t frame_size;
-        uint32_t uv_offset;
-        uint32_t yuv_stride;
-        uint32_t yuv_size;
+        uint32_t width, height;
+        uint32_t y_stride, y_size;
+        uint32_t y_stride2, y_size2;
+        uint32_t r_offset, r_stride, r_size, r_total;
+        uint32_t uv_base, uv_stride, uv_size;
+        uint32_t uv_base2, uv_stride2, uv_size2;
+        uint32_t uv_base3, tiny_stride, tiny_size;
+        uint32_t final_offset;
 
         if (copy_from_user(&buf_setup, argp, sizeof(buf_setup)))
             return -EFAULT;
 
-        pr_info("ISP set buffer: addr=0x%x size=%d\n", buf_setup.addr, buf_setup.size);
+        // Get dimensions from ISP device (OEM uses tispinfo/data_b2f34)
+        width = isp_dev->sensor_width;
+        height = isp_dev->sensor_height;
+        if (!width)
+            width = 1920;
+        if (!height)
+            height = 1080;
 
-        // Calculate stride and buffer offsets like reference
-        stride = ((width + 7) >> 3) << 3;  // Aligned stride
-        frame_size = stride * height;
+        pr_info("ISP set buffer: addr=0x%x size=%d width=%u height=%u isp_memopt=%d\n",
+                buf_setup.addr, buf_setup.size, width, height, isp_memopt);
 
-        // Validate buffer size
-        if (buf_setup.size < frame_size) {
-            pr_err("Buffer too small: need %d, got %d\n", frame_size, buf_setup.size);
-            return -EFAULT;
+        /* PINK_DIAG: Zero the entire ISP frame buffer before programming DMA.
+         * Theory: MDNS temporal reference reads from R-plane (within this buffer)
+         * before any frames have been written. Stale data from rmem (possibly
+         * a previous run's pink output) is read as the "previous frame" and
+         * blended into the output, causing persistent pink. Zeroing the buffer
+         * gives MDNS a clean black reference to start from. */
+        {
+            void __iomem *isp_buf_map = ioremap(buf_setup.addr, buf_setup.size);
+            if (isp_buf_map) {
+                memset_io(isp_buf_map, 0, buf_setup.size);
+                iounmap(isp_buf_map);
+                pr_info("ISP set buffer: zeroed %u bytes at phys 0x%x\n",
+                        buf_setup.size, buf_setup.addr);
+            } else {
+                pr_warn("ISP set buffer: ioremap failed for phys 0x%x size %u\n",
+                        buf_setup.addr, buf_setup.size);
+            }
         }
 
-        // Configure main frame buffers (system registers like reference)
-        // These would be actual register writes in hardware implementation
-        pr_info("Configuring main frame buffer: 0x%x stride=%d\n", buf_setup.addr, stride);
-
-        // UV buffer offset calculation
-        uv_offset = frame_size + (frame_size >> 1);
-        if (buf_setup.size >= uv_offset) {
-            pr_info("Configuring UV buffer: 0x%x\n", buf_setup.addr + frame_size);
+        // === Y-plane (main output) ===
+        y_stride = ((width + 7) >> 3) << 3;   // 8-byte aligned
+        y_size = y_stride * height;
+        if (buf_setup.size < y_size) {
+            pr_err("Buffer too small for Y plane: need %u, got %u\n", y_size, buf_setup.size);
+            return -EINVAL;
         }
+        system_reg_write(0x7820, buf_setup.addr);          // Y base address
+        system_reg_write(0x7824, y_stride);                 // Y stride
 
-        // YUV420 additional buffer configuration
-        yuv_stride = ((((width + 0x1f) >> 5) + 7) >> 3) << 3;
-        yuv_size = yuv_stride * ((((height + 0xf) >> 4) + 1) << 3);
+        // === Y second bank ===
+        y_stride2 = ((width + 7) >> 3) << 3;  // same alignment
+        y_size2 = y_stride2 * height;
+        system_reg_write(0x7828, buf_setup.addr + y_size);  // Y bank 2
+        system_reg_write(0x782c, y_stride2);                // Y bank 2 stride
 
-        if (!isp_memopt) {
-            // Full buffer mode - configure all planes
-            pr_info("Full buffer mode: YUV stride=%d size=%d\n", yuv_stride, yuv_size);
+        // === R-plane (reference frame for MDNS temporal) ===
+        r_offset = y_size + (y_size2 >> 1);    // after Y + half UV
+        if (buf_setup.size < r_offset) {
+            pr_err("Buffer too small for R plane offset: need %u, got %u\n", r_offset, buf_setup.size);
+            return -EINVAL;
+        }
+        r_stride = ((((width + 0x1f) >> 5) + 7) >> 3) << 3;
+        r_size = r_stride * (((height + 0xf) >> 4) + 1);  /* OEM: compressed height */
+        system_reg_write(0x7830, buf_setup.addr + r_offset);  // R base
+        system_reg_write(0x7834, r_stride);                    // R stride
+
+        // === Common registers ===
+        system_reg_write(0x7838, 0);
+        system_reg_write(0x783c, 1);   // Enable flag
+
+        // === Middle banks (0x7840-0x7854) — depends on isp_memopt ===
+        if (isp_memopt == 0) {
+            // Full buffer mode: 4 reference banks
+            system_reg_write(0x7840, buf_setup.addr + r_offset + r_size);
+            system_reg_write(0x7844, r_stride);
+            system_reg_write(0x7848, buf_setup.addr + r_offset + 2 * r_size);
+            system_reg_write(0x784c, r_stride);
+            system_reg_write(0x7850, buf_setup.addr + r_offset + 3 * r_size);
+            system_reg_write(0x7854, r_stride);
+            r_total = 4 * r_size;
+            pr_info("Full buffer mode: r_stride=%u r_size=%u r_total=%u\n",
+                    r_stride, r_size, r_total);
         } else {
-            // Memory optimized mode
-            pr_info("Memory optimized mode\n");
+            // Memory optimized: all banks point at same location
+            system_reg_write(0x7840, buf_setup.addr + r_offset);
+            system_reg_write(0x7844, 0);
+            system_reg_write(0x7848, buf_setup.addr + r_offset);
+            system_reg_write(0x784c, 0);
+            system_reg_write(0x7850, buf_setup.addr + r_offset);
+            system_reg_write(0x7854, 0);
+            r_total = r_size;
+            pr_info("Memory optimized mode: r_stride=%u r_size=%u\n", r_stride, r_size);
         }
+
+        // === UV-plane ===
+        uv_base = r_offset + r_total;
+        if (buf_setup.size < uv_base) {
+            pr_err("Buffer too small for UV base: need %u, got %u\n", uv_base, buf_setup.size);
+            return -EINVAL;
+        }
+
+        if (isp_memopt == 0) {
+            // Full UV buffer mode
+            uv_stride = ((width / 2 + 7) >> 3) << 3;
+            uv_size = uv_stride * height;
+            system_reg_write(0x7858, buf_setup.addr + uv_base);
+            system_reg_write(0x785c, uv_stride);
+
+            uv_base2 = uv_base + uv_size;
+            if (buf_setup.size < uv_base2) {
+                pr_err("Buffer too small for UV bank2: need %u, got %u\n", uv_base2, buf_setup.size);
+                return -EINVAL;
+            }
+            uv_stride2 = ((width / 2 + 7) >> 3) << 3;
+            uv_size2 = uv_stride2 * height;
+            system_reg_write(0x7860, buf_setup.addr + uv_base2);
+            system_reg_write(0x7864, uv_stride2);
+
+            uv_base3 = uv_base2 + uv_size2 / 2;
+            if (buf_setup.size < uv_base3) {
+                pr_err("Buffer too small for UV bank3: need %u, got %u\n", uv_base3, buf_setup.size);
+                return -EINVAL;
+            }
+            tiny_stride = ((width / 32 + 7) >> 3) << 3;
+            tiny_size = tiny_stride * height;
+            system_reg_write(0x7868, buf_setup.addr + uv_base3);
+            system_reg_write(0x786c, tiny_stride);
+            final_offset = uv_base3 + tiny_size / 32;
+
+            pr_info("UV full mode: uv_stride=%u uv_stride2=%u tiny_stride=%u final=%u\n",
+                    uv_stride, uv_stride2, tiny_stride, final_offset);
+        } else {
+            // Memory optimized: all UV banks point at base addr
+            system_reg_write(0x7858, buf_setup.addr);
+            system_reg_write(0x785c, 0);
+            system_reg_write(0x7860, buf_setup.addr);
+            system_reg_write(0x7864, 0);
+            system_reg_write(0x7868, buf_setup.addr);
+            system_reg_write(0x786c, 0);
+            final_offset = uv_base;
+
+            pr_info("UV memopt mode: all UV banks -> addr=0x%x final=%u\n",
+                    buf_setup.addr, final_offset);
+        }
+
+        // Final size check
+        if (buf_setup.size < final_offset) {
+            pr_err("Buffer too small for final layout: need %u, got %u\n",
+                   final_offset, buf_setup.size);
+            return -EINVAL;
+        }
+
+        pr_info("ISP DMA registers 0x7820-0x786c programmed successfully\n");
+
+        // Enable MDNS now that DMA registers are valid
+        tisp_mdns_enable_after_dma();
 
         return 0;
     }
@@ -5315,6 +5405,7 @@ static int tx_isp_init(void)
 
     /* Initialize device structure */
     spin_lock_init(&ourISPdev->lock);
+    init_waitqueue_head(&ourISPdev->poll_wait);
     ourISPdev->refcnt = 0;
     ourISPdev->is_open = false;
     ourISPdev->active_link = -1;
@@ -6390,7 +6481,7 @@ static int tx_isp_send_event_to_remote_local(void *subdev, int event_type, void 
     struct tx_isp_subdev *sd = (struct tx_isp_subdev *)subdev;
     int result = 0;
 
-    pr_debug("*** tx_isp_send_event_to_remote: MIPS-SAFE with VIC handler - event=0x%x ***\n", event_type);
+    pr_info("*** tx_isp_send_event_to_remote: MIPS-SAFE with VIC handler - event=0x%x ***\n", event_type);
 
     /* CRITICAL MIPS FIX: Never access ANY pointers that could be unaligned or corrupted */
     /* The crash at BadVA: 0x5f4942b3 was caused by unaligned memory access on MIPS */
@@ -6540,7 +6631,7 @@ int vic_event_handler(void *subdev, int event_type, void *data)
         return vic_core_ops_ioctl(&vic_dev->sd, 0x3000005, data);
     }
     default:
-        pr_debug("*** vic_event_handler: UNHANDLED EVENT 0x%x - returning 0xfffffdfd ***\n", event_type);
+        pr_info("*** vic_event_handler: UNHANDLED EVENT 0x%x - returning 0xfffffdfd ***\n", event_type);
         return 0xfffffdfd;
     }
 }
@@ -6555,7 +6646,7 @@ static int ispvic_frame_channel_qbuf(struct tx_isp_vic_device *vic_dev, void *bu
     int a1_2;
     int v1_1;
 
-    pr_debug("*** ispvic_frame_channel_qbuf: MIPS-SAFE implementation with alignment checks ***\n");
+    pr_info("*** ispvic_frame_channel_qbuf: MIPS-SAFE implementation with alignment checks ***\n");
 
     /* MIPS ALIGNMENT CHECK: Validate vic_dev pointer alignment */
     if (!vic_dev || ((uintptr_t)vic_dev & 0x3) != 0) {
@@ -6594,10 +6685,10 @@ static int ispvic_frame_channel_qbuf(struct tx_isp_vic_device *vic_dev, void *bu
 
     /* MIPS SAFE: Check if we have free buffers */
     if (list_empty(&vic_dev->free_head)) {
-        pr_debug("ispvic_frame_channel_qbuf: bank no free (MIPS-safe)\n");
+        pr_info("ispvic_frame_channel_qbuf: bank no free (MIPS-safe)\n");
         a1_4 = var_18;
     } else if (list_empty(&vic_dev->queue_head)) {
-        pr_debug("ispvic_frame_channel_qbuf: qbuffer null (MIPS-safe)\n");
+        pr_info("ispvic_frame_channel_qbuf: qbuffer null (MIPS-safe)\n");
         a1_4 = var_18;
     } else {
         /* MIPS SAFE: Get free buffer with alignment validation */
@@ -6638,7 +6729,7 @@ static int ispvic_frame_channel_qbuf(struct tx_isp_vic_device *vic_dev, void *bu
                         wmb();
 
                         pr_debug("*** MIPS-SAFE: VIC BUFFER WRITE - reg[0x%x] = 0x%x (buffer[%d] addr) ***\n",
-                                buffer_reg_offset, a1_2, v1_1);
+                               buffer_reg_offset, a1_2, v1_1);
                     } else {
                         pr_err("*** MIPS ALIGNMENT ERROR: register offset 0x%x not aligned ***\n", buffer_reg_offset);
                     }
@@ -6653,7 +6744,7 @@ static int ispvic_frame_channel_qbuf(struct tx_isp_vic_device *vic_dev, void *bu
                 if (((uintptr_t)&vic_dev->frame_count & 0x3) == 0) {
                     vic_dev->frame_count++;
                     pr_debug("*** MIPS-SAFE: Buffer programmed to VIC, frame_count=%u ***\n",
-                            vic_dev->frame_count);
+                           vic_dev->frame_count);
                 } else {
                     pr_warn("*** MIPS WARNING: frame_count not aligned, skipping increment ***\n");
                 }
@@ -6671,7 +6762,7 @@ static int ispvic_frame_channel_qbuf(struct tx_isp_vic_device *vic_dev, void *bu
     /* MIPS SAFE: Release spinlock */
     spin_unlock_irqrestore(&vic_dev->buffer_lock, a1_4);
 
-    pr_debug("*** ispvic_frame_channel_qbuf: MIPS-SAFE completion ***\n");
+    pr_info("*** ispvic_frame_channel_qbuf: MIPS-SAFE completion ***\n");
     return 0;
 }
 
