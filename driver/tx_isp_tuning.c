@@ -146,6 +146,27 @@ static void tiziano_bcsh_build_active_ccm(int32_t out[9], uint32_t ct);
 static void tiziano_bcsh_Tccm_RGBYUV(int32_t out[9], const int32_t *M, const int32_t *CCM, const int32_t *Minv);
 static int tiziano_bcsh_update(struct isp_tuning_data *tuning);
 
+/* Forward declarations for g_ctrl/s_ctrl dispatch */
+int tisp_g_awb_start(uint32_t *gains);
+int apical_isp_awb_zone_statis_g_attr(void __user *uptr);
+int tisp_g_wb_ct(void *arg1);
+int tisp_g_awb_cluster(void *arg1);
+int tisp_g_awb_ct_trend(void *arg1);
+int tisp_g_Hilightdepress(uint32_t *out);
+int apical_isp_gamma_g_attr(void __user *uptr);
+int tisp_ae_state_get(uint32_t *out);
+int tisp_g_BacklightComp(uint32_t *out);
+int tisp_g_ccm_attr(void *out);
+int tiziano_s_awb_start(uint32_t gain0, uint32_t gain1);
+int tisp_s_wb_ct(void *arg1);
+int tisp_s_awb_cluster(void *arg1, uint32_t arg2, uint32_t arg3);
+int tisp_s_awb_ct_trend(void *arg1);
+int tisp_s_Hilightdepress(int depress_level);
+int apical_isp_gamma_s_attr(void __user *uptr);
+int tisp_s_BacklightComp(int comp_level);
+int tisp_s_adr_enable(int enable);
+int tisp_s_ccm_attr(const void *in);
+
 /* External hardware register write functions from tx-isp-module.c */
 extern void system_reg_write(u32 reg, u32 value);
 extern void system_reg_write_awb(u32 block, u32 reg, u32 value);
