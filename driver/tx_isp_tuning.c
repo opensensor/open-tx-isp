@@ -77,7 +77,7 @@ module_param_named(force_bypass_defog, tisp_force_bypass_defog, int, S_IRUGO | S
 MODULE_PARM_DESC(force_bypass_defog,
 			 "Debug isolate FOV issues by forcing Defog bypass (default: 0)");
 
-static int tisp_force_bypass_gib = 1; /* GIB: 0=enabled, 1=bypassed — causes R=G=B, root cause unknown */
+static int tisp_force_bypass_gib = 0; /* GIB: 0=enabled, 1=bypassed — testing DG nudge fix for R=G=B */
 module_param_named(force_bypass_gib, tisp_force_bypass_gib, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(force_bypass_gib,
 			 "Force GIB bypass (default: 1 — GIB equalizes R=G=B in HW stats)");
@@ -4710,6 +4710,23 @@ static int tisp_ae0_process_impl(void)
     {
         uint32_t dg_val = dg0_cache[EffectFrame < 15 ? EffectFrame : 0];
         uint32_t reg_packed = (dg_val << 16) | dg_val;
+
+        /* GIB R=G=B TEST: The OEM's DG registers evolve per-frame
+         * (0x400→0x4d3→0x43e...), but ours stay at 0x04000400.
+         * Theory: GIB hardware needs a VALUE CHANGE via the gate to
+         * transition from power-on defaults to active processing.
+         * Nudge the DG value slightly on the first frame so the
+         * hardware sees a transition. */
+        {
+            static int dg_nudge_count;
+            if (dg_nudge_count == 0 && dg_val == 0x400) {
+                reg_packed = (0x401 << 16) | 0x401;  /* Tiny nudge */
+                dg_nudge_count = 1;
+            } else if (dg_nudge_count == 1) {
+                /* Revert to real value on second frame */
+                dg_nudge_count = 2;
+            }
+        }
 
         if (ae_wdr_mode == 0) {
             /* Normal mode: OEM uses system_reg_write_gib for gate writes */
