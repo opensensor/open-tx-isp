@@ -1507,56 +1507,17 @@ int system_irq_func_set(int index, irqreturn_t (*handler)(int irq, void *dev_id)
 EXPORT_SYMBOL(system_irq_func_set);
 
 
-/* ip_done_interrupt_static - EXACT Binary Ninja function name
+/* ip_done_interrupt_static - OEM EXACT from HLIL 0x14e6c.
  *
- * OEM HLIL 0x14e6c only does:
- *   if ((system_reg_read(0xc) & 0x40) == 0) tisp_lsc_write_lut_datas();
- *   return 2;
- *
- * The OEM relies on hardware IRQ bits 26-30 for AE/AWB.  On this T31
- * those bits only fire during the first few frames, so we poll from
- * ip_done (bit 13, every frame).  awb_interrupt_static() has
- * bank-change gating to avoid overwriting arrays with stale data. */
+ * OEM only does: LSC LUT write if LSC not bypassed, return 2.
+ * AE/AWB are delivered via HW IRQ bits 26-30, dispatched through
+ * irq_func_cb[] in ispcore_interrupt_service_routine. */
 irqreturn_t ip_done_interrupt_static(int irq, void *dev_id)
 {
-    static unsigned int ae_poll_frame_count;
-    extern int ae0_interrupt_static(void);
-    extern int ae1_interrupt_static(void);
-
-    /* OEM EXACT (0x48b4): if ((system_reg_read(0xc) & 0x40) == 0) */
-    uint32_t reg_val = system_reg_read(0xc);
-
-    if ((reg_val & 0x40) == 0) {
+    /* OEM EXACT: if ((system_reg_read(0xc) & 0x40) == 0) */
+    if ((system_reg_read(0xc) & 0x40) == 0)
         tisp_lsc_write_lut_datas();
-    }
 
-    /* OEM EXACT (0x48b4): The OEM ip_done_interrupt_static does NOT write
-     * to 0xa000/0xa800/0xb000 here.  Those enables are written during
-     * tisp_init via system_reg_write_ae() inside tiziano_ae_set_hardware_param().
-     *
-     * CRITICAL: Writing 0xa000=1 every frame re-arms the AE stats engine,
-     * which restarts DMA bank collection mid-cycle.  This causes the DMA
-     * buffer to contain incomplete/corrupt data (e.g., values with Y in
-     * upper bits instead of lower 21 bits).  The OEM writes 0xa000=1 only
-     * during init and threshold updates, never per-frame.
-     *
-     * For safety, we do a single re-latch on frame 0 to ensure the enables
-     * took effect after the ISP engine started, then never again. */
-    if (ae_poll_frame_count == 0) {
-        system_reg_write(0xb000, 1);  /* AWB stats enable — one-shot */
-        system_reg_write(0xa000, 1);  /* AE0 stats enable — one-shot */
-        system_reg_write(0xa800, 1);  /* AE1 stats enable — one-shot */
-    }
-
-    /* OEM EXACT: ae0_interrupt_static every frame, ae1 every 4th frame. */
-    ae0_interrupt_static();
-
-    if ((ae_poll_frame_count & 3) == 0)
-        ae1_interrupt_static();
-
-    ae_poll_frame_count++;
-
-    /* Binary Ninja: return 1 (OEM returns 1, not IRQ_HANDLED) */
     return IRQ_HANDLED;
 }
 

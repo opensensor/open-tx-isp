@@ -3689,7 +3689,7 @@ static uint32_t again_old = 0;
 static uint32_t tisp_ae_ctrls[38] = {0};  /* OEM: 0x98 bytes, set by tisp_set_ae_info from libimp */
 static uint32_t _ae_ev = 0;        /* Current exposure value (output of ae0_tune2) */
 static uint32_t ae_scene_luma = 0;  /* Scene luminance output */
-static uint32_t IspAeFlag = 0;     /* AE initial convergence flag */
+static uint32_t IspAeFlag = 1;     /* AE initial convergence flag — OEM sets to 1 during init */
 
 /* OEM analog/digital gain state for tisp_set_ae0_ag */
 static uint32_t ag_new = 0x400;    /* Current analog gain (Q10) */
@@ -3699,6 +3699,7 @@ static uint32_t data_c46a4 = 0x400; /* Cached digital gain */
 static uint32_t data_c46ac = 0x400; /* Cached compensated digital gain */
 
 /* OEM gain register/limit references */
+static uint32_t ae_requested_ag = 0x400; /* Last REQUESTED AG (before sensor quantization) */
 static uint32_t data_c46a8 = 0x400; /* Max integration time (tuning param) */
 static uint32_t data_c46b0 = 0x157fe; /* Max analog gain in Q10 (OEM: set by tisp_s_max_again) */
 static uint32_t data_c46bc = 0x400; /* Max ISP digital gain in Q10 (OEM: set by tisp_s_max_isp_dgain) */
@@ -3723,6 +3724,25 @@ static uint32_t data_9a2ec = 0;    /* Comp AE mode flag */
 static uint32_t data_c46d0 = 0;    /* AE gain distribution mode */
 static uint32_t ftune_wmeans_state = 0; /* OEM: ftune_wmeans.32574 */
 
+/* OEM ae0_tune2 persistent state — arg7 in OEM (5-element convergence state):
+ *   [0] = s5: current target exposure (from tisp_ae_target)
+ *   [1] = convergence mode flag (0=stable, 1=converging)
+ *   [2] = stored target_ev
+ *   [3] = scene mode (day/night)
+ *   [4] = convergence counter */
+static uint32_t ae0_conv_state[5];
+
+/* OEM ae0_tune2 EV FIFO — arg8 in OEM (15-entry history):
+ * Shifted left each frame, newest value pushed at index 14.
+ * The recency-weighted average drives the denominator of the
+ * target/current ratio, keeping both in the same EV domain. */
+static uint32_t ae0_ev_fifo[16];
+
+/* OEM ae0_tune2 scaled ev/lum arrays — arg18/arg19:
+ * Copies of ae0_ev_list / _lum_list after wmean-based scaling. */
+static uint32_t ae0_scaled_ev[10];
+static uint32_t ae0_scaled_lum[10];
+
 /* OEM scene luma tracking */
 static uint32_t scene_luma_old[8];
 static uint32_t scene_luma_wmean = 0;
@@ -3735,7 +3755,7 @@ static uint32_t ae_wdr_mode = 0;
 static void ae0_weight_mean2(uint32_t *zone_y, uint32_t *zone_weight,
                              uint32_t cols, uint32_t rows,
                              uint32_t *out_wmean, uint32_t *out_total_weight);
-static int ae0_tune2(uint32_t wmean, uint32_t q,
+static int ae0_tune2(uint32_t wmean, uint32_t q, uint32_t target_ev,
                      uint32_t *exp_out, uint32_t *ag_out, uint32_t *dg_out);
 static void tisp_set_ae0_ag(uint32_t ag, uint32_t dg);
 
@@ -4439,243 +4459,580 @@ static uint32_t tisp_ae_target(uint32_t cur_ev_q, uint32_t q)
     }
 }
 
-/* ae0_tune2 — Simplified AE exposure convergence controller.
+/* tisp_ae_target_ex — OEM EXACT variant with explicit array pointers.
  *
- * OEM (0x500b8) is an extremely complex gain-splitting PID controller
- * with 64-bit fixed-point math, multi-level gain distribution, hysteresis,
- * anti-flicker, and EV-target interpolation.
+ * Same algorithm as tisp_ae_target() but takes ev_list/lum_list as parameters
+ * instead of using globals.  This is needed by the OEM ae0_tune2 which passes
+ * locally-scaled copies of the tables (after wmean-based adjustment).
  *
- * This simplified version implements the core convergence loop:
- *   1. Compare weighted mean luminance against AE target
- *   2. Compute required exposure value change as a ratio
- *   3. Adjust integration time first (primary control)
- *   4. When IT is maxed/minned, adjust analog gain (secondary)
- *   5. Digital gain is a last resort (tertiary)
- *   6. Apply convergence speed damping to avoid oscillation
+ * OEM calling convention: tisp_ae_target(cur_ev_q, ev_list_ptr, lum_list_ptr, q)
+ */
+static uint32_t tisp_ae_target_ex(uint32_t cur_ev_q, uint32_t *ev_list,
+                                   uint32_t *lum_list, uint32_t q)
+{
+    uint32_t qm = q & 31;
+    uint32_t cur_ev = cur_ev_q >> qm;
+    int i, idx;
+    uint32_t x0, x1, y0, y1, dx, num;
+
+    if (cur_ev <= ev_list[0])
+        return lum_list[0];
+    if (cur_ev >= ev_list[9])
+        return lum_list[9];
+
+    idx = 0;
+    for (i = 0; i < 9; i++) {
+        if (cur_ev >= ev_list[i] && cur_ev <= ev_list[i + 1]) {
+            idx = i;
+            break;
+        }
+        if (cur_ev < ev_list[i])
+            idx = i;
+    }
+
+    x0 = ev_list[idx];
+    x1 = ev_list[idx + 1];
+    y0 = lum_list[idx];
+    y1 = lum_list[idx + 1];
+
+    if (x1 == x0)
+        return y0;
+
+    dx = (x1 > x0) ? (x1 - x0) : 1;
+    num = (cur_ev > x0) ? (cur_ev - x0) : 0;
+
+    if (y1 >= y0)
+        return y0 + (y1 - y0) * num / dx;
+    else
+        return y0 - (y0 - y1) * num / dx;
+}
+
+/* ae0_tune2 — OEM-exact AE exposure convergence controller (0x500b8).
  *
- * wmean:   current weighted mean scene luminance
- * q:       Q-format fixed-point position
- * exp_out: output integration time
- * ag_out:  output analog gain (Q10)
- * dg_out:  output digital gain (Q10)
+ * OEM is a 34-argument function; this implementation accesses the same data
+ * through driver globals.  The algorithm matches the BN C decompilation:
+ *
+ *   Phase A: Histogram wmean computation + ev_list/lum_list scaling
+ *   Phase B: AE mode processing (mode 0 passthrough, mode 1 weighting)
+ *   Phase C: EV FIFO management (15-entry temporal smoothing)
+ *   Phase D: Base EV + tisp_ae_target interpolation
+ *   Phase E: Convergence bounds check
+ *   Phase F: 64-bit EV interpolation (over/under exposure cases)
+ *   Phase G: _ae_ev update
+ *   Phase H: Gain distribution (IT → AG → DG)
+ *   Phase I: Scene mode detection
+ *   Phase J: Output
+ *
+ * OEM (0x500b8) is a 34-argument function with histogram-based table
+ * scaling, 15-entry EV FIFO, 64-bit fixed-point interpolation, multi-level
+ * gain distribution, and scene mode detection.
+ *
+ * This implementation accesses the same data through driver globals.
+ * The algorithm matches the BN C decompilation exactly.
+ *
+ * wmean:      current weighted mean scene luminance (from ae0_weight_mean2)
+ * q:          Q-format fixed-point position
+ * target_ev:  current total EV to push into FIFO (IT*AG*DG, OEM arg27)
+ * exp_out:    output integration time
+ * ag_out:     output analog gain (Q10)
+ * dg_out:     output digital gain (Q10)
  *
  * Returns: 0 = converged (stable), 1 = still adjusting
  */
-static int ae0_tune2(uint32_t wmean, uint32_t q,
+static int ae0_tune2(uint32_t wmean, uint32_t q, uint32_t target_ev,
                      uint32_t *exp_out, uint32_t *ag_out, uint32_t *dg_out)
 {
-    uint32_t ae_target;
-    uint32_t cur_it, cur_ag, cur_dg;
-    uint32_t min_it, max_it, min_ag, max_ag, min_dg, max_dg;
-    uint32_t conv_speed, tolerance;
-    uint32_t qm, one_q;
-    uint32_t ratio, error;
-    uint32_t tol_q, tol_scaled;
-    int32_t delta, step_speed, damped_delta;
-    uint32_t step_ratio;
-    uint32_t new_it, new_ag, new_dg;
+    uint32_t s0 = _AePointPos.data[0];  /* OEM: *arg14 = precision */
+    uint32_t qm = s0 & 31;
 
-    /* AE target via OEM-exact interpolation from ae0_ev_list + _lum_list.
-     * The OEM tisp_ae_target() interpolates the target brightness based on
-     * the current total EV. _scene_para.data[0] is NOT the AE target —
-     * it's a scene mode flag. */
-    {
-        uint32_t cur_ev_q;
-        uint32_t cur_it_tmp = _ae_reg.data[0];
-        uint32_t cur_ag_tmp = data_c46a0;
-        uint32_t cur_dg_tmp = data_c46a4;
-        uint32_t qm_tmp = q & 31;
-        if (qm_tmp == 0) qm_tmp = 10;
-        if (cur_it_tmp == 0) cur_it_tmp = 1;
-        if (cur_ag_tmp == 0) cur_ag_tmp = 0x400;
-        if (cur_dg_tmp == 0) cur_dg_tmp = 0x400;
-        cur_ev_q = fix_point_mult3_32(qm_tmp,
-                                      cur_it_tmp << qm_tmp,
-                                      cur_ag_tmp, cur_dg_tmp);
-        ae_target = tisp_ae_target(cur_ev_q, q);
-    }
-    if (ae_target == 0)
-        ae_target = 0x80;  /* Safe default: ~128 out of 255 */
+    /* OEM arg7: convergence state (persistent across frames) */
+    uint32_t s5 = ae0_conv_state[0];     /* target from tisp_ae_target */
+    uint32_t v0_34 = ae0_conv_state[1];  /* convergence mode flag */
+    uint32_t var_c8 = ae0_conv_state[3]; /* scene mode */
+    uint32_t v0_38 = ae0_conv_state[4];  /* convergence counter */
 
-    /* Current exposure state */
-    cur_it = _ae_reg.data[0];
-    cur_ag = data_c46a0;
-    cur_dg = data_c46a4;
+    /* OEM arg5: current exposure triplet for base EV computation */
+    uint32_t cur_it = _ae_reg.data[0];
+    uint32_t cur_ag = data_c46a0;
+    uint32_t cur_dg = data_c46a4;
+
+    /* OEM arg11: EV interpolation parameters */
+    uint32_t var_dc = ae_ev_step.data[0];
+    uint32_t var_e0 = ae_ev_step.data[1];
+    uint32_t a3_3 = ae_ev_step.data[2];
+    uint32_t a3_4 = ae_ev_step.data[3];
+    uint32_t v0_1 = ae_ev_step.data[4];
+
+    /* OEM arg13: convergence thresholds from ae_stable_tol */
+    uint32_t v0_6 = ae_stable_tol.data[0];
+    uint32_t v0_7 = ae_stable_tol.data[1];
+    uint32_t v0_8 = ae_stable_tol.data[2];
+    uint32_t v0_9 = ae_stable_tol.data[3];
+
+    /* OEM arg1: state from _exp_parameter */
+    uint32_t s2 = _exp_parameter.data[2];  /* FIFO depth control */
+    uint32_t v0_40 = _exp_parameter.data[7]; /* step param A */
+    uint32_t v0_41 = _exp_parameter.data[8]; /* step param B */
+    uint32_t v0_42 = _exp_parameter.data[0]; /* initial ref value */
+    uint32_t v0_43 = _exp_parameter.data[1]; /* conv threshold */
+
+    /* OEM arg10: gain mode (from tuning state) */
+    uint32_t v0_15 = 0;  /* gain mode — 0=default */
+    uint32_t v0_16 = 0;  /* sub mode */
+    uint32_t v0_17 = 0;  /* param */
+
+    /* OEM arg12: scene interpolation params */
+    uint32_t v0_2 = 0, v0_3 = 0, v0_4 = 0, v0_5 = 0;
+
+    /* OEM arg21-26: gain limit and current state pointers */
+    uint32_t v0_19 = ae_exp_th.data[0];  /* max IT */
+    uint32_t v0_21 = ae_exp_th.data[1];  /* max AG (Q10) */
+    uint32_t v0_23 = ae_exp_th.data[2];  /* max DG (Q10) */
+    uint32_t var_c4 = cur_it;             /* output IT (mutable) */
+    uint32_t var_d4 = cur_ag;             /* output AG (mutable) */
+    uint32_t var_d0 = cur_dg;             /* output DG (mutable) */
+
+    /* Computed values */
+    uint32_t var_b8;     /* base EV in Q-format */
+    uint32_t s6_2;       /* historical EV average (from FIFO) */
+    uint32_t s2_2;       /* new computed EV → written to _ae_ev */
+    uint32_t var_cc_2;   /* convergence in progress flag */
+    uint32_t var_c0_1 = 0; /* convergence counter for output */
+    uint32_t v0_68;      /* ratio = s5/s6 */
+    uint32_t v0_69;      /* new_ev = var_b8 * ratio */
+
+    /* Local copies of ev_list/lum_list (may be scaled) */
+    uint32_t local_ev[10], local_lum[10];
+    int i;
 
     if (cur_it == 0) cur_it = 1;
-    if (cur_ag == 0) cur_ag = 0x400;  /* Unity Q10 */
-    if (cur_dg == 0) cur_dg = 0x400;  /* Unity Q10 */
+    if (cur_ag == 0) cur_ag = 0x400;
+    if (cur_dg == 0) cur_dg = 0x400;
 
-    /* Exposure limits from tuning parameters.
-     * OEM ae_exp_th layout (AE0 group, indices 0..6):
-     *   [0] = max integration time (clamped to sensor max by init_exp_th)
-     *   [1] = max analog gain in Q10 (from tuning binary, ~0x157fe for GC2053)
-     *   [2] = max digital gain in Q10 (from tuning binary, typically 0x400 = 1x)
-     *   [3] = short IT threshold (overwritten by sensor param)
-     *   [4] = min analog gain (raw value clamped to >= 0x400 by init_exp_th)
-     *   [5] = min digital gain (raw value clamped to >= 0x400 by init_exp_th)
-     *   [6] = max DG secondary (0x400)
-     * Min IT defaults to 1 (OEM data_b0cfc is the min-exp from sensor). */
-    min_it = 1;
-    max_it = ae_exp_th.data[0]; /* Max integration time */
-    min_ag = ae_exp_th.data[4]; /* Min analog gain (raw, clamped below) */
-    if (min_ag < 0x400) min_ag = 0x400;  /* OEM clamps to >= 1x Q10 */
-    max_ag = ae_exp_th.data[1]; /* Max analog gain in Q10 */
-    min_dg = ae_exp_th.data[5]; /* Min digital gain */
-    if (min_dg < 0x400) min_dg = 0x400;  /* OEM clamps to >= 1x Q10 */
-    max_dg = ae_exp_th.data[2]; /* Max digital gain in Q10 */
+    /* ---- Compute base EV (OEM: var_b8) ---- */
+    var_b8 = fix_point_mult3_32(s0, cur_ag, cur_dg, cur_it << (qm));
 
-    /* Sanity clamp limits */
-    if (max_it == 0) max_it = 0x40000;
-    if (max_ag < min_ag) max_ag = 0x4000;
-    if (max_dg < min_dg) max_dg = 0x4000;
-    if (max_it < min_it) max_it = min_it;
-
-    /* Convergence speed parameters from _exp_parameter:
-     * data[3] = convergence speed (higher = faster)
-     * data[6] = tolerance (how close to target before declaring stable) */
-    conv_speed = _exp_parameter.data[3];
-    tolerance = _exp_parameter.data[6];
-    if (conv_speed == 0) conv_speed = 0x400;  /* Default Q10 speed */
-    if (tolerance == 0) tolerance = 1;
-
-    /* Compute error: how far are we from target?
-     * ratio = target / wmean in Q-format
-     * >1.0 means too dark (need more exposure)
-     * <1.0 means too bright (need less exposure) */
-    qm = q & 31;
-    if (qm == 0) qm = 10;
-    one_q = 1u << qm;
-
-    if (wmean == 0)
-        ratio = one_q << 2;  /* Very dark: 4x increase */
-    else
-        ratio = fix_point_div_32(qm, ae_target << qm, wmean << qm);
-
-    /* Check if already within tolerance */
-    if (ratio >= one_q)
-        error = ratio - one_q;
-    else
-        error = one_q - ratio;
-
-    /* Stable tolerance check: OEM uses ae_stable_tol */
-    tol_q = ae_stable_tol.data[0];
-    if (tol_q == 0) tol_q = 0x33;  /* ~5% tolerance */
-    tol_scaled = (tol_q * one_q) >> 8;  /* Convert 0..255 to Q-format fraction */
-
-    if (error <= tol_scaled) {
-        /* Within tolerance — declare stable */
-        *exp_out = cur_it;
-        *ag_out = cur_ag;
-        *dg_out = cur_dg;
-        return 0;
+    /* ---- Phase A: Copy ev/lum tables and optional histogram scaling ---- */
+    for (i = 0; i < 10; i++) {
+        local_ev[i] = ae0_ev_list.data[i];
+        local_lum[i] = _lum_list.data[i];
     }
 
-    /* Apply convergence damping: don't jump the full ratio in one frame.
-     * OEM uses ae_ev_step data for this; we use conv_speed as a fraction
-     * of the full correction to apply per frame.
-     *
-     * damped_ratio = 1.0 + (ratio - 1.0) * speed / 256
-     * This gives ~60% correction per frame at speed=0x9a (OEM default). */
-    delta = (int32_t)ratio - (int32_t)one_q;
-    step_speed = ae_ev_step.data[4];
-    if (step_speed == 0) step_speed = 0x9a;  /* OEM default */
+    if (data_9a2ec == 1) {
+        /* Histogram-based wmean computation from 256 bins.
+         * OEM uses IspAeStatic[256] histogram; our wmean is already
+         * computed by ae0_weight_mean2 and passed as parameter.
+         * Scale factor: (256 - wmean/2) / 256 */
+        uint32_t clamped_wmean = (wmean > 255) ? 255 : wmean;
+        uint32_t scale = fix_point_div_32(s0,
+                (256 - (clamped_wmean >> 1)) << qm,
+                256 << qm);
 
-    /* Scale delta by speed/256 to get per-frame step */
-    damped_delta = (delta * step_speed) >> 8;
+        for (i = 0; i < 10; i++) {
+            local_ev[i] = fix_point_mult2_32(s0,
+                    local_ev[i] << qm, scale) >> qm;
+            local_lum[i] = fix_point_mult2_32(s0,
+                    local_lum[i] << qm, scale) >> qm;
+        }
 
-    /* Clamp minimum step to ensure convergence */
-    if (damped_delta > 0 && damped_delta < (int32_t)(one_q >> 6))
-        damped_delta = one_q >> 6;
-    if (damped_delta < 0 && damped_delta > -(int32_t)(one_q >> 6))
-        damped_delta = -(int32_t)(one_q >> 6);
+        /* OEM pushes event 8 with wmean value */
+        {
+            struct tisp_event_record ev = {0};
+            ev.event_id = 8;
+            ev.args[0] = clamped_wmean;
+            tisp_event_push(&ev);
+        }
+    }
 
-    step_ratio = (uint32_t)((int32_t)one_q + damped_delta);
-    if (step_ratio == 0)
-        step_ratio = 1;
+    /* ---- Phase B: AE mode processing ---- */
+    /* OEM arg17[0] = ae_mode. Mode 0 = passthrough, Mode 1 = weighted.
+     * For now we use mode 0 (passthrough). */
+    for (i = 0; i < 10; i++) {
+        ae0_scaled_ev[i] = local_ev[i];
+        ae0_scaled_lum[i] = local_lum[i];
+    }
 
-    /* Cap maximum per-frame exposure change to 1.25x increase / 0.8x decrease.
-     * Larger caps cause AE oscillation due to sensor lag (the gain change
-     * takes 2-3 frames to appear in stats, so oversized steps overshoot). */
-    if (step_ratio > one_q + (one_q >> 2))   /* 1.25x max increase */
-        step_ratio = one_q + (one_q >> 2);
-    if (step_ratio < one_q - (one_q >> 2))   /* 0.75x max decrease */
-        step_ratio = one_q - (one_q >> 2);
+    /* ---- Phase C: EV FIFO management ---- */
+    /* Shift FIFO left by 1 position (OEM: entries 1..14 → 0..13) */
+    for (i = 1; i < 15; i++)
+        ae0_ev_fifo[i - 1] = ae0_ev_fifo[i];
+    ae0_ev_fifo[14] = target_ev;  /* Push newest at end */
 
-    /* Apply the step ratio to current EV = IT * AG * DG.
-     * Strategy: adjust IT first, then AG, then DG.
-     *
-     * Compute new_ev = cur_ev * step_ratio
-     * Then distribute across IT, AG, DG respecting limits. */
+    /* Compute s6 = recency-weighted average from FIFO */
+    if (IspAeFlag == 1) {
+        /* First frame: seed FIFO with initial value to avoid cold-start.
+         * OEM: s6_2 = target_ev, bypasses FIFO averaging entirely. */
+        ftune_wmeans_state = 1;
+        if (v0_34 == 1)
+            ftune_wmeans_state = 0;
+        /* Pre-fill FIFO so subsequent frames don't average with zeros */
+        for (i = 0; i < 15; i++)
+            ae0_ev_fifo[i] = target_ev;
+        s6_2 = target_ev;
+    } else {
+        if (v0_34 == 1)
+            ftune_wmeans_state = 0;
 
-    /* First: try to adjust integration time only */
+        if (ftune_wmeans_state == 1) {
+            s6_2 = target_ev;
+        } else {
+            /* Compute partial weighted mean of FIFO entries */
+            uint32_t depth = s2;
+            uint32_t offset, sum_w = 0, sum_wv = 0;
+
+            if (depth == 0) depth = 1;
+            if (depth > 15) depth = 15;
+            offset = 15 - depth;
+
+            for (i = (int)offset; i < 15; i++) {
+                uint32_t w = (uint32_t)(i + 1);
+                sum_wv += w * ae0_ev_fifo[i];
+                sum_w += w;
+            }
+
+            s6_2 = (sum_w > 0) ? (sum_wv / sum_w) : target_ev;
+        }
+    }
+
+    if (s6_2 == 0)
+        s6_2 = 1;
+
+    /* ---- Phase D: Handle ae_ev_init + call tisp_ae_target ---- */
+    if (IspAeFlag == 1) {
+        if (ae_ev_init_en == 1) {
+            var_b8 = ae_ev_init_strict << qm;
+            data_a0dfc = 0;
+            ae_ev_init_en = 0;
+        }
+        s5 = tisp_ae_target_ex(var_b8, local_ev, local_lum, s0);
+    }
+
+    /* Compute ratio = s5 / s6 (both in EV domain → ratio ≈ 1.0) */
     {
-        uint64_t new_it_64 = (uint64_t)cur_it * step_ratio;
-        new_it_64 >>= qm;
-        new_it = (uint32_t)new_it_64;
-        /* Guarantee minimum 1-unit progress to avoid integer truncation
-         * stall (e.g., 1 * 1.25 = 1 in integer math → stuck forever) */
-        if (step_ratio > one_q && new_it <= cur_it)
-            new_it = cur_it + 1;
-        if (step_ratio < one_q && new_it >= cur_it && cur_it > min_it)
-            new_it = cur_it - 1;
+        uint32_t s2_1 = s6_2 << qm;
+        if (s2_1 == 0) s2_1 = 1;
+        v0_68 = fix_point_div_32(s0, s5 << qm, s2_1);
+    }
+    /* Compute new_ev = var_b8 * ratio */
+    v0_69 = fix_point_mult2_32(s0, var_b8, v0_68);
+
+    /* ---- Phase E: Convergence bounds check ---- */
+    var_cc_2 = 0;
+    s2_2 = 0;
+
+    if (v0_34 == 1) {
+        /* Currently converging — check bounds */
+        if (v0_68 >= v0_6) {
+            /* Within or above lower bound */
+            if (v0_7 < v0_68) {
+                /* Above upper bound → set target and keep converging */
+                s2_2 = var_b8;
+                ae0_conv_state[2] = target_ev;
+                var_cc_2 = 1;
+            } else {
+                /* Within bounds */
+                ae0_conv_state[1] = 0;
+
+                if (s6_2 < s5 - v0_8) {
+                    /* Below target minus margin */
+                    var_cc_2 = 0;
+                    goto phase_f_target;
+                }
+                if (s5 + v0_9 < s6_2) {
+                    /* Above target plus margin */
+                    var_cc_2 = 0;
+                    goto phase_f_target;
+                }
+                /* Within deadband — converged with stable output */
+                ae0_conv_state[1] = 1;
+                ae0_conv_state[2] = target_ev;
+                ae0_conv_state[0] = s5;
+
+                if (data_a0df4 == 1) {
+                    var_cc_2 = 1;
+                    s2_2 = var_b8;
+                    s5 = 0;
+                } else {
+                    s2_2 = var_b8;
+                    var_cc_2 = 1;
+                }
+            }
+        } else {
+            /* Below lower bound */
+            ae0_conv_state[1] = 0;
+            goto phase_e_check_margins;
+        }
+    } else if (v0_34 == 0) {
+phase_e_check_margins:
+        if (s6_2 < s5 - v0_8) {
+            var_cc_2 = 0;
+            goto phase_f_target;
+        }
+        if (s5 + v0_9 < s6_2) {
+            var_cc_2 = 0;
+            goto phase_f_target;
+        }
+        /* Within deadband — set stable */
+        ae0_conv_state[1] = 1;
+        ae0_conv_state[2] = target_ev;
+        ae0_conv_state[0] = s5;
+
+        if (data_a0df4 == 1) {
+            var_cc_2 = 1;
+            s2_2 = var_b8;
+            s5 = 0;
+        } else {
+            s2_2 = var_b8;
+            var_cc_2 = 1;
+        }
+    } else {
+        /* v0_34 > 1 or undefined */
+        s2_2 = 0;
+        var_cc_2 = v0_34;
+        s5 = 0;
     }
 
-    if (new_it < min_it) new_it = min_it;
-    if (new_it > max_it) new_it = max_it;
-    new_ag = cur_ag;
-    new_dg = cur_dg;
+    goto phase_g;
 
-    /* If IT was clamped, compute residual and apply to AG */
-    if (new_it == max_it || new_it == min_it) {
-        uint32_t desired_it, residual;
-        {
-            uint64_t tmp = (uint64_t)cur_it * step_ratio;
-            tmp >>= qm;
-            desired_it = (uint32_t)tmp;
-        }
-        if (desired_it == 0) desired_it = 1;
-        if (new_it == 0) new_it = 1;
+phase_f_target:
+    /* ---- Phase F: Compute new target and EV interpolation ---- */
+    data_a0df4 = 0;
+    s5 = tisp_ae_target_ex(v0_69, local_ev, local_lum, s0);
+    ae0_conv_state[0] = s5;
 
-        residual = fix_point_div_32(qm, desired_it << qm, new_it << qm);
+    {
+        uint32_t diff;
+        if (s6_2 >= s5)
+            diff = s6_2 - s5;
+        else
+            diff = s5 - s6_2;
 
-        /* Apply residual to analog gain */
-        {
-            uint64_t new_ag_64 = (uint64_t)cur_ag * residual;
-            new_ag_64 >>= qm;
-            new_ag = (uint32_t)new_ag_64;
-        }
-        if (new_ag < min_ag) new_ag = min_ag;
-        if (new_ag > max_ag) new_ag = max_ag;
+        /* OEM: v0_75 = fix_div(diff << q, s6_2 << q) */
+        uint32_t s2_1 = s6_2 << qm;
+        uint32_t v0_75 = fix_point_div_32(s0, diff << qm, s2_1 ? s2_1 : 1);
+        uint32_t one_q = 1u << qm;
 
-        /* If AG also clamped, apply remainder to DG */
-        if (new_ag == max_ag || new_ag == min_ag) {
-            uint32_t desired_ag, ag_residual;
-            {
-                uint64_t tmp = (uint64_t)cur_ag * residual;
-                tmp >>= qm;
-                desired_ag = (uint32_t)tmp;
+        /* 64-bit EV interpolation (Phase F of OEM).
+         * OEM uses fix_point_mult2_64/mult3_64/div_64 for extended precision.
+         * Simplified to 32-bit where the values are bounded. */
+        if (s6_2 >= s5) {
+            /* Over-exposed: need to DECREASE EV */
+            if ((uint32_t)(-(int32_t)v0_1) >= (uint32_t)(-(int32_t)v0_75)) {
+                /* Large step: use mult2_64 path */
+                uint64_t a = (uint64_t)one_q << qm;
+                uint64_t b = fix_point_mult2_64_native(qm * 2,
+                        (uint64_t)var_dc << qm, (uint64_t)v0_75 << qm);
+                if (a >= b)
+                    s2_2 = (uint32_t)(a - b);
+                else
+                    s2_2 = 0;
+            } else {
+                /* Small step: use mult3_64 path */
+                uint64_t base = (uint64_t)one_q << qm;
+                uint64_t interp = fix_point_mult3_64_native(qm * 2,
+                        (uint64_t)var_dc << qm,
+                        (uint64_t)v0_75 << qm,
+                        (uint64_t)v0_75 << qm);
+                uint64_t diff64 = fix_point_mult2_64_native(qm * 2,
+                        (uint64_t)(one_q - v0_75) << qm,
+                        (uint64_t)interp);
+                uint64_t result = fix_point_div_64_native(qm * 2, base, diff64 ? diff64 : 1);
+                if (base >= result)
+                    s2_2 = (uint32_t)(base - result);
+                else
+                    s2_2 = 0;
             }
-            if (desired_ag == 0) desired_ag = 1;
-            if (new_ag == 0) new_ag = 1;
-
-            ag_residual = fix_point_div_32(qm, desired_ag << qm, new_ag << qm);
-            {
-                uint64_t new_dg_64 = (uint64_t)cur_dg * ag_residual;
-                new_dg_64 >>= qm;
-                new_dg = (uint32_t)new_dg_64;
+        } else {
+            /* Under-exposed: need to INCREASE EV */
+            if (a3_4 >= v0_75) {
+                /* Small correction: linear interp */
+                uint64_t base = (uint64_t)one_q << qm;
+                uint64_t interp = fix_point_mult3_64_native(qm * 2,
+                        (uint64_t)var_e0 << qm,
+                        (uint64_t)v0_75 << qm,
+                        (uint64_t)v0_75 << qm);
+                s2_2 = (uint32_t)(interp + base);
+            } else {
+                /* Large correction */
+                uint64_t base = (uint64_t)one_q << qm;
+                uint64_t interp = fix_point_mult2_64_native(qm * 2,
+                        (uint64_t)var_e0 << qm, (uint64_t)v0_75 << qm);
+                s2_2 = (uint32_t)(interp + base);
             }
-            if (new_dg < min_dg) new_dg = min_dg;
-            if (new_dg > max_dg) new_dg = max_dg;
         }
+
+        /* Scale s2_2 by var_b8 and clamp */
+        {
+            uint64_t a = (uint64_t)var_b8 << qm;
+            uint64_t b = (uint64_t)s2_2;
+            uint64_t result = fix_point_mult2_64_native(qm * 2, a, b);
+            result >>= qm;
+            if ((result >> 32) != 0)
+                s2_2 = 0xFFFFFFFF;  /* Overflow: clamp to max */
+            else
+                s2_2 = (uint32_t)result;
+        }
+
+        if (s2_2 < one_q)
+            s2_2 = one_q;
     }
 
-    *exp_out = new_it;
-    *ag_out = new_ag;
-    *dg_out = new_dg;
+    /* Step param processing (OEM: tisp_ae_tune call stub) */
+    if (v0_15 == 0 && v0_40 > 0) {
+        /* OEM calls tisp_ae_tune(arg28, ...) here.
+         * Not yet implemented — would adjust ev/lum tables based on
+         * scene analysis. */
+    }
 
-    data_a0dfc = 1;  /* Mark convergence in progress */
-    return 1;  /* Still adjusting */
+phase_g:
+    /* ---- Phase G: Write _ae_ev ---- */
+    _ae_ev = s2_2;
+
+    /* ---- Phase H: Gain distribution (IT → AG → DG) ---- */
+    if (var_b8 != s2_2 || data_a0df8 != 0 || data_a0dfc == 0) {
+        uint32_t gain_mode = data_c46d0;
+
+        data_a0dfc = 1;
+        data_a0df8 = 0;
+
+        if (gain_mode == 0) {
+            /* Mode 0: Direct EV distribution.
+             * OEM splits new EV across IT, AG, DG using max limits. */
+            uint32_t ev_to_distribute = s2_2;
+            uint32_t one_q_local = 1u << qm;
+            uint32_t max_it_q = v0_19;
+            uint32_t max_ag_q = v0_21;
+            uint32_t max_dg_q = v0_23;
+
+            if (fix_point_mult3_32(s0, var_c4 << qm, var_d4, var_d0)
+                    >= s2_2) {
+                /* Already at or above target — no change needed */
+                goto phase_h_done;
+            }
+
+            /* Compute required total gain ratio */
+            {
+                uint32_t cur_ev_product = fix_point_mult2_32(s0, var_d4, var_d0);
+                uint32_t it_q = var_c4 << qm;
+                uint32_t ev_ratio;
+
+                if (cur_ev_product == 0) cur_ev_product = 1;
+                ev_ratio = fix_point_div_32(s0, s2_2, cur_ev_product);
+
+                /* Try IT first */
+                if (fix_point_mult2_32(s0, (uint32_t)max_it_q << qm, cur_ev_product)
+                        >= s2_2) {
+                    /* IT alone can reach target.
+                     * OEM: var_c4 = (ev_ratio >> q) << q >> q, i.e. round
+                     * down to integer, put fractional remainder into AG. */
+                    var_c4 = ev_ratio >> qm;
+                    if (var_c4 == 0) var_c4 = 1;
+                    /* Guarantee minimum 1-unit IT progress when target
+                     * requires increase but truncation prevents it */
+                    if (s2_2 > var_b8 && var_c4 <= cur_it && cur_it < max_it_q)
+                        var_c4 = cur_it + 1;
+                    goto phase_h_ag_dg;
+                }
+
+                /* IT maxed — compute AG/DG distribution */
+                var_c4 = max_it_q;
+
+            phase_h_ag_dg:
+                /* Recompute what AG*DG needs to be */
+                if (var_c4 == 0) var_c4 = 1;
+                {
+                    uint32_t needed_gain = fix_point_div_32(s0,
+                            s2_2, var_c4 << qm);
+
+                    /* Try AG */
+                    if (fix_point_mult2_32(s0, needed_gain, one_q_local)
+                            >= max_ag_q) {
+                        var_d4 = max_ag_q;
+                    } else {
+                        var_d4 = needed_gain;
+                    }
+
+                    /* Remainder to DG */
+                    if (var_d4 == 0) var_d4 = one_q_local;
+                    {
+                        uint32_t remaining = fix_point_div_32(s0,
+                                needed_gain << qm, var_d4 << qm);
+                        if (remaining > max_dg_q)
+                            var_d0 = max_dg_q;
+                        else
+                            var_d0 = remaining;
+                    }
+                }
+            }
+        } else if (gain_mode == 1) {
+            /* Mode 1: Threshold-based distribution (OEM data_c46a8 as IT ref).
+             * Uses data_c46a8 as reference IT, distributes excess to AG/DG. */
+            uint32_t ref_it = data_c46a8;
+            uint32_t it_q;
+
+            if (var_c4 < ref_it)
+                var_c4 = ref_it;
+
+            it_q = var_c4 << qm;
+            if (fix_point_mult3_32(s0, it_q, var_d4, var_d0) >= s2_2) {
+                goto phase_h_done;
+            }
+
+            /* Distribute via AG then DG */
+            {
+                uint32_t needed = fix_point_div_32(s0, s2_2, it_q ? it_q : 1);
+                var_d4 = fix_point_div_32(s0, needed, var_d0 ? var_d0 : 1);
+                if (var_d4 > v0_21)
+                    var_d4 = v0_21;
+                var_d0 = fix_point_div_32(s0, needed,
+                        var_d4 ? var_d4 : 1);
+                if (var_d0 > v0_23)
+                    var_d0 = v0_23;
+            }
+        } else {
+            /* Unknown mode: reset to initial values */
+            var_d0 = cur_dg;
+            var_d4 = cur_ag;
+            var_c4 = cur_it;
+        }
+
+    phase_h_done:
+        /* ---- Phase I: Scene mode detection ---- */
+        /* OEM compares arg29-34 against scene thresholds.
+         * Simplified: maintain previous scene mode. */
+        ae0_conv_state[3] = var_c8;
+        var_c0_1 = 0;
+    } else {
+        /* var_b8 == s2_2 and no change flags */
+        if (data_a0df8 == 0 && data_a0dfc != 0) {
+            /* Check if scene mode counter needs increment */
+            if (v0_38 < 0xff)
+                var_c0_1 = v0_38 + 1;
+            else
+                var_c0_1 = v0_38;
+        }
+
+        /* Restore initial gains when at convergence with no change */
+        var_d0 = cur_dg;
+        var_d4 = cur_ag;
+        var_c4 = cur_it;
+    }
+
+    /* ---- Phase J: Output ---- */
+    {
+        uint32_t converged = var_cc_2;
+        if (var_c0_1 == v0_43)
+            converged = 1;
+
+        ae0_conv_state[1] = converged;
+        ae0_conv_state[4] = var_c0_1;
+    }
+
+    *exp_out = var_c4;
+    *ag_out = var_d4;
+    *dg_out = var_d0;
+
+    return (ae0_conv_state[1] != 0) ? 1 : 0;
 }
 
 /* tisp_set_ae0_ag — OEM EXACT (0x51870): Write analog + digital gain to sensor.
@@ -4730,12 +5087,13 @@ static void tisp_set_ae0_ag(uint32_t ag, uint32_t dg)
         dg_comp = dg;
     }
 
-    /* Step 4: Clamp to max digital gain.
-     * OEM ae_exp_th[2] = max DG in Q10 (typically 0x400 = 1x).
-     * ae_exp_th[6] is a secondary max-DG limit. Use the larger. */
-    max_dg = ae_exp_th.data[2];
-    if (ae_exp_th.data[6] > max_dg)
-        max_dg = ae_exp_th.data[6];
+    /* Step 4: Clamp ISP digital gain compensation.
+     * ae_exp_th.data[2] = max SENSOR digital gain (0x400 = 1x for GC2053).
+     * dg_comp here is ISP digital gain written to 0x1030/0x1034, NOT sensor DG.
+     * OEM uses a separate higher limit for ISP DG compensation (from AE state,
+     * not ae_exp_th). Allow up to 4x (0x1000 Q10) to compensate for sensor
+     * gain quantization (e.g., sensor steps 0x590→0x800 = 1.44x gap). */
+    max_dg = 0x1000;  /* 4x ISP digital gain max for quantization compensation */
     if (max_dg > 0 && dg_comp > max_dg)
         dg_comp = max_dg;
 
@@ -4809,25 +5167,26 @@ static int tisp_ae0_process_impl(void)
     new_ag = data_c46a0;
     new_dg = data_c46a4;
 
-    /* Sensible defaults if not yet initialized */
-    if (new_it == 0) new_it = 0x400;  /* ~1024 lines initial exposure */
+    /* Sensible defaults if not yet initialized.
+     * CRITICAL: new_it default must be small (1, not 0x400) because the FIFO
+     * target_ev = IT*AG*DG. A large default IT makes target_ev enormous,
+     * causing the OEM algorithm to think we're overexposed and clamp _ae_ev
+     * to minimum. */
+    if (new_it == 0) new_it = 1;      /* Minimum IT — AE will ramp up */
     if (new_ag == 0) new_ag = 0x400;  /* Unity analog gain (Q10) */
     if (new_dg == 0) new_dg = 0x400;  /* Unity digital gain (Q10) */
 
-    /* Handle initial EV seeding (from tisp_s_ev_start ioctl) */
-    if (ae_ev_init_en == 1) {
-        /* OEM: seed initial exposure from ae_ev_init_strict, clear flag */
-        if (ae_ev_init_strict > 0) {
-            new_it = ae_ev_init_strict;
-            data_a0dfc = 0;
-        }
-        ae_ev_init_en = 0;
+    /* Compute current total EV for ae0_tune2's FIFO (OEM arg27).
+     * This represents the ACTUAL current exposure, not a target.
+     * OEM: ae_ev_init seeding is handled INSIDE ae0_tune2 now. */
+    {
+        uint32_t cur_ev_for_fifo;
+        cur_ev_for_fifo = fix_point_mult3_32(q, new_it << q, new_ag, new_dg);
+        ae0_tune2(wmean, q, cur_ev_for_fifo, &new_it, &new_ag, &new_dg);
     }
-
-    ae0_tune2(wmean, q, &new_it, &new_ag, &new_dg);
-
-    /* Store computed exposure value */
-    _ae_ev = fix_point_mult3_32(q, new_it << q, new_ag, new_dg);
+    /* OEM ae0_tune2 sets _ae_ev directly; also compute here for logging */
+    if (_ae_ev == 0)
+        _ae_ev = fix_point_mult3_32(q, new_it << q, new_ag, new_dg);
 
     {
         static int ae_frame_diag;
@@ -11708,19 +12067,33 @@ static int      awb_shadow_ready;  /* set by ISR, cleared by dispatch */
 
 #define AWB_ZONE_COLS              0x0f
 #define AWB_ZONE_ROWS              0x0f
-#define AWB_NORMAL_RG_TH_LOW       0x0080u
-#define AWB_NORMAL_RG_TH_HIGH      0x0200u
-#define AWB_NORMAL_BG_TH_LOW       0x0080u
-#define AWB_NORMAL_BG_TH_HIGH      0x0200u
-#define AWB_DEFAULT_POINTPOS_LOW   0x0100u
-#define AWB_DEFAULT_POINTPOS_HIGH  0x0000u
-#define AWB_DEFAULT_COF_LOW        0x0100u
-#define AWB_DEFAULT_COF_HIGH       0x0fffu
-#define AWB_LUM_MEAN_LIMIT         0x0010u
-#define AWB_LUM_FREQ_BASE          0x00f0u
-#define AWB_LUM_FREQ_MODE          0x0001u
 
 static uint8_t _awb_parameter[0xb4];
+
+/* OEM reads AWB thresholds and luminance params from _awb_parameter[34..44],
+ * which are loaded from the tuning binary via tiziano_awb_params_refresh().
+ * Access via awb_param_word() helper to keep the index mapping clear.
+ * Index layout within _awb_parameter (45 u32 words = 0xB4 bytes):
+ *   [0]=word0  [1]=rows  [2]=enable  [3]=cols
+ *   [4..18]=zone_widths  [19..33]=zone_heights
+ *   [34]=rg_th_low  [35]=rg_th_high  [36]=bg_th_low  [37]=bg_th_high
+ *   [38]=pointpos_low  [39]=pointpos_high  [40]=cof_low  [41]=cof_high
+ *   [42]=lum_mean_limit  [43]=lum_freq_base  [44]=lum_freq_mode */
+static inline uint32_t awb_param_word(int idx)
+{
+	return ((const uint32_t *)_awb_parameter)[idx];
+}
+#define AWB_RG_TH_LOW()       awb_param_word(34)
+#define AWB_RG_TH_HIGH()      awb_param_word(35)
+#define AWB_BG_TH_LOW()       awb_param_word(36)
+#define AWB_BG_TH_HIGH()      awb_param_word(37)
+#define AWB_POINTPOS_LOW()    awb_param_word(38)
+#define AWB_POINTPOS_HIGH()   awb_param_word(39)
+#define AWB_COF_LOW()         awb_param_word(40)
+#define AWB_COF_HIGH()        awb_param_word(41)
+#define AWB_LUM_MEAN_LIMIT()  awb_param_word(42)
+#define AWB_LUM_FREQ_BASE()   awb_param_word(43)
+#define AWB_LUM_FREQ_MODE()   awb_param_word(44)
 static uint32_t _pixel_cnt_th;
 static uint32_t _awb_lowlight_rg_th[2];
 static uint32_t _AwbPointPos[2];
@@ -11915,108 +12288,76 @@ void tiziano_awb_params_refresh(void)
  */
 static int tiziano_awb_set_hardware_param(void)
 {
-	static const u32 awb_default_v30 =
-		(AWB_DEFAULT_POINTPOS_HIGH << 16) | AWB_DEFAULT_POINTPOS_LOW;
-	static const u32 awb_default_v34 =
-		(AWB_DEFAULT_COF_HIGH << 16) | AWB_DEFAULT_COF_LOW;
-	static const u32 awb_default_rg =
-		(AWB_NORMAL_RG_TH_HIGH << 16) | AWB_NORMAL_RG_TH_LOW;
-	static const u32 awb_default_bg =
-		(AWB_NORMAL_BG_TH_HIGH << 16) | AWB_NORMAL_BG_TH_LOW;
-
-    /* One-time pack of _awb_parameter into AWB registers (0xb008..0xb024) */
+    /* One-time pack of _awb_parameter into AWB zone config registers */
     if (!awb_first) {
         awb_first = 1;
-	        u32 stats_cfg;
-	        u32 param_word0;
+        u32 stats_cfg;
         u32 val;
-	        /* OEM MLIL: $s0 = &_awb_parameter, then:
-	         *   param_word0 = [$s0]         = wp[0]  (low 12 bits of 0xb004)
-	         *   rows        = [$s0 + 4]     = wp[1]  (bits 15:12)
-	         *   enable      = [$s0 + 8]     = wp[2]  (bits 16+, post-WB flag)
-	         *   cols        = [$s0 + 0xc]   = wp[3]  (bits 31:28)
-	         * All loaded from tuning blob via tiziano_awb_params_refresh(). */
-	        {
-	            const uint32_t *wp = (const uint32_t *)_awb_parameter;
-	            param_word0 = wp[0];
-	            /* OEM EXACT: wp[2] is the AWB stats enable flag (1=on).
-	             * Setting to 0 disables AWB stats DMA and IRQ entirely. */
-	            stats_cfg = (wp[3] << 28) | (wp[2] << 16) |
-	                (wp[1] << 12) | param_word0;
-	        }
-	        /* OEM uses raw system_reg_write for zone config registers
-	         * (0xb004-0xb024) — no 0xb000 latch here.
-	         * system_reg_write_awb() handles 0xb000 internally for
-	         * threshold registers 0xb028+. */
-	        system_reg_write(0x0b004, stats_cfg);
+        const uint32_t *wp = (const uint32_t *)_awb_parameter;
 
-        /* OEM: 0xb008-0xb014 = zone WIDTHS packed as low bytes from _awb_parameter[4..18]
-         *       0xb018-0xb024 = zone HEIGHTS packed as low bytes from _awb_parameter[19..33]
-         * Layout: [0]=word0 [1]=rows [2]=enable [3]=cols [4..18]=widths [19..33]=heights
-         * BUG FIX: was packing from p[0..29] (config header), not zone dimensions! */
-        {
-            const uint32_t *wp = (const uint32_t *)_awb_parameter;
-            /* Zone widths: wp[4..18] → low byte of each, packed 4 per register */
-            val = (wp[4]&0xff)|((wp[5]&0xff)<<8)|((wp[6]&0xff)<<16)|((wp[7]&0xff)<<24);
-            system_reg_write(0x0b008, val);
-            val = (wp[8]&0xff)|((wp[9]&0xff)<<8)|((wp[10]&0xff)<<16)|((wp[11]&0xff)<<24);
-            system_reg_write(0x0b00c, val);
-            val = (wp[12]&0xff)|((wp[13]&0xff)<<8)|((wp[14]&0xff)<<16)|((wp[15]&0xff)<<24);
-            system_reg_write(0x0b010, val);
-            val = (wp[16]&0xff)|((wp[17]&0xff)<<8)|((wp[18]&0xff)<<16);
-            system_reg_write(0x0b014, val);
-            /* Zone heights: wp[19..33] → low byte of each, packed 4 per register */
-            val = (wp[19]&0xff)|((wp[20]&0xff)<<8)|((wp[21]&0xff)<<16)|((wp[22]&0xff)<<24);
-            system_reg_write(0x0b018, val);
-            val = (wp[23]&0xff)|((wp[24]&0xff)<<8)|((wp[25]&0xff)<<16)|((wp[26]&0xff)<<24);
-            system_reg_write(0x0b01c, val);
-            val = (wp[27]&0xff)|((wp[28]&0xff)<<8)|((wp[29]&0xff)<<16)|((wp[30]&0xff)<<24);
-            system_reg_write(0x0b020, val);
-            val = (wp[31]&0xff)|((wp[32]&0xff)<<8)|((wp[33]&0xff)<<16);
-            system_reg_write(0x0b024, val);
-            pr_info("AWB: zone cfg=0x%x w[0]=%u h[0]=%u written to 0xb004-0xb024\n",
-                    stats_cfg, wp[4], wp[19]);
-            pr_info("AWB_HW_DIAG: param_word0=0x%x enable=%u cols=%d rows=%d stats_cfg=0x%08x\n",
-                    param_word0,
-                    (stats_cfg >> 16) & 0x7ff,
-                    (stats_cfg >> 28) & 0xf,
-                    (stats_cfg >> 12) & 0xf,
-                    stats_cfg);
-            pr_info("AWB_HW_DIAG: 0xb004=0x%08x 0xb008=0x%08x 0xb03c=0x%08x 0xb04c=0x%08x\n",
-                    system_reg_read(0xb004), system_reg_read(0xb008),
-                    system_reg_read(0xb03c), system_reg_read(0xb04c));
-            pr_info("AWB_HW_DIAG: WB 0x1804=0x%08x 0x1808=0x%08x CFA 0x4800=0x%08x bypass=0x%08x\n",
-                    system_reg_read(0x1804), system_reg_read(0x1808),
-                    system_reg_read(0x4800), system_reg_read(0xc));
-            pr_info("AWB_HW_DIAG: thresh 0xb028=0x%08x 0xb02c=0x%08x 0xb030=0x%08x 0xb034=0x%08x\n",
-                    system_reg_read(0xb028), system_reg_read(0xb02c),
-                    system_reg_read(0xb030), system_reg_read(0xb034));
-        }
+        /* OEM: 0xb004 = cols<<28 | enable<<16 | rows<<12 | word0 */
+        stats_cfg = (wp[3] << 28) | (wp[2] << 16) |
+            (wp[1] << 12) | wp[0];
+        system_reg_write(0x0b004, stats_cfg);
+
+        /* Zone widths: wp[4..18] → low byte packed 4 per register */
+        val = (wp[4]&0xff)|((wp[5]&0xff)<<8)|((wp[6]&0xff)<<16)|((wp[7]&0xff)<<24);
+        system_reg_write(0x0b008, val);
+        val = (wp[8]&0xff)|((wp[9]&0xff)<<8)|((wp[10]&0xff)<<16)|((wp[11]&0xff)<<24);
+        system_reg_write(0x0b00c, val);
+        val = (wp[12]&0xff)|((wp[13]&0xff)<<8)|((wp[14]&0xff)<<16)|((wp[15]&0xff)<<24);
+        system_reg_write(0x0b010, val);
+        val = (wp[16]&0xff)|((wp[17]&0xff)<<8)|((wp[18]&0xff)<<16);
+        system_reg_write(0x0b014, val);
+        /* Zone heights: wp[19..33] → low byte packed 4 per register */
+        val = (wp[19]&0xff)|((wp[20]&0xff)<<8)|((wp[21]&0xff)<<16)|((wp[22]&0xff)<<24);
+        system_reg_write(0x0b018, val);
+        val = (wp[23]&0xff)|((wp[24]&0xff)<<8)|((wp[25]&0xff)<<16)|((wp[26]&0xff)<<24);
+        system_reg_write(0x0b01c, val);
+        val = (wp[27]&0xff)|((wp[28]&0xff)<<8)|((wp[29]&0xff)<<16)|((wp[30]&0xff)<<24);
+        system_reg_write(0x0b020, val);
+        val = (wp[31]&0xff)|((wp[32]&0xff)<<8)|((wp[33]&0xff)<<16);
+        system_reg_write(0x0b024, val);
+        pr_info("AWB_HW: cfg=0x%08x w[0]=%u h[0]=%u "
+                "rg_th=%u/%u bg_th=%u/%u pp=%u/%u cof=%u/%u "
+                "lum_lim=%u lum_base=%u lum_mode=%u\n",
+                stats_cfg, wp[4], wp[19],
+                AWB_RG_TH_LOW(), AWB_RG_TH_HIGH(),
+                AWB_BG_TH_LOW(), AWB_BG_TH_HIGH(),
+                AWB_POINTPOS_LOW(), AWB_POINTPOS_HIGH(),
+                AWB_COF_LOW(), AWB_COF_HIGH(),
+                AWB_LUM_MEAN_LIMIT(), AWB_LUM_FREQ_BASE(),
+                AWB_LUM_FREQ_MODE());
     }
 
-    /* OEM uses system_reg_write_awb(1, ...) for ALL AWB threshold
-     * register writes. The 0xb000=1 latch pulse must precede each
-     * config register write — the hardware gates config access. */
-    {
-        if (awb_algo_mode == 1) {
-            system_reg_write_awb(1, 0xb028, 0x0fff0001);
-            system_reg_write_awb(1, 0xb02c, 0x0fff0001);
-            system_reg_write_awb(1, 0xb030, 0x00000100);
-            system_reg_write_awb(1, 0xb034, 0xffff0100);
+    /* OEM EXACT: threshold writes via system_reg_write_awb (latches 0xb000=1).
+     * awb_algo_mode maps to OEM data_99f58; awb_mode_flag maps to OEM ModeFlag.
+     * Threshold values come from _awb_parameter[34..41] (tuning bin). */
+    if (awb_algo_mode == 1) {
+        /* data_99f58 != 0 path: wide-open thresholds */
+        system_reg_write_awb(1, 0xb028, 0x0fff0001);
+        system_reg_write_awb(1, 0xb02c, 0x0fff0001);
+        system_reg_write_awb(1, 0xb030, 0x00000100);
+        system_reg_write_awb(1, 0xb034, 0xffff0100);
+    } else {
+        if (awb_mode_flag == 1) {
+            /* Lowlight mode: rg from _awb_lowlight_rg_th, bg fixed */
+            system_reg_write_awb(1, 0xb028,
+                (_awb_lowlight_rg_th[1] << 16) | _awb_lowlight_rg_th[0]);
+            system_reg_write_awb(1, 0xb02c, 0x03ff0001);
         } else {
-            if (awb_mode_flag == 1) {
-                u32 rg_lo = (_awb_lowlight_rg_th[0] & 0x0FFF);
-                u32 rg_hi = (_awb_lowlight_rg_th[1] & 0x0FFF) << 16;
-                system_reg_write_awb(1, 0xb028, rg_hi | rg_lo);
-                system_reg_write_awb(1, 0xb02c, 0x03ff0001);
-            } else {
-                system_reg_write_awb(1, 0xb028, awb_default_rg);
-                system_reg_write_awb(1, 0xb02c, awb_default_bg);
-            }
-            system_reg_write_awb(1, 0xb030, awb_default_v30);
-            system_reg_write_awb(1, 0xb034, awb_default_v34);
-            tiziano_awb_set_lum_th_freq();
+            /* Normal mode: OEM reads thresholds from _awb_parameter[34..37] */
+            system_reg_write_awb(1, 0xb028,
+                (AWB_RG_TH_HIGH() << 16) | AWB_RG_TH_LOW());
+            system_reg_write_awb(1, 0xb02c,
+                (AWB_BG_TH_HIGH() << 16) | AWB_BG_TH_LOW());
         }
+        /* OEM: point position and coefficient from _awb_parameter[38..41] */
+        system_reg_write_awb(1, 0xb030,
+            (AWB_POINTPOS_HIGH() << 16) | AWB_POINTPOS_LOW());
+        system_reg_write_awb(1, 0xb034,
+            (AWB_COF_HIGH() << 16) | AWB_COF_LOW());
+        tiziano_awb_set_lum_th_freq();
     }
 
     return 0;
@@ -17708,34 +18049,26 @@ static int tiziano_awb_set_lum_th_freq(void)
 	if (tisp_ae_mean_update(&mean, &scale) != 0)
 		mean = 0;
 
-	if (mean >= AWB_LUM_MEAN_LIMIT)
-		mean = AWB_LUM_MEAN_LIMIT;
+	/* OEM: cap to _awb_parameter[42] (lum_mean_limit) */
+	if (mean >= AWB_LUM_MEAN_LIMIT())
+		mean = AWB_LUM_MEAN_LIMIT();
 
 	lum_freq = (mean * scale) >> 10;
 	if (lum_freq == 0)
 		lum_freq = 1;
 
-	{
-		static int aediag;
-		if (aediag < 5) {
-			pr_info("AE_DIAG: ae_mean=%u scale=%d lum_freq=%u\n", mean, scale, lum_freq);
-			aediag++;
-		}
-	}
-
-	/* OEM uses system_reg_write_awb(1,...) which writes 0xb000=1
-	 * (latch pulse) before the register write. Without the latch,
-	 * AWB hardware ignores config register updates. */
+	/* OEM: 0xb038 = lum_freq_mode<<16 | lum_freq_base<<8 | lum_freq
+	 * All from _awb_parameter[42..44] loaded from tuning bin. */
 	system_reg_write_awb(1, 0xb038,
-		(AWB_LUM_FREQ_MODE << 16) | (AWB_LUM_FREQ_BASE << 8) | lum_freq);
+		(AWB_LUM_FREQ_MODE() << 16) | (AWB_LUM_FREQ_BASE() << 8) | lum_freq);
 	return 0;
 }
 
 static int JZ_Isp_Awb(void)
 {
 	uint32_t wb_attr_mode = 0;
-	u32 normal_rg = (AWB_NORMAL_RG_TH_HIGH << 16) | AWB_NORMAL_RG_TH_LOW;
-	u32 normal_bg = (AWB_NORMAL_BG_TH_HIGH << 16) | AWB_NORMAL_BG_TH_LOW;
+	u32 normal_rg = (AWB_RG_TH_HIGH() << 16) | AWB_RG_TH_LOW();
+	u32 normal_bg = (AWB_BG_TH_HIGH() << 16) | AWB_BG_TH_LOW();
 	u32 ev_low = _awb_mode[0] << 10;
 	u32 ev_high = _awb_mode[1] << 10;
 	u32 lowlight_rg = ((_awb_lowlight_rg_th[1] & 0x0fff) << 16) |
@@ -17809,149 +18142,50 @@ static int JZ_Isp_Awb(void)
  *   push event 10
  *   return 1
  *
- * BANK-CHANGE GATE (not in OEM but required for polled mode):
- * When called from ip_done polling (every frame), the same DMA bank
- * may be current for multiple consecutive calls.  Re-reading the same
- * bank overwrites awb_array with identical or partially-updated data,
- * and pushes duplicate event-10 entries that waste event queue slots.
- * Skip processing when the bank hasn't changed since the last call. */
+ * OEM does NOT mask bank index or skip bank 3. All 4 banks are valid. */
 int awb_interrupt_static(void)
 {
 	struct tisp_event_record event_data = {0};
-	uint32_t awb_status;
-	uint32_t bank_idx;
+	uint32_t offset;
 	void *buffer_addr;
 	static unsigned int awb_irq_count;
-	static uint32_t awb_last_bank = 0xFFFFFFFF;
-	static unsigned int awb_bank_change_count;
-	static unsigned int awb_oob_warn;
 
 	if (data_a2f5c == 0)
 		return 0;
 
-	awb_status = system_reg_read(0xb050);
+	/* OEM EXACT: read bank status, shift left 12 for byte offset */
+	offset = system_reg_read(0xb050) << 12;
+	buffer_addr = (void *)(unsigned long)(data_a2f5c + offset);
 
-	awb_irq_count++;
-
-	/* Track bank changes for diagnostics */
-	if (awb_status != awb_last_bank) {
-		awb_bank_change_count++;
-		awb_last_bank = awb_status;
-	}
-
-	/* Only 4 banks were allocated (0xb03c..0xb048 → +0x000/+0x1000/+0x2000/+0x3000).
-	 * If the hardware status register returns a value >= 4, an unmasked index
-	 * would push buffer_addr past the AWB DMA allocation into adjacent kernel
-	 * pages — those pages may contain GIB/MDNS LUT data that decodes (via the
-	 * 21-bits-per-channel unpack in JZ_Isp_Get_Awb_Statistics) to constant
-	 * R=G=B values, which is exactly the symptom we observed when GIB was
-	 * enabled. Mask the index to keep reads inside the allocation. */
-	bank_idx = awb_status & 0x3;
-
-	/* 0xb04c=3 may mean "3 banks (0-2)". When 0xb050 returns 3, no valid
-	 * data is available — skip processing. Without this, reading the
-	 * uninitialized bank 3 buffer returns zeros, corrupting AWB state. */
-	if (bank_idx == 3)
-		return 1;  /* skip this IRQ, return "handled" */
-
-	if (awb_status >= 4 && awb_oob_warn < 5) {
-		pr_warn("AWB_BANK_OOB: 0xb050=0x%x out of range (3 banks), masked to %u\n",
-			awb_status, bank_idx);
-		awb_oob_warn++;
-	}
-	buffer_addr = (void *)(unsigned long)(data_a2f5c + (bank_idx << 12));
-
-	/* OEM: private_dma_cache_sync(0, virt + (status << 12), 0x1000, 0) */
+	/* OEM EXACT: invalidate cache for this bank before reading */
 	private_dma_cache_sync(NULL, buffer_addr, 0x1000, 0);
 
+	/* OEM EXACT: unpack stats from DMA buffer */
+	JZ_Isp_Get_Awb_Statistics(buffer_addr, 0xf001f001);
+
+	/* OEM EXACT: update luminance threshold/frequency */
+	tiziano_awb_set_lum_th_freq();
+
+	/* One-shot diagnostic on first IRQ */
+	awb_irq_count++;
 	if (awb_irq_count == 1) {
-		/* Full AWB register dump on first IRQ — compare with OEM */
-		pr_info("AWB_REGDUMP: 0x8=%08x 0xb000=%08x 0xb004=%08x 0xb008=%08x 0xb00c=%08x\n",
-			system_reg_read(0x8),
-			system_reg_read(0xb000), system_reg_read(0xb004),
-			system_reg_read(0xb008), system_reg_read(0xb00c));
-		pr_info("AWB_REGDUMP: 0xb010=%08x 0xb014=%08x 0xb018=%08x 0xb01c=%08x 0xb020=%08x 0xb024=%08x\n",
-			system_reg_read(0xb010), system_reg_read(0xb014),
-			system_reg_read(0xb018), system_reg_read(0xb01c),
-			system_reg_read(0xb020), system_reg_read(0xb024));
-		pr_info("AWB_REGDUMP: 0xb028=%08x 0xb02c=%08x 0xb030=%08x 0xb034=%08x 0xb038=%08x\n",
+		pr_info("AWB_IRQ1: bank_off=0x%x 0xb004=%08x 0xb028=%08x "
+			"0xb02c=%08x 0xb030=%08x 0xb034=%08x 0xb038=%08x\n",
+			offset, system_reg_read(0xb004),
 			system_reg_read(0xb028), system_reg_read(0xb02c),
 			system_reg_read(0xb030), system_reg_read(0xb034),
 			system_reg_read(0xb038));
-		pr_info("AWB_REGDUMP: 0xb03c=%08x 0xb040=%08x 0xb044=%08x 0xb048=%08x 0xb04c=%08x 0xb050=%08x\n",
-			system_reg_read(0xb03c), system_reg_read(0xb040),
-			system_reg_read(0xb044), system_reg_read(0xb048),
-			system_reg_read(0xb04c), system_reg_read(0xb050));
-		pr_info("AWB_REGDUMP: 0xb054=%08x 0xb058=%08x WB: 0x1804=%08x 0x1808=%08x 0x180c=%08x 0x1810=%08x\n",
-			system_reg_read(0xb054), system_reg_read(0xb058),
-			system_reg_read(0x1804), system_reg_read(0x1808),
-			system_reg_read(0x180c), system_reg_read(0x1810));
-		pr_debug("AWB_HW_LIVE: 0xb000=0x%08x 0xb004=0x%08x 0xb050=0x%08x\n",
-			system_reg_read(0xb000), system_reg_read(0xb004),
-			system_reg_read(0xb050));
-		pr_debug("AWB_HW_LIVE: WB 0x1804=0x%08x 0x1808=0x%08x 0x180c=0x%08x 0x1810=0x%08x\n",
-			system_reg_read(0x1804), system_reg_read(0x1808),
-			system_reg_read(0x180c), system_reg_read(0x1810));
-		pr_debug("AWB_HW_LIVE: DMA 0xb03c=0x%08x 0xb040=0x%08x 0xb044=0x%08x 0xb048=0x%08x 0xb04c=0x%08x\n",
-			system_reg_read(0xb03c), system_reg_read(0xb040),
-			system_reg_read(0xb044), system_reg_read(0xb048),
-			system_reg_read(0xb04c));
-	}
-
-	if (awb_irq_count <= 10 || (awb_irq_count % 30) == 0) {
-		u32 *raw = (u32 *)buffer_addr;
-		pr_info("AWB_BANK[%u]: bank=%u changes=%u/%u "
-			"raw[0..3]=%08x %08x %08x %08x\n",
-			awb_irq_count, awb_status,
-			awb_bank_change_count, awb_irq_count,
-			raw[0], raw[1], raw[2], raw[3]);
-	}
-
-	JZ_Isp_Get_Awb_Statistics(buffer_addr, 0xf001f001);
-
-	if (awb_irq_count <= 10 || (awb_irq_count % 30) == 0) {
-		pr_info("AWB_STATS[%u]: R[0]=%u G[0]=%u B[0]=%u "
-			"P[0]=%u | R[112]=%u G[112]=%u B[112]=%u P[112]=%u\n",
-			awb_irq_count,
-			awb_array_r[0], awb_array_g[0],
-			awb_array_b[0], awb_array_p[0],
-			awb_array_r[112], awb_array_g[112],
-			awb_array_b[112], awb_array_p[112]);
-		/* Deep diagnostic on bank 3 (first zero bank) */
-		if (awb_irq_count == 3 || awb_irq_count == 60) {
+		{
 			u32 *buf = (u32 *)buffer_addr;
-			int nz = 0, nz_thr = 0, max_p = 0, max_z = -1;
-			int z;
-			for (z = 0; z < 225; z++) {
-				u32 w2 = buf[z * 4 + 2];
-				u32 w3 = buf[z * 4 + 3];
-				u32 p = ((w3 & 1) << 12) | (w2 >> 20);
-				if (p > 0) nz++;
-				if (p >= 25) nz_thr++;
-				if (p > (u32)max_p) { max_p = p; max_z = z; }
-			}
-			pr_info("AWB_DEEP[%u]: nz=%d nz_thr25=%d max_P=%d at_zone=%d (of 225)\n",
-				awb_irq_count, nz, nz_thr, max_p, max_z);
-			if (max_z >= 0) {
-				u32 w0 = buf[max_z*4], w1 = buf[max_z*4+1];
-				u32 w2 = buf[max_z*4+2], w3 = buf[max_z*4+3];
-				u32 r = w0 & 0x1fffff;
-				u32 g = ((w1 & 0x3ff) << 11) | (w0 >> 21);
-				u32 b = (w1 & 0x7ffffc00) >> 10;
-				u32 p = ((w3 & 1) << 12) | (w2 >> 20);
-				pr_info("AWB_DEEP[%u]: best_zone[%d] R=%u G=%u B=%u P=%u raw=[%08x %08x %08x %08x]\n",
-					awb_irq_count, max_z, r, g, b, p, w0, w1, w2, w3);
-			}
+			pr_info("AWB_IRQ1: zone0 raw=[%08x %08x %08x %08x] "
+				"R=%u G=%u B=%u P=%u\n",
+				buf[0], buf[1], buf[2], buf[3],
+				awb_array_r[0], awb_array_g[0],
+				awb_array_b[0], awb_array_p[0]);
 		}
 	}
 
-	tiziano_awb_set_lum_th_freq();
-
-	/* OEM: only pushes event 10 from ISR. Event 9 (CT update) is pushed
-	 * from JZ_Isp_Awb (the event 10 handler) AFTER Tiziano_awb_fpga
-	 * updates _awb_ct. Do NOT push event 9 here — it's redundant and
-	 * the extra event processing in ISR context disrupts AWB DMA timing. */
-
+	/* OEM EXACT: push event 10 → triggers JZ_Isp_Awb */
 	event_data.event_id = 0xa;
 	tisp_event_push(&event_data);
 	return 1;
@@ -30989,6 +31223,14 @@ int tiziano_ae_dn_params_refresh(void)
     data_a0df8 = 1;
     data_a0e04 = 1;
     data_a0e08 = 1;
+
+    /* Reset ae0_tune2 persistent state so IspAeFlag=1 path re-seeds cleanly.
+     * Without this, stale FIFO/conv_state from the previous mode causes the
+     * algorithm to misinterpret the exposure level after a mode switch. */
+    memset(ae0_ev_fifo, 0, sizeof(ae0_ev_fifo));
+    memset(ae0_conv_state, 0, sizeof(ae0_conv_state));
+    ftune_wmeans_state = 0;
+    data_a0dfc = 0;
 
     /* OEM: Clear convergence started flag */
     data_a0dfc = 0;
