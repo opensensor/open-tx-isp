@@ -134,6 +134,13 @@ static int tisp_sharpen_all_reg_refresh(void);
 int tisp_ccm_ct_update(void);
 int tisp_ccm_ev_update(void);
 static int tiziano_awb_set_hardware_param(void);
+int tisp_ae_s_comp(uint8_t comp_x);
+static int tisp_dpc_all_reg_refresh(uint32_t gain);
+static void tisp_s_dpc_str_internal(uint32_t strength);
+int tisp_s_dpc_strength(uint32_t strength);
+static int tisp_set_defog_strength(uint8_t *strength_ptr);
+int tisp_s_2dns_ratio(int ratio);
+int tisp_s_3dns_ratio(int ratio);
 static int tiziano_s_wb_algo(uint32_t mode);
 int tisp_s_awb_algo(uint32_t mode);
 int tisp_s_wb_frz(void *in_buf);
@@ -7002,15 +7009,21 @@ static int apical_isp_core_ops_s_ctrl(struct tx_isp_dev *dev, struct isp_core_ct
 
         case 0x980918: { // ISP_CTRL_ANTIFLICKER — OEM: CSWTCH.84 lookup then tisp_s_antiflick
             /* OEM lookup table CSWTCH.84: 0→0(off), 1→50(50Hz), 2→60(60Hz) */
-            static const uint8_t antiflick_hz[] = { 0, 50, 60 };
+            static const int8_t antiflick_hz[] = { 0, 50, 60 };
+            int8_t hz;
             if (ctrl->value > 2) {
                 ret = -EINVAL;
                 goto out;
             }
+            hz = antiflick_hz[ctrl->value];
             tuning->antiflicker = ctrl->value;
-            /* Store Hz value for AE algorithm flicker avoidance */
+            /* OEM: tisp_s_antiflick sets flicker_hz, calls
+             * tiziano_deflicker_expt_tune, then tisp_ae_trig.
+             * Simplified: just store the Hz for AE to use. */
+            _flicker_t.data[0] = (hz != 0) ? 1 : 0; /* enable */
+            _flicker_t.data[4] = hz; /* frequency */
             pr_info("Set control: ANTIFLICKER value=%d -> %dHz\n",
-                    ctrl->value, antiflick_hz[ctrl->value]);
+                    ctrl->value, hz);
             break;
         }
 
@@ -7022,8 +7035,11 @@ static int apical_isp_core_ops_s_ctrl(struct tx_isp_dev *dev, struct isp_core_ct
             tuning->move_state = ctrl->value;
             break;
 
-        case 0x8000023:  // AE Compensation
-            tuning->ae_comp = ctrl->value;
+        case 0x8000023:  // AE Compensation — OEM: tisp_set_ae_comp → tisp_ae_s_comp
+            if (ctrl->value < 256) {
+                tuning->ae_comp = ctrl->value;
+                tisp_ae_s_comp((uint8_t)ctrl->value);
+            }
             break;
 
         case 0x8000028:  /* OEM: tisp_s_max_again — set max analog gain */
@@ -7052,12 +7068,19 @@ static int apical_isp_core_ops_s_ctrl(struct tx_isp_dev *dev, struct isp_core_ct
             break;
         }
 
-        case 0x8000039:  // Defog Strength
-            tuning->defog_strength = ctrl->value;
+        case 0x8000039: { // Defog Strength — OEM: copy_from_user 1 byte, tisp_set_defog_strength
+            uint8_t defog_val = 0;
+            if (ctrl->value && copy_from_user(&defog_val,
+                    (void __user *)(unsigned long)ctrl->value, 1) == 0) {
+                tuning->defog_strength = defog_val;
+                tisp_set_defog_strength(&defog_val);
+            }
             break;
+        }
 
-        case 0x8000062:  // DPC Strength
+        case 0x8000062:  // DPC Strength — OEM: tisp_s_dpc_strength → tisp_s_dpc_str_internal
             tuning->dpc_strength = ctrl->value;
+            tisp_s_dpc_strength(ctrl->value);
             break;
 
         case 0x80000a2:  // DRC Strength — OEM: tisp_s_drc_strength → tisp_s_adr_str_internal
@@ -7065,16 +7088,18 @@ static int apical_isp_core_ops_s_ctrl(struct tx_isp_dev *dev, struct isp_core_ct
             tisp_s_adr_str_internal(ctrl->value);
             break;
 
-        case 0x8000085:  // Temper Strength
-            tuning->temper_strength = ctrl->value;
-//            writel(ctrl->value, tuning->regs + ISP_TEMPER_STRENGTH);
-//            wmb();
+        case 0x8000085:  // 3DNS/Temper Ratio — OEM: tisp_s_3dns_ratio
+            if (ctrl->value < 256) {
+                tuning->temper_strength = ctrl->value;
+                tisp_s_3dns_ratio(ctrl->value);
+            }
             break;
 
-        case 0x8000086:  // Sinter Strength
-            tuning->sinter_strength = ctrl->value;
-//            writel(ctrl->value, tuning->regs + ISP_SINTER_STRENGTH);
-//            wmb();
+        case 0x8000086:  // 2DNS/Sinter Ratio — OEM: tisp_s_2dns_ratio
+            if (ctrl->value < 256) {
+                tuning->sinter_strength = ctrl->value;
+                tisp_s_2dns_ratio(ctrl->value);
+            }
             break;
         // Special case handlers:
         case 0x8000004: {  // White Balance
@@ -9969,6 +9994,60 @@ static uint8_t *param_defog_main_para_now = defog_main_para_array;
 static uint8_t *param_defog_fpga_para_now = param_defog_fpga_para_array;
 static uint8_t *param_defog_block_t_x_now = defog_block_t_x_array;
 
+static uint32_t defog_strength_attr = 128;
+
+/* OEM EXACT: defog_itp — interpolation for defog strength (0x47300).
+ * strength < 128: interp = (strength * param + (128-strength) * 100) >> 7
+ * strength >= 128: interp = ((384-strength) * param + (param*100/255) * (strength-128)) >> 8 */
+static int32_t defog_itp(uint32_t strength, int32_t max_val, int32_t param)
+{
+    if ((int32_t)strength < 0x80) {
+        return ((int32_t)(strength * param) +
+            (int32_t)((0x80 - strength) * 0x64)) >> 7;
+    }
+    return ((int32_t)((0x180 - strength) * param) +
+        (int32_t)((max_val * 0x64 / 0xff) * (strength - 0x80))) >> 8;
+}
+
+/* OEM EXACT: tisp_s_defog_str_internal — interpolate 5 defog trsy arrays
+ * based on strength (0-255). Decompiled from OEM at 0x4736c.
+ * Interpolates defog_trsy0..4_list_now using defog_itp per entry. */
+static void tisp_s_defog_str_internal(uint8_t *strength_ptr)
+{
+    int32_t max_val;
+    uint32_t str = *strength_ptr;
+    int i;
+    uint8_t *lists[5];
+
+    max_val = (int32_t)le32_at(param_defog_main_para_now);
+    if (max_val < 0x1f)
+        max_val = 0x1f;
+
+    defog_strength_attr = str;
+
+    lists[0] = defog_trsy0_list_now;
+    lists[1] = defog_trsy1_list_now;
+    lists[2] = defog_trsy2_list_now;
+    lists[3] = defog_trsy3_list_now;
+    lists[4] = defog_trsy4_list_now;
+
+    for (i = 0; i < 9; i++) {
+        int j;
+        for (j = 0; j < 5; j++) {
+            int32_t param = (int32_t)le32_at(lists[j] + i * 4);
+            int32_t result = defog_itp(str, max_val, param);
+            le32_put(lists[j], i, (uint32_t)result);
+        }
+    }
+}
+
+/* OEM EXACT: tisp_set_defog_strength wrapper (0x660c0) */
+static int tisp_set_defog_strength(uint8_t *strength_ptr)
+{
+    tisp_s_defog_str_internal(strength_ptr);
+    return 0;
+}
+
 static int tisp_defog_all_reg_refresh(void)
 {
     /* Build geometry boundaries from HLIL tables or uniform fallback */
@@ -11786,6 +11865,13 @@ void tiziano_awb_params_refresh(void)
 	awb_zone_cache_valid = 0;
 
 
+    {
+        const uint32_t *awp = (const uint32_t *)_awb_parameter;
+        pr_info("tiziano_awb_params_refresh: awb_param[0..3]=%u,%u,%u,%u "
+            "(word0=0x%x rows=%u enable=%u cols=%u)\n",
+            awp[0], awp[1], awp[2], awp[3],
+            awp[0], awp[1], awp[2], awp[3]);
+    }
     pr_info("tiziano_awb_params_refresh: LOADED from bin - "
         "wb_static=%u,%u light_src_num=%u "
         "AwbPointPos[0]=0x%x(q=%u) AwbPointPos[1]=%u "
@@ -11837,21 +11923,23 @@ static int tiziano_awb_set_hardware_param(void)
     /* One-time pack of _awb_parameter into AWB registers (0xb008..0xb024) */
     if (!awb_first) {
         awb_first = 1;
-        const uint8_t *p = _awb_parameter;
 	        u32 stats_cfg;
 	        u32 param_word0;
         u32 val;
-	        /* OEM HLIL: 0xb004 packs cols/rows, a fixed enable bit, and
-	         * the first word of _awb_parameter rather than treating the
-	         * register as a pure magic constant. */
-	        param_word0 = (u32)p[0] | ((u32)p[1] << 8) |
-	            ((u32)p[2] << 16) | ((u32)p[3] << 24);
-	        /* OEM: data_99fb8<<28 | data_99fb4<<16 | param | data_99fb0<<12
-	         * OEM data_99fb4=1 → bit16=1 → post-WB stats (hardware applies
-	         * WB gains before accumulating). AWB algorithm expects this.
-	         * bit16=0 gives raw Bayer (R<<G, unusable ratios). */
-	        stats_cfg = (AWB_ZONE_COLS << 28) | (1u << 16) |
-	            (AWB_ZONE_ROWS << 12) | param_word0;
+	        /* OEM MLIL: $s0 = &_awb_parameter, then:
+	         *   param_word0 = [$s0]         = wp[0]  (low 12 bits of 0xb004)
+	         *   rows        = [$s0 + 4]     = wp[1]  (bits 15:12)
+	         *   enable      = [$s0 + 8]     = wp[2]  (bits 16+, post-WB flag)
+	         *   cols        = [$s0 + 0xc]   = wp[3]  (bits 31:28)
+	         * All loaded from tuning blob via tiziano_awb_params_refresh(). */
+	        {
+	            const uint32_t *wp = (const uint32_t *)_awb_parameter;
+	            param_word0 = wp[0];
+	            /* OEM EXACT: wp[2] is the AWB stats enable flag (1=on).
+	             * Setting to 0 disables AWB stats DMA and IRQ entirely. */
+	            stats_cfg = (wp[3] << 28) | (wp[2] << 16) |
+	                (wp[1] << 12) | param_word0;
+	        }
 	        /* OEM uses raw system_reg_write for zone config registers
 	         * (0xb004-0xb024) — no 0xb000 latch here.
 	         * system_reg_write_awb() handles 0xb000 internally for
@@ -11884,11 +11972,12 @@ static int tiziano_awb_set_hardware_param(void)
             system_reg_write(0x0b024, val);
             pr_info("AWB: zone cfg=0x%x w[0]=%u h[0]=%u written to 0xb004-0xb024\n",
                     stats_cfg, wp[4], wp[19]);
-            pr_info("AWB_HW_DIAG: param_word0=0x%x (bits0-11=0x%x) post_wb=%d cols=%d rows=%d\n",
-                    param_word0, param_word0 & 0xfff,
-                    (stats_cfg >> 16) & 1,
+            pr_info("AWB_HW_DIAG: param_word0=0x%x enable=%u cols=%d rows=%d stats_cfg=0x%08x\n",
+                    param_word0,
+                    (stats_cfg >> 16) & 0x7ff,
                     (stats_cfg >> 28) & 0xf,
-                    (stats_cfg >> 12) & 0xf);
+                    (stats_cfg >> 12) & 0xf,
+                    stats_cfg);
             pr_info("AWB_HW_DIAG: 0xb004=0x%08x 0xb008=0x%08x 0xb03c=0x%08x 0xb04c=0x%08x\n",
                     system_reg_read(0xb004), system_reg_read(0xb008),
                     system_reg_read(0xb03c), system_reg_read(0xb04c));
@@ -13237,6 +13326,8 @@ int tisp_awb_ev_update(uint32_t ev)
 
 int tiziano_s_awb_start(uint32_t gain0, uint32_t gain1)
 {
+	uint32_t *mf = (uint32_t *)_awb_mf_para;
+
 	if (tparams_day) {
 		memcpy((u8 *)tparams_day + 0x10e8, &gain0, sizeof(gain0));
 		memcpy((u8 *)tparams_day + 0x10ec, &gain1, sizeof(gain1));
@@ -13244,10 +13335,12 @@ int tiziano_s_awb_start(uint32_t gain0, uint32_t gain1)
 		memcpy((u8 *)tparams_day + 0x10f4, &gain1, sizeof(gain1));
 	}
 
-	awb_start_gain0 = gain0;
-	awb_start_gain1 = gain1;
-	awb_start_gain0_last = gain0;
-	awb_start_gain1_last = gain1;
+	/* OEM EXACT: write gains directly to _awb_mf_para[2..5].
+	 * Tiziano_awb_set_gain reads mf_gr/mf_gb from these offsets. */
+	mf[2] = gain0;  /* OEM data_99f80 */
+	mf[3] = gain1;  /* OEM data_99f84 */
+	mf[4] = gain0;  /* OEM data_99f88 */
+	mf[5] = gain1;  /* OEM data_99f8c */
 
 	return Tiziano_awb_set_gain(_awb_mf_para, _AwbPointPos[0], _wb_static);
 }
@@ -13259,12 +13352,15 @@ int tisp_s_awb_start(uint32_t gain0, uint32_t gain1)
 
 int tiziano_g_awb_start(uint32_t *gains)
 {
+	const uint32_t *mf = (const uint32_t *)_awb_mf_para;
+
 	if (!gains)
 		return -EINVAL;
 
-	gains[0] = awb_start_gain0;
-	gains[1] = awb_start_gain1;
-	return awb_start_gain1;
+	/* OEM EXACT: reads from _awb_mf_para[2..3] (data_99f80, data_99f84) */
+	gains[0] = mf[2];
+	gains[1] = mf[3];
+	return mf[3];
 }
 
 int tisp_g_awb_start(uint32_t *gains)
@@ -21973,6 +22069,14 @@ uint32_t dpc_d_m1_fthres_array[16] = {0x4, 0x8, 0xc, 0x10, 0x14, 0x18, 0x1c, 0x2
 uint32_t dpc_d_m3_dthres_array[16] = {0x6, 0xc, 0x12, 0x18, 0x1e, 0x24, 0x2a, 0x30, 0x36, 0x3c, 0x42, 0x48, 0x4e, 0x54, 0x5a, 0x60};
 uint32_t dpc_d_m3_fthres_array[16] = {0x3, 0x6, 0x9, 0xc, 0xf, 0x12, 0x15, 0x18, 0x1b, 0x1e, 0x21, 0x24, 0x27, 0x2a, 0x2d, 0x30};
 
+/* DPC base arrays — snapshot of tuning blob defaults for strength interpolation */
+static uint32_t dpc_base_m1_dthres[9];
+static uint32_t dpc_base_m1_fthres[9];
+static uint32_t dpc_base_m3_dthres[9];
+static uint32_t dpc_base_m3_fthres[9];
+static int dpc_base_saved;
+static uint32_t dpc_strength_stored = 128; /* OEM data_8ab14 */
+
 /* WDR DPC parameter arrays */
 uint32_t dpc_d_m1_dthres_wdr_array[16] = {0x10, 0x18, 0x20, 0x28, 0x30, 0x38, 0x40, 0x48, 0x50, 0x58, 0x60, 0x68, 0x70, 0x78, 0x80, 0x88};
 uint32_t dpc_d_m1_fthres_wdr_array[16] = {0x8, 0xc, 0x10, 0x14, 0x18, 0x1c, 0x20, 0x24, 0x28, 0x2c, 0x30, 0x34, 0x38, 0x3c, 0x40, 0x44};
@@ -22058,6 +22162,66 @@ void tiziano_dpc_params_refresh(void)
     memcpy(&ctr_con_par_array,         params + 0xA85C, 0x1c);
 
     pr_debug("tiziano_dpc_params_refresh: DPC parameters loaded from tuning data\n");
+
+    /* Save base arrays for strength interpolation */
+    memcpy(dpc_base_m1_fthres, dpc_d_m1_fthres_array, 9 * sizeof(u32));
+    memcpy(dpc_base_m1_dthres, dpc_d_m1_dthres_array, 9 * sizeof(u32));
+    memcpy(dpc_base_m3_fthres, dpc_d_m3_fthres_array, 9 * sizeof(u32));
+    memcpy(dpc_base_m3_dthres, dpc_d_m3_dthres_array, 9 * sizeof(u32));
+    dpc_base_saved = 1;
+}
+
+/* OEM EXACT: tisp_s_dpc_str_internal — interpolate DPC threshold arrays
+ * based on strength (0-255). Decompiled from OEM at 0x41588.
+ * strength < 0x81: scale toward minimum (5 for fthres, 0x3e8 for dthres)
+ * strength >= 0x81: scale toward maximum (0x4b0 for fthres, 5 for dthres) */
+static void tisp_s_dpc_str_internal(uint32_t strength)
+{
+    int i;
+
+    dpc_strength_stored = strength;
+
+    if (!dpc_base_saved) {
+        memcpy(dpc_base_m1_fthres, dpc_d_m1_fthres_array, 9 * sizeof(u32));
+        memcpy(dpc_base_m1_dthres, dpc_d_m1_dthres_array, 9 * sizeof(u32));
+        memcpy(dpc_base_m3_fthres, dpc_d_m3_fthres_array, 9 * sizeof(u32));
+        memcpy(dpc_base_m3_dthres, dpc_d_m3_dthres_array, 9 * sizeof(u32));
+        dpc_base_saved = 1;
+    }
+
+    for (i = 0; i < 9; i++) {
+        if (strength >= 0x81) {
+            /* Upper half: interpolate fthres toward 0x4b0, dthres toward 5 */
+            dpc_d_m1_fthres_array[i] = (((0x4b0 - dpc_base_m1_fthres[i]) *
+                (strength - 0x80)) >> 7) + dpc_base_m1_fthres[i];
+            dpc_d_m3_fthres_array[i] = (((0x4b0 - dpc_base_m3_fthres[i]) *
+                (strength - 0x80)) >> 7) + dpc_base_m3_fthres[i];
+            dpc_d_m1_dthres_array[i] = ((0x100 - strength) *
+                dpc_base_m1_dthres[i] + strength * 5 - 0x280) >> 7;
+            dpc_d_m3_dthres_array[i] = ((0x100 - strength) *
+                dpc_base_m3_dthres[i] + strength * 5 - 0x280) >> 7;
+        } else {
+            /* Lower half: interpolate fthres toward 5, dthres toward 0x3e8 */
+            u32 val;
+            val = (strength * dpc_base_m1_fthres[i]) >> 7;
+            dpc_d_m1_fthres_array[i] = (val < 5) ? 5 : val;
+            val = (strength * dpc_base_m3_fthres[i]) >> 7;
+            dpc_d_m3_fthres_array[i] = (val < 5) ? 5 : val;
+            dpc_d_m1_dthres_array[i] = ((dpc_base_m1_dthres[i] - 0x3e8) *
+                strength + 0x1f400) >> 7;
+            dpc_d_m3_dthres_array[i] = ((dpc_base_m3_dthres[i] - 0x3e8) *
+                strength + 0x1f400) >> 7;
+        }
+    }
+
+    tisp_dpc_all_reg_refresh(total_gain_old + 0x200);
+}
+
+/* OEM EXACT: tisp_s_dpc_strength wrapper (0x64c9c) */
+int tisp_s_dpc_strength(uint32_t strength)
+{
+    tisp_s_dpc_str_internal(strength);
+    return 0;
 }
 
 /* OEM EXACT: tisp_dpc_intp — interpolate all DPC/CTR arrays based on gain */
