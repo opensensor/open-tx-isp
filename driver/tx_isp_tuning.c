@@ -15717,11 +15717,9 @@ static int Tiziano_awb_set_gain(void *mf_para, uint32_t point_pos, const uint32_
 	}
 
 	if (awb_frz == 0) {
-		/* OEM Tiziano_awb_set_gain (0x1a0e8): writes gain_gr to 0x1804
-		 * and 0x180c, gain_gb to 0x1808 and 0x1810.  Format is
-		 * 0x04000000 | (gain & 0x3fff).  Previous code wrote to
-		 * 0x183c/0x1840/0x1844 (no-ops) causing green tint because
-		 * R channel stayed at 1.0x default. */
+		/* OEM Tiziano_awb_set_gain: 0x1800=1 latch is REQUIRED for
+		 * WB gain registers to accept writes (confirmed by experiment:
+		 * without latch, gains stay at unity 0x400). */
 		system_reg_write_awb(2, 0x1804, reg_pair[0]);
 		system_reg_write_awb(2, 0x1808, reg_pair[1]);
 		system_reg_write_awb(2, 0x180c, reg_pair[0]);
@@ -17851,6 +17849,27 @@ int awb_interrupt_static(void)
 	private_dma_cache_sync(NULL, buffer_addr, 0x1000, 0);
 
 	if (awb_irq_count == 1) {
+		/* Full AWB register dump on first IRQ — compare with OEM */
+		pr_info("AWB_REGDUMP: 0x8=%08x 0xb000=%08x 0xb004=%08x 0xb008=%08x 0xb00c=%08x\n",
+			system_reg_read(0x8),
+			system_reg_read(0xb000), system_reg_read(0xb004),
+			system_reg_read(0xb008), system_reg_read(0xb00c));
+		pr_info("AWB_REGDUMP: 0xb010=%08x 0xb014=%08x 0xb018=%08x 0xb01c=%08x 0xb020=%08x 0xb024=%08x\n",
+			system_reg_read(0xb010), system_reg_read(0xb014),
+			system_reg_read(0xb018), system_reg_read(0xb01c),
+			system_reg_read(0xb020), system_reg_read(0xb024));
+		pr_info("AWB_REGDUMP: 0xb028=%08x 0xb02c=%08x 0xb030=%08x 0xb034=%08x 0xb038=%08x\n",
+			system_reg_read(0xb028), system_reg_read(0xb02c),
+			system_reg_read(0xb030), system_reg_read(0xb034),
+			system_reg_read(0xb038));
+		pr_info("AWB_REGDUMP: 0xb03c=%08x 0xb040=%08x 0xb044=%08x 0xb048=%08x 0xb04c=%08x 0xb050=%08x\n",
+			system_reg_read(0xb03c), system_reg_read(0xb040),
+			system_reg_read(0xb044), system_reg_read(0xb048),
+			system_reg_read(0xb04c), system_reg_read(0xb050));
+		pr_info("AWB_REGDUMP: 0xb054=%08x 0xb058=%08x WB: 0x1804=%08x 0x1808=%08x 0x180c=%08x 0x1810=%08x\n",
+			system_reg_read(0xb054), system_reg_read(0xb058),
+			system_reg_read(0x1804), system_reg_read(0x1808),
+			system_reg_read(0x180c), system_reg_read(0x1810));
 		pr_debug("AWB_HW_LIVE: 0xb000=0x%08x 0xb004=0x%08x 0xb050=0x%08x\n",
 			system_reg_read(0xb000), system_reg_read(0xb004),
 			system_reg_read(0xb050));
