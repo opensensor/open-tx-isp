@@ -4860,24 +4860,10 @@ static long tx_isp_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned 
         pr_info("ISP set buffer: addr=0x%x size=%d width=%u height=%u isp_memopt=%d\n",
                 buf_setup.addr, buf_setup.size, width, height, isp_memopt);
 
-        /* PINK_DIAG: Zero the entire ISP frame buffer before programming DMA.
-         * Theory: MDNS temporal reference reads from R-plane (within this buffer)
-         * before any frames have been written. Stale data from rmem (possibly
-         * a previous run's pink output) is read as the "previous frame" and
-         * blended into the output, causing persistent pink. Zeroing the buffer
-         * gives MDNS a clean black reference to start from. */
-        {
-            void __iomem *isp_buf_map = ioremap(buf_setup.addr, buf_setup.size);
-            if (isp_buf_map) {
-                memset_io(isp_buf_map, 0, buf_setup.size);
-                iounmap(isp_buf_map);
-                pr_info("ISP set buffer: zeroed %u bytes at phys 0x%x\n",
-                        buf_setup.size, buf_setup.addr);
-            } else {
-                pr_warn("ISP set buffer: ioremap failed for phys 0x%x size %u\n",
-                        buf_setup.addr, buf_setup.size);
-            }
-        }
+        /* OEM does NOT zero the frame buffer — it just programs DMA registers.
+         * Previous PINK_DIAG zeroing (memset_io to 0) caused MDNS R=G=B:
+         * zeroed UV in temporal reference = desaturated blend = self-reinforcing
+         * grayscale output. Removed to match OEM behavior exactly. */
 
         // === Y-plane (main output) ===
         y_stride = ((width + 7) >> 3) << 3;   // 8-byte aligned
