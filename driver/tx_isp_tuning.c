@@ -64,6 +64,8 @@ extern void tx_isp_wakeup_frame_channels(void);
 
 #define TISP_TOP_BYPASS_ADR_BIT	BIT(7)
 #define TISP_TOP_BYPASS_DEFOG_BIT	BIT(11)
+#define TISP_TOP_BYPASS_GIB_BIT	BIT(5)
+#define TISP_TOP_BYPASS_MDNS_BIT	BIT(16)
 
 static int tisp_force_bypass_adr = 0; /* ADR algorithm now ported — enable by default */
 module_param_named(force_bypass_adr, tisp_force_bypass_adr, int, S_IRUGO | S_IWUSR);
@@ -75,6 +77,16 @@ module_param_named(force_bypass_defog, tisp_force_bypass_defog, int, S_IRUGO | S
 MODULE_PARM_DESC(force_bypass_defog,
 			 "Debug isolate FOV issues by forcing Defog bypass (default: 0)");
 
+static int tisp_force_bypass_gib = 0; /* GIB: 0=enabled, 1=bypassed */
+module_param_named(force_bypass_gib, tisp_force_bypass_gib, int, S_IRUGO | S_IWUSR);
+MODULE_PARM_DESC(force_bypass_gib,
+			 "Force GIB bypass (default: 1 — GIB produces R=G=B stats)");
+
+static int tisp_force_bypass_mdns = 0; /* MDNS: 0=enabled, 1=bypassed */
+module_param_named(force_bypass_mdns, tisp_force_bypass_mdns, int, S_IRUGO | S_IWUSR);
+MODULE_PARM_DESC(force_bypass_mdns,
+			 "Force MDNS bypass (default: 1 — suspected R=G=B cause)");
+
 extern uint32_t system_reg_read(u32 reg);
 
 static u32 tisp_apply_debug_top_bypass_overrides(u32 bypass_val, const char *reason)
@@ -85,16 +97,22 @@ static u32 tisp_apply_debug_top_bypass_overrides(u32 bypass_val, const char *rea
 		force_mask |= TISP_TOP_BYPASS_ADR_BIT;
 	if (tisp_force_bypass_defog)
 		force_mask |= TISP_TOP_BYPASS_DEFOG_BIT;
+	if (tisp_force_bypass_gib)
+		force_mask |= TISP_TOP_BYPASS_GIB_BIT;
+	if (tisp_force_bypass_mdns)
+		force_mask |= TISP_TOP_BYPASS_MDNS_BIT;
 
 	if (force_mask) {
 		u32 new_val = bypass_val | force_mask;
 
-		pr_info("%s: debug force-bypass mask=0x%08x -> top_bypass=0x%08x (ADR=%s Defog=%s)\n",
+		pr_info("%s: debug force-bypass mask=0x%08x -> top_bypass=0x%08x (ADR=%s Defog=%s GIB=%s MDNS=%s)\n",
 			reason ? reason : "tisp",
 			force_mask,
 			new_val,
 			tisp_force_bypass_adr ? "off" : "on",
-			tisp_force_bypass_defog ? "off" : "on");
+			tisp_force_bypass_defog ? "off" : "on",
+			tisp_force_bypass_gib ? "off" : "on",
+			tisp_force_bypass_mdns ? "off" : "on");
 		return new_val;
 	}
 
@@ -1834,7 +1852,7 @@ static void tiziano_bcsh_reg_apply(struct isp_tuning_data *tuning)
 }
 
 /* ADR (Adaptive Dynamic Range) Variables */
-static uint32_t adr_ratio = 0;
+static uint32_t adr_ratio = 0x80;  /* OEM default: 0x80 = neutral (no strength adjustment) */
 static uint32_t adr_wdr_en = 0;
 static uint32_t ev_changed = 0;
 static uint32_t ev_now = 0;
@@ -2088,7 +2106,7 @@ static int tisp_hldc_con_par_cfg(void);
 static int tisp_hldc_apply_par_array(void);
 static int tiziano_hldc_params_refresh(void);
 
-/* Forward declarations for _dn_params_refresh / _params_refresh (used by tisp_day_or_night_s_ctrl) */
+/* Forward declarations for _params_refresh base functions */
 static void tiziano_defog_params_refresh(void);
 extern int tiziano_ae_params_refresh(void);
 extern int tiziano_awb_dn_params_refresh(void);
@@ -2101,11 +2119,26 @@ extern void tiziano_lsc_params_refresh(void);
 extern void tiziano_ccm_params_refresh(void);
 extern int tiziano_clm_dn_params_refresh(void);
 extern int tiziano_gamma_lut_parameter(void);
-extern void tiziano_adr_params_refresh(void);
+extern int tiziano_adr_params_refresh(void);
+static int tiziano_adr_gamma_refresh(void);
 extern void tiziano_dpc_params_refresh(void);
 static void tiziano_bcsh_params_refresh(void);
 static void tiziano_rdns_params_refresh(void);
 static void tiziano_ydns_params_refresh(void);
+
+/* Forward declarations for OEM-exact _dn_ wrapper functions (Day/Night switch).
+ * Each wrapper calls base _params_refresh + additional HW register refresh/key bumps. */
+static int tiziano_defog_dn_params_refresh(void);
+static int tiziano_dmsc_dn_params_refresh(void);
+static int tiziano_lsc_dn_params_refresh(void);
+static int tiziano_ccm_dn_params_refresh(void);
+static void tiziano_gamma_params_refresh(void);
+static int tiziano_gamma_dn_params_refresh(void);
+static int tiziano_dpc_dn_params_refresh(void);
+static int tiziano_bcsh_dn_params_refresh(void);
+static int tiziano_rdns_dn_params_refresh(void);
+static int tiziano_ydns_dn_params_refresh(void);
+static int tiziano_sdns_dn_params_refresh(void);
 
 static int tisp_alloc_param_block(void **dst, const char *name)
 {
@@ -3472,6 +3505,12 @@ static uint32_t data_a0e04 = 1;    /* Force-init flag (1 = fill caches on first 
 static uint32_t data_a0df4 = 0;    /* Hysteresis engaged flag */
 static uint32_t data_a0df8 = 0;    /* Exposure unchanged flag */
 static uint32_t data_a0dfc = 0;    /* Convergence started flag */
+static uint32_t data_a0de4 = 0;    /* AE DN state flag (OEM: data_a0de4) */
+static uint32_t data_a0de8 = 0;    /* AE DN state flag (OEM: data_a0de8) */
+static uint32_t data_a0df0 = 0;    /* AE DN state flag (OEM: data_a0df0) */
+static uint32_t data_a0e08 = 0;    /* AE DN state flag (OEM: data_a0e08) */
+static uint32_t data_a0c08 = 0x80; /* AE compensation target (OEM: data_a0c08) */
+static uint8_t  ae_comp_x = 0x80;  /* AE compensation input (OEM: ae_comp_x) */
 static uint32_t data_9a2ec = 0;    /* Comp AE mode flag */
 static uint32_t data_c46d0 = 0;    /* AE gain distribution mode */
 static uint32_t ftune_wmeans_state = 0; /* OEM: ftune_wmeans.32574 */
@@ -5602,8 +5641,32 @@ static int tisp_day_or_night_s_ctrl(uint32_t mode)
 	pr_info("%s: applying %s mode wdr=%u\n",
 		__func__, active_mode ? "night" : "day", !!data_b2e74);
 
-	/* OEM calls _dn_params_refresh for each block. Bisecting which are
-	 * safe mid-stream. Group A (param-only, no HW stats/DMA): */
+	/* OEM recomputes bypass register from new tparams and writes to HW.
+	 * DISABLED: writing the new bypass mid-stream kills AE/AWB stats
+	 * because our tiziano_ae_dn_params_refresh is incomplete — the OEM's
+	 * full version reprograms both AE HW channels after the bypass change.
+	 * Without that, changing bypass bits (e.g. bit 2) can disable the
+	 * stats accumulation path permanently. Re-enable when full AE DN is done. */
+	{
+		u32 new_bypass = tisp_compute_top_bypass_from_params(!!data_b2e74);
+		pr_info("%s: bypass would be 0x%08x (NOT writing — AE DN incomplete)\n",
+			__func__, new_bypass);
+		/* system_reg_write(0xc, new_bypass); */
+	}
+
+	/* OEM calls _dn_params_refresh for every block (decompiled at 0x62300).
+	 * Each _dn_ wrapper reloads params from tparams_active AND forces a
+	 * full HW register refresh (key bumps, flag sets, register writes).
+	 *
+	 * BISECT STATUS: Enabling all _dn_ wrappers + Group B at once causes
+	 * AWB/AE stats to go to zero (image goes near-black).
+	 * Strategy: Group A uses SAFE param-only calls (proven working).
+	 * Group B added incrementally with safe-only functions.
+	 *
+	 * _dn_ wrapper implementations are defined near EXPORT_SYMBOL section
+	 * and can be swapped in once the culprit is identified. */
+
+	/* Group A: param-only reload from new tparams_active (PROVEN SAFE) */
 	tiziano_defog_params_refresh();
 	tiziano_dmsc_params_refresh();
 	tiziano_sharpen_dn_params_refresh();
@@ -5617,13 +5680,14 @@ static int tisp_day_or_night_s_ctrl(uint32_t mode)
 	tiziano_rdns_params_refresh();
 	tiziano_ydns_params_refresh();
 
-	/* Group B (touches AE/AWB/MDNS/SDNS HW — DISABLED for now):
-	 * tiziano_ae_params_refresh();
-	 * tiziano_awb_dn_params_refresh();
-	 * tiziano_mdns_dn_params_refresh();
-	 * tiziano_sdns_params_refresh();
-	 * tiziano_adr_params_refresh();
-	 */
+	/* Group B: DISABLED — one of these kills AWB/AE stats.
+	 * Enable ONE at a time to bisect which causes the blackout.
+	 * Uncomment and rebuild to test each: */
+	/* tiziano_ae_params_refresh(); */
+	/* tiziano_awb_dn_params_refresh(); */
+	/* tiziano_mdns_dn_params_refresh(); */
+	/* tiziano_sdns_params_refresh(); */
+	/* tiziano_adr_params_refresh(); */
 
 	if (ourISPdev) {
 		ourISPdev->day_night = active_mode;
@@ -20429,6 +20493,10 @@ int tiziano_mdns_init(uint32_t width, uint32_t height)
 void tisp_mdns_enable_after_dma(void)
 {
 	if (!mdns_hw_enabled) {
+		if (tisp_force_bypass_mdns) {
+			pr_info("tisp_mdns_enable_after_dma: SKIPPED — force_bypass_mdns=1\n");
+			return;
+		}
 		/* OEM: MDNS always enabled after DMA — no whitelist gating */
 		tisp_mdns_par_refresh(0x10000, 0x10000);
 		tisp_mdns_bypass(0);
@@ -21981,38 +22049,165 @@ static uint32_t height_def = 0;      /* Default height */
 static uint32_t data_ace54 = 0;      /* ADR calculation result */
 uint32_t param_adr_tool_control_array[0x38/4] = {0}; /* ADR control */
 
-/* tiziano_adr_params_refresh - Refresh ADR parameters */
-void tiziano_adr_params_refresh(void)
+/* tiziano_adr_gamma_refresh - stub (TODO: implement from OEM 0x4c41c)
+ * OEM uses tisp_gamma_param_array_get, histSub_4096, param_adr_gam_y_array_def, etc. */
+static int tiziano_adr_gamma_refresh(void)
 {
-    pr_debug("tiziano_adr_params_refresh: Refreshing ADR parameters\n");
+    pr_warn_once("tiziano_adr_gamma_refresh: stub - not yet implemented\n");
+    return 0;
+}
 
-    /* Update ADR parameters based on current conditions */
-    extern uint32_t adr_ratio;
-    extern uint32_t adr_wdr_en;
+/* tiziano_adr_params_refresh - OEM-exact bulk memcpy from tuning binary
+ * OEM address: 0x4d074
+ * Loads ~35 ADR parameter arrays from tparams, conditionally loads weight
+ * LUT arrays based on tool_control[0], then calls tisp_s_adr_str_internal
+ * and tiziano_adr_gamma_refresh. */
+int tiziano_adr_params_refresh(void)
+{
+    const u8 *p = (const u8 *)(tparams_active ? tparams_active : tparams_day);
+    uint32_t tool_ctl_local[0x38 / 4];
+    int i;
 
-    if (data_9a454 != 0) {
-        uint32_t ev_shifted = data_9a454 >> 10;
-
-        /* Adjust ADR ratio based on exposure */
-        if (ev_shifted < 0x60) {
-            /* Low light - increase ADR for better shadow detail */
-            adr_ratio = 0x180;
-        } else if (ev_shifted > 0x180) {
-            /* Bright light - reduce ADR to prevent over-enhancement */
-            adr_ratio = 0x80;
-        } else {
-            /* Normal light - default ADR */
-            adr_ratio = 0x100;
-        }
-
-        /* Update ADR enable based on conditions */
-        if (adr_wdr_en != 0) {
-            /* WDR mode - more aggressive ADR */
-            adr_ratio = (adr_ratio * 3) >> 1;
-        }
+    if (!p || !tuning_bin_loaded) {
+        pr_debug("tiziano_adr_params_refresh: no tuning bin loaded\n");
+        return 0;
     }
 
-    pr_debug("tiziano_adr_params_refresh: ADR ratio updated to 0x%x\n", adr_ratio);
+    /*
+     * Bulk memcpy from tuning binary into ADR parameter arrays.
+     * Offsets are relative to tparams base (OEM base = 0x84B10).
+     *
+     * NOTE: The first offset (param_adr_para_array) is a best guess --
+     * the OEM decompiler garbled the source address.  0x112ac is derived
+     * from the next known offset (0x112cc) minus the copy size (0x20).
+     */
+#define ADR_OFF_PARA            0x112ac  /* param_adr_para_array -- NEEDS VERIFICATION */
+#define ADR_OFF_CTC_KP          0x112cc
+#define ADR_OFF_MIN_KP          0x11310
+#define ADR_OFF_MAP_KP          0x1136c
+#define ADR_OFF_COC_Y1          0x113c8
+#define ADR_OFF_COC_Y2          0x113f8
+#define ADR_OFF_COC_Y3          0x11428
+#define ADR_OFF_COC_Y4          0x11458
+#define ADR_OFF_COC_Y5          0x11488
+#define ADR_OFF_COC_ADJ         0x114b8
+#define ADR_OFF_HIST_DIFF       0x1156c
+#define ADR_OFF_TM_BASE         0x1157c
+#define ADR_OFF_GAM_X           0x115a0
+#define ADR_OFF_GAM_Y           0x116a2
+#define ADR_OFF_CTC_MAP2CUT     0x117a4
+#define ADR_OFF_LIGHT_END       0x117c8
+#define ADR_OFF_BLOCK_LIGHT     0x1183c
+#define ADR_OFF_MAP_MODE        0x11878
+#define ADR_OFF_HISTSUB_DIFF    0x118a4
+#define ADR_OFF_TOOL_CTL        0x118c4
+#define ADR_OFF_EV_LIST         0x118fc
+#define ADR_OFF_LIGB_LIST       0x11920
+#define ADR_OFF_MAPB1_LIST      0x11944
+#define ADR_OFF_MAPB2_LIST      0x11968
+#define ADR_OFF_MAPB3_LIST      0x1198c
+#define ADR_OFF_MAPB4_LIST      0x119b0
+#define ADR_OFF_CTC_MAP2CUT_WDR 0x119d4
+#define ADR_OFF_LIGHT_END_WDR   0x119f8
+#define ADR_OFF_BLOCK_LIGHT_WDR 0x11a6c
+#define ADR_OFF_MAP_MODE_WDR    0x11aa8
+#define ADR_OFF_EV_LIST_WDR     0x11ad4
+#define ADR_OFF_LIGB_LIST_WDR   0x11af8
+#define ADR_OFF_MAPB1_LIST_WDR  0x11b1c
+#define ADR_OFF_MAPB2_LIST_WDR  0x11b40
+#define ADR_OFF_MAPB3_LIST_WDR  0x11b64
+#define ADR_OFF_MAPB4_LIST_WDR  0x11b88
+#define ADR_OFF_BLP2_LIST_WDR   0x11bac
+#define ADR_OFF_BLP2_LIST       0x11bd0
+/* Weight LUT offsets (used when tool_control[0] == 1) */
+#define ADR_OFF_W20_LUT         0x1104c
+#define ADR_OFF_W02_LUT         0x110cc
+#define ADR_OFF_W12_LUT         0x1114c
+#define ADR_OFF_W22_LUT         0x111cc
+#define ADR_OFF_W21_LUT         0x1124c
+#define ADR_OFF_CENTRE_WDIS     0x114f0
+
+    /* --- Main parameter arrays --- */
+    memcpy(&param_adr_para_array, p + ADR_OFF_PARA, 0x20);
+    memcpy(&param_adr_ctc_kneepoint_array, p + ADR_OFF_CTC_KP, 0x44);
+    memcpy(&param_adr_min_kneepoint_array, p + ADR_OFF_MIN_KP, 0x5c);
+    memcpy(&param_adr_map_kneepoint_array, p + ADR_OFF_MAP_KP, 0x5c);
+    memcpy(&param_adr_coc_kneepoint_y1_array, p + ADR_OFF_COC_Y1, 0x30);
+    memcpy(&param_adr_coc_kneepoint_y2_array, p + ADR_OFF_COC_Y2, 0x30);
+    memcpy(&param_adr_coc_kneepoint_y3_array, p + ADR_OFF_COC_Y3, 0x30);
+    memcpy(&param_adr_coc_kneepoint_y4_array, p + ADR_OFF_COC_Y4, 0x30);
+    memcpy(&param_adr_coc_kneepoint_y5_array, p + ADR_OFF_COC_Y5, 0x30);
+    memcpy(&param_adr_coc_adjust_array, p + ADR_OFF_COC_ADJ, 0x38);
+    memcpy(&param_adr_stat_block_hist_diff_array, p + ADR_OFF_HIST_DIFF, 0x10);
+    memcpy(&adr_tm_base_lut, p + ADR_OFF_TM_BASE, 0x24);
+    memcpy(&param_adr_gam_x_array, p + ADR_OFF_GAM_X, 0x102);
+    memcpy(&param_adr_gam_y_array, p + ADR_OFF_GAM_Y, 0x102);
+    memcpy(&adr_ctc_map2cut_y, p + ADR_OFF_CTC_MAP2CUT, 0x24);
+    memcpy(&adr_light_end, p + ADR_OFF_LIGHT_END, 0x74);
+    memcpy(&adr_block_light, p + ADR_OFF_BLOCK_LIGHT, 0x3c);
+    memcpy(&adr_map_mode, p + ADR_OFF_MAP_MODE, 0x2c);
+    memcpy(&histSub_4096_diff, p + ADR_OFF_HISTSUB_DIFF, 0x20);
+
+    /* --- tool_control: copy from tparams into local, then selective copy
+     *     into param_adr_tool_control_array, skipping index 1 (preserves
+     *     the runtime value at [1]).  OEM loop: i = 0..0xd, skip i==1. --- */
+    memcpy(tool_ctl_local, p + ADR_OFF_TOOL_CTL, 0x38);
+    for (i = 0; i < 0xe; i++) {
+        if (i != 1)
+            param_adr_tool_control_array[i] = tool_ctl_local[i];
+    }
+
+    /* --- List arrays (normal + WDR) --- */
+    memcpy(&adr_ev_list, p + ADR_OFF_EV_LIST, 0x24);
+    memcpy(&adr_ligb_list, p + ADR_OFF_LIGB_LIST, 0x24);
+    memcpy(&adr_mapb1_list, p + ADR_OFF_MAPB1_LIST, 0x24);
+    memcpy(&adr_mapb2_list, p + ADR_OFF_MAPB2_LIST, 0x24);
+    memcpy(&adr_mapb3_list, p + ADR_OFF_MAPB3_LIST, 0x24);
+    memcpy(&adr_mapb4_list, p + ADR_OFF_MAPB4_LIST, 0x24);
+    memcpy(&adr_blp2_list, p + ADR_OFF_BLP2_LIST, 0x24);
+    memcpy(&adr_ev_list_wdr, p + ADR_OFF_EV_LIST_WDR, 0x24);
+    memcpy(&adr_ligb_list_wdr, p + ADR_OFF_LIGB_LIST_WDR, 0x24);
+    memcpy(&adr_mapb1_list_wdr, p + ADR_OFF_MAPB1_LIST_WDR, 0x24);
+    memcpy(&adr_mapb2_list_wdr, p + ADR_OFF_MAPB2_LIST_WDR, 0x24);
+    memcpy(&adr_mapb3_list_wdr, p + ADR_OFF_MAPB3_LIST_WDR, 0x24);
+    memcpy(&adr_mapb4_list_wdr, p + ADR_OFF_MAPB4_LIST_WDR, 0x24);
+    memcpy(&adr_blp2_list_wdr, p + ADR_OFF_BLP2_LIST_WDR, 0x24);
+    memcpy(&adr_ctc_map2cut_y_wdr, p + ADR_OFF_CTC_MAP2CUT_WDR, 0x24);
+    memcpy(&adr_light_end_wdr, p + ADR_OFF_LIGHT_END_WDR, 0x74);
+    memcpy(&adr_block_light_wdr, p + ADR_OFF_BLOCK_LIGHT_WDR, 0x3c);
+    memcpy(&adr_map_mode_wdr, p + ADR_OFF_MAP_MODE_WDR, 0x2c);
+
+    /* --- Weight LUT arrays: conditional on tool_control[0] --- */
+    if (param_adr_tool_control_array[0] == 1) {
+        /* Tool-override mode: load weight LUTs from tuning binary */
+        memcpy(&param_adr_weight_20_lut_array, p + ADR_OFF_W20_LUT, 0x80);
+        memcpy(&param_adr_weight_02_lut_array, p + ADR_OFF_W02_LUT, 0x80);
+        memcpy(&param_adr_weight_12_lut_array, p + ADR_OFF_W12_LUT, 0x80);
+        memcpy(&param_adr_weight_22_lut_array, p + ADR_OFF_W22_LUT, 0x80);
+        memcpy(&param_adr_weight_21_lut_array, p + ADR_OFF_W21_LUT, 0x80);
+        memcpy(&param_adr_centre_w_dis_array, p + ADR_OFF_CENTRE_WDIS, 0x7c);
+    } else if (param_adr_tool_control_array[0] == 0) {
+        /* Default mode: use resolution-specific _tmp arrays */
+        memcpy(&param_adr_weight_20_lut_array, &param_adr_weight_20_lut_array_tmp, 0x80);
+        memcpy(&param_adr_weight_02_lut_array, &param_adr_weight_02_lut_array_tmp, 0x80);
+        memcpy(&param_adr_weight_12_lut_array, &param_adr_weight_12_lut_array_tmp, 0x80);
+        memcpy(&param_adr_weight_22_lut_array, &param_adr_weight_22_lut_array_tmp, 0x80);
+        memcpy(&param_adr_weight_21_lut_array, &param_adr_weight_21_lut_array_tmp, 0x80);
+        memcpy(&param_adr_centre_w_dis_array, &param_adr_centre_w_dis_array_tmp, 0x7c);
+    } else {
+        /* OEM: printk(2, "ADR TOOL CTL[0] overflow!!!\n", 0xe) */
+        pr_err("ADR TOOL CTL[0] overflow!!!\n");
+        return -1;
+    }
+
+    /* --- ADR strength + gamma refresh + signal EV changed --- */
+    if (adr_ratio != 0x80)
+        tisp_s_adr_str_internal(adr_ratio);
+
+    tiziano_adr_gamma_refresh();
+    ev_changed = 1;
+
+    return 0;
 }
 
 /* tisp_adr_set_params - Hybrid implementation
@@ -25913,6 +26108,130 @@ int tiziano_init_all_pipeline_components(uint32_t width, uint32_t height, uint32
 }
 EXPORT_SYMBOL(tiziano_init_all_pipeline_components);
 
+/* ============================================================
+ * OEM-exact Day/Night _dn_ wrapper functions.
+ *
+ * Each wraps the base _params_refresh with additional steps the OEM
+ * performs during tisp_day_or_night_s_ctrl: key bumps to force full
+ * HW register refresh, flag sets, and register writes.
+ *
+ * Decompiled from OEM tx-isp-t31.ko (port_9009) using Binary Ninja.
+ * ============================================================ */
+
+/* OEM EXACT: tiziano_defog_dn_params_refresh
+ * Decompiled at 0x455f0: params_refresh + params_init + set_reg_params */
+static int tiziano_defog_dn_params_refresh(void)
+{
+	tiziano_defog_params_refresh();
+	tiziano_defog_params_init();
+	tiziano_defog_set_reg_params();
+	return 0;
+}
+
+/* OEM EXACT: tiziano_dmsc_dn_params_refresh
+ * Decompiled at 0x26c44: key bump forces tisp_dmsc_all_reg_refresh to
+ * unconditionally rewrite all DMSC registers. */
+static int tiziano_dmsc_dn_params_refresh(void)
+{
+	dmsc_gain_last += 0x200;
+	tiziano_dmsc_params_refresh();
+	tisp_dmsc_all_reg_refresh(dmsc_gain_last);
+	return 0;
+}
+
+/* OEM EXACT: tiziano_lsc_dn_params_refresh
+ * Decompiled at 0x230b8: params_refresh + force LUT rewrite flag. */
+static int tiziano_lsc_dn_params_refresh(void)
+{
+	tiziano_lsc_params_refresh();
+	lsc_force_update = 1;
+	return 0;
+}
+
+/* OEM EXACT: tiziano_ccm_dn_params_refresh
+ * Decompiled at 0x2770c: params_refresh + force CCM recalc + apply. */
+static int tiziano_ccm_dn_params_refresh(void)
+{
+	tiziano_ccm_params_refresh();
+	ccm_real = 1;
+	jz_isp_ccm();
+	return 0;
+}
+
+/* OEM EXACT: tiziano_gamma_params_refresh
+ * Decompiled at 0x2136c: reload gamma LUTs from tuning binary.
+ * Linear at tparams+0x2844 (0x102 bytes), WDR at +0x2946. */
+static void tiziano_gamma_params_refresh(void)
+{
+	const u8 *p = (const u8 *)(tparams_active ? tparams_active : tparams_day);
+	if (!p || !tuning_bin_loaded)
+		return;
+	memcpy(tiziano_gamma_lut_linear, p + 0x2844, 0x102);
+	memcpy(tiziano_gamma_lut_wdr, p + 0x2946, 0x102);
+}
+
+/* OEM EXACT: tiziano_gamma_dn_params_refresh
+ * Decompiled at 0x213f4: reload LUTs then reprogram HW. */
+static int tiziano_gamma_dn_params_refresh(void)
+{
+	tiziano_gamma_params_refresh();
+	tiziano_gamma_lut_parameter();
+	return 0;
+}
+
+/* OEM EXACT: tiziano_dpc_dn_params_refresh
+ * Decompiled at 0x41a0c: key bump + params_refresh + full reg refresh. */
+static int tiziano_dpc_dn_params_refresh(void)
+{
+	data_9ab10 += 0x200;
+	tiziano_dpc_params_refresh();
+	tisp_dpc_all_reg_refresh(data_9ab10);
+	return 0;
+}
+
+/* OEM EXACT: tiziano_bcsh_dn_params_refresh
+ * Decompiled at 0x2b010: params_refresh + force update + apply. */
+static int tiziano_bcsh_dn_params_refresh(void)
+{
+	tiziano_bcsh_params_refresh();
+	BCSH_real = 1;
+	if (ourISPdev && ourISPdev->tuning_data)
+		tiziano_bcsh_update(ourISPdev->tuning_data);
+	return 0;
+}
+
+/* OEM EXACT: tiziano_rdns_dn_params_refresh
+ * Decompiled at 0x5964c: params_refresh + full reg refresh. */
+static int tiziano_rdns_dn_params_refresh(void)
+{
+	tiziano_rdns_params_refresh();
+	tisp_rdns_all_reg_refresh(rdns_gain_old);
+	return 0;
+}
+
+/* OEM EXACT: tiziano_ydns_dn_params_refresh
+ * Decompiled at 0x585d8: key bump + params_refresh + full intp + cfg.
+ * OEM calls tisp_ydns_intp_reg_refresh(ydns_gain_old) which is equivalent
+ * to tisp_ydns_intp() + tisp_ydns_param_cfg(). */
+static int tiziano_ydns_dn_params_refresh(void)
+{
+	ydns_gain_old += 0x200;
+	tiziano_ydns_params_refresh();
+	tisp_ydns_intp(ydns_gain_old);
+	tisp_ydns_param_cfg();
+	return 0;
+}
+
+/* OEM EXACT: tiziano_sdns_dn_params_refresh
+ * Decompiled at 0x32a94: params_refresh + full reg refresh.
+ * OEM passes data_8a9b4 to all_reg_refresh; our version takes no args. */
+static int tiziano_sdns_dn_params_refresh(void)
+{
+	tiziano_sdns_params_refresh();
+	tisp_sdns_all_reg_refresh();
+	return 0;
+}
+
 /* Export all the tiziano pipeline functions */
 EXPORT_SYMBOL(tiziano_ccm_init);
 EXPORT_SYMBOL(jz_isp_ccm);
@@ -28597,6 +28916,110 @@ void *tiziano_ae_para_addr(void)
     return &dmsc_nor_alias_thres_intp;
 }
 EXPORT_SYMBOL(tiziano_ae_para_addr);
+
+/* tisp_ae_s_comp - OEM EXACT (0x54a8c): Set AE compensation value.
+ *
+ * Computes a scaled compensation target from the input comp_x (0-255) and
+ * ae_comp_default, then forces both AE HW channels to reload parameters.
+ *
+ * OEM formula:
+ *   if comp_x >= 0x81: result = comp_x * 0x12c / 0x7f + ae_comp_default - 0x12e
+ *   else:              result = comp_x * ae_comp_default / 0x80
+ */
+int tisp_ae_s_comp(uint8_t comp_x)
+{
+    uint32_t a0 = (uint32_t)comp_x;
+    int32_t result;
+
+    /* OEM: ae_comp_param.data[0] = 1 (mark compensation active) */
+    ae_comp_param.data[0] = 1;
+
+    /* OEM: ae_comp_x = $a0 */
+    ae_comp_x = comp_x;
+
+    /* OEM: compute scaled compensation target */
+    if (a0 >= 0x81)
+        result = a0 * 0x12c / 0x7f + ae_comp_default - 0x12e;
+    else
+        result = a0 * ae_comp_default / 0x80;
+
+    /* OEM: data_a0c08 = result */
+    data_a0c08 = result;
+
+    /* OEM: data_a0df0 = 1; data_a0df4 = 1 */
+    data_a0df0 = 1;
+    data_a0df4 = 1;
+
+    /* OEM: reprogram both AE HW channels */
+    tiziano_ae_set_hardware_param(0, _ae_parameter.data, 1);
+    return tiziano_ae_set_hardware_param(1, _ae_parameter.data, 1);
+}
+EXPORT_SYMBOL(tisp_ae_s_comp);
+
+/* tiziano_ae_dn_params_refresh - OEM EXACT (0x54b54): Full AE DN switch reset.
+ *
+ * Sets all AE state flags to force re-convergence, reloads params from the
+ * new tparams_active, reinitializes exposure thresholds, reprograms parameter
+ * addresses, and forces both AE HW channels to reload.  Finally resets the
+ * AE compensation default and reapplies current compensation.
+ */
+int tiziano_ae_dn_params_refresh(void)
+{
+    /* OEM: Set all AE state flags to 1 to force full re-convergence */
+    IspAeFlag = 1;
+    data_a0de4 = 1;
+    data_a0de8 = 1;
+    data_a0df0 = 1;
+    data_a0df4 = 1;
+    data_a0df8 = 1;
+    data_a0e04 = 1;
+    data_a0e08 = 1;
+
+    /* OEM: Clear convergence started flag */
+    data_a0dfc = 0;
+
+    /* OEM: Reload all AE params from new tparams_active */
+    tiziano_ae_params_refresh();
+
+    /* OEM: Reload deflicker with sensor timing params.
+     * In tiziano_ae_init the OEM does:
+     *   a3 = zx.d(data_a2e44) -> our data_b2e54 (FPS denominator)
+     *   a1 = data_a2e34       -> our data_b2e44 (deflicker base)
+     *   a2 = zx.d(data_a2e46) -> our data_b2e56 (FPS numerator)
+     *   data_a0b18 = a1; data_a0b1c = a2; data_a0b20 = a3
+     *   tiziano_deflicker_expt(_flicker_t, a1, a2, a3, &_deflick_lut, &_nodes_num)
+     */
+    {
+        uint32_t a3 = (uint32_t)data_b2e54;  /* FPS denominator */
+        uint32_t a1 = data_b2e44;            /* Deflicker base */
+        uint32_t a2 = (uint32_t)data_b2e56;  /* FPS numerator */
+
+        data_b0b28 = a1;
+        data_b0b2c = a2;
+        data_b0b30 = a3;
+
+        tiziano_deflicker_expt(_flicker_t.data[0], a1, a2, a3,
+                               _deflick_lut.data,
+                               (uint32_t *)&_nodes_num.data[0]);
+    }
+
+    /* OEM: Reinitialize AE exposure thresholds from new params */
+    tiziano_ae_init_exp_th();
+
+    /* OEM: Recompute AE parameter addresses */
+    (void)tiziano_ae_para_addr();
+
+    /* OEM: Reprogram both AE HW channels with force flag */
+    tiziano_ae_set_hardware_param(0, _ae_parameter.data, 1);
+    tiziano_ae_set_hardware_param(1, _ae_parameter.data, 1);
+
+    /* OEM: Reset compensation default and reapply current compensation */
+    ae_comp_default = data_b0c18;
+    tisp_ae_s_comp(ae_comp_x);
+
+    return 0;
+}
+EXPORT_SYMBOL(tiziano_ae_dn_params_refresh);
 
 /* Sensor control functions - Safe structure-based implementations */
 static void tisp_set_sensor_integration_time(uint32_t time)

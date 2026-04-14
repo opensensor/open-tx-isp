@@ -3046,6 +3046,7 @@ static long isp_tuning_ioctl(struct file *file, unsigned int cmd, unsigned long 
 
     // Check if this is a tuning command (0x74xx series from reference)
     if ((cmd >> 8 & 0xFF) == 0x74) {
+        pr_info("ISP_CORE_INTERCEPT: 0x74 cmd=0x%x (SHOULD GO TO M0!)\n", cmd);
         if ((cmd & 0xFF) < 0x33) {
             if ((cmd - ISP_TUNING_GET_PARAM) < 0xA) {
 
