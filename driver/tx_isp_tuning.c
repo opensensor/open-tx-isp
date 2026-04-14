@@ -2565,8 +2565,9 @@ static u32 tisp_compute_top_bypass_from_params(int wdr_enable)
 		bypass_val = (bypass_val & 0xa1fffff6) | 0x00880002;
 	else
 		/* Force-bypass: GIB(5), GB(13), MDNS(16).
-		 * LSC(4) + ADR(7) re-enabled.
-		 * 0x34012029 = base | GIB(0x20) | GB(0x2000) | MDNS(0x10000) */
+		 * GIB causes R=G=B even with identical BLC/unity gains.
+		 * 0x106c readback shows 0x3c0000 (not our written 0x0) —
+		 * possible write ordering or latch issue. */
 		bypass_val = (bypass_val & 0xb577fffd) | 0x34012029;
 
 	pr_info("tisp_compute_top_bypass: final=0x%08x\n", bypass_val);
@@ -18262,11 +18263,21 @@ static int tiziano_gib_params_refresh(void)
             tiziano_gib_config_line[6], tiziano_gib_config_line[7],
             tiziano_gib_config_line[8], tiziano_gib_config_line[9],
             tiziano_gib_config_line[10], tiziano_gib_config_line[11]);
-    pr_info("gib_params_refresh: rg={%u,%u} bir={%u,%u} blc_r[0..2]={%u,%u,%u}\n",
+    pr_info("gib_params_refresh: rg={%u,%u} bir={%u,%u}\n",
             tiziano_gib_r_g_linear[0], tiziano_gib_r_g_linear[1],
-            tiziano_gib_b_ir_linear[0], tiziano_gib_b_ir_linear[1],
+            tiziano_gib_b_ir_linear[0], tiziano_gib_b_ir_linear[1]);
+    pr_info("gib_params_refresh: blc_r ={%u,%u,%u} blc_gr={%u,%u,%u}\n",
             tiziano_gib_deirm_blc_r_linear[0], tiziano_gib_deirm_blc_r_linear[1],
-            tiziano_gib_deirm_blc_r_linear[2]);
+            tiziano_gib_deirm_blc_r_linear[2],
+            tiziano_gib_deirm_blc_gr_linear[0], tiziano_gib_deirm_blc_gr_linear[1],
+            tiziano_gib_deirm_blc_gr_linear[2]);
+    pr_info("gib_params_refresh: blc_gb={%u,%u,%u} blc_b ={%u,%u,%u} blc_ir={%u,%u,%u}\n",
+            tiziano_gib_deirm_blc_gb_linear[0], tiziano_gib_deirm_blc_gb_linear[1],
+            tiziano_gib_deirm_blc_gb_linear[2],
+            tiziano_gib_deirm_blc_b_linear[0], tiziano_gib_deirm_blc_b_linear[1],
+            tiziano_gib_deirm_blc_b_linear[2],
+            tiziano_gib_deirm_blc_ir_linear[0], tiziano_gib_deirm_blc_ir_linear[1],
+            tiziano_gib_deirm_blc_ir_linear[2]);
     pr_info("gib_params_refresh: deir_r_m[0..3]={%u,%u,%u,%u}\n",
             tiziano_gib_deir_r_m[0], tiziano_gib_deir_r_m[1],
             tiziano_gib_deir_r_m[2], tiziano_gib_deir_r_m[3]);
@@ -18556,11 +18567,16 @@ int tiziano_gib_init(void)
                           tiziano_gib_deir_g_m,
                           tiziano_gib_deir_b_m);
 
-    pr_info("GIB_REGS: 0x1038=0x%08x 0x103c=0x%08x 0x1060=0x%08x 0x1064=0x%08x 0x1068=0x%08x 0x106c=0x%08x 0x1070=0x%08x\n",
+    pr_info("GIB_REGS: 0x1030=%08x 0x1034=%08x 0x1038=%08x 0x103c=%08x 0x1040=%08x\n",
+        system_reg_read(0x1030), system_reg_read(0x1034),
         system_reg_read(0x1038), system_reg_read(0x103c),
+        system_reg_read(0x1040));
+    pr_info("GIB_BLC: 0x1060=%08x 0x1064=%08x 0x1068=%08x 0x106c=%08x 0x1070=%08x\n",
         system_reg_read(0x1060), system_reg_read(0x1064),
         system_reg_read(0x1068), system_reg_read(0x106c),
         system_reg_read(0x1070));
+    pr_info("GIB_STATE: bypass=0x%08x reg8=0x%08x deir_en=%d\n",
+        system_reg_read(0xc), system_reg_read(0x8), GIB_CFG_DEIR_EN);
 
     return 0;
 }
