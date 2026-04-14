@@ -77,12 +77,12 @@ module_param_named(force_bypass_defog, tisp_force_bypass_defog, int, S_IRUGO | S
 MODULE_PARM_DESC(force_bypass_defog,
 			 "Debug isolate FOV issues by forcing Defog bypass (default: 0)");
 
-static int tisp_force_bypass_gib = 1; /* GIB: bypassed — R=G=B unsolved, HW registers correct but output equalized */
+static int tisp_force_bypass_gib = 0; /* GIB: enabled */
 module_param_named(force_bypass_gib, tisp_force_bypass_gib, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(force_bypass_gib,
 			 "Force GIB bypass (default: 1 — GIB equalizes R=G=B despite correct registers)");
 
-static int tisp_force_bypass_mdns = 1; /* MDNS: bypassed for clean baseline */
+static int tisp_force_bypass_mdns = 0; /* MDNS: enabled */
 module_param_named(force_bypass_mdns, tisp_force_bypass_mdns, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(force_bypass_mdns,
 			 "Force MDNS bypass (default: 0 — MDNS provides temporal denoise)");
@@ -2281,12 +2281,15 @@ static void tiziano_ydns_params_refresh(void);
 /* Forward declarations for OEM-exact _dn_ wrapper functions (Day/Night switch).
  * Each wrapper calls base _params_refresh + additional HW register refresh/key bumps. */
 static int tiziano_defog_dn_params_refresh(void);
+extern int tiziano_ae_dn_params_refresh(void);
 static int tiziano_dmsc_dn_params_refresh(void);
 static int tiziano_lsc_dn_params_refresh(void);
 static int tiziano_ccm_dn_params_refresh(void);
 static void tiziano_gamma_params_refresh(void);
 static int tiziano_gamma_dn_params_refresh(void);
+extern void tiziano_adr_dn_params_refresh(void);
 static int tiziano_dpc_dn_params_refresh(void);
+extern void tiziano_af_dn_params_refresh(void);
 static int tiziano_bcsh_dn_params_refresh(void);
 static int tiziano_rdns_dn_params_refresh(void);
 static int tiziano_ydns_dn_params_refresh(void);
@@ -5815,53 +5818,40 @@ static int tisp_day_or_night_s_ctrl(uint32_t mode)
 	pr_info("%s: applying %s mode wdr=%u\n",
 		__func__, active_mode ? "night" : "day", !!data_b2e74);
 
-	/* OEM recomputes bypass register from new tparams and writes to HW.
-	 * DISABLED: writing the new bypass mid-stream kills AE/AWB stats
-	 * because our tiziano_ae_dn_params_refresh is incomplete — the OEM's
-	 * full version reprograms both AE HW channels after the bypass change.
-	 * Without that, changing bypass bits (e.g. bit 2) can disable the
-	 * stats accumulation path permanently. Re-enable when full AE DN is done. */
+	/* OEM EXACT: recompute bypass register from tparams and write to HW.
+	 * The OEM writes bypass BEFORE calling any _dn_params_refresh functions.
+	 * tiziano_ae_dn_params_refresh is now fully implemented (resets all AE
+	 * state flags, reprograms both HW channels, reapplies compensation). */
 	{
 		u32 new_bypass = tisp_compute_top_bypass_from_params(!!data_b2e74);
-		pr_info("%s: bypass would be 0x%08x (NOT writing — AE DN incomplete)\n",
-			__func__, new_bypass);
-		/* system_reg_write(0xc, new_bypass); */
+		new_bypass = tisp_apply_debug_top_bypass_overrides(new_bypass, "dn_switch");
+		pr_info("%s: bypass 0x%08x -> 0x%08x\n",
+			__func__, system_reg_read(0xc), new_bypass);
+		system_reg_write(0xc, new_bypass);
 	}
 
-	/* OEM calls _dn_params_refresh for every block (decompiled at 0x62300).
-	 * Each _dn_ wrapper reloads params from tparams_active AND forces a
-	 * full HW register refresh (key bumps, flag sets, register writes).
-	 *
-	 * BISECT STATUS: Enabling all _dn_ wrappers + Group B at once causes
-	 * AWB/AE stats to go to zero (image goes near-black).
-	 * Strategy: Group A uses SAFE param-only calls (proven working).
-	 * Group B added incrementally with safe-only functions.
-	 *
-	 * _dn_ wrapper implementations are defined near EXPORT_SYMBOL section
-	 * and can be swapped in once the culprit is identified. */
-
-	/* Group A: param-only reload from new tparams_active (PROVEN SAFE) */
-	tiziano_defog_params_refresh();
-	tiziano_dmsc_params_refresh();
+	/* OEM EXACT call order (decompiled at 0x62300): all 18 _dn_ variants.
+	 * BISECT: top half enabled, bottom half disabled to find stats killer. */
+	tiziano_defog_dn_params_refresh();
+	tiziano_ae_dn_params_refresh();
+	tiziano_awb_dn_params_refresh();
+	tiziano_dmsc_dn_params_refresh();
 	tiziano_sharpen_dn_params_refresh();
+	tiziano_mdns_dn_params_refresh();
+	tiziano_sdns_dn_params_refresh();
 	tiziano_gib_dn_params_refresh();
-	tiziano_lsc_params_refresh();
-	tiziano_ccm_params_refresh();
+	tiziano_lsc_dn_params_refresh();
+	/* BISECT round 2: bottom-half first 5 enabled, last 4 disabled */
+	tiziano_ccm_dn_params_refresh();
 	tiziano_clm_dn_params_refresh();
-	tiziano_gamma_lut_parameter();
-	tiziano_dpc_params_refresh();
-	tiziano_bcsh_params_refresh();
-	tiziano_rdns_params_refresh();
-	tiziano_ydns_params_refresh();
-
-	/* Group B: DISABLED — one of these kills AWB/AE stats.
-	 * Enable ONE at a time to bisect which causes the blackout.
-	 * Uncomment and rebuild to test each: */
-	/* tiziano_ae_params_refresh(); */
-	/* tiziano_awb_dn_params_refresh(); */
-	/* tiziano_mdns_dn_params_refresh(); */
-	/* tiziano_sdns_params_refresh(); */
-	/* tiziano_adr_params_refresh(); */
+	tiziano_gamma_dn_params_refresh();
+	tiziano_adr_dn_params_refresh();
+	tiziano_dpc_dn_params_refresh();
+	/* BISECT round 3: all 4 enabled — previous segfault was userspace, not DN */
+	tiziano_af_dn_params_refresh();
+	tiziano_bcsh_dn_params_refresh();
+	tiziano_rdns_dn_params_refresh();
+	tiziano_ydns_dn_params_refresh();
 
 	if (ourISPdev) {
 		ourISPdev->day_night = active_mode;
@@ -19691,6 +19681,20 @@ static int tisp_dmsc_sharpness_set(u32 value)
 	if (dmsc_gain_last != 0xffffffff)
 		return tisp_dmsc_all_reg_refresh(dmsc_gain_last);
 
+	return 0;
+}
+
+/* OEM EXACT: tisp_dmsc_sharpness_get — return current sharpness (byte). */
+static u32 tisp_dmsc_sharpness_get(void)
+{
+	return dmsc_sharpness & 0xff;
+}
+
+/* OEM EXACT: tisp_dmsc_refresh — wrapper calling par_refresh with delta=0x100, commit=1. */
+static int tisp_dmsc_par_refresh(u32 gain, u32 delta, int commit);
+static int tisp_dmsc_refresh(u32 gain)
+{
+	tisp_dmsc_par_refresh(gain, 0x100, 1);
 	return 0;
 }
 
