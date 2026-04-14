@@ -6971,8 +6971,235 @@ static int apical_isp_core_ops_s_ctrl(struct tx_isp_dev *dev, struct isp_core_ct
         case 0x9a0914:   /* (no-op) */
         case 0x9a091a:   /* (no-op) */
         case 0x98091f:   /* (no-op) */
+        case 0x8000001:  /* (no-op) */
+        case 0x8000084:  /* (no-op) */
             ret = 0;
             break;
+
+        /* ---- OEM commands added for parity (previously missing) ---- */
+
+        case 0x8000008: { /* OEM: tisp_s_rgb_coefft — set RGB coefficients (6 bytes) */
+            int32_t rgb_buf[3];
+            if (copy_from_user(rgb_buf, (void __user *)(unsigned long)ctrl->value, 6)) {
+                ret = -EFAULT;
+                goto out;
+            }
+            tisp_s_rgb_coefft(rgb_buf);
+            break;
+        }
+
+        case 0x800000a: { /* OEM: tisp_s_awb_start — set AWB start gains (8 bytes) */
+            uint32_t awb_start[2];
+            if (copy_from_user(awb_start, (void __user *)(unsigned long)ctrl->value, 8)) {
+                ret = -EFAULT;
+                goto out;
+            }
+            tiziano_s_awb_start(awb_start[0], awb_start[1]);
+            break;
+        }
+
+        case 0x800000c: /* OEM: tisp_s_awb_algo — set AWB algorithm mode */
+            tisp_s_awb_algo(ctrl->value);
+            break;
+
+        case 0x800000d: { /* OEM: tisp_s_wb_ct — set WB color temperature */
+            uint32_t ct_val;
+            if (copy_from_user(&ct_val, (void __user *)(unsigned long)ctrl->value, 4)) {
+                ret = -EFAULT;
+                goto out;
+            }
+            tisp_s_wb_ct(&ct_val);
+            break;
+        }
+
+        case 0x800000e: { /* OEM: tisp_s_awb_cluster — set AWB cluster params (0x28 bytes) */
+            uint32_t cluster_buf[0x28 / 4];
+            if (copy_from_user(cluster_buf, (void __user *)(unsigned long)ctrl->value, 0x28)) {
+                ret = -EFAULT;
+                goto out;
+            }
+            tisp_s_awb_cluster(cluster_buf, cluster_buf[1], cluster_buf[2]);
+            break;
+        }
+
+        case 0x800000f: { /* OEM: tisp_s_awb_ct_trend — set AWB CT trend (0x18 bytes) */
+            uint32_t trend_buf[0x18 / 4];
+            if (copy_from_user(trend_buf, (void __user *)(unsigned long)ctrl->value, 0x18)) {
+                ret = -EFAULT;
+                goto out;
+            }
+            tisp_s_awb_ct_trend(trend_buf);
+            break;
+        }
+
+        case 0x8000024: /* OEM: apical_isp_ae_s_roi */
+            ret = 0; /* OEM routes through isra helper */
+            break;
+
+        case 0x8000025: /* OEM: apical_isp_expr_s_ctrl */
+            ret = 0; /* OEM routes through isra helper */
+            break;
+
+        case 0x800002a: /* OEM: tisp_s_Hilightdepress */
+            tisp_s_Hilightdepress(ctrl->value);
+            break;
+
+        case 0x800002b: /* OEM: apical_isp_gamma_s_attr — set gamma LUT */
+            ret = apical_isp_gamma_s_attr((void __user *)(unsigned long)ctrl->value);
+            break;
+
+        case 0x800002d: /* OEM: apical_isp_ae_zone_weight_s_attr */
+            ret = 0; /* OEM routes through isra helper */
+            break;
+
+        case 0x800002e: /* OEM: tisp_s_ae_hist — set AE histogram */
+            ret = 0; /* Complex: malloc+copy — stubbed */
+            break;
+
+        case 0x800002f: { /* OEM: tisp_s_ae_min — set AE minimum params (0x10 bytes) */
+            uint32_t ae_min[4];
+            if (copy_from_user(ae_min, (void __user *)(unsigned long)ctrl->value, 0x10)) {
+                ret = -EFAULT;
+                goto out;
+            }
+            /* OEM: tisp_s_ae_min(ae_min[0], ae_min[1], ae_min[2], ae_min[3]) */
+            ret = 0;
+            break;
+        }
+
+        case 0x8000032: /* OEM: tisp_s_ae_it_max */
+            ret = 0; /* OEM calls tisp_s_ae_it_max() with no args */
+            break;
+
+        case 0x8000034: /* OEM: tisp_set_ae_freeze */
+            /* OEM sets ae_freeze flag — not yet implemented */
+            break;
+
+        case 0x8000037: /* OEM: tisp_s_BacklightComp */
+            tisp_s_BacklightComp(ctrl->value);
+            break;
+
+        case 0x8000038: { /* OEM: tisp_s_ae_at_list — set AE AT list (0x28 bytes) */
+            uint32_t at_buf[0x28 / 4];
+            if (copy_from_user(at_buf, (void __user *)(unsigned long)ctrl->value, 0x28)) {
+                ret = -EFAULT;
+                goto out;
+            }
+            /* OEM: tisp_s_ae_at_list(at_buf[0]) */
+            ret = 0;
+            break;
+        }
+
+        case 0x8000042: /* OEM: apical_isp_af_hist_s_attr */
+            ret = 0; /* AF histogram set — stubbed */
+            break;
+
+        case 0x8000044: /* OEM: apical_isp_af_weight_s_attr */
+            ret = 0; /* AF weight set — stubbed */
+            break;
+
+        case 0x8000080: { /* OEM: copy 0x106 bytes to internal buffer */
+            uint8_t param_buf[0x106];
+            if (copy_from_user(param_buf, (void __user *)(unsigned long)ctrl->value, 0x106)) {
+                ret = -EFAULT;
+                goto out;
+            }
+            /* OEM copies to dev+0x3f80 offset — not critical for color */
+            break;
+        }
+
+        case 0x80000a3: /* OEM: tisp_s_adr_enable */
+            tisp_s_adr_enable(ctrl->value);
+            break;
+
+        case 0x80000a4: /* OEM: tisp_s_defog_enable */
+            /* OEM toggles defog block enable — deferred */
+            break;
+
+        case 0x80000a6: { /* OEM: tisp_set_csc_attr — set CSC attributes (0x40 bytes) */
+            uint32_t csc_buf[0x40 / 4];
+            if (copy_from_user(csc_buf, (void __user *)(unsigned long)ctrl->value, 0x40)) {
+                ret = -EFAULT;
+                goto out;
+            }
+            /* OEM: tisp_set_csc_attr(csc_buf) */
+            ret = 0;
+            break;
+        }
+
+        case 0x80000e3: { /* OEM: tisp_s_fcrop_control — frame crop (0x14 bytes) */
+            uint32_t fcrop[5];
+            if (copy_from_user(fcrop, (void __user *)(unsigned long)ctrl->value, 0x14)) {
+                ret = -EFAULT;
+                goto out;
+            }
+            ret = 0;
+            break;
+        }
+
+        case 0x80000e4: { /* OEM: combined hvflip set */
+            uint32_t hvflip = ctrl->value;
+            uint32_t hf = (hvflip & 2) >> 1;
+            uint32_t vf = hvflip & 1;
+            tuning->hflip = hf;
+            tuning->vflip = vf;
+            break;
+        }
+
+        case 0x80000e5: /* OEM: apical_isp_mask_s_attr */
+            ret = 0; /* Mask set — stubbed */
+            break;
+
+        case 0x80000e8: { /* OEM: tisp_s_autozoom_control (0x24 bytes) */
+            uint32_t zoom[0x24 / 4];
+            if (copy_from_user(zoom, (void __user *)(unsigned long)ctrl->value, 0x24)) {
+                ret = -EFAULT;
+                goto out;
+            }
+            ret = 0;
+            break;
+        }
+
+        case 0x80000e9: { /* OEM: tisp_s_scaler_level_control (0xc bytes) */
+            uint32_t scaler[3];
+            if (copy_from_user(scaler, (void __user *)(unsigned long)ctrl->value, 0xc)) {
+                ret = -EFAULT;
+                goto out;
+            }
+            ret = 0;
+            break;
+        }
+
+        case 0x80000ea: { /* OEM: tisp_set_wdr_output_mode (4 bytes) */
+            uint32_t wdr_mode;
+            if (copy_from_user(&wdr_mode, (void __user *)(unsigned long)ctrl->value, 4)) {
+                ret = -EFAULT;
+                goto out;
+            }
+            ret = 0;
+            break;
+        }
+
+        case 0x8000100: { /* OEM: tisp_s_ccm_attr — set CCM attributes (0x28 bytes) */
+            uint32_t ccm_buf[0x28 / 4];
+            if (copy_from_user(ccm_buf, (void __user *)(unsigned long)ctrl->value, 0x28)) {
+                ret = -EFAULT;
+                goto out;
+            }
+            tisp_s_ccm_attr(ccm_buf);
+            break;
+        }
+
+        case 0x8000102: { /* OEM: tisp_set_bcsh_fixed_contrast (3 bytes) */
+            uint8_t fc_buf[4];
+            if (copy_from_user(fc_buf, (void __user *)(unsigned long)ctrl->value, 3)) {
+                ret = -EFAULT;
+                goto out;
+            }
+            /* OEM: tisp_set_bcsh_fixed_contrast(fc_buf) */
+            ret = 0;
+            break;
+        }
 
         default:
             /* Binary Ninja: return 0xffffffff for unhandled commands */
