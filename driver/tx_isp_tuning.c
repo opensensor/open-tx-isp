@@ -4331,9 +4331,10 @@ static int tisp_ae0_get_hist(void *buffer, int mode, int flag);
 static int tisp_ae1_get_hist(void *buffer);
 static int tisp_ae0_ctrls_update(void);
 static int tisp_ae0_process_impl(void);
+int tisp_ae_g_scene_luma(uint32_t *out);
 static int tisp_event_push(void *event);
 static int system_reg_write_ae(int ae_id, uint32_t reg, uint32_t value);
-static int32_t tisp_log2_fixed_to_fixed_tuning(uint32_t input_val, int32_t in_precision, char out_precision);
+static int32_t tisp_log2_fixed_to_fixed(uint32_t input_val, int32_t in_precision, char out_precision);
 static void tisp_set_sensor_integration_time(uint32_t time);
 static uint32_t tisp_set_sensor_analog_gain(uint32_t requested_gain);
 static uint32_t tisp_set_sensor_digital_gain_short(uint32_t requested_gain);
@@ -5824,15 +5825,19 @@ static int tisp_ae0_process_impl(void)
         uint32_t reg_packed = (dg_val << 16) | dg_val;
 
         if (ae_wdr_mode == 0) {
-            /* Normal mode: OEM uses system_reg_write_gib for gate writes */
-            system_reg_write_gib(1, 0x1030, reg_packed);
-            system_reg_write_gib(1, 0x1034, reg_packed);
+            /* OEM EXACT: system_reg_write_ae(3, ...) for DG registers */
+            system_reg_write_ae(3, 0x1030, reg_packed);
+            system_reg_write_ae(3, 0x1034, reg_packed);
         } else if (ae_wdr_mode == 1) {
-            /* WDR mode: OEM uses system_reg_write_gib for gate writes */
-            system_reg_write_gib(1, 0x1000, reg_packed);
-            system_reg_write_gib(1, 0x1004, reg_packed);
+            /* WDR mode */
+            system_reg_write_ae(3, 0x1000, reg_packed);
+            system_reg_write_ae(3, 0x1004, reg_packed);
         }
     }
+
+    /* OEM EXACT: tisp_ae_g_scene_luma called after DG register writes,
+     * before event push. Updates scene_luma temporal filter. */
+    tisp_ae_g_scene_luma(&ae_scene_luma);
 
     /* ---- Step 6: Copy results to _ae_result ---- */
     memcpy(&_ae_result, &_ae_reg, sizeof(_ae_result));
@@ -5863,7 +5868,7 @@ static int tisp_ae0_process_impl(void)
         /* OEM: push event 4 only when gain changes or AE ctrl[0] != 0 */
         if (total_g != total_gain_old || tisp_ae_ctrls[0] != 0) {
             total_gain_old = total_g;
-            uint32_t log2_tg = tisp_log2_fixed_to_fixed_tuning(total_g, 0x10, 0x10);
+            uint32_t log2_tg = tisp_log2_fixed_to_fixed(total_g, 0x10, 0x10);
             struct tisp_event_record ev = {0};
             ev.event_id = 4;
             ev.args[0] = log2_tg;
@@ -5881,7 +5886,7 @@ static int tisp_ae0_process_impl(void)
 
         if (ag_val != again_old || tisp_ae_ctrls[0] != 0) {
             again_old = ag_val;
-            uint32_t log2_ag = tisp_log2_fixed_to_fixed_tuning(ag_val, 0x10, 0x10);
+            uint32_t log2_ag = tisp_log2_fixed_to_fixed(ag_val, 0x10, 0x10);
             struct tisp_event_record ev = {0};
             ev.event_id = 5;
             ev.args[0] = log2_ag;
@@ -6676,7 +6681,7 @@ static int32_t tisp_log2_int_to_fixed(uint32_t value, char precision_bits, char 
            (normalized & 0x7fff) >> ((15 - shift) & 0x1f);
 }
 
-static int32_t tisp_log2_fixed_to_fixed_tuning(uint32_t input_val, int32_t in_precision, char out_precision)
+static int32_t tisp_log2_fixed_to_fixed(uint32_t input_val, int32_t in_precision, char out_precision)
 {
     /* OEM EXACT (0x11470): log2_int_to_fixed(value, out_q, 0) - (in_q << out_q)
      *
@@ -6719,7 +6724,7 @@ static int tisp_g_ev_attr(uint32_t *ev_buffer, struct isp_tuning_data *tuning)
     ev_buffer[1] = tuning->exposure >> 10;            // Normalized exposure value
 
     // Convert exposure to fixed point representation
-    int32_t exp_fixed = tisp_log2_fixed_to_fixed_tuning(tuning->exposure, 10, 16);
+    int32_t exp_fixed = tisp_log2_fixed_to_fixed(tuning->exposure, 10, 16);
     ev_buffer[3] = exp_fixed;
 
     // Calculate exposure vs frame rate compensation
@@ -6732,8 +6737,8 @@ static int tisp_g_ev_attr(uint32_t *ev_buffer, struct isp_tuning_data *tuning)
     ev_buffer[2] = exp_comp;
 
     // Convert gain values to fixed point
-    ev_buffer[4] = tisp_log2_fixed_to_fixed_tuning(tuning->max_again, 10, 5);    // Analog gain
-    ev_buffer[5] = tisp_log2_fixed_to_fixed_tuning(tuning->max_dgain, 10, 5);    // Digital gain
+    ev_buffer[4] = tisp_log2_fixed_to_fixed(tuning->max_again, 10, 5);    // Analog gain
+    ev_buffer[5] = tisp_log2_fixed_to_fixed(tuning->max_dgain, 10, 5);    // Digital gain
     ev_buffer[6] = tuning->exposure & 0xffff;                             // Integration time
 
     // Calculate combined gain
@@ -6741,10 +6746,10 @@ static int tisp_g_ev_attr(uint32_t *ev_buffer, struct isp_tuning_data *tuning)
     ev_buffer[7] = total >> 2;
 
     // Additional gain conversions for min/max values
-    ev_buffer[8] = tisp_log2_fixed_to_fixed_tuning(tuning->max_again + 4, 10, 5);   // Max analog gain
-    ev_buffer[9] = tisp_log2_fixed_to_fixed_tuning(tuning->max_dgain + 4, 10, 5);   // Max digital gain
-    ev_buffer[10] = tisp_log2_fixed_to_fixed_tuning(tuning->max_again >> 1, 10, 5); // Min analog gain (half of max)
-    ev_buffer[11] = tisp_log2_fixed_to_fixed_tuning(tuning->max_dgain >> 1, 10, 5); // Min digital gain (half of max)
+    ev_buffer[8] = tisp_log2_fixed_to_fixed(tuning->max_again + 4, 10, 5);   // Max analog gain
+    ev_buffer[9] = tisp_log2_fixed_to_fixed(tuning->max_dgain + 4, 10, 5);   // Max digital gain
+    ev_buffer[10] = tisp_log2_fixed_to_fixed(tuning->max_again >> 1, 10, 5); // Min analog gain (half of max)
+    ev_buffer[11] = tisp_log2_fixed_to_fixed(tuning->max_dgain >> 1, 10, 5); // Min digital gain (half of max)
 
     // FPS and timing related values
     ev_buffer[0x1b] = tuning->fps_num;    // Current FPS numerator
@@ -7378,6 +7383,9 @@ static int isp_get_af_zone(struct tx_isp_dev *dev, struct isp_core_ctrl *ctrl)
 }
 
 /* Forward declarations needed by g_ctrl/s_ctrl before main declaration block */
+int tisp_g_ae_hist(void *buffer);
+int tisp_s_ae_hist(void *hist_data);
+int tisp_ae_g_scene_luma(uint32_t *out);
 int tisp_mdns_param_array_get(int param_id, void *out_buf, int *size_buf);
 int tisp_mdns_param_array_set(int param_id, void *in_buf, int *size_buf);
 static int tisp_s_max_again(uint32_t value);
@@ -7711,9 +7719,15 @@ static int apical_isp_core_ops_g_ctrl(struct tx_isp_dev *dev, struct isp_core_ct
             ret = apical_isp_gamma_g_attr((void __user *)(unsigned long)ctrl->value);
             break;
 
-        case 0x800002e: /* OEM: tisp_g_ae_hist — complex, stubbed */
-            ret = 0;
+        case 0x800002e: { /* OEM: tisp_g_ae_hist — copy histogram to user */
+            void *hist_buf = kmalloc(0x42c, GFP_KERNEL);
+            if (!hist_buf) { ret = -ENOMEM; break; }
+            tisp_g_ae_hist(hist_buf);
+            if (copy_to_user((void __user *)(unsigned long)ctrl->value, hist_buf, 0x400))
+                ret = -EFAULT;
+            kfree(hist_buf);
             break;
+        }
 
         case 0x800002f: { /* OEM: tisp_g_ae_min — get AE min (0x10 bytes) */
             uint32_t ae_min[4] = {0};
@@ -8282,9 +8296,10 @@ static int apical_isp_core_ops_s_ctrl(struct tx_isp_dev *dev, struct isp_core_ct
             ret = 0; /* OEM routes through isra helper */
             break;
 
-        case 0x800002e: /* OEM: tisp_s_ae_hist — set AE histogram */
-            ret = 0; /* Complex: malloc+copy — stubbed */
+        case 0x800002e: { /* OEM: tisp_s_ae_hist — set AE histogram */
+            tisp_s_ae_hist((void *)(unsigned long)ctrl->value);
             break;
+        }
 
         case 0x800002f: { /* OEM: tisp_s_ae_min — set AE minimum params (0x10 bytes) */
             uint32_t ae_min[4];
@@ -10107,8 +10122,7 @@ int tisp_dpc_param_array_set(int param_id, void *in_buf, int *size_buf)
 }
 
 
-/* Stub implementations for remaining parameter array functions */
-/* These need to be implemented based on Binary Ninja decompilations */
+/* Parameter array functions — implemented from Binary Ninja decompilations */
 
 int tisp_rdns_param_array_get(int param_id, void *out_buf, int *size_buf)
 {
@@ -15970,7 +15984,8 @@ static uint32_t data_d04a8 = 0x1000;  /* Short integration time parameter */
 static uint32_t data_d04ac = 0x1000;  /* Short integration gain parameter */
 static uint32_t data_c46b8 = 0;       /* Integration time cache */
 static uint32_t data_c46f8 = 0;       /* Short integration time cache */
-static uint32_t data_c470c = 0;       /* Short exposure mode flag */
+static uint32_t data_c4714 = 0;       /* AE min integration time (OEM: data_c4714) */
+static uint32_t data_c470c = 0;       /* AE min analog gain (OEM: data_c470c) */
 
 /* IRQ callback function table */
 static void (*irq_func_cb[32])(void) = {NULL};
@@ -16028,7 +16043,7 @@ static uint32_t data_b2ee0(uint32_t log_val, unsigned int *var_ptr);
 static uint32_t data_b2ee4(uint32_t log_val, void **var_ptr);
 static int data_b2f04(uint32_t param, int flag);
 static int data_b2f08(uint32_t param, int flag);
-/* tisp_log2_fixed_to_fixed(void) stub removed — tisp_log2_fixed_to_fixed_tuning
+/* tisp_log2_fixed_to_fixed(void) stub removed — tisp_log2_fixed_to_fixed
  * is used directly by gain functions with proper (value, in_q, out_q) args. */
 
 /* Remove duplicate declarations - using the struct versions defined earlier */
@@ -28778,7 +28793,7 @@ static void tisp_param_operate_process(const void *data, size_t len)
         else if (param_id == 0x3ac)
             handler = (param_fn_t)tisp_hldc_param_array_set;
         else if (param_id - 0x3ad < 0x13)
-            handler = (param_fn_t)tisp_af_param_array_get; /* AF set not implemented, use get as stub */
+            handler = (param_fn_t)tisp_af_param_array_set;
         else if (param_id - 0x3c0 < 0x26)
             handler = (param_fn_t)tisp_bcsh_param_array_set;
         else if (param_id - 0x3e6 < 0xf)
@@ -32777,29 +32792,60 @@ EXPORT_SYMBOL(tiziano_ae_dn_params_refresh);
 /* ========== Missing AE functions — OEM EXACT implementations ========== */
 
 /* OEM EXACT: tisp_ae_g_scene_luma (0x54ce4) — compute weighted scene luma.
- * Uses 8-entry temporal filter on per-frame luma to produce stable scene luma. */
+ * OEM BSS: data_a0dd0=ae_stat_weight_h (init 0x400), data_a0dd4=ae_stat_max (init 0xfff)
+ *          data_c4f94=ae_custom_frame_cnt, data_a2e0c=sensor_total_width
+ * These are internal AE state updated during processing. */
+static uint32_t ae_stat_weight_h = 0x400;   /* OEM: data_a0dd0 */
+static uint32_t ae_stat_max_val = 0xfff;    /* OEM: data_a0dd4 */
+static uint32_t ae_custom_frame_cnt = 0;    /* OEM: data_c4f94 */
+
 int tisp_ae_g_scene_luma(uint32_t *out)
 {
+    uint32_t pp = _AePointPos.data[0];
+    uint32_t qm = pp & 31;
+    /* OEM: total_pixels = sensor_total_width * sensor_total_height / 4 */
+    uint32_t total_pixels;
+    uint32_t hist_contrib;
+    uint32_t remainder;
+    uint32_t ratio;
     uint8_t luma_val = 0;
-    uint32_t luma_scaled;
+    uint32_t luma_ev;
     int i;
+
+    total_pixels = width_def * height_def / 4;
+    if (total_pixels == 0) total_pixels = 1;
+
+    /* OEM: hist_contrib = (ae_stat_weight_h * tisp_ae_hist[0]) / 4 +
+     *                     (ae_custom_frame_cnt * ae_stat_max_val) / 4 */
+    hist_contrib = (ae_stat_weight_h * ((uint32_t *)tisp_ae_hist)[0]) / 4 +
+                   (ae_custom_frame_cnt * ae_stat_max_val) / 4;
+
+    remainder = (total_pixels > hist_contrib) ? (total_pixels - hist_contrib) : 1;
+
+    ratio = fix_point_div_32(pp, remainder << qm, total_pixels << qm);
+
+    /* OEM: compute EV-weighted luma */
+    luma_ev = fix_point_mult2_32(pp, ev0_cache[EffectFrame + 1], ratio);
+    (void)luma_ev; /* used implicitly by tisp_ae_g_luma */
 
     tisp_ae_g_luma(&luma_val);
     if (luma_val == 0) luma_val = 1;
-    luma_scaled = (uint32_t)luma_val;
 
-    /* Shift history and insert new value */
+    /* Shift history left by 1 */
     for (i = 0; i < 7; i++)
         scene_luma_old[i] = scene_luma_old[i + 1];
-    scene_luma_old[7] = luma_scaled;
 
-    /* Weighted mean (1*v0 + 2*v1 + ... + 8*v7) / 36 */
+    /* OEM: scene_luma_old[7] = div(luma_ev_result, luma_val << q) >> 2 */
+    scene_luma_old[7] = fix_point_div_32(pp, luma_ev,
+                            (uint32_t)luma_val << qm) >> 2;
+
+    /* Weighted mean: sum(i * scene_luma_old[i-1]) for i=1..8, then / 36 */
     {
         uint32_t sum = 0;
         for (i = 0; i < 8; i++)
             sum += (i + 1) * scene_luma_old[i];
         scene_luma_wmean = sum;
-        scene_luma_weight = 0x24;  /* 36 */
+        scene_luma_weight = 0x24;
         *out = sum / 0x24;
     }
     return *out;
@@ -32825,13 +32871,14 @@ void ae1_weight_mean2(uint32_t *r, uint32_t *g, uint32_t *b, uint32_t *out, uint
 {
     int rows = params[1];
     int cols = params[3];
-    uint32_t *wt = params + 0x13;  /* +0x4c / 4 */
+    uint32_t *wt = params + 0x13;
     int row, col, idx;
+    uint32_t divisor;
 
     for (row = 0; row < rows; row++) {
         for (col = 0; col < cols; col++) {
             idx = row * cols + col;
-            uint32_t divisor = params[4 + col] * wt[row];
+            divisor = params[4 + col] * wt[row];
             if (divisor == 0) divisor = 1;
             out[idx] = (r[idx] + g[idx] + b[idx]) / divisor;
         }
@@ -32915,7 +32962,7 @@ int tisp_ae_g_min(uint32_t *out)
 /* OEM EXACT: tisp_ae_s_min (0x512d0) */
 int tisp_ae_s_min(uint32_t it_min, uint32_t ag_min, uint32_t it_short_min, uint32_t ag_short_min)
 {
-    if (it_min != 0 && IspAeExp.data[0] >= it_min)
+    if (it_min != 0 && _ae_reg.data[0] >= it_min)
         data_c4714 = it_min;
     if (ag_min >= 0x400)
         data_c470c = ag_min;
@@ -32944,13 +32991,24 @@ int tisp_ae_s_at_list(uint32_t *in)
 int tisp_g_ae_attr(uint32_t *out)
 {
     uint32_t buf[40];
-    tisp_ae_manual_get(buf);
+    tisp_get_ae_attr(buf);
     out[0] = buf[3];  /* ae mode */
     out[0xc] = buf[12]; /* additional attr */
     return 0;
 }
 
 /* OEM EXACT: tisp_s_aezone_weight (0x6356c) */
+/* OEM EXACT: tisp_ae_trig (0x55b34) — trigger AE recalculation */
+static void tisp_ae_trig(void)
+{
+    data_a0df0 = 1;
+    data_a0df4 = 1;
+    data_a0df8 = 1;
+    data_a0dfc = 0;
+    tiziano_ae_set_hardware_param(0, (void *)&_ae_parameter, 1);
+    tiziano_ae_set_hardware_param(1, (void *)&_ae_parameter, 1);
+}
+
 int tisp_s_aezone_weight(uint32_t *weights)
 {
     int sz = 0x384;
@@ -33133,7 +33191,7 @@ static uint32_t tisp_set_sensor_analog_gain(uint32_t requested_gain)
 
     /* OEM EXACT: tisp_log2_fixed_to_fixed(arg1 << 6, 0x10, 0x10)
      * The << 6 converts from Q10 to Q16 before log2. */
-    log_result = tisp_log2_fixed_to_fixed_tuning(
+    log_result = tisp_log2_fixed_to_fixed(
         requested_gain << 6, 0x10, 0x10);
 
     /* OEM EXACT: data_a2ed0(log_result, &var_28)
@@ -33168,7 +33226,7 @@ static uint32_t tisp_set_sensor_digital_gain_short(uint32_t requested_gain)
     pr_debug("tisp_set_sensor_digital_gain_short: requested=0x%x\n", requested_gain);
 
     /* Convert Q10 linear to log2 Q16 */
-    log_result = tisp_log2_fixed_to_fixed_tuning(requested_gain << 6, 0x10, 0x10);
+    log_result = tisp_log2_fixed_to_fixed(requested_gain << 6, 0x10, 0x10);
 
     /* Clip through sensor's alloc_dgain callback.
      * GC2053 may not have alloc_dgain, in which case we pass through. */
@@ -33247,7 +33305,7 @@ static uint32_t tisp_set_sensor_analog_gain_short(uint32_t requested_gain)
 
     pr_debug("tisp_set_sensor_analog_gain_short: requested=0x%x\n", requested_gain);
 
-    log_result = tisp_log2_fixed_to_fixed_tuning(
+    log_result = tisp_log2_fixed_to_fixed(
         requested_gain << 6, 0x10, 0x10);
     gain_param = data_b2ee4(log_result, &var_28);
     v0_2 = tisp_math_exp2(gain_param, 0x10, 0x10);
@@ -33470,7 +33528,7 @@ static int data_b2f08(uint32_t param, int flag)
     return 0;
 }
 
-/* tisp_log2_fixed_to_fixed stub removed — now using tisp_log2_fixed_to_fixed_tuning
+/* tisp_log2_fixed_to_fixed stub removed — now using tisp_log2_fixed_to_fixed
  * which correctly implements log2_int_to_fixed(val, out_q, 0) - (in_q << out_q).
  * The old stub returned a constant 0x1000 which made tisp_set_sensor_analog_gain broken. */
 
