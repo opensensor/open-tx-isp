@@ -26518,18 +26518,35 @@ int tiziano_adr_interrupt_static(void)
 
     /* Step 3-4: Find matching buffer, sync cache, parse data
      * OEM: private_dma_cache_sync(0, virt+offset, 0x1000, 0) then tiziano_adr_get_data() */
-    if (reg_val == phys_base) {
-        private_dma_cache_sync(NULL, adr_dma_virt, 0x1000, 0);
-        tiziano_adr_get_data((uint32_t *)adr_dma_virt);
-    } else if (reg_val == phys_base + 0x1000) {
-        private_dma_cache_sync(NULL, (char *)adr_dma_virt + 0x1000, 0x1000, 0);
-        tiziano_adr_get_data((uint32_t *)((char *)adr_dma_virt + 0x1000));
-    } else if (reg_val == phys_base + 0x2000) {
-        private_dma_cache_sync(NULL, (char *)adr_dma_virt + 0x2000, 0x1000, 0);
-        tiziano_adr_get_data((uint32_t *)((char *)adr_dma_virt + 0x2000));
-    } else if (reg_val == phys_base + 0x3000) {
-        private_dma_cache_sync(NULL, (char *)adr_dma_virt + 0x3000, 0x1000, 0);
-        tiziano_adr_get_data((uint32_t *)((char *)adr_dma_virt + 0x3000));
+    {
+        static int adr_irq_log;
+        int matched = 0;
+
+        if (reg_val == phys_base) {
+            private_dma_cache_sync(NULL, adr_dma_virt, 0x1000, 0);
+            tiziano_adr_get_data((uint32_t *)adr_dma_virt);
+            matched = 1;
+        } else if (reg_val == phys_base + 0x1000) {
+            private_dma_cache_sync(NULL, (char *)adr_dma_virt + 0x1000, 0x1000, 0);
+            tiziano_adr_get_data((uint32_t *)((char *)adr_dma_virt + 0x1000));
+            matched = 2;
+        } else if (reg_val == phys_base + 0x2000) {
+            private_dma_cache_sync(NULL, (char *)adr_dma_virt + 0x2000, 0x1000, 0);
+            tiziano_adr_get_data((uint32_t *)((char *)adr_dma_virt + 0x2000));
+            matched = 3;
+        } else if (reg_val == phys_base + 0x3000) {
+            private_dma_cache_sync(NULL, (char *)adr_dma_virt + 0x3000, 0x1000, 0);
+            tiziano_adr_get_data((uint32_t *)((char *)adr_dma_virt + 0x3000));
+            matched = 4;
+        }
+
+        if (adr_irq_log < 10 || (adr_irq_log % 300) == 0) {
+            pr_info("ADR_IRQ[%d]: reg=0x%x base=0x%x match=%d bmy=[%d,%d,%d,%d,%d,%d]\n",
+                    adr_irq_log, reg_val, phys_base, matched,
+                    block_mean_y[0], block_mean_y[4], block_mean_y[8],
+                    block_mean_y[12], block_mean_y[16], block_mean_y[20]);
+        }
+        adr_irq_log++;
     }
 
 push_event:
