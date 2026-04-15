@@ -5795,8 +5795,13 @@ static int tisp_ae0_process_impl(void)
             dg0_cache[i] = dg0_cache[i - 1];
         }
 
-        /* Insert current values */
-        cur_ev = fix_point_mult2_32(q, new_it << q, data_c46a0);
+        /* Insert current values: IT from _ae_reg.data[0] (set by
+         * tisp_set_sensor_integration_time), AG from data_c46a0 and DG from
+         * data_c46ac (set by tisp_set_ae0_ag).  _ae_reg.data[1]/[2] are NOT
+         * reliably populated by tisp_set_ae0_ag — it writes to data_c46a0
+         * and data_c46ac instead. */
+        cur_ev = fix_point_mult3_32(q,
+            _ae_reg.data[0] << (q & 0x1f), data_c46a0, data_c46ac);
         cur_ad = fix_point_mult2_32(q, data_c46a0, data_c46ac);
         ev0_cache[0] = cur_ev;
         ad0_cache[0] = cur_ad;
@@ -5820,7 +5825,10 @@ static int tisp_ae0_process_impl(void)
         }
     }
 
-    /* ---- Step 5: Write digital gain to ISP DG registers ---- */
+    /* ---- Step 5: Copy results to _ae_result (OEM: before DG reg write) ---- */
+    memcpy(&_ae_result, &_ae_reg, sizeof(_ae_result));
+
+    /* ---- Step 6: Write digital gain to ISP DG registers ---- */
     /* OEM EXACT: JZ_Isp_Ae_Dg2reg packs DG with GIB linear gain ratios,
      * then writes to 0x1030/0x1034 (normal) or 0x1000/0x1004 (WDR).
      * var_38/var_34 = output regs, var_40/var_3c = linear gain pair.
@@ -5844,9 +5852,6 @@ static int tisp_ae0_process_impl(void)
     /* OEM EXACT: tisp_ae_g_scene_luma called after DG register writes,
      * before event push. Updates scene_luma temporal filter. */
     tisp_ae_g_scene_luma(&ae_scene_luma);
-
-    /* ---- Step 6: Copy results to _ae_result ---- */
-    memcpy(&_ae_result, &_ae_reg, sizeof(_ae_result));
 
     /* ---- Step 7: Push events for downstream ISP blocks ---- */
 
@@ -32973,10 +32978,10 @@ int JZ_Isp_Ae_Reg2par(uint32_t *out, uint32_t *regs)
         }
     }
 
-    out[0] = r0 & 0x7ff;
-    out[1] = (r0 >> 12) & 0xf;
-    out[2] = (r0 >> 11) & 0x3ff;
-    out[3] = r0 >> 28;
+    out[0] = r0 & 0x7ff;                     /* bits [10:0]  = 11 bits */
+    out[1] = (r0 >> 12) & 0xf;                /* bits [15:12] = 4 bits  */
+    out[2] = (r0 << 5) >> 21;                 /* bits [26:16] = 11 bits */
+    out[3] = r0 >> 28;                        /* bits [31:28] = 4 bits  */
 
     for (i = 0; i < 15; i++) {
         out[4 + i] = row_data[i];
@@ -33195,40 +33200,35 @@ static void tisp_set_sensor_integration_time(uint32_t time)
 {
     pr_debug("tisp_set_sensor_integration_time: Setting integration time to %u\n", time);
 
-    extern struct tx_isp_dev *ourISPdev;
-    if (!ourISPdev) {
-        pr_err("tisp_set_sensor_integration_time: No ISP device available\n");
-        return;
-    }
-
-    /* Check WDR mode - use safe structure access */
-    bool wdr_mode = (dmsc_sp_d_w_stren_wdr_array != NULL);
-
-    if (!wdr_mode) {
-        /* Normal mode: allocate and set integration time */
+    /* OEM EXACT (0x4e5f0): Branch on tisp_ae_ctrls[0], NOT WDR mode.
+     * When ctrls[0] != 0: use cached IT (data_c46a8), update cache+AG
+     * When ctrls[0] == 0: use requested IT, adjust AG if clipped */
+    if (tisp_ae_ctrls[0] != 0) {
+        /* AE ctrl active: use cached IT value */
         void *var_ptr = NULL;
-        int32_t allocated_time = data_b2eec(time, &var_ptr);
+        int32_t allocated_time = data_b2eec(data_c46a8, &var_ptr);
         _ae_reg.data[0] = allocated_time;
+        data_c46a8 = allocated_time;
+        /* OEM: set_integration_time with allocated value */
+        data_b2ef4(allocated_time, 0);
+    } else {
+        /* Normal: allocate requested IT */
+        void *var_ptr = NULL;
+        int32_t s3 = data_b2eec(time, &var_ptr);
+        _ae_reg.data[0] = s3;
 
-        if (time != allocated_time) {
-            /* Calculate adjustment using fixed-point math */
-            int32_t point_pos = _AePointPos.data[0];
-            if (point_pos > 0 && point_pos < 32) { /* Safety check for shift amount */
-                int32_t mult_result = fix_point_mult2_32(point_pos, data_d04a0, time << (point_pos & 0x1f));
-                data_d04a0 = fix_point_div_32(point_pos, mult_result, allocated_time << (point_pos & 0x1f));
-            }
+        if (time != (uint32_t)s3) {
+            /* IT was clipped — compensate AG ratio.
+             * OEM: AG = div(mult(q, AG, req<<q), alloc<<q) */
+            int32_t q = _AePointPos.data[0];
+            uint32_t qm = q & 0x1f;
+            int32_t mult_result = fix_point_mult2_32(q, _ae_reg.data[1], time << qm);
+            _ae_reg.data[1] = fix_point_div_32(q, mult_result, s3 << qm);
         }
 
-        /* Apply the setting to sensor */
-        data_b2ef4(allocated_time, 0);
-        data_c46b8 = _ae_reg.data[0];
-    } else {
-        /* WDR mode: use cached value */
-        void *var_ptr = NULL;
-        int32_t allocated_time = data_b2eec(data_c46b8, &var_ptr);
-        _ae_reg.data[0] = allocated_time;
-        data_c46b8 = allocated_time;
-        data_b2ef4(allocated_time, 0);
+        /* OEM: set_integration_time, then cache */
+        data_b2ef4(s3, 0);
+        data_c46a8 = _ae_reg.data[0];
     }
 }
 
