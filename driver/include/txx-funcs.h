@@ -26,15 +26,16 @@
 #include <linux/netlink.h>
 #include <net/netlink.h>
 #include <linux/spi/spi.h>
-#include <soc/irq.h>
+#include <irq.h>
 #include <soc/base.h>
 #include <asm/io.h>
 #include <asm/irq.h>
 #include <asm/uaccess.h>
 #include <asm/cacheflush.h>
 #include <soc/gpio.h>
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,0,0)
 #include <mach/platform.h>
-/*#include <linux/seq_file.h>*/
+#endif
 #include <jz_proc.h>
 
 struct jz_driver_common_interfaces {
