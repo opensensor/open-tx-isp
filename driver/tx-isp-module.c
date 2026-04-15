@@ -6971,7 +6971,7 @@ static int sensor_subdev_video_s_stream(struct tx_isp_subdev *sd, int enable)
                     vin_init_in_progress = 1;
 
                     extern int tx_isp_vin_init(struct tx_isp_subdev *sd, int enable);
-                    ret = tx_isp_vin_init(vin_device, 1);
+                    ret = tx_isp_vin_init(&vin_device->sd, 1);
 
                     vin_init_in_progress = 0;
 
