@@ -25964,6 +25964,15 @@ static int Tiziano_adr_fpga(void *arg1, uint32_t *arg2, uint32_t *arg3,
 		int32_t *bmy_ptr = (int32_t *)block_mean_y;
 		int32_t max_sq = 0x3ffffc;
 
+		{
+			static int adr_wt_log;
+			if (adr_wt_log < 5 || (adr_wt_log % 300) == 0) {
+				pr_info("ADR_WT[%d]: v1_13=%d v0_3=%d var_128_1=%d var_11c_1=%d var_124_2=%d v0_248=0x%x s6_1=%d v0_9=%d s1=%d\n",
+					adr_wt_log, v1_13, v0_3, var_128_1, var_11c_1, var_124_2, v0_248, s6_1, v0_9, s1);
+			}
+			adr_wt_log++;
+		}
+
 		for (i = 0; i < 24; i++) {
 			int32_t bmy = *bmy_ptr;
 			int32_t weight;
@@ -26025,6 +26034,15 @@ static int Tiziano_adr_fpga(void *arg1, uint32_t *arg2, uint32_t *arg3,
 			{
 				int32_t mapped_weight = (fix_point_div_32(0xa,
 					weight << 0xa, 0x19000) + 0x200) >> 0xa;
+
+				{
+					static int adr_blk_log;
+					if (adr_blk_log < 48) {
+						pr_info("ADR_BLK[%d/%d]: bmy=%d wt=%d mw=%d\n",
+							adr_blk_log / 24, i, bmy, weight, mapped_weight);
+					}
+					adr_blk_log++;
+				}
 
 				/* Find bracket in var_148 for mapped_weight, interpolate var_1d8 */
 				int32_t blk_found2 = 0;
