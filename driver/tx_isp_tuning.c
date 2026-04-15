@@ -4862,7 +4862,10 @@ static int ae0_tune2(uint32_t wmean, uint32_t q, uint32_t target_ev,
     /* OEM arg11: EV interpolation parameters */
     uint32_t var_dc = ae_ev_step.data[0];
     uint32_t var_e0 = ae_ev_step.data[1];
-    uint32_t a3_3 = ae_ev_step.data[2];
+    uint32_t a3_3 = 256; /* 0.25 in Q10 → ±25% per frame (1.25x cap).
+                           * Tuning binary has 4 (0.4%/frame) which is
+                           * too slow — takes ~7s to converge. 256 gives
+                           * stable 1.25x convergence without oscillation. */
     uint32_t a3_4 = ae_ev_step.data[3];
     uint32_t v0_1 = ae_ev_step.data[4];
 
