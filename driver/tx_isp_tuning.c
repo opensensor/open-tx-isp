@@ -444,6 +444,92 @@ static uint32_t *sdns_sp_uu_stren_array_now = NULL;
 static uint32_t *sdns_sp_mv_uu_thres_array_now = NULL;
 static uint32_t *sdns_sp_mv_uu_stren_array_now = NULL;
 static uint32_t *sdns_ave_thres_array_now = NULL;
+static uint32_t *sdns_h_mv_1_array_now = NULL;
+static uint32_t *sdns_h_mv_2_array_now = NULL;
+static uint32_t *sdns_h_mv_3_array_now = NULL;
+static uint32_t *sdns_h_mv_4_array_now = NULL;
+static uint32_t *sdns_h_mv_5_array_now = NULL;
+static uint32_t *sdns_h_mv_6_array_now = NULL;
+static uint32_t *sdns_h_mv_7_array_now = NULL;
+static uint32_t *sdns_h_mv_8_array_now = NULL;
+static uint32_t *sdns_h_mv_9_array_now = NULL;
+static uint32_t *sdns_h_mv_10_array_now = NULL;
+static uint32_t *sdns_h_mv_11_array_now = NULL;
+static uint32_t *sdns_h_mv_12_array_now = NULL;
+static uint32_t *sdns_h_mv_13_array_now = NULL;
+static uint32_t *sdns_h_mv_14_array_now = NULL;
+static uint32_t *sdns_h_mv_15_array_now = NULL;
+static uint32_t *sdns_h_mv_16_array_now = NULL;
+static uint32_t *sdns_dark_thres_array_now = NULL;
+static uint32_t *sdns_light_thres_array_now = NULL;
+static uint32_t *sdns_sp_d_v2_win5_thres_array_now = NULL;
+static uint32_t *sdns_sp_d_w_sp_stren_0_array_now = NULL;
+static uint32_t *sdns_sp_d_w_sp_stren_1_array_now = NULL;
+static uint32_t *sdns_sp_d_w_sp_stren_2_array_now = NULL;
+static uint32_t *sdns_sp_d_w_sp_stren_3_array_now = NULL;
+static uint32_t *sdns_sp_d_b_sp_stren_0_array_now = NULL;
+static uint32_t *sdns_sp_d_b_sp_stren_1_array_now = NULL;
+static uint32_t *sdns_sp_d_b_sp_stren_2_array_now = NULL;
+static uint32_t *sdns_sp_d_b_sp_stren_3_array_now = NULL;
+static uint32_t *sdns_sp_d_flat_thres_array_now = NULL;
+static uint32_t *sdns_sp_d_flat_stren_array_now = NULL;
+static uint32_t *sdns_sp_ud_w_sp_stren_0_array_now = NULL;
+static uint32_t *sdns_sp_ud_w_sp_stren_1_array_now = NULL;
+static uint32_t *sdns_sp_ud_w_sp_stren_2_array_now = NULL;
+static uint32_t *sdns_sp_ud_w_sp_stren_3_array_now = NULL;
+static uint32_t *sdns_sp_ud_b_sp_stren_0_array_now = NULL;
+static uint32_t *sdns_sp_ud_b_sp_stren_1_array_now = NULL;
+static uint32_t *sdns_sp_ud_b_sp_stren_2_array_now = NULL;
+static uint32_t *sdns_sp_ud_b_sp_stren_3_array_now = NULL;
+static uint32_t *sdns_sp_ud_std_thres_array_now = NULL;
+static uint32_t *sdns_sp_ud_std_stren_array_now = NULL;
+static uint32_t *sdns_sp_ud_flat_thres_array_now = NULL;
+static uint32_t *sdns_sp_ud_flat_stren_array_now = NULL;
+static uint32_t *sdns_mv_num_thr_5x5_array_now = NULL;
+static uint32_t *sdns_mv_num_thr_7x7_array_now = NULL;
+static uint32_t *sdns_mv_num_thr_9x9_array_now = NULL;
+static uint32_t *sdns_mv_num_thr_11x11_array_now = NULL;
+
+/* SDNS interpolated values (computed by tisp_sdns_intp from gain-indexed arrays) */
+static uint32_t sdns_grad_zx_thres_intp;
+static uint32_t sdns_grad_zy_thres_intp;
+static uint32_t sdns_std_thr1_intp;
+static uint32_t sdns_std_thr2_intp;
+static uint32_t sdns_mv_num_thr_5x5_intp;
+static uint32_t sdns_mv_num_thr_7x7_intp;
+static uint32_t sdns_mv_num_thr_9x9_intp;
+static uint32_t sdns_mv_num_thr_11x11_intp;
+static uint32_t sdns_h_s_1_intp, sdns_h_s_2_intp, sdns_h_s_3_intp, sdns_h_s_4_intp;
+static uint32_t sdns_h_s_5_intp, sdns_h_s_6_intp, sdns_h_s_7_intp, sdns_h_s_8_intp;
+static uint32_t sdns_h_s_9_intp, sdns_h_s_10_intp, sdns_h_s_11_intp, sdns_h_s_12_intp;
+static uint32_t sdns_h_s_13_intp, sdns_h_s_14_intp, sdns_h_s_15_intp, sdns_h_s_16_intp;
+static uint32_t sdns_h_mv_1_intp, sdns_h_mv_2_intp, sdns_h_mv_3_intp, sdns_h_mv_4_intp;
+static uint32_t sdns_h_mv_5_intp, sdns_h_mv_6_intp, sdns_h_mv_7_intp, sdns_h_mv_8_intp;
+static uint32_t sdns_h_mv_9_intp, sdns_h_mv_10_intp, sdns_h_mv_11_intp, sdns_h_mv_12_intp;
+static uint32_t sdns_h_mv_13_intp, sdns_h_mv_14_intp, sdns_h_mv_15_intp, sdns_h_mv_16_intp;
+static uint32_t sdns_dark_thres_intp;
+static uint32_t sdns_light_thres_intp;
+static uint32_t sdns_sharpen_tt_opt_intp;
+static uint32_t sdns_sp_uu_thres_intp;
+static uint32_t sdns_sp_uu_stren_intp;
+static uint32_t sdns_sp_mv_uu_thres_intp;
+static uint32_t sdns_sp_mv_uu_stren_intp;
+static uint32_t sdns_sp_d_v2_win5_thres_intp;
+static uint32_t sdns_sp_d_w_sp_stren_0_intp, sdns_sp_d_w_sp_stren_1_intp;
+static uint32_t sdns_sp_d_w_sp_stren_2_intp, sdns_sp_d_w_sp_stren_3_intp;
+static uint32_t sdns_sp_d_b_sp_stren_0_intp, sdns_sp_d_b_sp_stren_1_intp;
+static uint32_t sdns_sp_d_b_sp_stren_2_intp, sdns_sp_d_b_sp_stren_3_intp;
+static uint32_t sdns_sp_d_flat_thres_intp;
+static uint32_t sdns_sp_d_flat_stren_intp;
+static uint32_t sdns_sp_ud_w_sp_stren_0_intp, sdns_sp_ud_w_sp_stren_1_intp;
+static uint32_t sdns_sp_ud_w_sp_stren_2_intp, sdns_sp_ud_w_sp_stren_3_intp;
+static uint32_t sdns_sp_ud_b_sp_stren_0_intp, sdns_sp_ud_b_sp_stren_1_intp;
+static uint32_t sdns_sp_ud_b_sp_stren_2_intp, sdns_sp_ud_b_sp_stren_3_intp;
+static uint32_t sdns_sp_ud_std_thres_intp;
+static uint32_t sdns_sp_ud_std_stren_intp;
+static uint32_t sdns_sp_ud_flat_thres_intp;
+static uint32_t sdns_sp_ud_flat_stren_intp;
+static uint32_t sdns_ave_thres_intp;
 
 /* AWB globals - declared early for use in ioctl handlers */
 static uint32_t _awb_mode[3] = {0, 0, 0};
@@ -3020,7 +3106,9 @@ static int tisp_mdns_param_size(int id)
 }
 
 /* Function declarations for register refresh functions */
+static void tisp_sdns_intp(uint32_t gain);
 static int tisp_sdns_all_reg_refresh(void);
+static int tisp_sdns_intp_reg_refresh(void);
 static void tisp_mdns_select_now_tables(int wdr_enable);
 static int tisp_mdns_y_3d_param_cfg(void);
 static int tisp_mdns_y_2d_param_cfg(void);
@@ -21740,135 +21828,587 @@ void tiziano_sdns_params_refresh(void)
         tisp_s_sdns_ratio(data_9a9c0);
 }
 
-/* tisp_sdns_all_reg_refresh - Write all SDNS registers to hardware */
+/* OEM EXACT: tisp_sdns_intp — interpolate all SDNS gain-indexed arrays */
+static void tisp_sdns_intp(uint32_t gain)
+{
+    int gain_hi = gain >> 16;
+    int gain_lo = gain & 0xffff;
+
+    sdns_grad_zx_thres_intp = tisp_simple_intp(gain_hi, gain_lo, sdns_grad_zx_thres_array_now);
+    sdns_grad_zy_thres_intp = tisp_simple_intp(gain_hi, gain_lo, sdns_grad_zy_thres_array_now);
+    sdns_std_thr1_intp      = tisp_simple_intp(gain_hi, gain_lo, sdns_std_thr1_array_now);
+    sdns_std_thr2_intp      = tisp_simple_intp(gain_hi, gain_lo, sdns_std_thr2_array_now);
+
+    sdns_mv_num_thr_5x5_intp  = tisp_simple_intp(gain_hi, gain_lo, sdns_mv_num_thr_5x5_array_now);
+    sdns_mv_num_thr_7x7_intp  = tisp_simple_intp(gain_hi, gain_lo, sdns_mv_num_thr_7x7_array_now);
+    sdns_mv_num_thr_9x9_intp  = tisp_simple_intp(gain_hi, gain_lo, sdns_mv_num_thr_9x9_array_now);
+    sdns_mv_num_thr_11x11_intp = tisp_simple_intp(gain_hi, gain_lo, sdns_mv_num_thr_11x11_array_now);
+
+    sdns_h_s_1_intp  = tisp_simple_intp(gain_hi, gain_lo, sdns_h_s_1_array_now);
+    sdns_h_s_2_intp  = tisp_simple_intp(gain_hi, gain_lo, sdns_h_s_2_array_now);
+    sdns_h_s_3_intp  = tisp_simple_intp(gain_hi, gain_lo, sdns_h_s_3_array_now);
+    sdns_h_s_4_intp  = tisp_simple_intp(gain_hi, gain_lo, sdns_h_s_4_array_now);
+    sdns_h_s_5_intp  = tisp_simple_intp(gain_hi, gain_lo, sdns_h_s_5_array_now);
+    sdns_h_s_6_intp  = tisp_simple_intp(gain_hi, gain_lo, sdns_h_s_6_array_now);
+    sdns_h_s_7_intp  = tisp_simple_intp(gain_hi, gain_lo, sdns_h_s_7_array_now);
+    sdns_h_s_8_intp  = tisp_simple_intp(gain_hi, gain_lo, sdns_h_s_8_array_now);
+    sdns_h_s_9_intp  = tisp_simple_intp(gain_hi, gain_lo, sdns_h_s_9_array_now);
+    sdns_h_s_10_intp = tisp_simple_intp(gain_hi, gain_lo, sdns_h_s_10_array_now);
+    sdns_h_s_11_intp = tisp_simple_intp(gain_hi, gain_lo, sdns_h_s_11_array_now);
+    sdns_h_s_12_intp = tisp_simple_intp(gain_hi, gain_lo, sdns_h_s_12_array_now);
+    sdns_h_s_13_intp = tisp_simple_intp(gain_hi, gain_lo, sdns_h_s_13_array_now);
+    sdns_h_s_14_intp = tisp_simple_intp(gain_hi, gain_lo, sdns_h_s_14_array_now);
+    sdns_h_s_15_intp = tisp_simple_intp(gain_hi, gain_lo, sdns_h_s_15_array_now);
+    sdns_h_s_16_intp = tisp_simple_intp(gain_hi, gain_lo, sdns_h_s_16_array_now);
+
+    sdns_h_mv_1_intp  = tisp_simple_intp(gain_hi, gain_lo, sdns_h_mv_1_array_now);
+    sdns_h_mv_2_intp  = tisp_simple_intp(gain_hi, gain_lo, sdns_h_mv_2_array_now);
+    sdns_h_mv_3_intp  = tisp_simple_intp(gain_hi, gain_lo, sdns_h_mv_3_array_now);
+    sdns_h_mv_4_intp  = tisp_simple_intp(gain_hi, gain_lo, sdns_h_mv_4_array_now);
+    sdns_h_mv_5_intp  = tisp_simple_intp(gain_hi, gain_lo, sdns_h_mv_5_array_now);
+    sdns_h_mv_6_intp  = tisp_simple_intp(gain_hi, gain_lo, sdns_h_mv_6_array_now);
+    sdns_h_mv_7_intp  = tisp_simple_intp(gain_hi, gain_lo, sdns_h_mv_7_array_now);
+    sdns_h_mv_8_intp  = tisp_simple_intp(gain_hi, gain_lo, sdns_h_mv_8_array_now);
+    sdns_h_mv_9_intp  = tisp_simple_intp(gain_hi, gain_lo, sdns_h_mv_9_array_now);
+    sdns_h_mv_10_intp = tisp_simple_intp(gain_hi, gain_lo, sdns_h_mv_10_array_now);
+    sdns_h_mv_11_intp = tisp_simple_intp(gain_hi, gain_lo, sdns_h_mv_11_array_now);
+    sdns_h_mv_12_intp = tisp_simple_intp(gain_hi, gain_lo, sdns_h_mv_12_array_now);
+    sdns_h_mv_13_intp = tisp_simple_intp(gain_hi, gain_lo, sdns_h_mv_13_array_now);
+    sdns_h_mv_14_intp = tisp_simple_intp(gain_hi, gain_lo, sdns_h_mv_14_array_now);
+    sdns_h_mv_15_intp = tisp_simple_intp(gain_hi, gain_lo, sdns_h_mv_15_array_now);
+    sdns_h_mv_16_intp = tisp_simple_intp(gain_hi, gain_lo, sdns_h_mv_16_array_now);
+
+    sdns_dark_thres_intp      = tisp_simple_intp(gain_hi, gain_lo, sdns_dark_thres_array_now);
+    sdns_light_thres_intp     = tisp_simple_intp(gain_hi, gain_lo, sdns_light_thres_array_now);
+    sdns_sharpen_tt_opt_intp  = tisp_simple_intp(gain_hi, gain_lo, sdns_sharpen_tt_opt_array_now);
+    sdns_ave_thres_intp       = tisp_simple_intp(gain_hi, gain_lo, sdns_ave_thres_array_now);
+
+    sdns_sp_uu_thres_intp     = tisp_simple_intp(gain_hi, gain_lo, sdns_sp_uu_thres_array_now);
+    sdns_sp_uu_stren_intp     = tisp_simple_intp(gain_hi, gain_lo, sdns_sp_uu_stren_array_now);
+    sdns_sp_mv_uu_thres_intp  = tisp_simple_intp(gain_hi, gain_lo, sdns_sp_mv_uu_thres_array_now);
+    sdns_sp_mv_uu_stren_intp  = tisp_simple_intp(gain_hi, gain_lo, sdns_sp_mv_uu_stren_array_now);
+
+    sdns_sp_d_v2_win5_thres_intp = tisp_simple_intp(gain_hi, gain_lo, sdns_sp_d_v2_win5_thres_array_now);
+    sdns_sp_d_w_sp_stren_0_intp  = tisp_simple_intp(gain_hi, gain_lo, sdns_sp_d_w_sp_stren_0_array_now);
+    sdns_sp_d_w_sp_stren_1_intp  = tisp_simple_intp(gain_hi, gain_lo, sdns_sp_d_w_sp_stren_1_array_now);
+    sdns_sp_d_w_sp_stren_2_intp  = tisp_simple_intp(gain_hi, gain_lo, sdns_sp_d_w_sp_stren_2_array_now);
+    sdns_sp_d_w_sp_stren_3_intp  = tisp_simple_intp(gain_hi, gain_lo, sdns_sp_d_w_sp_stren_3_array_now);
+    sdns_sp_d_b_sp_stren_0_intp  = tisp_simple_intp(gain_hi, gain_lo, sdns_sp_d_b_sp_stren_0_array_now);
+    sdns_sp_d_b_sp_stren_1_intp  = tisp_simple_intp(gain_hi, gain_lo, sdns_sp_d_b_sp_stren_1_array_now);
+    sdns_sp_d_b_sp_stren_2_intp  = tisp_simple_intp(gain_hi, gain_lo, sdns_sp_d_b_sp_stren_2_array_now);
+    sdns_sp_d_b_sp_stren_3_intp  = tisp_simple_intp(gain_hi, gain_lo, sdns_sp_d_b_sp_stren_3_array_now);
+    sdns_sp_d_flat_thres_intp    = tisp_simple_intp(gain_hi, gain_lo, sdns_sp_d_flat_thres_array_now);
+    sdns_sp_d_flat_stren_intp    = tisp_simple_intp(gain_hi, gain_lo, sdns_sp_d_flat_stren_array_now);
+
+    sdns_sp_ud_w_sp_stren_0_intp = tisp_simple_intp(gain_hi, gain_lo, sdns_sp_ud_w_sp_stren_0_array_now);
+    sdns_sp_ud_w_sp_stren_1_intp = tisp_simple_intp(gain_hi, gain_lo, sdns_sp_ud_w_sp_stren_1_array_now);
+    sdns_sp_ud_w_sp_stren_2_intp = tisp_simple_intp(gain_hi, gain_lo, sdns_sp_ud_w_sp_stren_2_array_now);
+    sdns_sp_ud_w_sp_stren_3_intp = tisp_simple_intp(gain_hi, gain_lo, sdns_sp_ud_w_sp_stren_3_array_now);
+    sdns_sp_ud_b_sp_stren_0_intp = tisp_simple_intp(gain_hi, gain_lo, sdns_sp_ud_b_sp_stren_0_array_now);
+    sdns_sp_ud_b_sp_stren_1_intp = tisp_simple_intp(gain_hi, gain_lo, sdns_sp_ud_b_sp_stren_1_array_now);
+    sdns_sp_ud_b_sp_stren_2_intp = tisp_simple_intp(gain_hi, gain_lo, sdns_sp_ud_b_sp_stren_2_array_now);
+    sdns_sp_ud_b_sp_stren_3_intp = tisp_simple_intp(gain_hi, gain_lo, sdns_sp_ud_b_sp_stren_3_array_now);
+    sdns_sp_ud_std_thres_intp    = tisp_simple_intp(gain_hi, gain_lo, sdns_sp_ud_std_thres_array_now);
+    sdns_sp_ud_std_stren_intp    = tisp_simple_intp(gain_hi, gain_lo, sdns_sp_ud_std_stren_array_now);
+    sdns_sp_ud_flat_thres_intp   = tisp_simple_intp(gain_hi, gain_lo, sdns_sp_ud_flat_thres_array_now);
+    sdns_sp_ud_flat_stren_intp   = tisp_simple_intp(gain_hi, gain_lo, sdns_sp_ud_flat_stren_array_now);
+}
+
+/* OEM EXACT: tisp_sdns_all_reg_refresh - Write all SDNS registers to hardware */
 static int tisp_sdns_all_reg_refresh(void)
 {
-    void __iomem *base_reg = ioremap(0x13308000, 0x1000); /* SDNS register base */
+    int i;
 
-    if (!base_reg) {
-        pr_err("tisp_sdns_all_reg_refresh: Failed to map SDNS registers\n");
-        return -ENOMEM;
-    }
+    /* Hardcoded LUT tables from OEM */
+    static const uint32_t sdns_gaussian_x[32] = {
+        0x000f0007, 0x0033001e, 0x003b001c, 0x00ce0079,
+        0x0084003e, 0x01d00111, 0x00eb006e, 0x033801e5,
+        0x016f00ad, 0x050802f7, 0x021000f8, 0x073e0445,
+        0x02ce0152, 0x09db05d0, 0x03aa01b9, 0x0ce00797,
+        0x04a3022e, 0x104c099b, 0x05ba02b1, 0x141e0bdb,
+        0x04960342, 0x18580e59, 0x083f03e1, 0x1cf91113,
+        0x09ae048d, 0x22001409, 0x0b3b0547, 0x276f173e,
+        0x0ce3047f, 0x2d441aad, 0x0ea906e5, 0x33801e5b
+    };
+    static const uint32_t sdns_gaussian_k[64] = {
+        0x3333, 0x2000, 0x1111, 0x055d, 0x0ccd, 0x0842, 0x0421, 0x0153,
+        0x05c8, 0x03a8, 0x01d1, 0x0097, 0x0342, 0x020c, 0x0106, 0x0055,
+        0x0212, 0x0152, 0x00a7, 0x0037, 0x0172, 0x00ea, 0x0074, 0x0026,
+        0x010f, 0x00ac, 0x0055, 0x001c, 0x00d0, 0x0084, 0x0041, 0x0015,
+        0x00a4, 0x0068, 0x0034, 0x0011, 0x0085, 0x0054, 0x002a, 0x000e,
+        0x006e, 0x0046, 0x0023, 0x000b, 0x005c, 0x003b, 0x001d, 0x0009,
+        0x004f, 0x0032, 0x0019, 0x0008, 0x0044, 0x002b, 0x0015, 0x0007,
+        0x003b, 0x0025, 0x0013, 0x0006, 0x0034, 0x0021, 0x0010, 0x0005
+    };
 
-    pr_info("tisp_sdns_all_reg_refresh: Writing SDNS parameters to registers\n");
+    /* 0x8800-0x8808: grad_thres_opt */
+    system_reg_write(0x8800, (sdns_aa_mv_det_opt[1] << 4) | sdns_aa_mv_det_opt[0]);
+    system_reg_write(0x8804, (sdns_grad_zy_thres_intp << 16) | sdns_grad_zx_thres_intp);
+    system_reg_write(0x8808, (sdns_std_thr2_intp << 16) | (sdns_std_thr1_intp << 4) | sdns_aa_mv_det_opt[2]);
 
-    /* Write threshold arrays to hardware */
-    for (int i = 0; i < 16; i++) {
-        writel(sdns_std_thr1_array_now[i], base_reg + 0x100 + (i * 4));     /* STD threshold 1 */
-        writel(sdns_std_thr2_array_now[i], base_reg + 0x140 + (i * 4));     /* STD threshold 2 */
-        writel(sdns_grad_zx_thres_array_now[i], base_reg + 0x180 + (i * 4)); /* Gradient ZX */
-        writel(sdns_grad_zy_thres_array_now[i], base_reg + 0x1c0 + (i * 4)); /* Gradient ZY */
-        writel(sdns_h_mv_wei_now[i], base_reg + 0x200 + (i * 4));           /* H MV weight */
-        writel(sdns_sp_uu_thres_array_now[i], base_reg + 0x240 + (i * 4));  /* SP UU threshold */
-        writel(sdns_sp_uu_stren_array_now[i], base_reg + 0x280 + (i * 4));  /* SP UU strength */
-        writel(sdns_sp_mv_uu_thres_array_now[i], base_reg + 0x2c0 + (i * 4)); /* SP MV UU threshold */
-        writel(sdns_sp_mv_uu_stren_array_now[i], base_reg + 0x300 + (i * 4)); /* SP MV UU strength */
-        writel(sdns_ave_thres_array_now[i], base_reg + 0x340 + (i * 4));     /* Average threshold */
-        writel(sdns_ave_fliter_now[i], base_reg + 0x380 + (i * 4));         /* Average filter */
-        writel(sdns_sharpen_tt_opt_array_now[i], base_reg + 0x3c0 + (i * 4)); /* Sharpen TT */
-    }
+    /* 0x880c: h_mv_wei_opt */
+    system_reg_write(0x880c, sdns_h_mv_wei_now[0] | (sdns_h_mv_wei_now[1] << 4) |
+                     (sdns_h_mv_wei_now[2] << 8) | (sdns_h_mv_wei_now[3] << 12));
 
-    /* Enable SDNS processing - Binary Ninja shows 0x8b4c register */
-    writel(1, base_reg + 0xb4c);
+    /* 0x8810-0x8814: mv_seg */
+    system_reg_write(0x8810, sdns_aa_mv_det_opt[3] | (sdns_aa_mv_det_opt[4] << 8));
+    system_reg_write(0x8814, sdns_mv_num_thr_5x5_intp | (sdns_mv_num_thr_7x7_intp << 8) |
+                     (sdns_mv_num_thr_9x9_intp << 16) | (sdns_mv_num_thr_11x11_intp << 24));
 
-    iounmap(base_reg);
-    pr_info("tisp_sdns_all_reg_refresh: SDNS registers written to hardware\n");
+    /* 0x8818: g_det */
+    system_reg_write(0x8818, sdns_aa_mv_det_opt[5] | (sdns_aa_mv_det_opt[6] << 24));
+
+    /* 0x881c-0x8858: r_s_mv — 15 r_s values packed as pairs, then 15 r_mv values */
+    for (i = 0; i < 7; i++)
+        system_reg_write(0x881c + i * 4, sdns_r_s[i * 2] | (sdns_r_s[i * 2 + 1] << 16));
+    system_reg_write(0x8838, sdns_r_s[14]);
+    for (i = 0; i < 7; i++)
+        system_reg_write(0x883c + i * 4, sdns_r_mv[i * 2] | (sdns_r_mv[i * 2 + 1] << 16));
+    system_reg_write(0x8858, sdns_r_mv[14]);
+
+    /* 0x885c-0x8868: h_s — 16 values packed 4x8-bit */
+    system_reg_write(0x885c, sdns_h_s_1_intp | (sdns_h_s_2_intp << 8) |
+                     (sdns_h_s_3_intp << 16) | (sdns_h_s_4_intp << 24));
+    system_reg_write(0x8860, sdns_h_s_5_intp | (sdns_h_s_6_intp << 8) |
+                     (sdns_h_s_7_intp << 16) | (sdns_h_s_8_intp << 24));
+    system_reg_write(0x8864, sdns_h_s_9_intp | (sdns_h_s_10_intp << 8) |
+                     (sdns_h_s_11_intp << 16) | (sdns_h_s_12_intp << 24));
+    system_reg_write(0x8868, sdns_h_s_13_intp | (sdns_h_s_14_intp << 8) |
+                     (sdns_h_s_15_intp << 16) | (sdns_h_s_16_intp << 24));
+
+    /* 0x886c-0x8878: h_mv — 16 values packed 4x8-bit */
+    system_reg_write(0x886c, sdns_h_mv_1_intp | (sdns_h_mv_2_intp << 8) |
+                     (sdns_h_mv_3_intp << 16) | (sdns_h_mv_4_intp << 24));
+    system_reg_write(0x8870, sdns_h_mv_5_intp | (sdns_h_mv_6_intp << 8) |
+                     (sdns_h_mv_7_intp << 16) | (sdns_h_mv_8_intp << 24));
+    system_reg_write(0x8874, sdns_h_mv_9_intp | (sdns_h_mv_10_intp << 8) |
+                     (sdns_h_mv_11_intp << 16) | (sdns_h_mv_12_intp << 24));
+    system_reg_write(0x8878, sdns_h_mv_13_intp | (sdns_h_mv_14_intp << 8) |
+                     (sdns_h_mv_15_intp << 16) | (sdns_h_mv_16_intp << 24));
+
+    /* 0x887c: dark_light_tt_opt */
+    system_reg_write(0x887c, sdns_dark_thres_intp | (sdns_light_thres_intp << 8) |
+                     (sdns_h_val_max << 16) | (sdns_sharpen_tt_opt_intp << 24));
+
+    /* 0x8880-0x889c: d_s1_thres — 15 values packed as 16-bit pairs */
+    for (i = 0; i < 7; i++)
+        system_reg_write(0x8880 + i * 4, sdns_d_s1_thr[i * 2] | (sdns_d_s1_thr[i * 2 + 1] << 16));
+    system_reg_write(0x889c, sdns_d_s1_thr[14]);
+
+    /* 0x88a0-0x88bc: w_thres — 16 values packed as 8-bit pairs */
+    for (i = 0; i < 8; i++)
+        system_reg_write(0x88a0 + i * 4, sdns_w_thr[i * 2] | (sdns_w_thr[i * 2 + 1] << 8));
+
+    /* 0x88c0: hls_en_ave_filter */
+    system_reg_write(0x88c0, sdns_ave_fliter_now[0] | (sdns_ave_fliter_now[1] << 1) |
+                     (sdns_ave_thres_intp << 4) | (sdns_ave_fliter_now[2] << 16));
+
+    /* 0x88c4-0x88cc: gaussian_y (HARDCODED) */
+    system_reg_write(0x88c4, 0x3999a);
+    system_reg_write(0x88c8, 0x1999a);
+    system_reg_write(0x88cc, 0x999a);
+
+    /* 0x88d0-0x894c: gaussian_x (32 regs, HARDCODED) */
+    for (i = 0; i < 32; i++)
+        system_reg_write(0x88d0 + i * 4, sdns_gaussian_x[i]);
+
+    /* 0x8950-0x8a4c: gaussian_k (64 regs, HARDCODED) */
+    for (i = 0; i < 64; i++)
+        system_reg_write(0x8950 + i * 4, sdns_gaussian_k[i]);
+
+    /* 0x8a50-0x8a5c: h_line (HARDCODED) */
+    system_reg_write(0x8a50, 0x04030201);
+    system_reg_write(0x8a54, 0x08070605);
+    system_reg_write(0x8a58, 0x0c0b0a09);
+    system_reg_write(0x8a5c, 0x100f0e0d);
+
+    /* 0x8a60: sp_std_en_seg_opt */
+    system_reg_write(0x8a60, (sdns_sharpen_g_std[1] << 4) | sdns_sharpen_g_std[0]);
+
+    /* 0x8a64-0x8a70: sp_uu */
+    system_reg_write(0x8a64, sdns_sp_uu_par[0] | (sdns_sp_uu_thres_intp << 8));
+    system_reg_write(0x8a68, sdns_sp_uu_stren_intp | (sdns_sp_uu_par[1] << 16) | (sdns_sp_uu_par[2] << 24));
+    system_reg_write(0x8a6c, sdns_sp_mv_uu_thres_intp | (sdns_sp_mv_uu_stren_intp << 8));
+    system_reg_write(0x8a70, sdns_sp_mv_wei_uu_value[0] | (sdns_sp_mv_wei_uu_value[1] << 4) |
+                     (sdns_sp_mv_wei_uu_value[2] << 8) | (sdns_sp_mv_wei_uu_value[3] << 12));
+
+    /* 0x8a74-0x8a98: sp_v2_d_w_b_ll_hl_flat */
+    system_reg_write(0x8a74, sdns_sp_d_v2_sigma_win5_slope[0] | (sdns_sp_d_v2_win5_thres_intp << 8) |
+                     (sdns_sp_d_v2_sigma_win5_slope[1] << 16) | (sdns_sp_d_wbhl_flat[0] << 24));
+    system_reg_write(0x8a78, sdns_sp_d_w_sp_stren_0_intp | (sdns_sp_d_w_sp_stren_1_intp << 16));
+    system_reg_write(0x8a7c, sdns_sp_d_w_sp_stren_2_intp | (sdns_sp_d_w_sp_stren_3_intp << 16));
+    system_reg_write(0x8a80, sdns_sp_d_wbhl_flat[1] | (sdns_sp_d_wbhl_flat[2] << 16));
+    system_reg_write(0x8a84, sdns_sp_d_b_sp_stren_0_intp | (sdns_sp_d_b_sp_stren_1_intp << 16));
+    system_reg_write(0x8a88, sdns_sp_d_b_sp_stren_2_intp | (sdns_sp_d_b_sp_stren_3_intp << 16));
+    system_reg_write(0x8a8c, sdns_sp_d_wbhl_flat[3] | (sdns_sp_d_wbhl_flat[4] << 16));
+    system_reg_write(0x8a90, sdns_sp_d_wbhl_flat[5] | (sdns_sp_d_wbhl_flat[6] << 16));
+    system_reg_write(0x8a94, sdns_sp_d_wbhl_flat[7] | (sdns_sp_d_flat_thres_intp << 16));
+    system_reg_write(0x8a98, sdns_sp_d_wbhl_flat[8] | (sdns_sp_d_flat_stren_intp << 16));
+
+    /* 0x8a9c-0x8aa0: sp_ud_v2_v1_coef */
+    system_reg_write(0x8a9c, sdns_sp_ud_v2_1_coef[0] | (sdns_sp_ud_v2_1_coef[1] << 4) |
+                     (sdns_sp_ud_v2_1_coef[2] << 8) | (sdns_sp_ud_v2_1_coef[3] << 12) |
+                     (sdns_sp_ud_v2_1_coef[4] << 16));
+    system_reg_write(0x8aa0, sdns_sp_ud_v2_1_coef[5] | (sdns_sp_ud_v2_1_coef[6] << 8) |
+                     (sdns_sp_ud_v2_1_coef[7] << 12) | (sdns_sp_ud_wbhl_flat[0] << 16));
+
+    /* 0x8aa4-0x8aa8: sp_ud_w_stren */
+    system_reg_write(0x8aa4, sdns_sp_ud_w_sp_stren_0_intp | (sdns_sp_ud_w_sp_stren_1_intp << 16));
+    system_reg_write(0x8aa8, sdns_sp_ud_w_sp_stren_2_intp | (sdns_sp_ud_w_sp_stren_3_intp << 16));
+
+    /* 0x8aac: sp_ud_w_limit */
+    system_reg_write(0x8aac, sdns_sp_ud_wbhl_flat[1] | (sdns_sp_ud_wbhl_flat[2] << 16));
+
+    /* 0x8ab0-0x8ab4: sp_ud_b_stren */
+    system_reg_write(0x8ab0, sdns_sp_ud_b_sp_stren_0_intp | (sdns_sp_ud_b_sp_stren_1_intp << 16));
+    system_reg_write(0x8ab4, sdns_sp_ud_b_sp_stren_2_intp | (sdns_sp_ud_b_sp_stren_3_intp << 16));
+
+    /* 0x8ab8-0x8ac4: sp_ud_b_limit_srd */
+    system_reg_write(0x8ab8, sdns_sp_ud_wbhl_flat[3] | (sdns_sp_ud_std_thres_intp << 16) |
+                     (sdns_sp_ud_std_stren_intp << 24));
+    system_reg_write(0x8abc, sdns_sp_ud_wbhl_flat[4] | (sdns_sp_ud_wbhl_flat[5] << 8) |
+                     (sdns_sp_ud_wbhl_flat[6] << 16));
+    system_reg_write(0x8ac0, sdns_sp_ud_wbhl_flat[7] | (sdns_sp_ud_wbhl_flat[8] << 8) |
+                     (sdns_sp_ud_flat_thres_intp << 20));
+    system_reg_write(0x8ac4, sdns_sp_ud_wbhl_flat[9] | (sdns_sp_ud_flat_stren_intp << 16));
+
+    /* 0x8ac8: sp_ud_stren_shift */
+    system_reg_write(0x8ac8, sdns_sp_ud_wbhl_flat[10]);
+
+    /* 0x8acc-0x8ad8: sp_uu_np_array — 16 values packed 4x8-bit */
+    for (i = 0; i < 4; i++)
+        system_reg_write(0x8acc + i * 4, sdns_sp_uu_np_array[i * 4] |
+                         (sdns_sp_uu_np_array[i * 4 + 1] << 8) |
+                         (sdns_sp_uu_np_array[i * 4 + 2] << 16) |
+                         (sdns_sp_uu_np_array[i * 4 + 3] << 24));
+
+    /* 0x8adc-0x8af0: sp_d_w_wei_np — 22 values packed 4x8-bit (last reg has 2) */
+    for (i = 0; i < 5; i++)
+        system_reg_write(0x8adc + i * 4, sdns_sp_d_w_wei_np_array[i * 4] |
+                         (sdns_sp_d_w_wei_np_array[i * 4 + 1] << 8) |
+                         (sdns_sp_d_w_wei_np_array[i * 4 + 2] << 16) |
+                         (sdns_sp_d_w_wei_np_array[i * 4 + 3] << 24));
+    system_reg_write(0x8af0, sdns_sp_d_w_wei_np_array[20] | (sdns_sp_d_w_wei_np_array[21] << 8));
+
+    /* 0x8af4-0x8b08: sp_d_b_wei_np — same layout */
+    for (i = 0; i < 5; i++)
+        system_reg_write(0x8af4 + i * 4, sdns_sp_d_b_wei_np_array[i * 4] |
+                         (sdns_sp_d_b_wei_np_array[i * 4 + 1] << 8) |
+                         (sdns_sp_d_b_wei_np_array[i * 4 + 2] << 16) |
+                         (sdns_sp_d_b_wei_np_array[i * 4 + 3] << 24));
+    system_reg_write(0x8b08, sdns_sp_d_b_wei_np_array[20] | (sdns_sp_d_b_wei_np_array[21] << 8));
+
+    /* 0x8b0c-0x8b20: sp_ud_w_wei_np */
+    for (i = 0; i < 5; i++)
+        system_reg_write(0x8b0c + i * 4, sdns_sp_ud_w_wei_np_array[i * 4] |
+                         (sdns_sp_ud_w_wei_np_array[i * 4 + 1] << 8) |
+                         (sdns_sp_ud_w_wei_np_array[i * 4 + 2] << 16) |
+                         (sdns_sp_ud_w_wei_np_array[i * 4 + 3] << 24));
+    system_reg_write(0x8b20, sdns_sp_ud_w_wei_np_array[20] | (sdns_sp_ud_w_wei_np_array[21] << 8));
+
+    /* 0x8b24-0x8b38: sp_ud_b_wei_np */
+    for (i = 0; i < 5; i++)
+        system_reg_write(0x8b24 + i * 4, sdns_sp_ud_b_wei_np_array[i * 4] |
+                         (sdns_sp_ud_b_wei_np_array[i * 4 + 1] << 8) |
+                         (sdns_sp_ud_b_wei_np_array[i * 4 + 2] << 16) |
+                         (sdns_sp_ud_b_wei_np_array[i * 4 + 3] << 24));
+    system_reg_write(0x8b38, sdns_sp_ud_b_wei_np_array[20] | (sdns_sp_ud_b_wei_np_array[21] << 8));
+
+    /* SDNS commit */
+    system_reg_write(0x8b4c, 1);
+
     return 0;
 }
 
-/* tisp_sdns_intp_reg_refresh - Interpolated register refresh */
+/* OEM EXACT: tisp_sdns_intp_reg_refresh - per-frame subset of gain-interpolated registers */
 static int tisp_sdns_intp_reg_refresh(void)
 {
-    pr_debug("tisp_sdns_intp_reg_refresh: Interpolated SDNS register refresh\n");
-    /* For now, just call full refresh - could be optimized later */
-    return tisp_sdns_all_reg_refresh();
+    /* 0x8800-0x8808: grad_thres_opt */
+    system_reg_write(0x8800, (sdns_aa_mv_det_opt[1] << 4) | sdns_aa_mv_det_opt[0]);
+    system_reg_write(0x8804, (sdns_grad_zy_thres_intp << 16) | sdns_grad_zx_thres_intp);
+    system_reg_write(0x8808, (sdns_std_thr2_intp << 16) | (sdns_std_thr1_intp << 4) | sdns_aa_mv_det_opt[2]);
+
+    /* 0x8810-0x8814: mv_seg_number_num_thres */
+    system_reg_write(0x8810, sdns_aa_mv_det_opt[3] | (sdns_aa_mv_det_opt[4] << 8));
+    system_reg_write(0x8814, sdns_mv_num_thr_5x5_intp | (sdns_mv_num_thr_7x7_intp << 8) |
+                     (sdns_mv_num_thr_9x9_intp << 16) | (sdns_mv_num_thr_11x11_intp << 24));
+
+    /* 0x885c-0x8868: h_s — 16 values packed 4x8-bit */
+    system_reg_write(0x885c, sdns_h_s_1_intp | (sdns_h_s_2_intp << 8) |
+                     (sdns_h_s_3_intp << 16) | (sdns_h_s_4_intp << 24));
+    system_reg_write(0x8860, sdns_h_s_5_intp | (sdns_h_s_6_intp << 8) |
+                     (sdns_h_s_7_intp << 16) | (sdns_h_s_8_intp << 24));
+    system_reg_write(0x8864, sdns_h_s_9_intp | (sdns_h_s_10_intp << 8) |
+                     (sdns_h_s_11_intp << 16) | (sdns_h_s_12_intp << 24));
+    system_reg_write(0x8868, sdns_h_s_13_intp | (sdns_h_s_14_intp << 8) |
+                     (sdns_h_s_15_intp << 16) | (sdns_h_s_16_intp << 24));
+
+    /* 0x886c-0x8878: h_mv — 16 values packed 4x8-bit */
+    system_reg_write(0x886c, sdns_h_mv_1_intp | (sdns_h_mv_2_intp << 8) |
+                     (sdns_h_mv_3_intp << 16) | (sdns_h_mv_4_intp << 24));
+    system_reg_write(0x8870, sdns_h_mv_5_intp | (sdns_h_mv_6_intp << 8) |
+                     (sdns_h_mv_7_intp << 16) | (sdns_h_mv_8_intp << 24));
+    system_reg_write(0x8874, sdns_h_mv_9_intp | (sdns_h_mv_10_intp << 8) |
+                     (sdns_h_mv_11_intp << 16) | (sdns_h_mv_12_intp << 24));
+    system_reg_write(0x8878, sdns_h_mv_13_intp | (sdns_h_mv_14_intp << 8) |
+                     (sdns_h_mv_15_intp << 16) | (sdns_h_mv_16_intp << 24));
+
+    /* 0x887c: dark_light_tt_opt */
+    system_reg_write(0x887c, sdns_dark_thres_intp | (sdns_light_thres_intp << 8) |
+                     (sdns_h_val_max << 16) | (sdns_sharpen_tt_opt_intp << 24));
+
+    /* 0x8a64-0x8a70: sp_uu */
+    system_reg_write(0x8a64, sdns_sp_uu_par[0] | (sdns_sp_uu_thres_intp << 8));
+    system_reg_write(0x8a68, sdns_sp_uu_stren_intp | (sdns_sp_uu_par[1] << 16) | (sdns_sp_uu_par[2] << 24));
+    system_reg_write(0x8a6c, sdns_sp_mv_uu_thres_intp | (sdns_sp_mv_uu_stren_intp << 8));
+    system_reg_write(0x8a70, sdns_sp_mv_wei_uu_value[0] | (sdns_sp_mv_wei_uu_value[1] << 4) |
+                     (sdns_sp_mv_wei_uu_value[2] << 8) | (sdns_sp_mv_wei_uu_value[3] << 12));
+
+    /* 0x8a74-0x8a98: sp_v2_d_w_b_ll_hl_flat */
+    system_reg_write(0x8a74, sdns_sp_d_v2_sigma_win5_slope[0] | (sdns_sp_d_v2_win5_thres_intp << 8) |
+                     (sdns_sp_d_v2_sigma_win5_slope[1] << 16) | (sdns_sp_d_wbhl_flat[0] << 24));
+    system_reg_write(0x8a78, sdns_sp_d_w_sp_stren_0_intp | (sdns_sp_d_w_sp_stren_1_intp << 16));
+    system_reg_write(0x8a7c, sdns_sp_d_w_sp_stren_2_intp | (sdns_sp_d_w_sp_stren_3_intp << 16));
+    system_reg_write(0x8a80, sdns_sp_d_wbhl_flat[1] | (sdns_sp_d_wbhl_flat[2] << 16));
+    system_reg_write(0x8a84, sdns_sp_d_b_sp_stren_0_intp | (sdns_sp_d_b_sp_stren_1_intp << 16));
+    system_reg_write(0x8a88, sdns_sp_d_b_sp_stren_2_intp | (sdns_sp_d_b_sp_stren_3_intp << 16));
+    system_reg_write(0x8a8c, sdns_sp_d_wbhl_flat[3] | (sdns_sp_d_wbhl_flat[4] << 16));
+    system_reg_write(0x8a90, sdns_sp_d_wbhl_flat[5] | (sdns_sp_d_wbhl_flat[6] << 16));
+    system_reg_write(0x8a94, sdns_sp_d_wbhl_flat[7] | (sdns_sp_d_flat_thres_intp << 16));
+    system_reg_write(0x8a98, sdns_sp_d_wbhl_flat[8] | (sdns_sp_d_flat_stren_intp << 16));
+
+    /* 0x8aa4-0x8aa8: sp_ud_w_stren */
+    system_reg_write(0x8aa4, sdns_sp_ud_w_sp_stren_0_intp | (sdns_sp_ud_w_sp_stren_1_intp << 16));
+    system_reg_write(0x8aa8, sdns_sp_ud_w_sp_stren_2_intp | (sdns_sp_ud_w_sp_stren_3_intp << 16));
+
+    /* 0x8ab0-0x8ab4: sp_ud_b_stren */
+    system_reg_write(0x8ab0, sdns_sp_ud_b_sp_stren_0_intp | (sdns_sp_ud_b_sp_stren_1_intp << 16));
+    system_reg_write(0x8ab4, sdns_sp_ud_b_sp_stren_2_intp | (sdns_sp_ud_b_sp_stren_3_intp << 16));
+
+    /* 0x8ab8-0x8ac4: sp_ud_b_limit_srd */
+    system_reg_write(0x8ab8, sdns_sp_ud_wbhl_flat[3] | (sdns_sp_ud_std_thres_intp << 16) |
+                     (sdns_sp_ud_std_stren_intp << 24));
+    system_reg_write(0x8abc, sdns_sp_ud_wbhl_flat[4] | (sdns_sp_ud_wbhl_flat[5] << 8) |
+                     (sdns_sp_ud_wbhl_flat[6] << 16));
+    system_reg_write(0x8ac0, sdns_sp_ud_wbhl_flat[7] | (sdns_sp_ud_wbhl_flat[8] << 8) |
+                     (sdns_sp_ud_flat_thres_intp << 20));
+    system_reg_write(0x8ac4, sdns_sp_ud_wbhl_flat[9] | (sdns_sp_ud_flat_stren_intp << 16));
+
+    /* Does NOT write 0x8b4c (commit) - that's done by par_refresh */
+    return 0;
 }
 
-/* tisp_sdns_par_refresh - Binary Ninja EXACT implementation */
+/* OEM EXACT: tisp_sdns_par_refresh */
 int tisp_sdns_par_refresh(uint32_t ev_value, uint32_t threshold, int enable_write)
 {
     uint32_t prev_value = data_9a9c4;
-
-    pr_debug("tisp_sdns_par_refresh: EV=%u, threshold=%u, enable=%d\n", ev_value, threshold, enable_write);
 
     if (prev_value != 0xFFFFFFFF) {
         uint32_t diff = (prev_value >= ev_value) ? (prev_value - ev_value) : (ev_value - prev_value);
 
         if (diff >= threshold) {
             data_9a9c4 = ev_value;
+            tisp_sdns_intp(ev_value);
             tisp_sdns_intp_reg_refresh();
         }
     } else {
         data_9a9c4 = ev_value;
+        tisp_sdns_intp(ev_value);
         tisp_sdns_all_reg_refresh();
     }
 
     if (enable_write == 1) {
-        /* Binary Ninja: Enable SDNS with register write */
         system_reg_write(0x8b4c, 1);
     }
 
     return 0;
 }
 
-/* tiziano_sdns_init - Binary Ninja EXACT implementation */
+/* Helper: set all SDNS _now pointers for non-WDR mode */
+static void tisp_sdns_select_now_linear(void)
+{
+    sdns_h_mv_wei_now = sdns_h_mv_wei;
+    sdns_std_thr2_array_now = sdns_std_thr2_array;
+    sdns_grad_zx_thres_array_now = sdns_grad_zx_thres_array;
+    sdns_grad_zy_thres_array_now = sdns_grad_zy_thres_array;
+    sdns_std_thr1_array_now = sdns_std_thr1_array;
+    sdns_sharpen_tt_opt_array_now = sdns_sharpen_tt_opt_array;
+    sdns_ave_fliter_now = sdns_ave_fliter;
+    sdns_sp_uu_thres_array_now = sdns_sp_uu_thres_array;
+    sdns_sp_uu_stren_array_now = sdns_sp_uu_stren_array;
+    sdns_sp_mv_uu_thres_array_now = sdns_sp_mv_uu_thres_array;
+    sdns_sp_mv_uu_stren_array_now = sdns_sp_mv_uu_stren_array;
+    sdns_ave_thres_array_now = sdns_ave_thres_array;
+
+    sdns_h_s_1_array_now  = sdns_h_s_1_array;
+    sdns_h_s_2_array_now  = sdns_h_s_2_array;
+    sdns_h_s_3_array_now  = sdns_h_s_3_array;
+    sdns_h_s_4_array_now  = sdns_h_s_4_array;
+    sdns_h_s_5_array_now  = sdns_h_s_5_array;
+    sdns_h_s_6_array_now  = sdns_h_s_6_array;
+    sdns_h_s_7_array_now  = sdns_h_s_7_array;
+    sdns_h_s_8_array_now  = sdns_h_s_8_array;
+    sdns_h_s_9_array_now  = sdns_h_s_9_array;
+    sdns_h_s_10_array_now = sdns_h_s_10_array;
+    sdns_h_s_11_array_now = sdns_h_s_11_array;
+    sdns_h_s_12_array_now = sdns_h_s_12_array;
+    sdns_h_s_13_array_now = sdns_h_s_13_array;
+    sdns_h_s_14_array_now = sdns_h_s_14_array;
+    sdns_h_s_15_array_now = sdns_h_s_15_array;
+    sdns_h_s_16_array_now = sdns_h_s_16_array;
+
+    /* h_mv arrays have no WDR variants */
+    sdns_h_mv_1_array_now  = sdns_h_mv_1_array;
+    sdns_h_mv_2_array_now  = sdns_h_mv_2_array;
+    sdns_h_mv_3_array_now  = sdns_h_mv_3_array;
+    sdns_h_mv_4_array_now  = sdns_h_mv_4_array;
+    sdns_h_mv_5_array_now  = sdns_h_mv_5_array;
+    sdns_h_mv_6_array_now  = sdns_h_mv_6_array;
+    sdns_h_mv_7_array_now  = sdns_h_mv_7_array;
+    sdns_h_mv_8_array_now  = sdns_h_mv_8_array;
+    sdns_h_mv_9_array_now  = sdns_h_mv_9_array;
+    sdns_h_mv_10_array_now = sdns_h_mv_10_array;
+    sdns_h_mv_11_array_now = sdns_h_mv_11_array;
+    sdns_h_mv_12_array_now = sdns_h_mv_12_array;
+    sdns_h_mv_13_array_now = sdns_h_mv_13_array;
+    sdns_h_mv_14_array_now = sdns_h_mv_14_array;
+    sdns_h_mv_15_array_now = sdns_h_mv_15_array;
+    sdns_h_mv_16_array_now = sdns_h_mv_16_array;
+
+    sdns_dark_thres_array_now  = sdns_dark_thres_array;
+    sdns_light_thres_array_now = sdns_light_thres_array;
+
+    sdns_mv_num_thr_5x5_array_now  = sdns_mv_num_thr_5x5_array;
+    sdns_mv_num_thr_7x7_array_now  = sdns_mv_num_thr_7x7_array;
+    sdns_mv_num_thr_9x9_array_now  = sdns_mv_num_thr_9x9_array;
+    sdns_mv_num_thr_11x11_array_now = sdns_mv_num_thr_11x11_array;
+
+    sdns_sp_d_v2_win5_thres_array_now = sdns_sp_d_v2_win5_thres_array;
+    sdns_sp_d_w_sp_stren_0_array_now  = sdns_sp_d_w_sp_stren_0_array;
+    sdns_sp_d_w_sp_stren_1_array_now  = sdns_sp_d_w_sp_stren_1_array;
+    sdns_sp_d_w_sp_stren_2_array_now  = sdns_sp_d_w_sp_stren_2_array;
+    sdns_sp_d_w_sp_stren_3_array_now  = sdns_sp_d_w_sp_stren_3_array;
+    sdns_sp_d_b_sp_stren_0_array_now  = sdns_sp_d_b_sp_stren_0_array;
+    sdns_sp_d_b_sp_stren_1_array_now  = sdns_sp_d_b_sp_stren_1_array;
+    sdns_sp_d_b_sp_stren_2_array_now  = sdns_sp_d_b_sp_stren_2_array;
+    sdns_sp_d_b_sp_stren_3_array_now  = sdns_sp_d_b_sp_stren_3_array;
+    sdns_sp_d_flat_thres_array_now    = sdns_sp_d_flat_thres_array;
+    sdns_sp_d_flat_stren_array_now    = sdns_sp_d_flat_stren_array;
+    sdns_sp_ud_w_sp_stren_0_array_now = sdns_sp_ud_w_sp_stren_0_array;
+    sdns_sp_ud_w_sp_stren_1_array_now = sdns_sp_ud_w_sp_stren_1_array;
+    sdns_sp_ud_w_sp_stren_2_array_now = sdns_sp_ud_w_sp_stren_2_array;
+    sdns_sp_ud_w_sp_stren_3_array_now = sdns_sp_ud_w_sp_stren_3_array;
+    sdns_sp_ud_b_sp_stren_0_array_now = sdns_sp_ud_b_sp_stren_0_array;
+    sdns_sp_ud_b_sp_stren_1_array_now = sdns_sp_ud_b_sp_stren_1_array;
+    sdns_sp_ud_b_sp_stren_2_array_now = sdns_sp_ud_b_sp_stren_2_array;
+    sdns_sp_ud_b_sp_stren_3_array_now = sdns_sp_ud_b_sp_stren_3_array;
+    sdns_sp_ud_std_thres_array_now    = sdns_sp_ud_std_thres_array;
+    sdns_sp_ud_std_stren_array_now    = sdns_sp_ud_std_stren_array;
+    sdns_sp_ud_flat_thres_array_now   = sdns_sp_ud_flat_thres_array;
+    sdns_sp_ud_flat_stren_array_now   = sdns_sp_ud_flat_stren_array;
+}
+
+/* Helper: set all SDNS _now pointers for WDR mode */
+static void tisp_sdns_select_now_wdr(void)
+{
+    sdns_h_mv_wei_now = sdns_h_mv_wei_wdr;
+    sdns_std_thr2_array_now = sdns_std_thr2_wdr_array;
+    sdns_grad_zx_thres_array_now = sdns_grad_zx_thres_wdr_array;
+    sdns_grad_zy_thres_array_now = sdns_grad_zy_thres_wdr_array;
+    sdns_std_thr1_array_now = sdns_std_thr1_wdr_array;
+    sdns_sharpen_tt_opt_array_now = sdns_sharpen_tt_opt_wdr_array;
+    sdns_ave_fliter_now = sdns_ave_fliter_wdr;
+    sdns_sp_uu_thres_array_now = sdns_sp_uu_thres_wdr_array;
+    sdns_sp_uu_stren_array_now = sdns_sp_uu_stren_wdr_array;
+    sdns_sp_mv_uu_thres_array_now = sdns_sp_mv_uu_thres_wdr_array;
+    sdns_sp_mv_uu_stren_array_now = sdns_sp_mv_uu_stren_wdr_array;
+    sdns_ave_thres_array_now = sdns_ave_thres_wdr_array;
+
+    sdns_h_s_1_array_now  = sdns_h_s_1_wdr_array;
+    sdns_h_s_2_array_now  = sdns_h_s_2_wdr_array;
+    sdns_h_s_3_array_now  = sdns_h_s_3_wdr_array;
+    sdns_h_s_4_array_now  = sdns_h_s_4_wdr_array;
+    sdns_h_s_5_array_now  = sdns_h_s_5_wdr_array;
+    sdns_h_s_6_array_now  = sdns_h_s_6_wdr_array;
+    sdns_h_s_7_array_now  = sdns_h_s_7_wdr_array;
+    sdns_h_s_8_array_now  = sdns_h_s_8_wdr_array;
+    sdns_h_s_9_array_now  = sdns_h_s_9_wdr_array;
+    sdns_h_s_10_array_now = sdns_h_s_10_wdr_array;
+    sdns_h_s_11_array_now = sdns_h_s_11_wdr_array;
+    sdns_h_s_12_array_now = sdns_h_s_12_wdr_array;
+    sdns_h_s_13_array_now = sdns_h_s_13_wdr_array;
+    sdns_h_s_14_array_now = sdns_h_s_14_wdr_array;
+    sdns_h_s_15_array_now = sdns_h_s_15_wdr_array;
+    sdns_h_s_16_array_now = sdns_h_s_16_wdr_array;
+
+    /* h_mv arrays have no WDR variants — same as linear */
+    sdns_h_mv_1_array_now  = sdns_h_mv_1_array;
+    sdns_h_mv_2_array_now  = sdns_h_mv_2_array;
+    sdns_h_mv_3_array_now  = sdns_h_mv_3_array;
+    sdns_h_mv_4_array_now  = sdns_h_mv_4_array;
+    sdns_h_mv_5_array_now  = sdns_h_mv_5_array;
+    sdns_h_mv_6_array_now  = sdns_h_mv_6_array;
+    sdns_h_mv_7_array_now  = sdns_h_mv_7_array;
+    sdns_h_mv_8_array_now  = sdns_h_mv_8_array;
+    sdns_h_mv_9_array_now  = sdns_h_mv_9_array;
+    sdns_h_mv_10_array_now = sdns_h_mv_10_array;
+    sdns_h_mv_11_array_now = sdns_h_mv_11_array;
+    sdns_h_mv_12_array_now = sdns_h_mv_12_array;
+    sdns_h_mv_13_array_now = sdns_h_mv_13_array;
+    sdns_h_mv_14_array_now = sdns_h_mv_14_array;
+    sdns_h_mv_15_array_now = sdns_h_mv_15_array;
+    sdns_h_mv_16_array_now = sdns_h_mv_16_array;
+
+    sdns_dark_thres_array_now  = sdns_dark_thres_array;
+    sdns_light_thres_array_now = sdns_light_thres_array;
+
+    sdns_mv_num_thr_5x5_array_now  = sdns_mv_num_thr_5x5_array;
+    sdns_mv_num_thr_7x7_array_now  = sdns_mv_num_thr_7x7_array;
+    sdns_mv_num_thr_9x9_array_now  = sdns_mv_num_thr_9x9_array;
+    sdns_mv_num_thr_11x11_array_now = sdns_mv_num_thr_11x11_array;
+
+    sdns_sp_d_v2_win5_thres_array_now = sdns_sp_d_v2_win5_thres_array;
+    sdns_sp_d_w_sp_stren_0_array_now  = sdns_sp_d_w_sp_stren_0_array;
+    sdns_sp_d_w_sp_stren_1_array_now  = sdns_sp_d_w_sp_stren_1_array;
+    sdns_sp_d_w_sp_stren_2_array_now  = sdns_sp_d_w_sp_stren_2_array;
+    sdns_sp_d_w_sp_stren_3_array_now  = sdns_sp_d_w_sp_stren_3_array;
+    sdns_sp_d_b_sp_stren_0_array_now  = sdns_sp_d_b_sp_stren_0_array;
+    sdns_sp_d_b_sp_stren_1_array_now  = sdns_sp_d_b_sp_stren_1_array;
+    sdns_sp_d_b_sp_stren_2_array_now  = sdns_sp_d_b_sp_stren_2_array;
+    sdns_sp_d_b_sp_stren_3_array_now  = sdns_sp_d_b_sp_stren_3_array;
+    sdns_sp_d_flat_thres_array_now    = sdns_sp_d_flat_thres_array;
+    sdns_sp_d_flat_stren_array_now    = sdns_sp_d_flat_stren_array;
+    sdns_sp_ud_w_sp_stren_0_array_now = sdns_sp_ud_w_sp_stren_0_array;
+    sdns_sp_ud_w_sp_stren_1_array_now = sdns_sp_ud_w_sp_stren_1_array;
+    sdns_sp_ud_w_sp_stren_2_array_now = sdns_sp_ud_w_sp_stren_2_array;
+    sdns_sp_ud_w_sp_stren_3_array_now = sdns_sp_ud_w_sp_stren_3_array;
+    sdns_sp_ud_b_sp_stren_0_array_now = sdns_sp_ud_b_sp_stren_0_array;
+    sdns_sp_ud_b_sp_stren_1_array_now = sdns_sp_ud_b_sp_stren_1_array;
+    sdns_sp_ud_b_sp_stren_2_array_now = sdns_sp_ud_b_sp_stren_2_array;
+    sdns_sp_ud_b_sp_stren_3_array_now = sdns_sp_ud_b_sp_stren_3_array;
+    sdns_sp_ud_std_thres_array_now    = sdns_sp_ud_std_thres_array;
+    sdns_sp_ud_std_stren_array_now    = sdns_sp_ud_std_stren_array;
+    sdns_sp_ud_flat_thres_array_now   = sdns_sp_ud_flat_thres_array;
+    sdns_sp_ud_flat_stren_array_now   = sdns_sp_ud_flat_stren_array;
+}
+
+/* tiziano_sdns_init - OEM EXACT implementation */
 int tiziano_sdns_init(void)
 {
-    pr_info("tiziano_sdns_init: Initializing SDNS processing\n");
-
-    /* Initialize strength arrays */
-    for (int i = 0; i < 16; i++) {
-        for (int j = 0; j < 16; j++) {
-            sdns_h_s_arrays[i][j] = (i + 1) * (j + 1) * 2;
-            sdns_h_s_wdr_arrays[i][j] = (i + 1) * (j + 1) * 3;
-        }
-    }
-
-    /* Binary Ninja: Select parameter arrays based on WDR mode */
+    /* Select parameter arrays based on WDR mode */
     if (sdns_wdr_en != 0) {
-        sdns_h_mv_wei_now = sdns_h_mv_wei_wdr;
-        sdns_std_thr2_array_now = sdns_std_thr2_wdr_array;
-        sdns_grad_zx_thres_array_now = sdns_grad_zx_thres_wdr_array;
-        sdns_grad_zy_thres_array_now = sdns_grad_zy_thres_wdr_array;
-        sdns_std_thr1_array_now = sdns_std_thr1_wdr_array;
-        sdns_h_s_1_array_now = sdns_h_s_wdr_arrays[0]; /* First strength array */
-        sdns_sharpen_tt_opt_array_now = sdns_sharpen_tt_opt_wdr_array;
-        sdns_ave_fliter_now = sdns_ave_fliter_wdr;
-        sdns_sp_uu_thres_array_now = sdns_sp_uu_thres_wdr_array;
-        sdns_sp_uu_stren_array_now = sdns_sp_uu_stren_wdr_array;
-        sdns_sp_mv_uu_thres_array_now = sdns_sp_mv_uu_thres_wdr_array;
-        sdns_sp_mv_uu_stren_array_now = sdns_sp_mv_uu_stren_wdr_array;
-        sdns_ave_thres_array_now = sdns_ave_thres_wdr_array;
-        pr_info("tiziano_sdns_init: Using WDR SDNS parameters\n");
+        tisp_sdns_select_now_wdr();
     } else {
-        sdns_h_mv_wei_now = sdns_h_mv_wei;
-        sdns_std_thr2_array_now = sdns_std_thr2_array;
-        sdns_grad_zx_thres_array_now = sdns_grad_zx_thres_array;
-        sdns_grad_zy_thres_array_now = sdns_grad_zy_thres_array;
-        sdns_std_thr1_array_now = sdns_std_thr1_array;
-        sdns_h_s_1_array_now = sdns_h_s_arrays[0]; /* First strength array */
-        sdns_sharpen_tt_opt_array_now = sdns_sharpen_tt_opt_array;
-        sdns_ave_fliter_now = sdns_ave_fliter;
-        sdns_sp_uu_thres_array_now = sdns_sp_uu_thres_array;
-        sdns_sp_uu_stren_array_now = sdns_sp_uu_stren_array;
-        sdns_sp_mv_uu_thres_array_now = sdns_sp_mv_uu_thres_array;
-        sdns_sp_mv_uu_stren_array_now = sdns_sp_mv_uu_stren_array;
-        sdns_ave_thres_array_now = sdns_rgbg_dis; /* Binary Ninja shows this for linear mode */
-        pr_info("tiziano_sdns_init: Using linear SDNS parameters\n");
+        tisp_sdns_select_now_linear();
     }
 
-    /* Binary Ninja: Initialize state and refresh parameters */
+    /* Initialize state and refresh parameters */
     data_9a9c4 = 0xFFFFFFFF;
     tiziano_sdns_params_refresh();
 
-    /* Binary Ninja: Initial parameter refresh with enable */
-    int ret = tisp_sdns_par_refresh(0, 0, 1);
-    if (ret) {
-        pr_err("tiziano_sdns_init: Failed to refresh SDNS parameters: %d\n", ret);
-        return ret;
-    }
+    /* Initial parameter refresh with enable */
+    tisp_sdns_par_refresh(0, 0, 1);
 
-    pr_info("tiziano_sdns_init: SDNS processing initialized successfully\n");
     return 0;
 }
 
@@ -27688,33 +28228,9 @@ int tisp_sdns_wdr_en(int enable)
     sdns_wdr_en = enable ? 1 : 0;
 
     if (sdns_wdr_en) {
-        sdns_h_mv_wei_now = sdns_h_mv_wei_wdr;
-        sdns_std_thr2_array_now = sdns_std_thr2_wdr_array;
-        sdns_grad_zx_thres_array_now = sdns_grad_zx_thres_wdr_array;
-        sdns_grad_zy_thres_array_now = sdns_grad_zy_thres_wdr_array;
-        sdns_std_thr1_array_now = sdns_std_thr1_wdr_array;
-        sdns_h_s_1_array_now = sdns_h_s_wdr_arrays[0];
-        sdns_sharpen_tt_opt_array_now = sdns_sharpen_tt_opt_wdr_array;
-        sdns_ave_fliter_now = sdns_ave_fliter_wdr;
-        sdns_sp_uu_thres_array_now = sdns_sp_uu_thres_wdr_array;
-        sdns_sp_uu_stren_array_now = sdns_sp_uu_stren_wdr_array;
-        sdns_sp_mv_uu_thres_array_now = sdns_sp_mv_uu_thres_wdr_array;
-        sdns_sp_mv_uu_stren_array_now = sdns_sp_mv_uu_stren_wdr_array;
-        sdns_ave_thres_array_now = sdns_ave_thres_wdr_array;
+        tisp_sdns_select_now_wdr();
     } else {
-        sdns_h_mv_wei_now = sdns_h_mv_wei;
-        sdns_std_thr2_array_now = sdns_std_thr2_array;
-        sdns_grad_zx_thres_array_now = sdns_grad_zx_thres_array;
-        sdns_grad_zy_thres_array_now = sdns_grad_zy_thres_array;
-        sdns_std_thr1_array_now = sdns_std_thr1_array;
-        sdns_h_s_1_array_now = sdns_h_s_arrays[0];
-        sdns_sharpen_tt_opt_array_now = sdns_sharpen_tt_opt_array;
-        sdns_ave_fliter_now = sdns_ave_fliter;
-        sdns_sp_uu_thres_array_now = sdns_sp_uu_thres_array;
-        sdns_sp_uu_stren_array_now = sdns_sp_uu_stren_array;
-        sdns_sp_mv_uu_thres_array_now = sdns_sp_mv_uu_thres_array;
-        sdns_sp_mv_uu_stren_array_now = sdns_sp_mv_uu_stren_array;
-        sdns_ave_thres_array_now = sdns_rgbg_dis;
+        tisp_sdns_select_now_linear();
     }
 
     tisp_sdns_all_reg_refresh();
