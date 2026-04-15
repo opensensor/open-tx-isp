@@ -4333,6 +4333,7 @@ int tisp_ae_g_scene_luma(uint32_t *out);
 static int tisp_event_push(void *event);
 static int system_reg_write_ae(int ae_id, uint32_t reg, uint32_t value);
 static int32_t tisp_log2_fixed_to_fixed(uint32_t input_val, int32_t in_precision, char out_precision);
+static void JZ_Isp_Ae_Dg2reg(uint32_t q, uint32_t *out_regs, uint32_t dg_val, uint32_t *linear_pair);
 static void tisp_set_sensor_integration_time(uint32_t time);
 static uint32_t tisp_set_sensor_analog_gain(uint32_t requested_gain);
 static uint32_t tisp_set_sensor_digital_gain_short(uint32_t requested_gain);
@@ -4903,6 +4904,14 @@ static int ae0_tune2(uint32_t wmean, uint32_t q, uint32_t target_ev,
         uint32_t s2_1 = s6_2 << qm;
         if (s2_1 == 0) s2_1 = 1;
         v0_68 = fix_point_div_32(s0, s5 << qm, s2_1);
+        {
+            static int ratio_diag;
+            if (ratio_diag < 5) {
+                pr_info("AE_RATIO[%d]: s0=%u qm=%u s5=%u s5q=0x%x s6_2=%u s2_1=0x%x v0_68=0x%x\n",
+                    ratio_diag, s0, qm, s5, s5 << qm, s6_2, s2_1, v0_68);
+                ratio_diag++;
+            }
+        }
     }
     /* Compute new_ev = var_b8 * ratio */
     v0_69 = fix_point_mult2_32(s0, var_b8, v0_68);
@@ -5715,11 +5724,12 @@ static int tisp_ae0_process_impl(void)
         ae_scene_wmean = ae_wmean;
         ae_scene_total = total_wt;
 
-        /* OEM: Push FIFO value and call ae0_tune2 */
+        /* OEM: Push current EV (IT*AG*DG) as FIFO value into ae0_tune2.
+         * ae0_conv_state[0] stores the luma TARGET (s5), NOT the current EV.
+         * Using the target as FIFO entry causes s6==s5 → ratio=1.0 → stuck.
+         * The correct FIFO value is the actual current exposure. */
         {
-            uint32_t fifo_val = ae0_conv_state[0];
-            if (fifo_val == 0)
-                fifo_val = fix_point_mult3_32(q, new_it << q, new_ag, new_dg);
+            uint32_t fifo_val = fix_point_mult3_32(q, new_it << q, new_ag, new_dg);
             ae0_tune2(ae_wmean, q, fifo_val, &new_it, &new_ag, &new_dg);
         }
     }
@@ -5811,25 +5821,23 @@ static int tisp_ae0_process_impl(void)
     }
 
     /* ---- Step 5: Write digital gain to ISP DG registers ---- */
-    /* OEM calls JZ_Isp_Ae_Dg2reg to pack DG into register format,
+    /* OEM EXACT: JZ_Isp_Ae_Dg2reg packs DG with GIB linear gain ratios,
      * then writes to 0x1030/0x1034 (normal) or 0x1000/0x1004 (WDR).
-     *
-     * OEM JZ_Isp_Ae_Dg2reg(q, &var_38, dg0_cache[EffectFrame], &var_40):
-     *   var_38 = (dg << 16) | mult(q, dg_pair[0], dg)  = dg<<16 | dg
-     *   var_34 = (mult(q, dg_pair[1], dg) << 16) | dg   = dg<<16 | dg
-     * Since dg_pair[0]=dg_pair[1]=one_q (1.0), both registers are dg|dg. */
+     * var_38/var_34 = output regs, var_40/var_3c = linear gain pair.
+     * OEM inits var_38=var_34=0x4000400, var_40=var_3c=one_q at function top. */
     {
         uint32_t dg_val = dg0_cache[EffectFrame < 15 ? EffectFrame : 0];
-        uint32_t reg_packed = (dg_val << 16) | dg_val;
+        uint32_t dg_regs[2] = { 0x04000400, 0x04000400 };
+        uint32_t linear_pair[2] = { 1u << q, 1u << q };
+
+        JZ_Isp_Ae_Dg2reg(q, dg_regs, dg_val, linear_pair);
 
         if (ae_wdr_mode == 0) {
-            /* OEM EXACT: system_reg_write_ae(3, ...) for DG registers */
-            system_reg_write_ae(3, 0x1030, reg_packed);
-            system_reg_write_ae(3, 0x1034, reg_packed);
+            system_reg_write_ae(3, 0x1030, dg_regs[0]);
+            system_reg_write_ae(3, 0x1034, dg_regs[1]);
         } else if (ae_wdr_mode == 1) {
-            /* WDR mode */
-            system_reg_write_ae(3, 0x1000, reg_packed);
-            system_reg_write_ae(3, 0x1004, reg_packed);
+            system_reg_write_ae(3, 0x1000, dg_regs[0]);
+            system_reg_write_ae(3, 0x1004, dg_regs[1]);
         }
     }
 
@@ -6667,7 +6675,78 @@ static int32_t tisp_log2_fixed_to_fixed(uint32_t input_val, int32_t in_precision
            - (in_precision << (out_precision & 0x1f));
 }
 
+/* OEM EXACT: tisp_log2_int_to_fixed_64 (0x114a8) — 64-bit input log2.
+ * Takes a 64-bit value (lo, hi), finds the MSB position, normalizes to
+ * 16-bit, then iteratively computes fractional log2 bits. */
+static int32_t tisp_log2_int_to_fixed_64(uint32_t val_lo, uint32_t val_hi,
+                                          char precision, char shift)
+{
+    uint32_t v;
+    int32_t bit_pos;
+    uint32_t normalized;
+    int32_t result = 0;
+    int32_t i;
 
+    if ((val_lo | val_hi) == 0)
+        return 0;
+
+    /* Find MSB position across 64-bit value */
+    if (val_hi != 0) {
+        v = val_hi;
+        bit_pos = 32;
+    } else {
+        v = val_lo;
+        bit_pos = 0;
+    }
+
+    if (v >= 0x10000) { v >>= 16; bit_pos += 16; }
+    if (v >= 0x100)   { v >>= 8;  bit_pos += 8;  }
+    if (v >= 0x10)    { v >>= 4;  bit_pos += 4;  }
+    if (v >= 4)       { v >>= 2;  bit_pos += 2;  }
+    if (v != 1)       { bit_pos += 1; }
+
+    /* Normalize the 64-bit value to a 32-bit fixed-point mantissa.
+     * OEM uses (val << (16 - bit_pos)) or (val >> (bit_pos - 16)). */
+    {
+        uint64_t val64 = ((uint64_t)val_hi << 32) | val_lo;
+        if (bit_pos >= 16)
+            val64 >>= (bit_pos - 15);
+        else
+            val64 <<= (15 - bit_pos);
+        normalized = (uint32_t)val64;
+    }
+
+    /* Iterative fractional log2 computation (same as 32-bit version) */
+    for (i = 0; i < (int32_t)(uint8_t)precision; i++) {
+        uint64_t sq = (uint64_t)normalized * (uint64_t)normalized;
+        uint32_t sq_hi = (uint32_t)(sq >> 32);
+        uint32_t sq_lo = (uint32_t)sq;
+
+        result <<= 1;
+
+        if (((sq_lo & 0x80000000) | sq_hi) == 0) {
+            /* MSB of 64-bit square is 0 → shift left */
+            normalized = (sq_hi << 17) | (sq_lo >> 15);
+        } else {
+            /* MSB of 64-bit square is 1 → set bit and shift right */
+            result += 1;
+            normalized = (sq_hi << 16) | (sq_lo >> 16);
+        }
+    }
+
+    return ((bit_pos << ((uint8_t)precision & 0x1f)) + result)
+               << ((uint8_t)shift & 0x1f)
+           | (normalized & 0x7fff) >> ((15 - (uint8_t)shift) & 0x1f);
+}
+
+/* OEM EXACT: tisp_log2_fixed_to_fixed_64 (0x116ac) — 64-bit fixed-point log2.
+ * Same as 32-bit version but accepts 64-bit input value. */
+static int32_t tisp_log2_fixed_to_fixed_64(uint32_t val_lo, uint32_t val_hi,
+                                            int32_t in_precision, char out_precision)
+{
+    return tisp_log2_int_to_fixed_64(val_lo, val_hi, out_precision, 0)
+           - (in_precision << ((uint8_t)out_precision & 0x1f));
+}
 
 // Reimplemented to avoid 64-bit division on MIPS32
 static int32_t fix_point_div_64(int32_t shift_bits, int32_t scale,
@@ -16041,12 +16120,16 @@ static struct ae1_hdr_cfg _ae1_hdr_cfg = {0};
 static uint32_t ae1_ag_q10_cur = 0x400;
 static uint32_t ae1_dg_q10_cur = 0x400;
 
-/* JZ_Isp_Ae_Dg2reg - Convert digital gain to AE register values (generic placeholder) */
-static void JZ_Isp_Ae_Dg2reg(uint32_t pos, uint32_t *reg1, uint32_t dg_val, uint32_t *reg2)
+/* OEM EXACT: JZ_Isp_Ae_Dg2reg (0x4eab8) — pack DG into register format.
+ * Multiplies the R/G and B/IR linear gain ratios by the digital gain value,
+ * producing the packed register values for 0x1030 and 0x1034.
+ * arg1=q, arg2=output_regs[2], arg3=dg_val, arg4=linear_gain_pair[2] */
+static void JZ_Isp_Ae_Dg2reg(uint32_t q, uint32_t *out_regs, uint32_t dg_val, uint32_t *linear_pair)
 {
-    uint32_t p = pos & 31;
-    if (reg1) *reg1 = (dg_val >> p) & 0xFFFF;
-    if (reg2) *reg2 = (dg_val << p) & 0xFFFF;
+    uint32_t v0 = fix_point_mult2_32(q, linear_pair[0], dg_val);
+    uint32_t v1 = fix_point_mult2_32(q, linear_pair[1], dg_val);
+    out_regs[0] = (dg_val << 16) | v0;
+    out_regs[1] = (v1 << 16) | dg_val;
 }
 
 
