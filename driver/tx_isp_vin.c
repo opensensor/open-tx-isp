@@ -435,7 +435,7 @@ int tx_isp_vin_init(struct tx_isp_subdev *sd, int enable)
     int32_t v1;
     extern struct tx_isp_dev *ourISPdev;
     
-    mcp_log_info("tx_isp_vin_init: EXACT Binary Ninja implementation", arg2);
+    mcp_log_info("tx_isp_vin_init: EXACT Binary Ninja implementation", enable);
     
     /* Binary Ninja: void* $a0 = *(arg1 + 0xe4) */
     if (!ourISPdev || !ourISPdev->sensor) {
