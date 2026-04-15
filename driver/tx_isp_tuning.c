@@ -1803,6 +1803,7 @@ static uint32_t data_d7228 = 0;
 /* WDR Data Structure Pointers - From Binary Ninja */
 static void *TizianoWdrFpgaStructMe = NULL;
 static void *data_d94a8 = NULL;
+static void tiziano_bcsh_TransitParam(void);
 
 /* BCSH hardware apply: program registers if platform provides mapping */
 static void tiziano_bcsh_reg_apply(struct isp_tuning_data *tuning)
