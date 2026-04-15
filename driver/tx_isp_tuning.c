@@ -24904,8 +24904,12 @@ static void subsection(int32_t *result, int32_t blend_pct,
 	 *
 	 * gam_x/gam_y below are used ONLY by the inline gamma lookups in this function.
 	 * subsection_map calls pass gam_lut_a, gam_lut_b directly (unchanged). */
-	int16_t *gam_x = gam_lut_b;  /* iterate this (OEM iterates arg4) */
-	int16_t *gam_y = gam_lut_a;  /* interpolate this (OEM reads arg3) */
+	/* Subsection kneepoints are OUTPUT Y values. The inline gamma lookup
+	 * finds: given mapped input X → output Y.  So iterate gam_lut_a (X table)
+	 * and interpolate gam_lut_b (Y table).  This matches subsection_map's
+	 * convention and produces output-domain values for the tone curve. */
+	int16_t *gam_x = gam_lut_a;
+	int16_t *gam_y = gam_lut_b;
 	int32_t v0_val = 2 << (prec_a & 0x1f);
 	int32_t fp;
 	int32_t half_a = (1 << (prec_a & 0x1f)) / 2;
@@ -24920,7 +24924,7 @@ static void subsection(int32_t *result, int32_t blend_pct,
 				0xfff << (prec_a & 0x1f), v0_val) + half_a)
 				>> (prec_a & 0x1f);
 		int32_t mapped = subsection_map(0x1388, map_in, blend_pct,
-				gam_lut_a, gam_lut_b, lut, num_bins, prec_a, prec_b,
+				gam_x, gam_y, lut, num_bins, prec_a, prec_b,
 				blend_mode);
 
 		/* Lookup in gam_x to find the Y value */
@@ -24955,7 +24959,7 @@ static void subsection(int32_t *result, int32_t blend_pct,
 					mapped << (prec_a & 0x1f), v0_val) + half_a)
 					>> (prec_a & 0x1f);
 			int32_t mapped2 = subsection_map(sub_arg1, map_in2, blend_pct,
-					gam_lut_a, gam_lut_b, lut, num_bins, prec_a, prec_b,
+					gam_x, gam_y, lut, num_bins, prec_a, prec_b,
 					blend_mode);
 
 			for (j = 0; j < 0x81; j++) {
@@ -24996,7 +25000,7 @@ static void subsection(int32_t *result, int32_t blend_pct,
 							v0_val) + half_a)
 							>> (prec_a & 0x1f);
 					int32_t mapped_kp1 = subsection_map(sub_arg_kp1, map_in_kp1,
-							blend_pct, gam_lut_a, gam_lut_b, lut, num_bins,
+							blend_pct, gam_x, gam_y, lut, num_bins,
 							prec_a, prec_b, blend_mode);
 
 					for (j = 0; j < 0x81; j++) {
@@ -25026,7 +25030,7 @@ static void subsection(int32_t *result, int32_t blend_pct,
 							v0_val) + half_a)
 							>> (prec_a & 0x1f);
 					int32_t mapped3 = subsection_map(sub_arg2, map_in3,
-							blend_pct, gam_lut_a, gam_lut_b, lut, num_bins,
+							blend_pct, gam_x, gam_y, lut, num_bins,
 							prec_a, prec_b, blend_mode);
 
 					for (j = 0; j < 0x81; j++) {
@@ -28708,6 +28712,16 @@ static int tiziano_bcsh_dn_params_refresh(void)
 	 * previous mode. */
 	if (ourISPdev && ourISPdev->tuning_data)
 		tiziano_bcsh_sync_active_bank(ourISPdev->tuning_data);
+
+	pr_info("BCSH_DN: CCM_d=[%u,%u,%u,%u,%u,%u,%u,%u,%u]\n",
+		bcsh_CCM_d[0], bcsh_CCM_d[1], bcsh_CCM_d[2],
+		bcsh_CCM_d[3], bcsh_CCM_d[4], bcsh_CCM_d[5],
+		bcsh_CCM_d[6], bcsh_CCM_d[7], bcsh_CCM_d[8]);
+	pr_info("BCSH_DN: CCM_t=[%u,%u,%u,%u,%u,%u,%u,%u,%u]\n",
+		bcsh_CCM_t[0], bcsh_CCM_t[1], bcsh_CCM_t[2],
+		bcsh_CCM_t[3], bcsh_CCM_t[4], bcsh_CCM_t[5],
+		bcsh_CCM_t[6], bcsh_CCM_t[7], bcsh_CCM_t[8]);
+
 	BCSH_real = 1;
 	if (ourISPdev && ourISPdev->tuning_data)
 		tiziano_bcsh_update(ourISPdev->tuning_data);
