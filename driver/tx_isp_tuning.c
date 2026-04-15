@@ -589,6 +589,12 @@ static uint32_t bcsh_Cxl_now = 0x10;
 static uint32_t bcsh_Cxh_now = 0x344;
 static uint32_t bcsh_Cyl_now = 0x08;
 static uint32_t bcsh_Cyh_now = 0x34c;
+/* TransitParam working copies (OEM: tisp_BCSH_ai32*) */
+static uint32_t bcsh_ai32_Svalue[4];
+static uint32_t bcsh_ai32_C[5];
+static uint32_t bcsh_Cslope0, bcsh_Cslope1, bcsh_Cslope2;
+static uint32_t bcsh_Sstep0, bcsh_Sstep1;
+static uint32_t bcsh_HDPslope, bcsh_HBPslope, bcsh_HLSPslope;
 static uint32_t bcsh_OffsetYUVy[2] = { 0x03C0, 0x0440 }; /* OEM: 0x9a6d8 */
 static uint32_t bcsh_OffsetRGB2yuv[3] = { 0x0400, 0x0400, 0x0400 }; /* OEM: 0x9a668..0x9a670 */
 static uint32_t bcsh_clip0[4] = { 0x0000, 0x03ff, 0x0000, 0x03ff }; /* OEM: tisp_BCSH_au32clip 0x9a6c8 */
@@ -28865,11 +28871,7 @@ static void tiziano_bcsh_dump2(void)
  * Our tiziano_bcsh_reg_apply handles the equivalent computation via
  * tiziano_bcsh_compute_slopes, so this exists for compatibility. */
 /* Working copies of S-values and C params after StrenCal (OEM: tisp_BCSH_ai32*) */
-static uint32_t bcsh_ai32_Svalue[4];  /* Svalue after user saturation scaling */
-static uint32_t bcsh_ai32_C[5];       /* C params after user contrast scaling */
-static uint32_t bcsh_Cslope0, bcsh_Cslope1, bcsh_Cslope2;
-static uint32_t bcsh_Sstep0, bcsh_Sstep1;
-static uint32_t bcsh_HDPslope, bcsh_HBPslope, bcsh_HLSPslope;
+/* (bcsh_ai32_Svalue etc. declared near line 593) */
 
 static void tiziano_bcsh_TransitParam(void)
 {
