@@ -4915,13 +4915,47 @@ phase_f_target:
         uint32_t v0_75 = fix_point_div_32(s0, diff << qm, s2_1 ? s2_1 : 1);
         uint32_t one_q = 1u << qm;
 
+        /* OEM EXACT: tisp_ae_tune (0x4fe84) — adapt var_dc/var_e0 BEFORE
+         * the 64-bit interpolation so the interpolation uses updated coefficients.
+         * OEM calls tisp_ae_tune(arg28, &var_dc, &var_e0, step, s0, one_q)
+         * with one_q (not computed s2_2) as the reference value. */
+        {
+            uint32_t step_count = 0;
+            if (v0_15 == 0)
+                step_count = v0_40;
+            else if (v0_15 == 1)
+                step_count = v0_41;
+
+            if ((int32_t)step_count > 0) {
+                uint32_t tune_a = _exp_parameter.data[5];
+                uint32_t tune_b = _exp_parameter.data[6];
+                uint32_t s7_tune = step_count << qm;
+                uint32_t s3_tune = 0x80u << qm;
+
+                /* OEM: arg6 = one_q (unity in Q-format) */
+                if (one_q < tune_a + var_dc)
+                    tune_a = one_q - var_dc;
+                if (one_q < tune_b + var_e0)
+                    tune_b = one_q - var_e0;
+
+                if (s3_tune == 0) s3_tune = 1;
+                var_dc = var_dc + fix_point_div_32(s0,
+                        fix_point_mult2_32(s0, s7_tune, tune_a), s3_tune);
+                var_e0 = var_e0 + fix_point_div_32(s0,
+                        fix_point_mult2_32(s0, s7_tune, tune_b), s3_tune);
+
+                /* Write back to persistent state */
+                ae_ev_step.data[0] = var_dc;
+                ae_ev_step.data[1] = var_e0;
+            }
+        }
+
         /* 64-bit EV interpolation (Phase F of OEM).
-         * OEM uses fix_point_mult2_64/mult3_64/div_64 for extended precision.
-         * Simplified to 32-bit where the values are bounded. */
+         * Uses adapted var_dc/var_e0 from tisp_ae_tune above. */
         if (s6_2 >= s5) {
             /* Over-exposed: need to DECREASE EV */
             if ((uint32_t)(-(int32_t)v0_1) >= (uint32_t)(-(int32_t)v0_75)) {
-                /* Large step: use mult2_64 path */
+                /* Large error (v0_75 >= v0_1): linear response */
                 uint64_t a = (uint64_t)one_q << qm;
                 uint64_t b = fix_point_mult2_64_native(qm * 2,
                         (uint64_t)var_dc << qm, (uint64_t)v0_75 << qm);
@@ -4930,7 +4964,7 @@ phase_f_target:
                 else
                     s2_2 = 0;
             } else {
-                /* Small step: use mult3_64 path */
+                /* Small error: quadratic response */
                 uint64_t base = (uint64_t)one_q << qm;
                 uint64_t interp = fix_point_mult3_64_native(qm * 2,
                         (uint64_t)var_dc << qm,
@@ -4948,7 +4982,7 @@ phase_f_target:
         } else {
             /* Under-exposed: need to INCREASE EV */
             if (a3_4 >= v0_75) {
-                /* Small correction: linear interp */
+                /* Small error: quadratic response */
                 uint64_t base = (uint64_t)one_q << qm;
                 uint64_t interp = fix_point_mult3_64_native(qm * 2,
                         (uint64_t)var_e0 << qm,
@@ -4956,7 +4990,7 @@ phase_f_target:
                         (uint64_t)v0_75 << qm);
                 s2_2 = (uint32_t)(interp + base);
             } else {
-                /* Large correction */
+                /* Large error: linear response */
                 uint64_t base = (uint64_t)one_q << qm;
                 uint64_t interp = fix_point_mult2_64_native(qm * 2,
                         (uint64_t)var_e0 << qm, (uint64_t)v0_75 << qm);
@@ -4964,12 +4998,23 @@ phase_f_target:
             }
         }
 
-        /* OEM: a3_3 is used WITHIN the Phase F interpolation formula, not as
-         * a hard post-clamp. The 64-bit interpolation above already limits
-         * the step via var_dc/var_e0 coefficients. A hard clamp here with
-         * a3_3=4 (0.4% per frame from tuning binary) makes convergence
-         * impossibly slow. Removed hard clamp — the OEM's interpolation
-         * inherently controls the step rate. */
+        /* OEM EXACT: Clamp interpolated ratio by a3_3 step bounds.
+         * a3_3 = ae_ev_step.data[2] limits max per-frame EV change to
+         * ±a3_3/1024 around unity (1.0).  Without this clamp, the AE
+         * overshoots and oscillates, causing visible brightness flicker.
+         * OEM computes bounds in Q20 (qm*2) then clamps the 64-bit
+         * interpolation result; we use equivalent 32-bit since Q10
+         * values fit easily in uint32_t. */
+        {
+            uint32_t one_q_q20 = one_q << qm;
+            uint32_t a3_3_q20 = a3_3 << qm;
+            uint32_t upper_bound = one_q_q20 + a3_3_q20;
+            uint32_t lower_bound = (one_q_q20 > a3_3_q20) ?
+                                    (one_q_q20 - a3_3_q20) : 0;
+
+            if (s2_2 > upper_bound) s2_2 = upper_bound;
+            if (s2_2 < lower_bound) s2_2 = lower_bound;
+        }
 
         /* Scale s2_2 by var_b8 and clamp */
         {
@@ -4985,43 +5030,6 @@ phase_f_target:
 
         if (s2_2 < one_q)
             s2_2 = one_q;
-    }
-
-    /* OEM EXACT: tisp_ae_tune — adjust step parameters var_dc/var_e0.
-     * arg1 = _exp_parameter.data[5..6] (tune coefficients)
-     * arg2 = &var_dc, arg3 = &var_e0
-     * arg4 = step count (v0_40 or v0_41), arg5 = s0 (Q), arg6 = s2_2 */
-    {
-        uint32_t step_count = 0;
-        if (v0_15 == 0)
-            step_count = v0_40;
-        else if (v0_15 == 1)
-            step_count = v0_41;
-
-        if ((int32_t)step_count > 0) {
-            /* OEM tisp_ae_tune (0x4fe84):
-             * Adjusts var_dc and var_e0 based on how far s2_2 is from
-             * the current step position, scaled by step_count. */
-            uint32_t tune_a = _exp_parameter.data[5];
-            uint32_t tune_b = _exp_parameter.data[6];
-            uint32_t s7_tune = step_count << qm;
-            uint32_t s3_tune = 0x80u << qm;
-
-            if (s2_2 < tune_a + var_dc)
-                tune_a = s2_2 - var_dc;
-            if (s2_2 < tune_b + var_e0)
-                tune_b = s2_2 - var_e0;
-
-            if (s3_tune == 0) s3_tune = 1;
-            var_dc = var_dc + fix_point_div_32(s0,
-                    fix_point_mult2_32(s0, s7_tune, tune_a), s3_tune);
-            var_e0 = var_e0 + fix_point_div_32(s0,
-                    fix_point_mult2_32(s0, s7_tune, tune_b), s3_tune);
-
-            /* Write back to persistent state */
-            ae_ev_step.data[0] = var_dc;
-            ae_ev_step.data[1] = var_e0;
-        }
     }
 
     /* DEBUG: trace convergence on first frames */
@@ -26568,11 +26576,11 @@ int tiziano_adr_init(uint32_t width, uint32_t height)
     /* Binary Ninja: Write ADR configuration registers */
     system_reg_write(0x4000, width_div | (height_div << 16));
     system_reg_write(0x4010, height_div << 16);
-    system_reg_write(0x4014, ((height_div << 1) << 16) | (height_div << 1));
+    system_reg_write(0x4014, ((height_div * 3) << 16) | (height_div * 2));
     system_reg_write(0x4018, height);
     system_reg_write(0x401c, width_div << 16);
     system_reg_write(0x4020, ((width_div * 3) << 16) | (width_div << 1));
-    system_reg_write(0x4024, ((width_div * 4) << 16) | (width_div * 3));
+    system_reg_write(0x4024, ((width_div * 5) << 16) | (width_div * 4));
     system_reg_write(0x4028, width);
     system_reg_write(0x4454, ((height - height_sub) << 16) | height_sub);
     system_reg_write(0x4458, ((width - width_sub) << 16) | width_sub);
