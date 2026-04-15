@@ -1272,6 +1272,11 @@ int ispcore_video_s_stream(struct tx_isp_subdev *sd, int enable)
         if (v0_3 == 3) {
             isp_dev->state = 4;
 
+            /* OEM: set exception_enable on VIC device so ISR calls
+             * exception_handle (pipeline reset) on error interrupts. */
+            if (vic_dev)
+                vic_dev->exception_enable = 1;
+
             /* Re-arm AWB stats DMA on stream restart.
              * The AWB DMA engine may be single-shot: after cycling through
              * all banks it stops. Re-writing 0xb04c re-triggers it.
@@ -1598,15 +1603,37 @@ irqreturn_t ispcore_interrupt_service_routine(int irq, void *dev_id)
             queue_work_on(0, fs_workqueue, &fs_work);
     }
 
-    /* OEM: for non-WDR, error bits 0x200 and 0x100 just increment counters.
-     * Do NOT read/write register 0xc here — that's the bypass register
-     * and touching it corrupts processing block configuration. */
+    /* OEM EXACT: error bits 0x200/0x100 trigger exception_handle() pipeline
+     * reset when the exception-enable flag is set. Without this reset, ISP
+     * pipeline errors at startup leave the AE stats DMA engine producing
+     * data only on alternate banks (50% dead frames). */
     {
         static u32 isp_err_200_count, isp_err_100_count;
-        if (interrupt_status & 0x200)
+        if (interrupt_status & 0x200) {
+            if (vic_dev->exception_enable) {
+                /* OEM exception_handle: flush → poll → reset → restart */
+                u32 r;
+                system_reg_write(0x24, system_reg_read(0x24) | 1);
+                do { r = system_reg_read(0x28); } while (!(r & 1));
+                r = system_reg_read(0x20);
+                system_reg_write(0x20, r | 4);
+                system_reg_write(0x20, r & ~4);
+                system_reg_write(0x800, 1);
+            }
             isp_err_200_count++;
-        if (interrupt_status & 0x100)
+        }
+        if (interrupt_status & 0x100) {
+            if (vic_dev->exception_enable) {
+                u32 r;
+                system_reg_write(0x24, system_reg_read(0x24) | 1);
+                do { r = system_reg_read(0x28); } while (!(r & 1));
+                r = system_reg_read(0x20);
+                system_reg_write(0x20, r | 4);
+                system_reg_write(0x20, r & ~4);
+                system_reg_write(0x800, 1);
+            }
             isp_err_100_count++;
+        }
     }
 
     /*

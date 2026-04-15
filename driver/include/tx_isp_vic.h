@@ -186,6 +186,10 @@ struct tx_isp_vic_device {
     void *capture_buf_virt __attribute__((aligned(4)));      /* 0x144 */
     uint32_t capture_buf_size __attribute__((aligned(4)));   /* total allocated size */
 
+    /* OEM offset 0x17c: exception handling enable flag.
+     * Set to 1 during stream-on, enables ISP pipeline reset on error IRQs. */
+    int exception_enable __attribute__((aligned(4)));
+
     /* Moved from tx_isp_subdev private fields (ABI fix) */
     struct tx_isp_irq_info sd_irq_info;  /* VIC IRQ info (was sd.irq_info) */
     struct mutex vic_frame_end_lock __attribute__((aligned(4)));
