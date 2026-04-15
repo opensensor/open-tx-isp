@@ -2852,13 +2852,13 @@ EXPORT_SYMBOL(vic_subdev_ops);
 
 
 /* VIC FRD file operations - EXACT Binary Ninja implementation */
-const struct file_operations isp_vic_frd_fops = {
+const struct proc_ops isp_vic_frd_fops = {
     .owner = THIS_MODULE,
-    .llseek = seq_lseek,                /* private_seq_lseek from hex dump */
-    .read = seq_read,                   /* private_seq_read from hex dump */
-    .write = isp_vic_cmd_set,           /* OEM: write handler for snapraw/saveraw */
-    .open = dump_isp_vic_frd_open,      /* dump_isp_vic_frd_open from hex dump */
-    .release = single_release,          /* private_single_release from hex dump */
+    .proc_lseek = seq_lseek,                /* private_seq_lseek from hex dump */
+    .proc_read = seq_read,                   /* private_seq_read from hex dump */
+    .proc_write = isp_vic_cmd_set,           /* OEM: write handler for snapraw/saveraw */
+    .proc_open = dump_isp_vic_frd_open,      /* dump_isp_vic_frd_open from hex dump */
+    .proc_release = single_release,          /* private_single_release from hex dump */
 };
 
 /* Wrapper fops for /proc/jz/isp/isp-w02 created from tx_isp_proc.c.
@@ -2890,21 +2890,21 @@ static ssize_t isp_vic_cmd_set_wrapper(struct file *file, const char __user *buf
     return isp_vic_cmd_set(file, buf, count, ppos);
 }
 
-const struct file_operations isp_vic_frd_fops_wrapper = {
+const struct proc_ops isp_vic_frd_fops_wrapper = {
     .owner = THIS_MODULE,
-    .llseek = seq_lseek,
-    .read = seq_read,
-    .write = isp_vic_cmd_set_wrapper,
-    .open = dump_isp_vic_frd_open_wrapper,
-    .release = single_release,
+    .proc_lseek = seq_lseek,
+    .proc_read = seq_read,
+    .proc_write = isp_vic_cmd_set_wrapper,
+    .proc_open = dump_isp_vic_frd_open_wrapper,
+    .proc_release = single_release,
 };
 
 /* VIC W02 proc file operations - FIXED for proper proc interface */
-const struct file_operations isp_w02_proc_fops = {
+const struct proc_ops isp_w02_proc_fops = {
     .owner = THIS_MODULE,
-    .open = vic_chardev_open,
+    .proc_open = vic_chardev_open,
     .release = vic_chardev_release,
-    .write = vic_proc_write,
+    .proc_write = vic_proc_write,
     .llseek = default_llseek,
 };
 

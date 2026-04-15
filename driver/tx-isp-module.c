@@ -780,7 +780,7 @@ static void frame_channel_drain_deliverability_queues(struct tx_isp_channel_stat
     state->pre_dequeue_ready = false;
     state->pre_dequeue_index = 0;
     state->pre_dequeue_seq = 0;
-    memset(&state->pre_dequeue_ts, 0, sizeof(state->pre_dequeue_ts));
+    memset(&state->pre_dequeue_ts_us, 0, sizeof(state->pre_dequeue_ts_us));
     spin_unlock_irqrestore(&state->queue_lock, qf);
 
     wake_up_interruptible(&state->frame_wait);
@@ -813,7 +813,7 @@ static int frame_channel_track_buffer(struct frame_channel_device *fcd,
     tracked->bytesused = buffer->bytesused;
     tracked->flags = buffer->flags;
     tracked->field = buffer->field;
-    tracked->timestamp_us = buffer->timestamp_us;
+    tracked->timestamp_us = get_timestamp_us();
     tracked->sequence = buffer->sequence;
     tracked->memory = buffer->memory;
     tracked->length = buffer->length;
@@ -1286,23 +1286,17 @@ static inline s64 get_timestamp_us(void)
     return ktime_to_us(ktime_get());
 }
 
-/* Legacy wrapper for code that still passes a pointer */
+/* Legacy wrapper - no-op on 5.0+, fills timeval on older kernels */
 static inline void fill_timeval_mono(void *tv_unused)
 {
-    /* No-op on modern kernels - use get_timestamp_us() instead */
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5,0,0)
     struct timeval *tv = tv_unused;
     struct timespec ts;
     ktime_get_ts(&ts);
     tv->tv_sec = ts.tv_sec;
     tv->tv_usec = ts.tv_nsec / 1000;
-#else
-    /* Fallback: raw monotonic */
-    struct timespec ts;
-    getrawmonotonic(&ts);
-    tv->tv_sec = ts.tv_sec;
-    tv->tv_usec = ts.tv_nsec / 1000;
 #endif
+    (void)tv_unused;
 }
 
 int tisp_get_frame_drop(u32 channel_id, u32 *enable, u32 *period, u32 *mask)
@@ -3800,7 +3794,7 @@ long frame_channel_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned 
             state->current_buffer.bytesused = buffer.bytesused;
             state->current_buffer.flags = buffer.flags;
             state->current_buffer.field = buffer.field;
-            state->current_buffer.timestamp = buffer.timestamp_us;
+            state->current_buffer.timestamp_us = get_timestamp_us();
             state->current_buffer.sequence = buffer.sequence;
             state->current_buffer.memory = buffer.memory;
             state->current_buffer.length = buffer.length;
