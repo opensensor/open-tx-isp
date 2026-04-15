@@ -2853,7 +2853,6 @@ EXPORT_SYMBOL(vic_subdev_ops);
 
 /* VIC FRD file operations - EXACT Binary Ninja implementation */
 const struct proc_ops isp_vic_frd_fops = {
-    .owner = THIS_MODULE,
     .proc_lseek = seq_lseek,                /* private_seq_lseek from hex dump */
     .proc_read = seq_read,                   /* private_seq_read from hex dump */
     .proc_write = isp_vic_cmd_set,           /* OEM: write handler for snapraw/saveraw */
@@ -2891,7 +2890,6 @@ static ssize_t isp_vic_cmd_set_wrapper(struct file *file, const char __user *buf
 }
 
 const struct proc_ops isp_vic_frd_fops_wrapper = {
-    .owner = THIS_MODULE,
     .proc_lseek = seq_lseek,
     .proc_read = seq_read,
     .proc_write = isp_vic_cmd_set_wrapper,
@@ -2901,11 +2899,10 @@ const struct proc_ops isp_vic_frd_fops_wrapper = {
 
 /* VIC W02 proc file operations - FIXED for proper proc interface */
 const struct proc_ops isp_w02_proc_fops = {
-    .owner = THIS_MODULE,
     .proc_open = vic_chardev_open,
-    .release = vic_chardev_release,
+    .proc_release = vic_chardev_release,
     .proc_write = vic_proc_write,
-    .llseek = default_llseek,
+    .proc_lseek = default_llseek,
 };
 
 /* Implementation of the open/release functions */
@@ -3379,7 +3376,6 @@ static struct platform_driver tx_isp_vic_platform_driver = {
     .remove = tx_isp_vic_remove,
     .driver = {
         .name = "tx-isp-vic",
-        .owner = THIS_MODULE,
     },
 };
 

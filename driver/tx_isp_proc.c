@@ -54,7 +54,6 @@ static int tx_isp_proc_w00_open(struct inode *inode, struct file *file)
 }
 
 static const struct proc_ops tx_isp_proc_w00_fops = {
-    .owner = THIS_MODULE,
     .proc_open = tx_isp_proc_w00_open,
     .proc_read = seq_read,
     .proc_lseek = seq_lseek,
@@ -117,7 +116,6 @@ static int tx_isp_proc_w01_open(struct inode *inode, struct file *file)
 }
 
 static const struct proc_ops tx_isp_proc_w01_fops = {
-    .owner = THIS_MODULE,
     .proc_open = tx_isp_proc_w01_open,
     .proc_read = seq_read,
     .proc_write = tx_isp_proc_w01_write,
@@ -205,7 +203,6 @@ static int tx_isp_proc_w02_open(struct inode *inode, struct file *file)
 }
 
 static const struct proc_ops tx_isp_proc_w02_fops = {
-    .owner = THIS_MODULE,
     .proc_open = tx_isp_proc_w02_open,
     .proc_read = seq_read,
     .proc_write = tx_isp_proc_w02_write,
@@ -283,7 +280,6 @@ static int tx_isp_proc_vic_mdma_open(struct inode *inode, struct file *file)
 }
 
 static const struct proc_ops tx_isp_proc_vic_mdma_fops = {
-    .owner = THIS_MODULE,
     .proc_open = tx_isp_proc_vic_mdma_open,
     .proc_read = seq_read,
     .proc_lseek = seq_lseek,
@@ -358,7 +354,6 @@ static int tx_isp_proc_fs_open(struct inode *inode, struct file *file)
 }
 
 static const struct proc_ops tx_isp_proc_fs_fops = {
-    .owner = THIS_MODULE,
     .proc_open = tx_isp_proc_fs_open,
     .proc_read = seq_read,
     .proc_write = tx_isp_proc_fs_write,
@@ -419,7 +414,6 @@ static int tx_isp_proc_m0_open(struct inode *inode, struct file *file)
 }
 
 static const struct proc_ops tx_isp_proc_m0_fops = {
-    .owner = THIS_MODULE,
     .proc_open = tx_isp_proc_m0_open,
     .proc_read = seq_read,
     .proc_write = tx_isp_proc_m0_write,
@@ -440,7 +434,6 @@ static int tx_isp_proc_csi_open(struct inode *inode, struct file *file)
 }
 
 static const struct proc_ops tx_isp_proc_csi_fops = {
-    .owner = THIS_MODULE,
     .proc_open = tx_isp_proc_csi_open,
     .proc_read = seq_read,
     .proc_lseek = seq_lseek,
@@ -525,7 +518,6 @@ static int tx_isp_proc_clks_open(struct inode *inode, struct file *file)
 }
 
 static const struct proc_ops tx_isp_proc_clks_fops = {
-    .owner = THIS_MODULE,
     .proc_open = tx_isp_proc_clks_open,
     .proc_read = seq_read,
     .proc_lseek = seq_lseek,
@@ -545,7 +537,6 @@ static int tx_isp_proc_vic_open(struct inode *inode, struct file *file)
 }
 
 static const struct proc_ops tx_isp_proc_vic_fops = {
-    .owner = THIS_MODULE,
     .proc_open = tx_isp_proc_vic_open,
     .proc_read = seq_read,
     .proc_lseek = seq_lseek,

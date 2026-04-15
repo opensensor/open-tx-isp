@@ -31930,7 +31930,7 @@ static void tisp_set_sensor_integration_time(uint32_t time)
  * provide the full requested analog gain. */
 static uint32_t tisp_set_sensor_analog_gain(uint32_t requested_gain)
 {
-    unsigned long var_28;
+    unsigned int var_28;
     uint32_t log_result, gain_param, v0_2, final_gain;
 
     pr_debug("tisp_set_sensor_analog_gain: requested gain=0x%x\n", requested_gain);

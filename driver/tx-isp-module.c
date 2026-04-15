@@ -34,6 +34,8 @@
 /* V4L2 control IDs - use standard V4L2 control IDs */
 /* Note: V4L2 structures and enums are already defined in kernel headers */
 #include "include/tx_isp.h"
+
+static inline s64 get_timestamp_us(void);
 #include "include/tx_isp_core.h"
 #include "include/tx-libimp.h"
 #include "include/tx-isp-debug.h"
