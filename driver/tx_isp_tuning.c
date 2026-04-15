@@ -1850,7 +1850,14 @@ static void tiziano_bcsh_reg_apply(struct isp_tuning_data *tuning)
         }
     }
 
-    tiziano_bcsh_compute_slopes(Sth, Carr, HDP, HBP, &cs0, &cs1, &cs2, &hdp_s, &hbp_s);
+    /* OEM: TransitParam computes all slopes/steps. Call it first,
+     * then use its outputs for register writes. */
+    tiziano_bcsh_TransitParam();
+    cs0 = bcsh_Cslope0;
+    cs1 = bcsh_Cslope1;
+    cs2 = bcsh_Cslope2;
+    hdp_s = bcsh_HDPslope;
+    hbp_s = bcsh_HBPslope;
 
     /* Compose and write 0x8000..0x8070 block (best-effort OEM-aligned packing) */
     /* Compute S-vectors (svec1 declared at function scope for 0x806c-0x8070) */
@@ -1943,13 +1950,8 @@ static void tiziano_bcsh_reg_apply(struct isp_tuning_data *tuning)
     system_reg_write(BASE + 0x0044, PACK16(hbp_s, HBP[0]));
     system_reg_write(BASE + 0x0048, PACK16(HBP[2], HBP[1]));
 
-    /* 0x804C: HLSPslope + HLSP[0] (OEM arg19/arg18) */
-    {
-        uint32_t hlsp_s = 0;
-        if (HLSP[1] < HLSP[2] && (HLSP[2] - HLSP[1]) > 0)
-            hlsp_s = 0x400 / (HLSP[2] - HLSP[1]);
-        system_reg_write(BASE + 0x004c, PACK16(hlsp_s, HLSP[0]));
-    }
+    /* 0x804C: HLSPslope + HLSP[0] (OEM arg19/arg18) — use TransitParam output */
+    system_reg_write(BASE + 0x004c, PACK16(bcsh_HLSPslope, HLSP[0]));
 
     /* 0x8050: EV/HLSP-gated mixed value (OEM-like). */
     {
@@ -2017,27 +2019,15 @@ static void tiziano_bcsh_reg_apply(struct isp_tuning_data *tuning)
         system_reg_write(BASE + 0x0050, s1_3);
     }
 
-    /* 0x8054..0x8060: Cslope0/C array (OEM arg7=Cslope0, arg6=C, arg8=Cslope1, arg9=Cslope2) */
-    system_reg_write(BASE + 0x0054, PACK16(cs0, bcsh_C[0]));
+    /* 0x8054..0x8060: Cslope0/C array — use TransitParam's StrenCal-adjusted C values */
+    system_reg_write(BASE + 0x0054, PACK16(cs0, bcsh_ai32_C[0]));
     system_reg_write(BASE + 0x0058, PACK16(cs2, cs1));
-    system_reg_write(BASE + 0x005c, PACK16(bcsh_C[2], bcsh_C[1]));
-    system_reg_write(BASE + 0x0060, PACK16(bcsh_C[4], bcsh_C[3]));
+    system_reg_write(BASE + 0x005c, PACK16(bcsh_ai32_C[2], bcsh_ai32_C[1]));
+    system_reg_write(BASE + 0x0060, PACK16(bcsh_ai32_C[4], bcsh_ai32_C[3]));
 
-    /* 0x8064..0x8068: Sstep + Sthres (OEM arg12=Sstep, arg10=Sthres)
-     * Sstep[0] = |Svalue[1]-Svalue[0]| / (Sthres[2]-Sthres[1])
-     * Sstep[1] = |Svalue[2]-Svalue[3]| / (Sthres[2]-Sthres[1])
-     */
-    {
-        uint32_t sstep0 = 0, sstep1 = 0;
-        if (Sth[1] < Sth[2]) {
-            uint32_t denom = Sth[2] - Sth[1];
-            uint32_t d0 = (svec1[1] >= svec1[0]) ? (svec1[1] - svec1[0]) : (svec1[0] - svec1[1]);
-            uint32_t d1 = (svec1[2] >= svec1[3]) ? (svec1[2] - svec1[3]) : (svec1[3] - svec1[2]);
-            sstep0 = d0 / denom;
-            sstep1 = d1 / denom;
-        }
-        system_reg_write(BASE + 0x0064, PACK16(sstep1, ((sstep0 << 3) | (Sth[0] & 0x7))));
-    }
+    /* 0x8064..0x8068: Sstep + Sthres — use TransitParam outputs */
+    system_reg_write(BASE + 0x0064,
+        PACK16(bcsh_Sstep1, ((bcsh_Sstep0 << 3) | (Sth[0] & 0x7))));
     system_reg_write(BASE + 0x0068, PACK16(Sth[2], Sth[1]));
 
     /* 0x806c..0x8070: Svalue (OEM arg11 = saturation values) */
@@ -28873,16 +28863,22 @@ static void tiziano_bcsh_dump2(void)
  * strength, contrast slopes, HDP/HBP/HLSP slopes, and offsets.
  * Our tiziano_bcsh_reg_apply handles the equivalent computation via
  * tiziano_bcsh_compute_slopes, so this exists for compatibility. */
+/* Working copies of S-values and C params after StrenCal (OEM: tisp_BCSH_ai32*) */
+static uint32_t bcsh_ai32_Svalue[4];  /* Svalue after user saturation scaling */
+static uint32_t bcsh_ai32_C[5];       /* C params after user contrast scaling */
+static uint32_t bcsh_Cslope0, bcsh_Cslope1, bcsh_Cslope2;
+static uint32_t bcsh_Sstep0, bcsh_Sstep1;
+static uint32_t bcsh_HDPslope, bcsh_HBPslope, bcsh_HLSPslope;
+
 static void tiziano_bcsh_TransitParam(void)
 {
     /* OEM EXACT: tiziano_bcsh_TransitParam at 0x29698.
      * Applies user saturation/contrast/brightness controls via StrenCal,
-     * computes Cslope, Sstep, HDP/HBP/HLSP slopes.
-     * With default user settings (sat=0x80, contrast=0x80, brightness=0x80),
-     * most paths are passthrough (memcpy). */
+     * computes Cslope0/1/2, Sstep0/1, HDP/HBP/HLSP slopes. */
     struct isp_tuning_data *tuning = ourISPdev ? ourISPdev->tuning_data : NULL;
     uint8_t user_sat, user_contrast, user_brightness;
     uint32_t brightness_scaled;
+    uint32_t *Sth, *HDP, *HBP, *HLSP;
 
     if (!tuning)
         return;
@@ -28891,42 +28887,178 @@ static void tiziano_bcsh_TransitParam(void)
     user_contrast = tuning->bcsh_contrast;
     user_brightness = tuning->bcsh_brightness;
 
-    /* OEM: data_9a660 = 0x400; data_9a664 = 0x400 */
+    Sth = bcsh_wdr_enabled ? bcsh_Sthres_wdr : bcsh_Sthres;
+    HDP = bcsh_wdr_enabled ? bcsh_HDP_wdr : bcsh_HDP;
+    HBP = bcsh_wdr_enabled ? bcsh_HBP_wdr : bcsh_HBP;
+    HLSP = bcsh_wdr_enabled ? bcsh_HLSP_wdr : bcsh_HLSP;
+
+    /* OEM: reset OffsetRGB2yuv[1,2] = 0x400 every call */
     bcsh_OffsetRGB2yuv[1] = 0x400;
     bcsh_OffsetRGB2yuv[2] = 0x400;
 
-    /* Section 1: Saturation StrenCal — with default 0x80, passthrough */
+    /* Section 1: Saturation StrenCal */
     if (user_sat != 0x80) {
-        /* Non-default saturation: scale S-values via StrenCal.
-         * For now, use simple passthrough — full StrenCal needs
-         * per-element scaling of 4 S-value components. */
-        /* TODO: implement full StrenCal path for non-default saturation */
+        if ((int8_t)user_sat < 0) {
+            bcsh_ai32_Svalue[0] = tiziano_bcsh_StrenCal_part0(
+                user_sat, 0x80, 0x100, tuning->bcsh_saturation_value, 0x1800);
+            bcsh_ai32_Svalue[1] = tiziano_bcsh_StrenCal_part0(
+                user_sat, 0x80, 0x100, tuning->bcsh_saturation_max, 0x1800);
+            bcsh_ai32_Svalue[2] = tiziano_bcsh_StrenCal_part0(
+                user_sat, 0x80, 0x100, tuning->bcsh_saturation_min, 0x1800);
+            bcsh_ai32_Svalue[3] = tiziano_bcsh_StrenCal_part0(
+                user_sat, 0x80, 0x100, tuning->bcsh_saturation_mult, 0x1800);
+        } else {
+            bcsh_ai32_Svalue[0] = tiziano_bcsh_StrenCal_part0(
+                user_sat, 0, 0x80, 0, tuning->bcsh_saturation_value);
+            bcsh_ai32_Svalue[1] = tiziano_bcsh_StrenCal_part0(
+                user_sat, 0, 0x80, 0, tuning->bcsh_saturation_max);
+            bcsh_ai32_Svalue[2] = tiziano_bcsh_StrenCal_part0(
+                user_sat, 0, 0x80, 0, tuning->bcsh_saturation_min);
+            bcsh_ai32_Svalue[3] = tiziano_bcsh_StrenCal_part0(
+                user_sat, 0, 0x80, 0, tuning->bcsh_saturation_mult);
+        }
+    } else {
+        /* Default: passthrough */
+        bcsh_ai32_Svalue[0] = tuning->bcsh_saturation_value;
+        bcsh_ai32_Svalue[1] = tuning->bcsh_saturation_max;
+        bcsh_ai32_Svalue[2] = tuning->bcsh_saturation_min;
+        bcsh_ai32_Svalue[3] = tuning->bcsh_saturation_mult;
     }
-    /* else: tisp_BCSH_ai32Svalue = tisp_BCSH_au32Svalue (passthrough) */
 
-    /* Section 2: Brightness — compute UV offset */
+    /* Section 2: Brightness scaling (also done in reg_apply for register write) */
     brightness_scaled = ((uint32_t)user_brightness * bcsh_B) >> 7;
     if (brightness_scaled >= 0x76d)
         brightness_scaled = 0x76c;
 
-    /* OEM: Offset1[0] = OffsetYUVy[1] + OffsetRGB2yuv[0] - 0x800 + brightness_scaled
-     * This is also done in reg_apply, but TransitParam sets it up first. */
-
-    /* Section 3: Contrast StrenCal — with default 0x80, passthrough */
-    if (bcsh_C[0] != 0 && user_contrast != 0x80) {
-        /* Non-default contrast: scale C parameters via StrenCal.
-         * TODO: implement full StrenCal path for non-default contrast */
+    /* Section 2b: Apply brightness StrenCal to S-values if brightness != 0x80 */
+    if ((int8_t)user_brightness >= 0 && user_brightness != 0x80) {
+        bcsh_ai32_Svalue[0] = tiziano_bcsh_StrenCal_part0(
+            user_brightness, 0, 0x80, 0, bcsh_ai32_Svalue[0]);
+        bcsh_ai32_Svalue[1] = tiziano_bcsh_StrenCal_part0(
+            user_brightness, 0, 0x80, 0, bcsh_ai32_Svalue[1]);
+        bcsh_ai32_Svalue[2] = tiziano_bcsh_StrenCal_part0(
+            user_brightness, 0, 0x80, 0, bcsh_ai32_Svalue[2]);
+        bcsh_ai32_Svalue[3] = tiziano_bcsh_StrenCal_part0(
+            user_brightness, 0, 0x80, 0, bcsh_ai32_Svalue[3]);
     }
-    /* else: tisp_BCSH_ai32C = tisp_BCSH_au32C (passthrough) */
 
-    /* Section 4: Cslope computation from C parameters.
-     * Already done by tiziano_bcsh_compute_slopes in reg_apply. */
+    /* Section 3: Contrast StrenCal */
+    if (bcsh_C[0] != 0 && user_contrast != 0x80) {
+        bcsh_ai32_C[0] = bcsh_C[0]; /* enable flag preserved */
+        if ((int8_t)user_contrast < 0) {
+            uint32_t mid = ((bcsh_C[4] >= bcsh_C[3]) ?
+                (bcsh_C[4] - bcsh_C[3]) : (bcsh_C[3] - bcsh_C[4])) / 2 + bcsh_C[3];
+            bcsh_ai32_C[1] = tiziano_bcsh_StrenCal_part0(
+                user_contrast, 0x80, 0xff, bcsh_C[3], mid);
+            bcsh_ai32_C[2] = tiziano_bcsh_StrenCal(
+                user_contrast, 0x80, 0xff, bcsh_C[4], mid, 1);
+            bcsh_ai32_C[3] = tiziano_bcsh_StrenCal(
+                user_contrast, 0x80, 0xff, bcsh_C[3], 0, 1);  /* OEM: data_9a7b4 */
+            bcsh_ai32_C[4] = tiziano_bcsh_StrenCal_part0(
+                user_contrast, 0x80, 0xff, bcsh_C[4], 0x3ff);
+        } else {
+            uint32_t mid = ((bcsh_C[4] >= bcsh_C[3]) ?
+                (bcsh_C[4] - bcsh_C[3]) : (bcsh_C[3] - bcsh_C[4])) / 2 + bcsh_C[3];
+            bcsh_ai32_C[1] = tiziano_bcsh_StrenCal_part0(
+                user_contrast, 0, 0x80, 0, bcsh_C[3]);
+            bcsh_ai32_C[2] = tiziano_bcsh_StrenCal(
+                user_contrast, 0, 0x80, 0x3ff, bcsh_C[4], 1);
+            bcsh_ai32_C[3] = tiziano_bcsh_StrenCal(
+                user_contrast, 0, 0x80, mid, bcsh_C[3], 1);
+            bcsh_ai32_C[4] = tiziano_bcsh_StrenCal_part0(
+                user_contrast, 0, 0x80, mid, bcsh_C[4]);
+            /* OEM also scales S-values in contrast-decrease path */
+            bcsh_ai32_Svalue[0] = tiziano_bcsh_StrenCal_part0(
+                user_contrast, 0, 0x80, 0, bcsh_ai32_Svalue[0]);
+            bcsh_ai32_Svalue[1] = tiziano_bcsh_StrenCal_part0(
+                user_contrast, 0, 0x80, 0, bcsh_ai32_Svalue[1]);
+            bcsh_ai32_Svalue[2] = tiziano_bcsh_StrenCal_part0(
+                user_contrast, 0, 0x80, 0, bcsh_ai32_Svalue[2]);
+            bcsh_ai32_Svalue[3] = tiziano_bcsh_StrenCal_part0(
+                user_contrast, 0, 0x80, 0, bcsh_ai32_Svalue[3]);
+        }
+    } else {
+        /* Default: passthrough */
+        memcpy(bcsh_ai32_C, bcsh_C, sizeof(bcsh_ai32_C));
+    }
 
-    /* Section 5: Sstep computation from Sthres.
-     * Already done by tiziano_bcsh_compute_slopes in reg_apply. */
+    /* Section 4: Cslope computation — OEM EXACT formulas */
+    {
+        uint32_t c1 = bcsh_ai32_C[1];  /* threshold low */
+        uint32_t c2 = bcsh_ai32_C[2];  /* threshold high */
+        uint32_t c3 = bcsh_ai32_C[3];  /* value at low */
+        uint32_t c4 = bcsh_ai32_C[4];  /* value at high */
 
-    /* Section 6: HDP/HBP/HLSP slope computation.
-     * Already done by tiziano_bcsh_compute_slopes in reg_apply. */
+        /* Cslope0 = (c3 << 10) / c1 */
+        bcsh_Cslope0 = (c1 != 0) ? ((c3 << 10) / c1) : 0;
+
+        /* Cslope1 = (|c3 - c4| << 10) / (c2 - c1) */
+        if (c1 < c2) {
+            uint32_t diff = (c3 >= c4) ? (c3 - c4) : (c4 - c3);
+            bcsh_Cslope1 = (diff << 10) / (c2 - c1);
+        } else {
+            bcsh_ai32_C[1] = c2;  /* OEM clamps c1 to c2 */
+            bcsh_Cslope1 = 0;
+        }
+
+        /* Cslope2 = (|c4 - clip| << 10) / (clip - c2), where clip = bcsh_clip0[1] (0x3ff) */
+        {
+            uint32_t clip = bcsh_clip0[1];  /* OEM: data_9a6bc */
+            if (c2 < clip) {
+                uint32_t diff = (c4 >= clip) ? (c4 - clip) : (clip - c4);
+                bcsh_Cslope2 = (diff << 10) / (clip - c2);
+            } else {
+                bcsh_ai32_C[2] = clip;
+                bcsh_Cslope2 = 0;
+            }
+        }
+    }
+
+    /* Section 5: Sstep computation — OEM EXACT */
+    {
+        uint32_t sth1 = Sth[1];
+        uint32_t sth2 = Sth[2];
+
+        if (sth1 < sth2) {
+            uint32_t range = sth2 - sth1;
+            uint32_t d0 = (bcsh_ai32_Svalue[0] >= bcsh_ai32_Svalue[1]) ?
+                (bcsh_ai32_Svalue[0] - bcsh_ai32_Svalue[1]) :
+                (bcsh_ai32_Svalue[1] - bcsh_ai32_Svalue[0]);
+            uint32_t d1 = (bcsh_ai32_Svalue[2] >= bcsh_ai32_Svalue[3]) ?
+                (bcsh_ai32_Svalue[2] - bcsh_ai32_Svalue[3]) :
+                (bcsh_ai32_Svalue[3] - bcsh_ai32_Svalue[2]);
+            bcsh_Sstep0 = d0 / range;
+            bcsh_Sstep1 = d1 / range;
+        } else {
+            Sth[1] = sth2;  /* OEM clamps */
+            bcsh_Sstep0 = 0;
+            bcsh_Sstep1 = 0;
+        }
+    }
+
+    /* Section 6: HDP/HBP/HLSP slopes — OEM EXACT */
+    {
+        if (HDP[1] < HDP[2])
+            bcsh_HDPslope = 0x400 / (HDP[2] - HDP[1]);
+        else {
+            HDP[1] = HDP[2];
+            bcsh_HDPslope = 0;
+        }
+
+        if (HBP[1] < HBP[2])
+            bcsh_HBPslope = 0x400 / (HBP[2] - HBP[1]);
+        else {
+            HBP[1] = HBP[2];
+            bcsh_HBPslope = 0;
+        }
+
+        if (HLSP[1] < HLSP[2])
+            bcsh_HLSPslope = 0x400 / (HLSP[2] - HLSP[1]);
+        else {
+            HLSP[1] = HLSP[2];
+            bcsh_HLSPslope = 0;
+        }
+    }
 }
 
 /* OEM: tiziano_deflicker_expt_tune — deflicker exposure tuning.
