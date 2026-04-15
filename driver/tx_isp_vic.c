@@ -573,7 +573,7 @@ int tx_isp_create_vic_device(struct tx_isp_dev *isp_dev)
 
     /* *** CRITICAL: Link VIC device to ISP core *** */
     /* Store the VIC device properly - the subdev is PART of the VIC device */
-    isp_dev->vic_dev = (struct tx_isp_subdev *)&vic_dev->sd;
+    isp_dev->vic_dev = vic_dev;
 
     /* *** CRITICAL FIX: Ensure VIC subdev has proper ISP device back-reference *** */
     /* sd.isp removed for ABI - use ourISPdev global */  /* This ensures tx_isp_vic_start can find the ISP device */
@@ -802,11 +802,7 @@ int vic_framedone_irq_function(struct tx_isp_vic_device *vic_dev)
 gpio_handling:
     /* OEM: GPIO switch handling */
     if (gpio_switch_state != 0) {
-        struct {
-            uint8_t pin;
-            uint8_t pad[19];
-            uint8_t state;
-        } *gpio_ptr = &gpio_info[0];
+        typeof(gpio_info[0]) *gpio_ptr = &gpio_info[0];
 
         gpio_switch_state = 0;
 
@@ -2632,7 +2628,7 @@ static void vic_pipo_mdma_enable(struct tx_isp_vic_device *vic_dev)
 int ispvic_frame_channel_s_stream(struct tx_isp_vic_device *vic_dev, int enable)
 {
     void __iomem *vic_base;
-    int32_t var_18 = 0;
+    unsigned long var_18 = 0;
 
     if (!vic_dev) {
         pr_err("%s[%d]: invalid parameter\n", "ispvic_frame_channel_s_stream", __LINE__);
@@ -2830,7 +2826,7 @@ extern ssize_t vic_proc_write(struct file *file, const char __user *buf, size_t 
 /* VIC sensor operations structure - MISSING from original implementation */
 struct tx_isp_subdev_sensor_ops vic_sensor_ops = {
     .ioctl = vic_sensor_ops_ioctl,                    /* From tx-isp-module.c */
-    .sync_sensor_attr = vic_sensor_ops_sync_sensor_attr, /* From tx-isp-module.c */
+    .sync_sensor_attr = (int (*)(struct tx_isp_subdev *, void *))vic_sensor_ops_sync_sensor_attr, /* From tx-isp-module.c */
 };
 
 /* VIC core operations structure - MISSING ioctl registration */
@@ -3099,7 +3095,7 @@ void tx_isp_vic_remove(struct platform_device *pdev)
     struct resource *res;
 
     if (!sd)
-        return -EINVAL;
+        return;
 
     /* Stop VIC */
     tx_isp_vic_stop(sd);
@@ -3135,7 +3131,7 @@ void tx_isp_vic_remove(struct platform_device *pdev)
     tx_isp_subdev_deinit(sd);
     kfree(sd);
 
-    return 0;
+    return;
 }
 
 /* OEM EXACT: ispvic_frame_channel_qbuf
@@ -3151,7 +3147,7 @@ static int ispvic_frame_channel_qbuf(void *arg1, void *arg2)
 	struct vic_buffer_entry *incoming = (struct vic_buffer_entry *)arg2;
 	struct vic_buffer_entry *queued_buffer;
 	struct vic_buffer_entry *bank_buffer;
-	int32_t var_18 = 0;
+	unsigned long var_18 = 0;
 	void __iomem *vic_base;
 
 	if (sd != NULL && (unsigned long)sd < 0xfffff001)

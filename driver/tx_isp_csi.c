@@ -1199,14 +1199,14 @@ int tx_isp_csi_probe(struct platform_device *pdev)
 }
 
 /* CSI remove function */
-int tx_isp_csi_remove(struct platform_device *pdev)
+void tx_isp_csi_remove(struct platform_device *pdev)
 {
     struct tx_isp_csi_device *csi_dev = platform_get_drvdata(pdev);
     struct tx_isp_subdev *sd;
     struct resource *res = NULL;
 
     if (!csi_dev)
-        return -EINVAL;
+        return;
 
     sd = &csi_dev->sd;
 
@@ -1224,7 +1224,7 @@ int tx_isp_csi_remove(struct platform_device *pdev)
     tx_isp_subdev_deinit(sd);
 
     pr_info("*** tx_isp_csi_remove: CSI device removed ***\n");
-    return 0;
+    return;
 }
 
 /* CSI register dump function for debugging */

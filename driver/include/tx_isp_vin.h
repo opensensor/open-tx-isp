@@ -55,7 +55,7 @@ struct tx_isp_vin_device {
 
 /* VIN Functions */
 int tx_isp_vin_probe(struct platform_device *pdev);
-int tx_isp_vin_remove(struct platform_device *pdev);
+void tx_isp_vin_remove(struct platform_device *pdev);
 
 /* VIN Operations */
 int tx_isp_vin_start(struct tx_isp_subdev *sd);

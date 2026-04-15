@@ -3,7 +3,7 @@
 
 /* CSI Functions */
 int tx_isp_csi_probe(struct platform_device *pdev);
-int tx_isp_csi_remove(struct platform_device *pdev);
+void tx_isp_csi_remove(struct platform_device *pdev);
 
 /* CSI Operations */
 int tx_isp_csi_start(struct tx_isp_subdev *sd);

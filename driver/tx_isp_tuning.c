@@ -8606,7 +8606,7 @@ struct af_zone_data af_zone_data = {
 
 
 /* Event callback function array - Binary Ninja reference */
-typedef int (*isp_event_cb_t)();
+typedef int (*isp_event_cb_t)(int,int,int,int,int,int,int,int);
 static isp_event_cb_t cb[32] = {NULL};
 
 /* ISP event callback function array - Binary Ninja reference */
@@ -31930,7 +31930,7 @@ static void tisp_set_sensor_integration_time(uint32_t time)
  * provide the full requested analog gain. */
 static uint32_t tisp_set_sensor_analog_gain(uint32_t requested_gain)
 {
-    unsigned int var_28;
+    unsigned unsigned long var_28;
     uint32_t log_result, gain_param, v0_2, final_gain;
 
     pr_debug("tisp_set_sensor_analog_gain: requested gain=0x%x\n", requested_gain);

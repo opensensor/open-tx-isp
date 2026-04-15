@@ -2719,7 +2719,7 @@ int tx_isp_request_irq2(struct platform_device *pdev, struct tx_isp_dev *isp_dev
                                   isp_dev);                /* Binary Ninja: arg2 */
 
         if (ret != 0) {
-            /* Binary Ninja: int32_t var_18_2 = $v0_1; isp_printf(2, "flags = 0x%08x, jzflags = %p,0x%08x", "tx_isp_request_irq") */
+            /* Binary Ninja: unsigned long var_18_2 = $v0_1; isp_printf(2, "flags = 0x%08x, jzflags = %p,0x%08x", "tx_isp_request_irq") */
             pr_err("*** tx_isp_request_irq: flags = 0x%08x, irq = %d, ret = 0x%08x ***\n",
                    IRQF_SHARED | IRQF_ONESHOT, irq_num, ret);
             /* Binary Ninja: *arg2 = 0 */

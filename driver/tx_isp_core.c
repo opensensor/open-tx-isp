@@ -1144,7 +1144,7 @@ int ispcore_video_s_stream(struct tx_isp_subdev *sd, int enable)
     struct tx_isp_subdev **s3_1;
     struct frame_channel_device *frame_chan;
     int result = 0;
-    int var_28 = 0;
+    unsigned long var_28 = 0;
     int vic_state;
     int channel_count;
     int ch;
@@ -2743,7 +2743,7 @@ int ispcore_core_ops_init(struct tx_isp_subdev *sd, int on)
 
             pr_info("*** ispcore_core_ops_init: VIC state check passed, proceeding with initialization ***");
 
-            struct tx_isp_subdev *init_sensor = isp_dev->sensor;
+            struct tx_isp_subdev *init_sensor = (struct tx_isp_subdev *)isp_dev->sensor;
             struct tisp_sensor_info_blob sensor_info;
 
             (void)init_sensor;
@@ -4448,7 +4448,7 @@ int tx_isp_core_probe(struct platform_device *pdev)
 
 
 /* Core remove function */
-int tx_isp_core_remove(struct platform_device *pdev)
+void tx_isp_core_remove(struct platform_device *pdev)
 {
     void *core_dev = platform_get_drvdata(pdev);
 
@@ -4467,7 +4467,7 @@ int tx_isp_core_remove(struct platform_device *pdev)
         isp_core_tuning_deinit(core_dev);
         kfree(core_dev);
     }
-    return 0;
+    return;
 }
 
 

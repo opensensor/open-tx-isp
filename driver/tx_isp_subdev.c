@@ -1012,7 +1012,6 @@ static int sensor_dimensions_cached = 0; /* Flag to indicate if dimensions were 
 static int read_sensor_dimensions(u32 *width, u32 *height)
 {
     struct file *width_file, *height_file;
-    mm_segment_t old_fs;
     char width_buf[16], height_buf[16];
     loff_t pos;
     int ret = 0;
@@ -1021,15 +1020,12 @@ static int read_sensor_dimensions(u32 *width, u32 *height)
     *width = 1920;
     *height = 1080;
 
-    old_fs = get_fs();
-    set_fs(KERNEL_DS);
-
     /* Read width from /proc/jz/sensor/width */
     width_file = filp_open("/proc/jz/sensor/width", O_RDONLY, 0);
     if (!IS_ERR(width_file)) {
         pos = 0;
         memset(width_buf, 0, sizeof(width_buf));
-        if (vfs_read(width_file, width_buf, sizeof(width_buf)-1, &pos) > 0) {
+        if (kernel_read(width_file, width_buf, sizeof(width_buf)-1, &pos) > 0) {
             width_buf[sizeof(width_buf)-1] = '\0';
             *width = simple_strtol(width_buf, NULL, 10);
         }
@@ -1044,7 +1040,7 @@ static int read_sensor_dimensions(u32 *width, u32 *height)
     if (!IS_ERR(height_file)) {
         pos = 0;
         memset(height_buf, 0, sizeof(height_buf));
-        if (vfs_read(height_file, height_buf, sizeof(height_buf)-1, &pos) > 0) {
+        if (kernel_read(height_file, height_buf, sizeof(height_buf)-1, &pos) > 0) {
             height_buf[sizeof(height_buf)-1] = '\0';
             *height = simple_strtol(height_buf, NULL, 10);
         }
@@ -1053,8 +1049,6 @@ static int read_sensor_dimensions(u32 *width, u32 *height)
         pr_warn("read_sensor_dimensions: Failed to open /proc/jz/sensor/height\n");
         ret = -1;
     }
-
-    set_fs(old_fs);
 
     /* Validate dimensions */
     if (*width == 0 || *height == 0 || *width > 4096 || *height > 4096) {
@@ -1372,7 +1366,7 @@ int tx_isp_module_notify_handler(struct tx_isp_module *module, unsigned int cmd,
 
 /* Forward declarations for probe functions */
 extern int tx_isp_vic_probe(struct platform_device *pdev);
-extern int tx_isp_vic_remove(struct platform_device *pdev);
+extern void tx_isp_vic_remove(struct platform_device *pdev);
 
 /* Platform driver structures */
 static struct platform_driver tx_isp_csi_driver = {

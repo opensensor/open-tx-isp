@@ -1045,12 +1045,12 @@ err_free_vin:
  * tx_isp_vin_remove - VIN platform device remove
  * @pdev: Platform device
  */
-int tx_isp_vin_remove(struct platform_device *pdev)
+void tx_isp_vin_remove(struct platform_device *pdev)
 {
     struct tx_isp_vin_device *vin = platform_get_drvdata(pdev);
 
     if (!vin) {
-        return -EINVAL;
+        return;
     }
 
     mcp_log_info("vin_remove: starting VIN removal", 0);
@@ -1087,7 +1087,7 @@ int tx_isp_vin_remove(struct platform_device *pdev)
     platform_set_drvdata(pdev, NULL);
 
     mcp_log_info("vin_remove: VIN removal completed", 0);
-    return 0;
+    return;
 }
 
 /* ========================================================================
