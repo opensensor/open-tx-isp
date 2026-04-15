@@ -1,3 +1,4 @@
+#include <linux/version.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/miscdevice.h>
@@ -4101,11 +4102,18 @@ static int tx_isp_create_framechan_devices(struct tx_isp_dev *isp_dev)
 extern long subdev_sensor_ops_ioctl(struct tx_isp_subdev *sd,
                                     unsigned int cmd, void *arg);
 
+/* Wrapper to match int return type expected by .ioctl */
+static int subdev_sensor_ops_ioctl_wrapper(struct tx_isp_subdev *sd,
+                                           unsigned int cmd, void *arg)
+{
+    return (int)subdev_sensor_ops_ioctl(sd, cmd, arg);
+}
+
 /* Core sensor operations - OEM path uses core as the sensor manager */
 static struct tx_isp_subdev_sensor_ops core_sensor_ops = {
     .release_all_sensor = NULL,
     .sync_sensor_attr = NULL,
-    .ioctl = subdev_sensor_ops_ioctl,
+    .ioctl = subdev_sensor_ops_ioctl_wrapper,
 };
 
 /* Update the core subdev ops to include the core ops */
@@ -4698,12 +4706,9 @@ __must_check int private_get_driver_interface(struct jz_driver_common_interfaces
 {
 	if(pfaces == NULL)
 		return -1;
-	*pfaces = get_driver_common_interfaces();
-	if(*pfaces && ((*pfaces)->flags_0 != (unsigned int)printk || (*pfaces)->flags_0 !=(*pfaces)->flags_1)){
-		ISP_ERROR("flags = 0x%08x, jzflags = %p,0x%08x", (*pfaces)->flags_0, printk, (*pfaces)->flags_1);
-		return -1;
-	}else
-		return 0;
+	/* Open-source driver: no blob interface validation needed */
+	*pfaces = NULL;
+	return 0;
 }
 EXPORT_SYMBOL(private_get_driver_interface);
 
@@ -4952,11 +4957,12 @@ void private_dma_cache_sync(struct device *dev, void *vaddr, size_t size, enum d
         return;
     }
 
-    /* Use the standard Linux DMA cache sync function that's available in kernel 3.10 */
-    /* This matches the reference implementation in external/ingenic-sdk/3.10/avpu/t31/avpu_main.c */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,0,0)
     dma_cache_sync(dev, vaddr, size, direction);
-
-    pr_debug("private_dma_cache_sync: Cache sync completed using dma_cache_sync\n");
+#else
+    /* dma_cache_sync removed in modern kernels; use MIPS cache ops directly */
+    dma_cache_wback_inv((unsigned long)vaddr, size);
+#endif
 }
 EXPORT_SYMBOL(private_dma_cache_sync);
 
