@@ -3263,7 +3263,7 @@ int ae0_interrupt_static(void);
 int ae1_interrupt_hist(void);
 int ae1_interrupt_static(void);
 int awb_interrupt_static(void);
-int af_interrupt_static(void);
+static irqreturn_t af_interrupt_static(int irq, void *dev_id);
 int tiziano_wdr_interrupt_static(void);
 
 static int JZ_Isp_Awb(void);
@@ -8600,7 +8600,7 @@ struct af_zone_data af_zone_data = {
 
 
 /* Event callback function array - Binary Ninja reference */
-static int (*cb[32])() = {NULL};
+static int (*cb[32])(void) = {NULL};
 
 /* ISP event callback function array - Binary Ninja reference */
 void (*isp_event_func_cb[32])(void) = {NULL};
@@ -18711,13 +18711,13 @@ static int tisp_af_process_impl(void)
 
 /* OEM EXACT: af_interrupt_static — AF stats DMA handler.
  * Decompiled from OEM at 0x56864. Reads AF bank, syncs DMA, unpacks stats. */
-int af_interrupt_static(void)
+static irqreturn_t af_interrupt_static(int irq, void *dev_id)
 {
     uint32_t status;
     void *buffer_addr;
 
     if (data_a2f80 == 0)
-        return 0;
+        return IRQ_NONE;
 
     status = system_reg_read(0xb8b8);
     buffer_addr = (void *)(unsigned long)(data_a2f80 + (status << 12));
@@ -18727,7 +18727,7 @@ int af_interrupt_static(void)
      * Default 15x15 zone grid. */
     tisp_af_get_statistics(buffer_addr, 15, 15);
     tisp_af_process_impl();
-    return 1;
+    return IRQ_HANDLED;
 }
 
 /* OEM EXACT: tiziano_wdr_interrupt_static — WDR stats handler.
@@ -27670,7 +27670,7 @@ int tisp_event_set_cb(int event_id, void *callback)
     }
 
     /* Binary Ninja: *((arg1 << 2) + &cb) = arg2 */
-    cb[event_id] = (int (*)())callback;
+    cb[event_id] = ((int (*)(void)))callback;
 
     pr_info("tisp_event_set_cb: Event %d callback set to %p\n", event_id, callback);
     return 0;
@@ -29143,7 +29143,7 @@ int tisp_code_create_tuning_node(void)
     }
 
     /* Binary Ninja: tuning_class = __class_create(&__this_module, "isp-m0", 0) */
-    tuning_class = class_create(THIS_MODULE, "isp-m0");
+    tuning_class = class_create("isp-m0");
     if (IS_ERR(tuning_class)) {
         ret = PTR_ERR(tuning_class);
         pr_err("tisp_code_create_tuning_node: Failed to create class: %d\n", ret);
