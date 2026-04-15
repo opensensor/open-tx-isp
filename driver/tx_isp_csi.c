@@ -1044,8 +1044,8 @@ int csi_set_on_lanes(struct tx_isp_csi_device *csi_dev, int lanes)
 }
 
 /* CSI link setup stub - CSI doesn't need complex link management */
-static int csi_video_link_setup(struct tx_isp_subdev_pad *local,
-                                  struct tx_isp_subdev_pad *remote,
+static int csi_video_link_setup(const struct tx_isp_subdev_pad *local,
+                                  const struct tx_isp_subdev_pad *remote,
                                   u32 flags)
 {
     pr_info("*** csi_video_link_setup: CSI link setup (stub) - flags=0x%x ***\n", flags);

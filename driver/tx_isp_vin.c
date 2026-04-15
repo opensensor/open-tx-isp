@@ -426,7 +426,7 @@ int tx_isp_vin_disable_irq(struct tx_isp_vin_device *vin)
  *
  * This is the EXACT Binary Ninja implementation that was missing!
  */
-int tx_isp_vin_init(void* arg1, int32_t arg2)
+int tx_isp_vin_init(struct tx_isp_subdev *sd, int enable)
 {
     void* a0;
     void* v0_1;
@@ -669,7 +669,7 @@ label_132f4:
  *
  * This is the EXACT Binary Ninja implementation that was missing!
  */
-int tx_isp_vin_activate_subdev(void* arg1)
+int tx_isp_vin_activate_subdev(struct tx_isp_subdev *sd)
 {
     extern struct tx_isp_dev *ourISPdev;
     struct tx_isp_vin_device *vin_dev;

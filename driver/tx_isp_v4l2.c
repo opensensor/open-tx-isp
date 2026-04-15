@@ -259,7 +259,7 @@ static int tx_isp_v4l2_querycap(struct file *file, void *priv,
         return -EINVAL;
     }
     
-    strlcpy(cap->driver, "tx-isp", sizeof(cap->driver));
+    strscpy(cap->driver, "tx-isp", sizeof(cap->driver));
     snprintf(cap->card, sizeof(cap->card), "TX-ISP Channel %d", dev->channel_num);
     snprintf(cap->bus_info, sizeof(cap->bus_info), "platform:tx-isp");
     cap->device_caps = V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_STREAMING;
@@ -661,12 +661,12 @@ static const struct v4l2_ioctl_ops tx_isp_v4l2_ioctl_ops = {
     .vidioc_s_parm        = tx_isp_v4l2_s_parm,
     
     /* Controls - CRITICAL for encoder compatibility */
-    .vidioc_queryctrl     = tx_isp_v4l2_queryctrl,
-    .vidioc_g_ctrl        = tx_isp_v4l2_g_ctrl,
-    .vidioc_s_ctrl        = tx_isp_v4l2_s_ctrl,
+    
+    
+    
     
     /* Crop capabilities - encoder compatibility */
-    .vidioc_cropcap       = tx_isp_v4l2_cropcap,
+    
     
     /* Buffer management */
     .vidioc_reqbufs       = tx_isp_v4l2_reqbufs,
@@ -741,7 +741,7 @@ static int tx_isp_v4l2_mmap(struct file *file, struct vm_area_struct *vma)
     
     /* For encoder compatibility, we need to support memory mapping */
     /* This is a basic implementation - actual buffer mapping would be more complex */
-    vma->vm_flags |= VM_IO | VM_DONTEXPAND | VM_DONTDUMP;
+    vm_flags_set(vma, VM_IO | VM_DONTEXPAND | VM_DONTDUMP);
     vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
     
     pr_info("*** Channel %d: MMAP SUCCESS ***\n", dev->channel_num);
@@ -870,7 +870,7 @@ static int tx_isp_create_v4l2_device(int channel)
     video_set_drvdata(vdev, dev);
     
     /* Register video device - this creates /dev/videoX */
-    ret = video_register_device(vdev, VFL_TYPE_GRABBER, -1);
+    ret = video_register_device(vdev, VFL_TYPE_VIDEO, -1);
     if (ret) {
         pr_err("Failed to register video device for channel %d: %d\n", channel, ret);
         goto err_free_vdev;

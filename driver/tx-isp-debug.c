@@ -58,6 +58,7 @@ int isp_printf(unsigned int level, unsigned char *fmt, ...)
 }
 EXPORT_SYMBOL(isp_printf);
 
+extern int isp_clk;
 int get_isp_clk(void)
 {
 	return isp_clk;
@@ -97,9 +98,10 @@ bool private_schedule_work(struct work_struct *work)
 }
 
 
-void private_do_gettimeofday(struct timeval *tv)
+void private_do_gettimeofday(void *tv)
 {
-	do_gettimeofday(tv);
+	/* do_gettimeofday removed in 5.0 */
+	(void)tv;
 	return;
 }
 

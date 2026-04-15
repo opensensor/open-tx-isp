@@ -479,7 +479,7 @@ setup_complete:
 }
 
 /* FS remove function */
-int tx_isp_fs_remove(struct platform_device *pdev)
+void tx_isp_fs_remove(struct platform_device *pdev)
 {
     struct tx_isp_fs_device *fs_dev = platform_get_drvdata(pdev);
     struct tx_isp_frame_channel *channels_buffer;
@@ -490,7 +490,7 @@ int tx_isp_fs_remove(struct platform_device *pdev)
 
     if (!fs_dev) {
         pr_info("*** tx_isp_fs_remove: No FS device to remove (probe may have failed) ***\n");
-        return 0;
+        return;
     }
 
     /* SAFE: Clean up frame channels with proper array indexing */
@@ -518,7 +518,7 @@ int tx_isp_fs_remove(struct platform_device *pdev)
     kfree(fs_dev);
 
     pr_info("FS device removed successfully\n");
-    return 0;
+    return;
 }
 
 
