@@ -2661,11 +2661,12 @@ static u32 tisp_compute_top_bypass_from_params(int wdr_enable)
 	/* OEM non-WDR masks (from tisp_init @ 0x15f98):
 	 *   AND=0xb577fffd  OR=0x34000009
 	 * OEM OR mask only sets bits {0,3,26,28,29}.
-	 * Bit 13 (GB) kept bypassed until gain interp is validated. */
+	 * GIB(bit5) force-bypassed until HW init root cause identified.
+	 * GB(bit13) is tparams[13]=1 (bypassed) in tuning binary. */
 	if (wdr_enable)
 		bypass_val = (bypass_val & 0xa1ffdf76) | 0x00880002;
 	else
-		bypass_val = (bypass_val & 0xb577fffd) | 0x34002029;
+		bypass_val = (bypass_val & 0xb577fffd) | 0x34000029;
 
 	pr_info("tisp_compute_top_bypass: final=0x%08x\n", bypass_val);
 
@@ -19531,9 +19532,10 @@ static int tiziano_gib_lut_parameter(void)
         (GIB_CFG_BLC_THR << 4) |
         (GIB_CFG_BLC_GAIN << 2));
 
-    /* OEM EXACT: 0x106c via system_reg_write_gib gate */
+    /* OEM EXACT: 0x106c via system_reg_write_gib gate.
+     * OEM uses data_9a2ec (AE comp mode flag) for bit 16, NOT GIB_CFG_DEIR_EN. */
     system_reg_write_gib(1, 0x106c,
-        (GIB_CFG_DEIR_EN << 16) |
+        (data_9a2ec << 16) |
         (GIB_CFG_DEIR_MODE << 3) |
         GIB_CFG_DEIR_STR);
 
@@ -19708,12 +19710,13 @@ int tiziano_gib_dn_params_refresh(void)
 {
     tiziano_gib_params_refresh();
 
+    /* OEM EXACT: sets data_9a2ec, not GIB_CFG_DEIR_EN */
     if (deir_en != 1)
-        GIB_CFG_DEIR_EN = 0;
+        data_9a2ec = 0;
     else if (ourISPdev->day_night != 0)
-        GIB_CFG_DEIR_EN = 0;
+        data_9a2ec = 0;
     else
-        GIB_CFG_DEIR_EN = deir_en;
+        data_9a2ec = deir_en;
 
     tiziano_gib_lut_parameter();
     return 0;
@@ -19728,12 +19731,15 @@ int tiziano_gib_init(void)
 {
     tiziano_gib_params_refresh();
 
+    /* OEM EXACT: sets data_9a2ec (AE comp mode flag), NOT GIB_CFG_DEIR_EN.
+     * data_9a2ec controls histogram-based ev_list/lum_list scaling in
+     * ae0_tune2 Phase A.  OEM disables it when DEIR is off or night mode. */
     if (deir_en != 1)
-        GIB_CFG_DEIR_EN = 0;
+        data_9a2ec = 0;
     else if (ourISPdev->day_night != 0)
-        GIB_CFG_DEIR_EN = 0;
+        data_9a2ec = 0;
     else
-        GIB_CFG_DEIR_EN = deir_en;
+        data_9a2ec = deir_en;
 
     tiziano_gib_lut_parameter();
     tiziano_gib_deir_reg(tiziano_gib_deir_r_m,
