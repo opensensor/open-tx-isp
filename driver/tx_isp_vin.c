@@ -421,8 +421,8 @@ int tx_isp_vin_disable_irq(struct tx_isp_vin_device *vin)
 
 /**
  * tx_isp_vin_init - EXACT Binary Ninja implementation (000133c4)
- * @arg1: VIN device pointer (equivalent to sd->isp->vin_dev)
- * @arg2: Enable/disable flag
+ * @sd: VIN device pointer (equivalent to sd->isp->vin_dev)
+ * @enable: Enable/disable flag
  *
  * This is the EXACT Binary Ninja implementation that was missing!
  */
@@ -437,7 +437,7 @@ int tx_isp_vin_init(struct tx_isp_subdev *sd, int enable)
     
     mcp_log_info("tx_isp_vin_init: EXACT Binary Ninja implementation", enable);
     
-    /* Binary Ninja: void* $a0 = *(arg1 + 0xe4) */
+    /* Binary Ninja: void* $a0 = *(sd + 0xe4) */
     if (!ourISPdev || !ourISPdev->sensor) {
         a0 = 0;
     } else {
@@ -479,7 +479,7 @@ int tx_isp_vin_init(struct tx_isp_subdev *sd, int enable)
             } else {
                 /* Binary Ninja: result = $v0_2() */
                 int (*init_func)(struct tx_isp_subdev *, int) = (int (*)(struct tx_isp_subdev *, int))v0_2;
-                result = init_func(&sensor->sd, arg2);
+                result = init_func(&sensor->sd, enable);
                 
                 /* Binary Ninja: if (result == 0xfffffdfd) */
                 if (result == 0xfffffdfd) {
@@ -494,13 +494,13 @@ int tx_isp_vin_init(struct tx_isp_subdev *sd, int enable)
     /* Binary Ninja: int32_t $v1 = 3 */
     v1 = 3;
     
-    /* Binary Ninja: if (arg2 == 0) */
-    if (arg2 == 0) {
+    /* Binary Ninja: if (enable == 0) */
+    if (enable == 0) {
         /* Binary Ninja: $v1 = 2 */
         v1 = 2;
     }
     
-    /* Binary Ninja: *(arg1 + 0xf4) = $v1 */
+    /* Binary Ninja: *(sd + 0xf4) = $v1 */
     if (ourISPdev && ourISPdev->vin_dev) {
         struct tx_isp_vin_device *vin_dev = (struct tx_isp_vin_device *)ourISPdev->vin_dev;
         vin_dev->state = v1;
@@ -665,7 +665,7 @@ label_132f4:
 
 /**
  * tx_isp_vin_activate_subdev - EXACT Binary Ninja implementation (00013350)
- * @arg1: VIN device pointer
+ * @sd: VIN device pointer
  *
  * This is the EXACT Binary Ninja implementation that was missing!
  */
@@ -684,19 +684,19 @@ int tx_isp_vin_activate_subdev(struct tx_isp_subdev *sd)
     
     vin_dev = (struct tx_isp_vin_device *)ourISPdev->vin_dev;
     
-    /* Binary Ninja: private_mutex_lock(arg1 + 0xe8) */
+    /* Binary Ninja: private_mutex_lock(sd + 0xe8) */
     mutex_lock(&vin_dev->mlock);
     
-    /* Binary Ninja: if (*(arg1 + 0xf4) == 1) *(arg1 + 0xf4) = 2 */
+    /* Binary Ninja: if (*(sd + 0xf4) == 1) *(sd + 0xf4) = 2 */
     if (vin_dev->state == 1) {
         vin_dev->state = 2;
         mcp_log_info("tx_isp_vin_activate_subdev: state changed from 1 to 2", vin_dev->state);
     }
     
-    /* Binary Ninja: private_mutex_unlock(arg1 + 0xe8) */
+    /* Binary Ninja: private_mutex_unlock(sd + 0xe8) */
     mutex_unlock(&vin_dev->mlock);
     
-    /* Binary Ninja: *(arg1 + 0xf8) += 1 */
+    /* Binary Ninja: *(sd + 0xf8) += 1 */
     vin_dev->refcnt += 1;
     mcp_log_info("tx_isp_vin_activate_subdev: refcnt incremented", vin_dev->refcnt);
     
