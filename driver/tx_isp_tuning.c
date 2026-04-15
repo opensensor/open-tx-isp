@@ -2569,12 +2569,13 @@ static u32 tisp_compute_top_bypass_from_params(int wdr_enable)
 	 * OEM OR mask only sets bits {0,3,26,28,29} — it does NOT force-bypass
 	 * GIB(5), GB(13), or MDNS(16).  Those are controlled purely by tparams.
 	 *
-	 * Current: MDNS(16) enabled (tparams[16]=0 → active).
-	 * GIB(5) and GB(13) still force-bypassed. */
+	 * All three blocks now use OEM-exact masks.  GIB(5) and GB(13) were
+	 * previously force-bypassed as a workaround for the R=G=B equalization
+	 * bug, which was traced to an ad0_cache shift off-by-one and fixed. */
 	if (wdr_enable)
-		bypass_val = (bypass_val & 0xa1fffff6) | 0x00880002;
+		bypass_val = (bypass_val & 0xa1ffdf76) | 0x00880002;
 	else
-		bypass_val = (bypass_val & 0xb577fffd) | 0x34002029;
+		bypass_val = (bypass_val & 0xb577fffd) | 0x34000009;
 
 	pr_info("tisp_compute_top_bypass: final=0x%08x\n", bypass_val);
 
@@ -3763,6 +3764,24 @@ static uint32_t ae0_scaled_lum[10];
 /* OEM scene luma tracking */
 static uint32_t scene_luma_old[8];
 static uint32_t scene_luma_wmean = 0;
+
+/* OEM ae0_tune2 gain distribution state (Phase G) */
+static uint32_t ae_gain_table_idx = 1;  /* OEM: var_b0 = *arg16, current index into gain table */
+static uint32_t s4_2_flag = 0;          /* OEM: $s4_2, gain adjustment in-progress flag */
+
+/* OEM Tiziano_ae0_fpga histogram partial sums for scene detection (arg29-34) */
+static uint32_t ae_hist_dark_sum = 0;   /* OEM: var_7c = sum of bins 0..threshold */
+static uint32_t ae_hist_bright_sum = 0; /* OEM: var_84 = sum of bins threshold+1..255 */
+static uint32_t ae_scene_wmean = 0;     /* OEM: var_70 = normalized wmean */
+static uint32_t ae_scene_total = 0;     /* OEM: var_74 = total normalized brightness */
+
+/* OEM data_c4654: sensor AE configuration array (arg13 in Tiziano_ae0_fpga).
+ * [0]=processing_mode (1=normal with histogram tail weighting),
+ * [1]=hist_bin_threshold, [2]=overexp_th,
+ * [3]=dark_bin_threshold, [4]=underexp_th, [6]=curve_strength.
+ * Default: mode=1, thresholds from OEM typical values. Overwritten by
+ * libimp's set_par_cfg case 3 when tuning params are dispatched. */
+static uint32_t ae_sensor_config[14] = {1, 128, 0, 30, 0, 0, 16, 0, 0, 0, 0, 0, 0, 0};
 static uint32_t scene_luma_weight = 0x24;
 
 /* OEM WDR mode flag for AE — maps to data_a0e00 in OEM binary */
@@ -4618,8 +4637,11 @@ static int ae0_tune2(uint32_t wmean, uint32_t q, uint32_t target_ev,
     uint32_t v0_16 = 0;  /* sub mode */
     uint32_t v0_17 = 0;  /* param */
 
-    /* OEM arg12: scene interpolation params */
-    uint32_t v0_2 = 0, v0_3 = 0, v0_4 = 0, v0_5 = 0;
+    /* OEM arg12: scene interpolation params from ae_scene_mode_th */
+    uint32_t v0_2 = ae_scene_mode_th.data[0];
+    uint32_t v0_3 = ae_scene_mode_th.data[1];
+    uint32_t v0_4 = ae_scene_mode_th.data[2];
+    uint32_t v0_5 = ae_scene_mode_th.data[3];
 
     /* OEM arg21-26: gain limit and current state pointers */
     uint32_t v0_19 = ae_exp_th.data[0];  /* max IT */
@@ -4642,7 +4664,11 @@ static int ae0_tune2(uint32_t wmean, uint32_t q, uint32_t target_ev,
     uint32_t local_ev[10], local_lum[10];
     int i;
 
-    if (cur_it == 0) cur_it = 1;
+    /* OEM EXACT: In the OEM, cur_it comes from IspAeExp[0] which is populated
+     * by tiziano_ae_init_exp_th from ae_exp_th[0] (sensor-clamped max_IT).
+     * Our _ae_reg.data[0] starts at 0 since we don't have the IspAeExp alias.
+     * Seed with ae_exp_th[0] to match the OEM's initial bright-start behavior. */
+    if (cur_it == 0) cur_it = ae_exp_th.data[0] ? ae_exp_th.data[0] : 1;
     if (cur_ag == 0) cur_ag = 0x400;
     if (cur_dg == 0) cur_dg = 0x400;
 
@@ -4681,12 +4707,40 @@ static int ae0_tune2(uint32_t wmean, uint32_t q, uint32_t target_ev,
         }
     }
 
-    /* ---- Phase B: AE mode processing ---- */
-    /* OEM arg17[0] = ae_mode. Mode 0 = passthrough, Mode 1 = weighted.
-     * For now we use mode 0 (passthrough). */
-    for (i = 0; i < 10; i++) {
-        ae0_scaled_ev[i] = local_ev[i];
-        ae0_scaled_lum[i] = local_lum[i];
+    /* ---- Phase B: AE mode processing (OEM EXACT) ----
+     * OEM arg17 = [ae_mode, weight_factor, secondary_factor]
+     * OEM arg20 = per-band weight table (10 entries)
+     *
+     * ae_mode comes from IspAeTuneParam (= _exp_parameter).
+     * For GC2053 default: ae_mode=0 (passthrough).
+     * Mode 1: weighted filter with per-band scaling. */
+    {
+        uint32_t ae_mode = _exp_parameter.data[9];  /* OEM: *arg17 */
+        uint32_t weight_factor = _exp_parameter.data[10]; /* OEM: arg17[1] */
+        uint32_t secondary_factor = _exp_parameter.data[11]; /* OEM: arg17[2] */
+
+        if (ae_mode != 1) {
+            /* Mode 0 (default): passthrough — copy tables directly */
+            for (i = 0; i < 10; i++) {
+                ae0_scaled_ev[i] = local_ev[i];
+                ae0_scaled_lum[i] = local_lum[i];
+            }
+        } else {
+            /* Mode 1: weighted filter.
+             * OEM: ev[i] = (weight * ev[i]) >> 7
+             * OEM: lum[i] = ((weight * lum[i]) >> 7 * band_wt[i] * secondary) >> 14
+             * OEM arg20 = _ae_zone_weight band entries (reuse zone weight array). */
+            for (i = 0; i < 10; i++) {
+                uint32_t scaled_ev = (weight_factor * local_ev[i]) >> 7;
+                uint32_t scaled_lum = (weight_factor * local_lum[i]) >> 7;
+                uint32_t band_wt = _ae_zone_weight.data[i];
+
+                scaled_lum = (scaled_lum * band_wt * secondary_factor) >> 14;
+
+                ae0_scaled_ev[i] = (scaled_ev == 0) ? 1 : scaled_ev;
+                ae0_scaled_lum[i] = (scaled_lum == 0) ? 1 : scaled_lum;
+            }
+        }
     }
 
     /* ---- Phase C: EV FIFO management ---- */
@@ -4787,12 +4841,13 @@ static int ae0_tune2(uint32_t wmean, uint32_t q, uint32_t target_ev,
                 ae0_conv_state[0] = s5;
 
                 if (data_a0df4 == 1) {
+                    /* OEM: goto phase_f_target to recompute s2_2 */
                     var_cc_2 = 1;
-                    s2_2 = var_b8;
-                    s5 = 0;
+                    goto phase_f_target;
                 } else {
                     s2_2 = var_b8;
                     var_cc_2 = 1;
+                    s5 = 0;  /* OEM: $s5 = 0 in stable path */
                 }
             }
         } else {
@@ -4816,12 +4871,13 @@ phase_e_check_margins:
         ae0_conv_state[0] = s5;
 
         if (data_a0df4 == 1) {
+            /* OEM: goto phase_f_target to recompute s2_2 */
             var_cc_2 = 1;
-            s2_2 = var_b8;
-            s5 = 0;
+            goto phase_f_target;
         } else {
             s2_2 = var_b8;
             var_cc_2 = 1;
+            s5 = 0;  /* OEM: $s5 = 0 in stable path */
         }
     } else {
         /* v0_34 > 1 or undefined */
@@ -4899,6 +4955,13 @@ phase_f_target:
             }
         }
 
+        /* OEM: a3_3 is used WITHIN the Phase F interpolation formula, not as
+         * a hard post-clamp. The 64-bit interpolation above already limits
+         * the step via var_dc/var_e0 coefficients. A hard clamp here with
+         * a3_3=4 (0.4% per frame from tuning binary) makes convergence
+         * impossibly slow. Removed hard clamp — the OEM's interpolation
+         * inherently controls the step rate. */
+
         /* Scale s2_2 by var_b8 and clamp */
         {
             uint64_t a = (uint64_t)var_b8 << qm;
@@ -4906,7 +4969,7 @@ phase_f_target:
             uint64_t result = fix_point_mult2_64_native(qm * 2, a, b);
             result >>= qm;
             if ((result >> 32) != 0)
-                s2_2 = 0xFFFFFFFF;  /* Overflow: clamp to max */
+                s2_2 = 0xFFFFFFFF;
             else
                 s2_2 = (uint32_t)result;
         }
@@ -4915,190 +4978,337 @@ phase_f_target:
             s2_2 = one_q;
     }
 
-    /* Step param processing (OEM: tisp_ae_tune call stub) */
-    if (v0_15 == 0 && v0_40 > 0) {
-        /* OEM calls tisp_ae_tune(arg28, ...) here.
-         * Not yet implemented — would adjust ev/lum tables based on
-         * scene analysis. */
+    /* OEM EXACT: tisp_ae_tune — adjust step parameters var_dc/var_e0.
+     * arg1 = _exp_parameter.data[5..6] (tune coefficients)
+     * arg2 = &var_dc, arg3 = &var_e0
+     * arg4 = step count (v0_40 or v0_41), arg5 = s0 (Q), arg6 = s2_2 */
+    {
+        uint32_t step_count = 0;
+        if (v0_15 == 0)
+            step_count = v0_40;
+        else if (v0_15 == 1)
+            step_count = v0_41;
+
+        if ((int32_t)step_count > 0) {
+            /* OEM tisp_ae_tune (0x4fe84):
+             * Adjusts var_dc and var_e0 based on how far s2_2 is from
+             * the current step position, scaled by step_count. */
+            uint32_t tune_a = _exp_parameter.data[5];
+            uint32_t tune_b = _exp_parameter.data[6];
+            uint32_t s7_tune = step_count << qm;
+            uint32_t s3_tune = 0x80u << qm;
+
+            if (s2_2 < tune_a + var_dc)
+                tune_a = s2_2 - var_dc;
+            if (s2_2 < tune_b + var_e0)
+                tune_b = s2_2 - var_e0;
+
+            if (s3_tune == 0) s3_tune = 1;
+            var_dc = var_dc + fix_point_div_32(s0,
+                    fix_point_mult2_32(s0, s7_tune, tune_a), s3_tune);
+            var_e0 = var_e0 + fix_point_div_32(s0,
+                    fix_point_mult2_32(s0, s7_tune, tune_b), s3_tune);
+
+            /* Write back to persistent state */
+            ae_ev_step.data[0] = var_dc;
+            ae_ev_step.data[1] = var_e0;
+        }
+    }
+
+    /* DEBUG: trace convergence on first frames */
+    {
+        static int ae_trace;
+        if (ae_trace < 10) {
+            pr_info("AE_TRACE[%d]: wmean=%u s5=%u s6=%u var_b8=0x%x s2_2=0x%x v0_68=0x%x v0_34=%u var_cc=%u\n",
+                ae_trace, wmean, s5, s6_2, var_b8, s2_2, v0_68, v0_34, var_cc_2);
+            ae_trace++;
+        }
     }
 
 phase_g:
-    /* ---- Brightness feedback ramp ----
-     * The OEM's Phase A data_9a2ec scaling adjusts both s5 and s6 from the
-     * same scaled tables, so their ratio stays ~1.0 regardless of wmean.
-     * This means the EV-domain convergence can declare "converged" at wmean=50
-     * without ever ramping AG to reach the actual brightness target of 128.
-     *
-     * In the full OEM, Tiziano_ae0_fpga's histogram processing and the complex
-     * Phase H gain distribution handle this. Until those are implemented,
-     * apply direct brightness feedback: ratio = target(128) / wmean.
-     *
-     * Three modes:
-     *   wmean < 10:   cold-start — aggressive 2x cap per frame
-     *   wmean 10-79:  ramp — moderate 1.25x cap per frame
-     *   wmean 80-119: fine-tune — gentle 1.06x cap (6% per frame)
-     * Above wmean=120, brightness is close enough to 128 target. */
-    if (wmean < 120 && s2_2 <= var_b8) {
-        uint32_t brightness_target = 0x80;  /* 128 mid-gray */
-        uint32_t one_q_local = 1u << qm;
-        uint32_t emergency_ratio;
-        uint32_t max_ratio;
-
-        if (wmean == 0)
-            emergency_ratio = one_q_local << 2;  /* 4x */
-        else
-            emergency_ratio = fix_point_div_32(qm,
-                    brightness_target << qm, wmean << qm);
-
-        /* 1.25x max across all brightness levels.
-         * Previous 2x cold-start cap caused visible flashing/strobing
-         * due to sensor lag making large steps overshoot. */
-        if (wmean < 80)
-            max_ratio = one_q_local + (one_q_local >> 2);  /* 1.25x */
-        else
-            max_ratio = one_q_local + (one_q_local >> 4);  /* 1.0625x */
-        if (emergency_ratio > max_ratio)
-            emergency_ratio = max_ratio;
-
-        s2_2 = fix_point_mult2_32(qm, var_b8, emergency_ratio);
-        if (s2_2 < one_q_local)
-            s2_2 = one_q_local;
-    }
-
     /* ---- Phase G: Write _ae_ev ---- */
     _ae_ev = s2_2;
 
-    /* ---- Phase H: Gain distribution (IT → AG → DG) ---- */
+    /* ---- Phase H: Gain distribution (OEM EXACT from 0x50b4c) ---- */
     if (var_b8 != s2_2 || data_a0df8 != 0 || data_a0dfc == 0) {
         uint32_t gain_mode = data_c46d0;
+        uint32_t one_q = 1u << qm;
 
         data_a0dfc = 1;
         data_a0df8 = 0;
 
-        if (gain_mode == 0) {
-            /* Mode 0: Direct EV distribution.
-             * OEM splits new EV across IT, AG, DG using max limits. */
-            uint32_t ev_to_distribute = s2_2;
-            uint32_t one_q_local = 1u << qm;
-            uint32_t max_it_q = v0_19;
-            uint32_t max_ag_q = v0_21;
-            uint32_t max_dg_q = v0_23;
+        if (gain_mode != 0 && gain_mode != 1) {
+            /* OEM: unknown mode → zero all (NOT restore current) */
+            var_d0 = 0;
+            var_d4 = 0;
+            var_c4 = 0;
+            goto phase_h_scene_detect;
+        }
 
-            if (fix_point_mult3_32(s0, var_c4 << qm, var_d4, var_d0)
-                    >= s2_2) {
-                /* Already at or above target — no change needed */
-                goto phase_h_done;
-            }
-
-            /* Compute required total gain ratio */
-            {
-                uint32_t cur_ev_product = fix_point_mult2_32(s0, var_d4, var_d0);
-                uint32_t it_q = var_c4 << qm;
-                uint32_t ev_ratio;
-
-                if (cur_ev_product == 0) cur_ev_product = 1;
-                ev_ratio = fix_point_div_32(s0, s2_2, cur_ev_product);
-
-                /* Try IT first */
-                if (fix_point_mult2_32(s0, (uint32_t)max_it_q << qm, cur_ev_product)
-                        >= s2_2) {
-                    /* IT alone can reach target.
-                     * OEM: var_c4 = (ev_ratio >> q) << q >> q, i.e. round
-                     * down to integer, put fractional remainder into AG. */
-                    var_c4 = ev_ratio >> qm;
-                    if (var_c4 == 0) var_c4 = 1;
-                    /* Guarantee minimum 1-unit IT progress when target
-                     * requires increase but truncation prevents it */
-                    if (s2_2 > var_b8 && var_c4 <= cur_it && cur_it < max_it_q)
-                        var_c4 = cur_it + 1;
-                    goto phase_h_ag_dg;
-                }
-
-                /* IT maxed — compute AG/DG distribution */
-                var_c4 = max_it_q;
-
-            phase_h_ag_dg:
-                /* Recompute what AG*DG needs to be */
-                if (var_c4 == 0) var_c4 = 1;
-                {
-                    uint32_t needed_gain = fix_point_div_32(s0,
-                            s2_2, var_c4 << qm);
-
-                    /* Try AG */
-                    if (fix_point_mult2_32(s0, needed_gain, one_q_local)
-                            >= max_ag_q) {
-                        var_d4 = max_ag_q;
-                    } else {
-                        var_d4 = needed_gain;
-                    }
-
-                    /* Remainder to DG */
-                    if (var_d4 == 0) var_d4 = one_q_local;
-                    {
-                        uint32_t remaining = fix_point_div_32(s0,
-                                needed_gain << qm, var_d4 << qm);
-                        if (remaining > max_dg_q)
-                            var_d0 = max_dg_q;
-                        else
-                            var_d0 = remaining;
-                    }
-                }
-            }
-        } else if (gain_mode == 1) {
-            /* Mode 1: Threshold-based distribution (OEM data_c46a8 as IT ref).
-             * Uses data_c46a8 as reference IT, distributes excess to AG/DG. */
+        if (gain_mode == 1) {
+            /* Mode 1: Threshold-based with data_c46a8 reference IT */
             uint32_t ref_it = data_c46a8;
-            uint32_t it_q;
+            uint32_t s4_q;
 
-            if (var_c4 < ref_it)
-                var_c4 = ref_it;
+            /* OEM: clamp ref_it to max, update shared state */
+            if (var_c4 < ref_it) {
+                uint32_t clamped = (ref_it < v0_19) ? ref_it : v0_19;
+                var_c4 = clamped;
+            }
+            data_c46a8 = var_c4;  /* OEM: writeback */
 
-            it_q = var_c4 << qm;
-            if (fix_point_mult3_32(s0, it_q, var_d4, var_d0) >= s2_2) {
-                goto phase_h_done;
+            s4_q = var_c4 << qm;
+            s4_2_flag = 0;  /* assume converged */
+
+            if (fix_point_mult3_32(s0, s4_q, var_d4, var_d0) >= s2_2) {
+                goto phase_h_converged;
             }
 
-            /* Distribute via AG then DG */
+            /* OEM: compute needed ratio, check if AG*DG can reach */
             {
-                uint32_t needed = fix_point_div_32(s0, s2_2, it_q ? it_q : 1);
-                var_d4 = fix_point_div_32(s0, needed, var_d0 ? var_d0 : 1);
-                if (var_d4 > v0_21)
+                uint32_t v0_175 = fix_point_div_32(s0, s2_2, s4_q ? s4_q : 1);
+
+                if (fix_point_mult2_32(s0, v0_21, var_d0) >= v0_175) {
+                    /* AG alone can reach → compute exact AG */
+                    var_d4 = fix_point_div_32(s0, s2_2,
+                            fix_point_mult2_32(s0, s4_q ? s4_q : 1, var_d0));
+                    goto phase_h_scene_detect;
+                }
+
+                /* AG maxed, compute DG remainder */
+                {
+                    uint32_t v0_181 = fix_point_div_32(s0, s2_2,
+                            fix_point_mult2_32(s0, s4_q ? s4_q : 1, v0_21));
+                    var_d0 = (v0_181 < v0_23) ? v0_181 : v0_23;
+                }
+
+                if (var_cc_2 == 0) {
+                    /* Not converged: flag in-progress, set AG to max */
+                    s4_2_flag = 1;
                     var_d4 = v0_21;
-                var_d0 = fix_point_div_32(s0, needed,
-                        var_d4 ? var_d4 : 1);
-                if (var_d0 > v0_23)
-                    var_d0 = v0_23;
+                    goto phase_h_scene_detect;
+                }
+
+                /* Converged path */
+                ae0_conv_state[3] = var_c8;
+                var_d4 = v0_21;
+                var_c0_1 = v0_38 + ((v0_38 < 0xff) ? 1 : 0);
+                goto phase_h_output;
             }
-        } else {
-            /* Unknown mode: reset to initial values */
-            var_d0 = cur_dg;
-            var_d4 = cur_ag;
-            var_c4 = cur_it;
         }
 
-    phase_h_done:
-        /* ---- Phase I: Scene mode detection ---- */
-        /* OEM compares arg29-34 against scene thresholds.
-         * Simplified: maintain previous scene mode. */
+        /* Mode 0: OEM EXACT gain distribution (0x50bf8) */
+        {
+            uint32_t v0_116 = fix_point_mult2_32(s0, var_d4, var_d0);
+            uint32_t v0_118 = var_c4 << qm;
+            uint32_t v0_121;  /* needed IT*AG*DG / (AG*DG) = needed IT ratio */
+            uint32_t s2_3;    /* IT in Q-format */
+            uint32_t fp_4;    /* AG ratio */
+            uint32_t s7_1;    /* DG ratio */
+            uint32_t v0_126;  /* reference EV ratio */
+
+            s4_2_flag = 0;
+
+            if (fix_point_mult2_32(s0, v0_118, v0_116) >= s2_2)
+                goto phase_h_converged;
+
+            /* Compute needed IT ratio and max ratios */
+            if (v0_116 == 0) v0_116 = 1;
+            v0_121 = fix_point_div_32(s0, s2_2, v0_116);
+            s2_3 = v0_19 << qm;
+            fp_4 = fix_point_div_32(s0, v0_21, var_d4 ? var_d4 : 1);
+            s7_1 = fix_point_div_32(s0, v0_23, var_d0 ? var_d0 : 1);
+            v0_126 = fix_point_div_32(s0, v0_42 << qm, v0_116 ? v0_116 : 1);
+
+            /* OEM: When v0_15 != 0, use gain table search before distribution.
+             * For GC2053 default (v0_15=0), skip directly to distribution. */
+            if (v0_15 != 0) {
+                uint32_t a3_q = 0; /* gain table entry in Q-format */
+
+                if (v0_15 == 1 && v0_121 >= (ae_sensor_config[0] << qm)) {
+                    /* OEM gain table search (0x50c70): iterative search
+                     * through ae_sensor_config gain table entries.
+                     * Search backward from current index to find optimal point. */
+                    uint32_t idx = ae_gain_table_idx;
+                    uint32_t entry_q;
+
+                    /* Search backward: find where gain_entry fits */
+                    while (idx > 1) {
+                        entry_q = fix_point_div_32(s0,
+                                ae_sensor_config[idx] << qm, v0_118 ? v0_118 : 1);
+                        if ((0x14 << qm) + s2_3 >= entry_q)
+                            break;
+                        idx--;
+                    }
+                    ae_gain_table_idx = idx;
+
+                    /* Search forward to find where v0_121 fits */
+                    {
+                        uint32_t fi = 1;
+                        uint32_t found_q = ae_sensor_config[1] << qm;
+                        while (fi < idx) {
+                            if (v0_121 < (ae_sensor_config[fi + 1] << qm)) {
+                                found_q = ae_sensor_config[fi] << qm;
+                                break;
+                            }
+                            fi++;
+                        }
+                        if (found_q < s2_3)
+                            s2_3 = found_q;
+                    }
+
+                    fp_4 = fix_point_div_32(s0, v0_121, s2_3 ? s2_3 : 1);
+                    if (fp_4 >= fix_point_div_32(s0, v0_121,
+                            fix_point_mult2_32(s0, s2_3, fp_4))) {
+                        s7_1 = one_q;
+                        s4_2_flag = 0;
+                    } else {
+                        s7_1 = fix_point_div_32(s0,
+                                fix_point_div_32(s0, v0_121,
+                                    fix_point_mult2_32(s0, s2_3, fp_4)),
+                                fp_4 ? fp_4 : 1);
+                        s4_2_flag = 1;
+                    }
+                } else if (v0_15 == 1) {
+                    /* v0_121 below gain table threshold */
+                    if (v0_16 == 0) {
+                        s2_3 = (v0_121 >> qm) << qm;
+                        fp_4 = fix_point_div_32(s0, v0_121, s2_3 ? s2_3 : 1);
+                        s7_1 = v0_15 << qm;
+                        s4_2_flag = 0;
+                    } else {
+                        s2_3 = (v0_121 >> qm) << qm;
+                        fp_4 = one_q;
+                        s7_1 = one_q;
+                        s4_2_flag = 0;
+                    }
+                } else {
+                    /* v0_15 > 1: zero gains */
+                    s2_3 = 0;
+                    fp_4 = 0;
+                    s7_1 = 0;
+                    s4_2_flag = 0;
+                }
+
+                goto phase_h_mode0_apply;
+            }
+
+            /* v0_15 == 0 (default GC2053): Distribution based on v0_121 vs limits. */
+            if (s2_3 < v0_121) {
+                /* Max IT not enough: need AG/DG too */
+                /* OEM: check if IT * max_AG_ratio >= needed */
+                if (fix_point_mult2_32(s0, s2_3, fp_4) >= v0_121) {
+                    /* IT + partial AG is enough */
+                    s7_1 = one_q;  /* no DG change */
+                    fp_4 = fix_point_div_32(s0, v0_121, s2_3 ? s2_3 : 1);
+                    s4_2_flag = 0;
+                } else {
+                    /* Need all three: check IT * AG * DG */
+                    if (fix_point_mult3_32(s0, s2_3, fp_4, s7_1) >= v0_121) {
+                        /* Partial DG needed */
+                        s7_1 = fix_point_div_32(s0, v0_121,
+                                fix_point_mult2_32(s0, s2_3, fp_4));
+                        s4_2_flag = 0;
+                    } else {
+                        /* All maxed out — still adjusting */
+                        s4_2_flag = 1;
+                    }
+                }
+            } else if (v0_126 < v0_121) {
+                /* Between reference and max IT: use IT only */
+                s2_3 = (v0_121 >> qm) << qm;  /* round down to integer IT */
+                fp_4 = fix_point_div_32(s0, v0_121, s2_3 ? s2_3 : 1);
+                s7_1 = one_q;
+                s4_2_flag = 0;
+            } else {
+                /* Below reference: IT alone with unity gains */
+                s2_3 = (v0_121 >> qm) << qm;
+                fp_4 = one_q;
+                s7_1 = one_q;
+                s4_2_flag = 0;
+            }
+
+        phase_h_mode0_apply:
+            /* OEM EXACT: multiplicative assignment */
+            var_c4 = s2_3 >> qm;
+            if (var_c4 == 0) var_c4 = 1;
+            var_d4 = fix_point_mult2_32(s0, fp_4, var_d4);
+            var_d0 = fix_point_mult2_32(s0, s7_1, var_d0);
+
+            if (var_cc_2 == 0 && v0_34 != 1)
+                goto phase_h_scene_detect;
+        }
+
+    phase_h_converged:
+        /* OEM: converged or already at target */
         ae0_conv_state[3] = var_c8;
-        var_c0_1 = 0;
-    } else {
-        /* var_b8 == s2_2 and no change flags */
-        if (data_a0df8 == 0 && data_a0dfc != 0) {
-            /* Check if scene mode counter needs increment */
-            if (v0_38 < 0xff)
-                var_c0_1 = v0_38 + 1;
-            else
-                var_c0_1 = v0_38;
+        var_c0_1 = (s4_2_flag == 0) ? 0 :
+                   (v0_38 + ((v0_38 < 0xff) ? 1 : 0));
+        goto phase_h_output;
+
+    phase_h_scene_detect:
+        /* OEM Phase I: Scene mode detection (OEM EXACT logic from 0x510a8).
+         * Uses histogram partial sums to determine scene mode (var_c8).
+         * v0_2..v0_5 = ae_scene_mode_th thresholds.
+         * ae_hist_dark_sum/ae_hist_bright_sum = histogram partial sums.
+         * ae_scene_wmean/ae_scene_total = brightness measures. */
+        {
+            uint32_t arg33 = ae_scene_wmean;
+            uint32_t arg34 = ae_scene_total;
+
+            if (s6_2 >= s5) {
+                /* Overexposed path */
+                if (ae_hist_bright_sum >= ae_hist_dark_sum) {
+                    /* Bright dominates — no scene change */
+                } else {
+                    uint32_t s2_q = arg33 << qm;
+                    uint32_t s1_q = arg34 << qm;
+
+                    if (fix_point_mult2_32(s0, s1_q, v0_5) >= s2_q)
+                        var_c8 = 2;
+                    else if (fix_point_mult2_32(s0, s2_q, v0_3) < s1_q)
+                        var_c8 = 0;
+                    else
+                        var_c8 = 1;
+                }
+            } else {
+                /* Underexposed path */
+                if (ae_hist_dark_sum >= ae_hist_bright_sum) {
+                    /* Dark dominates — no scene change */
+                } else {
+                    uint32_t s2_q = arg33 << qm;
+                    uint32_t s1_q = arg34 << qm;
+                    uint32_t v0_189 = (fix_point_mult2_32(s0, s1_q, v0_4) < s2_q) ? 1 : 0;
+
+                    if (v0_189 != 0)
+                        var_c8 = 2;
+
+                    if (v0_189 == 0 || arg33 < 0x29)
+                        var_c8 = (fix_point_mult2_32(s0, s2_q, v0_2) < s1_q &&
+                                  arg34 >= 0x29) ? 1 : 0;
+                }
+            }
         }
 
-        /* Restore initial gains when at convergence with no change */
+        ae0_conv_state[3] = var_c8;
+        var_c0_1 = (s4_2_flag == 0) ? 0 :
+                   (v0_38 + ((v0_38 < 0xff) ? 1 : 0));
+        goto phase_h_output;
+
+    phase_h_output:
+        ;  /* fall through to output */
+    } else {
+        /* var_b8 == s2_2 and no change flags — OEM: restore initial gains */
         var_d0 = cur_dg;
         var_d4 = cur_ag;
         var_c4 = cur_it;
+
+        /* OEM: check convergence counter */
+        ae0_conv_state[3] = var_c8;
+        var_c0_1 = 0;
     }
 
-    /* ---- Phase J: Output ---- */
+    /* ---- Phase J: Output (OEM EXACT) ---- */
     {
         uint32_t converged = var_cc_2;
         if (var_c0_1 == v0_43)
@@ -5223,6 +5433,10 @@ static int tisp_ae0_process_impl(void)
     tisp_ae_get_y_zone(zones);
     ae0_weight_mean2(zones, &wmean, &total_wt);
 
+    /* ---- OEM Tiziano_ae0_fpga (0x51488) EXACT implementation ----
+     * Unpacks sensor config, computes histogram partial sums, does histogram
+     * tail weighting to inflate wmean for dark scenes, then calls ae0_tune2. */
+
     {
         static int ae_table_logged;
         if (!ae_table_logged) {
@@ -5248,12 +5462,22 @@ static int tisp_ae0_process_impl(void)
     new_ag = data_c46a0;
     new_dg = data_c46a4;
 
-    /* Sensible defaults if not yet initialized.
-     * CRITICAL: new_it default must be small (1, not 0x400) because the FIFO
-     * target_ev = IT*AG*DG. A large default IT makes target_ev enormous,
-     * causing the OEM algorithm to think we're overexposed and clamp _ae_ev
-     * to minimum. */
-    if (new_it == 0) new_it = 1;      /* Minimum IT — AE will ramp up */
+    /* OEM EXACT: Initial exposure seeding from IspAeExp / ae_exp_th.
+     *
+     * In the OEM, tiziano_ae_init_exp_th() populates IspAeExp from ae_exp_th,
+     * and tisp_ae0_process_impl passes IspAeExp as the "current exposure" to
+     * Tiziano_ae0_fpga → ae0_tune2.  So on the FIRST frame, cur_it = max_IT
+     * (ae_exp_th[0]), NOT zero.  This gives the AE algorithm a bright starting
+     * point from which it converges downward to the correct exposure.
+     *
+     * With IT=1 (the previous default), var_b8 = 1.0 Q10, the FIFO seeds at
+     * a tiny value, tisp_ae_target maps it to lum_list[0]=5039, and the FIFO
+     * immediately equals the target → false convergence → stuck dark forever.
+     *
+     * With IT=max_IT, var_b8 is large, the AE correctly sees "overexposed"
+     * (or near-target), and converges from bright toward the correct exposure
+     * within a few frames — exactly matching OEM behavior. */
+    if (new_it == 0) new_it = ae_exp_th.data[0] ? ae_exp_th.data[0] : 1;
     if (new_ag == 0) new_ag = 0x400;  /* Unity analog gain (Q10) */
     if (new_dg == 0) new_dg = 0x400;  /* Unity digital gain (Q10) */
 
@@ -5262,12 +5486,135 @@ static int tisp_ae0_process_impl(void)
      * (ae0_conv_state[0]), NOT the current IT*AG*DG product.  The lum_list
      * values (100-10000) are stable across frames, keeping the FIFO ratio
      * s5/s6 ≈ 1.0.  Pushing the volatile IT*AG*DG product caused massive
-     * oscillation: AG spikes → huge FIFO → ratio → 0 → ev clamped to min. */
+     * oscillation: AG spikes → huge FIFO → ratio → 0 → ev clamped to min.
+     *
+     * OEM Tiziano_ae0_fpga: when processing_mode ($s4)==1, inflates wmean
+     * via histogram tail weighting before Phase A scaling.  This breaks the
+     * convergence deadlock when wmean≈0 by making the scaled tables produce
+     * a non-unity ratio.  Without this inflation, both s5 and s6 scale
+     * identically → ratio=1.0 → no exposure change → stuck dark.
+     *
+     * Our histogram inflation: when wmean is very low and conv_state[0] is
+     * near the minimum EV, use the midpoint of the ev_list as the FIFO seed.
+     * This gives the convergence logic a real target to ramp toward. */
+    /* OEM Tiziano_ae0_fpga: Unpack sensor config (arg13 = ae_sensor_config).
+     * $s4 = processing_mode, $s1 = hist_bin_threshold, $s7 = dark_threshold,
+     * $s5 = curve_strength, $v1_1 = overexp_th, $v1 = underexp_th */
     {
-        uint32_t fifo_val = ae0_conv_state[0];
-        if (fifo_val == 0)
-            fifo_val = fix_point_mult3_32(q, new_it << q, new_ag, new_dg);
-        ae0_tune2(wmean, q, fifo_val, &new_it, &new_ag, &new_dg);
+        uint32_t s4_mode = ae_sensor_config[0];  /* processing mode */
+        uint32_t s1_bin = ae_sensor_config[1];   /* histogram bin threshold */
+        uint32_t s7_dark = ae_sensor_config[3];  /* dark bin threshold */
+        uint32_t s5_curve = ae_sensor_config[6]; /* curve strength */
+        uint32_t ae_wmean = wmean;
+
+        /* OEM: Compute histogram partial sums from IspAeStatic.
+         * a3_2 = sum of bins from s1+1 to 255 (bright tail)
+         * t1_1 = sum of bins from 0 to s7-1 (dark region) */
+        {
+            uint32_t a3_2 = 0, t1_1 = 0;
+            int hi;
+
+            /* Bright tail sum: bins s1+1..255 */
+            for (hi = (int)s1_bin + 1; hi < 256; hi++)
+                a3_2 += IspAeStatic[hi];
+
+            /* Dark region sum: bins 0..s7-1 */
+            for (hi = 0; hi < (int)s7_dark && hi < 256; hi++)
+                t1_1 += IspAeStatic[hi];
+
+            ae_hist_bright_sum = a3_2;
+            ae_hist_dark_sum = t1_1;
+        }
+
+        /* OEM: Histogram tail quadratic weighting ($s4==1 path).
+         * Computes weighted sum of bright histogram bins above threshold
+         * using quadratic curve, then inflates wmean (var_54).
+         * This is the critical mechanism that breaks the convergence
+         * deadlock when wmean ≈ 0 (dark scene at minimum exposure). */
+        if (s4_mode == 1) {
+            uint32_t hist_th = (*(uint32_t *)((uint8_t *)&_exp_parameter + 0x8c));
+            uint32_t curve_str;
+            uint32_t v1_4 = 0;
+            int hi;
+
+            /* OEM: i_4 = *(arg7 + 0x8c) = _exp_parameter byte offset 0x8c */
+            if (hist_th == 0) hist_th = 128;
+            if (hist_th < 0xff)
+                hist_th = (hist_th * 2) / 3;
+
+            /* OEM: $s1_3 = clamp($s5, 1, 0x20) = curve strength */
+            curve_str = s5_curve;
+            if (curve_str == 0) curve_str = 1;
+            if (curve_str > 0x20) curve_str = 0x20;
+
+            /* OEM: Loop from hist_th to 255, weight each bin quadratically.
+             * weight = (curve_str-1) * ((i-th)/(255-th))^2  (in Q16)
+             * v1_4 += bin[i] * weight */
+            for (hi = (int)hist_th; hi < 256; hi++) {
+                uint32_t norm_pos = fix_point_div_32(16,
+                        (uint32_t)(hi - (int)hist_th) << 16,
+                        (uint32_t)(256 - (int)hist_th) << 16);
+                uint32_t weight = fix_point_mult2_32(16,
+                        (curve_str - 1) << 16,
+                        fix_point_mult2_32(16, norm_pos, norm_pos));
+                v1_4 += fix_point_mult2_32(5,
+                        IspAeStatic[hi] << 5, weight >> 11) >> 5;
+            }
+
+            /* OEM: var_54 = (v1_4 + zone_area_product) * wmean / zone_area_product
+             * zone_area_product = cols * rows * col_spacing * row_spacing */
+            {
+                uint32_t cols = _ae_parameter.data[1];
+                uint32_t rows = _ae_parameter.data[3];
+                uint32_t col_sp = _ae_parameter.data[4];
+                uint32_t row_sp = _ae_parameter.data[19];
+                uint32_t zone_area;
+
+                if (cols == 0) cols = 15;
+                if (rows == 0) rows = 15;
+                if (col_sp == 0) col_sp = 64;
+                if (row_sp == 0) row_sp = 36;
+                zone_area = cols * rows * col_sp * row_sp;
+
+                if (zone_area > 0 && wmean > 0) {
+                    uint64_t tmp = (uint64_t)(v1_4 + zone_area) * wmean;
+                    do_div(tmp, zone_area);
+                    ae_wmean = (uint32_t)tmp;
+                }
+                else
+                    ae_wmean = wmean;
+
+                if (ae_wmean > 255) ae_wmean = 255;
+                if (ae_wmean < 1) ae_wmean = 1;
+            }
+        }
+
+        /* OEM: The histogram buffer retains residual data across frames.
+         * Our dead DMA bank frames have exactly zero in IspAeStatic,
+         * producing ae_wmean=1 which stalls convergence.  Carry over
+         * the previous inflated wmean on dead-bank frames so the
+         * convergence keeps ramping. */
+        {
+            static uint32_t ae_wmean_persist = 128;
+            if (wmean > 1 || ae_wmean > 1) {
+                /* Alive frame: update persistent wmean */
+                ae_wmean_persist = ae_wmean;
+            } else {
+                /* Dead bank frame: use previous wmean */
+                ae_wmean = ae_wmean_persist;
+            }
+        }
+
+        ae_scene_wmean = ae_wmean;
+        ae_scene_total = total_wt;
+
+        /* OEM: Push FIFO value and call ae0_tune2 */
+        {
+            uint32_t fifo_val = ae0_conv_state[0];
+            if (fifo_val == 0)
+                fifo_val = fix_point_mult3_32(q, new_it << q, new_ag, new_dg);
+            ae0_tune2(ae_wmean, q, fifo_val, &new_it, &new_ag, &new_dg);
+        }
     }
     /* OEM ae0_tune2 sets _ae_ev directly; also compute here for logging */
     if (_ae_ev == 0)
@@ -5652,8 +5999,14 @@ int ae0_interrupt_static(void)
             ae0_zone_g[i] = g;
             ae0_zone_b[i] = b;
             zones[i] = r + g + b;
+            /* OEM: IspAeStatic[i] = Channel 0 (R) value, used by
+             * Tiziano_ae0_fpga histogram processing */
+            IspAeStatic[i] = r;
             src += 4;  /* Advance 4 words (16 bytes) to next zone */
         }
+        /* Clear entries 225-255 (unused histogram bins) */
+        for (i = 225; i < 256; i++)
+            IspAeStatic[i] = 0;
 
         {
             static int ae_zone_log;
@@ -6009,6 +6362,7 @@ int tisp_init(void *sensor_info_arg, char *param_name)
 
     tiziano_ae_init(tisp_si_height(&sensor_params), tisp_si_width(&sensor_params),
                     tisp_si_min_integration_time(&sensor_params));
+
     tiziano_awb_init(tisp_si_height(&sensor_params), tisp_si_width(&sensor_params));
     tiziano_gamma_init(tisp_si_width(&sensor_params), tisp_si_height(&sensor_params),
                        tisp_si_fps(&sensor_params));
@@ -24133,17 +24487,36 @@ static int tisp_adr_set_params(void)
     }
     system_reg_write(0x4364, data_9f0cc);
 
-    /* 3) LUT window payload (0x4084..0x4290): use composite builder
-     * with map_kneepoint_y values from Tiziano_adr_fpga */
+    /* 3) OEM EXACT: map_kneepoint_y → regs 0x4084..0x4290 (132 regs, 264 entries as pairs).
+     * The OEM writes the per-block tone curves computed by Tiziano_adr_fpga
+     * directly as packed 16-bit pairs. Previous code used tisp_adr_build_lut_payload
+     * which incorrectly wrote weight LUTs and parameter arrays instead. */
     {
-        uint32_t out_words[ADR_LUT_WORD_COUNT];
-        int w = tisp_adr_build_lut_payload(out_words, ADR_LUT_WORD_COUNT);
-
-        while (w < (int)ADR_LUT_WORD_COUNT) out_words[w++] = 0;
-
-        uint32_t addr = ADR_LUT_START;
-        for (i = 0; i < (int)ADR_LUT_WORD_COUNT; ++i, addr += 4)
-            system_reg_write(addr, out_words[i]);
+        static int adr_diag;
+        uint32_t *s0_mkp = map_kneepoint_y;
+        if (adr_diag < 3) {
+            /* Dump first 3 blocks (11 kneepoints each) to verify tone curve values */
+            pr_info("ADR_MKY blk0: %u %u %u %u %u %u %u %u %u %u %u\n",
+                map_kneepoint_y[0], map_kneepoint_y[1], map_kneepoint_y[2],
+                map_kneepoint_y[3], map_kneepoint_y[4], map_kneepoint_y[5],
+                map_kneepoint_y[6], map_kneepoint_y[7], map_kneepoint_y[8],
+                map_kneepoint_y[9], map_kneepoint_y[10]);
+            pr_info("ADR_MKY blk1: %u %u %u %u %u %u %u %u %u %u %u\n",
+                map_kneepoint_y[11], map_kneepoint_y[12], map_kneepoint_y[13],
+                map_kneepoint_y[14], map_kneepoint_y[15], map_kneepoint_y[16],
+                map_kneepoint_y[17], map_kneepoint_y[18], map_kneepoint_y[19],
+                map_kneepoint_y[20], map_kneepoint_y[21]);
+            pr_info("ADR_MKY blk12: %u %u %u %u %u %u %u %u %u %u %u\n",
+                map_kneepoint_y[132], map_kneepoint_y[133], map_kneepoint_y[134],
+                map_kneepoint_y[135], map_kneepoint_y[136], map_kneepoint_y[137],
+                map_kneepoint_y[138], map_kneepoint_y[139], map_kneepoint_y[140],
+                map_kneepoint_y[141], map_kneepoint_y[142]);
+            adr_diag++;
+        }
+        for (i = 0x4084; i != 0x4294; i += 4) {
+            system_reg_write(i, (s0_mkp[1] << 16) | (s0_mkp[0] & 0xFFFF));
+            s0_mkp += 2;
+        }
     }
 
     return 0;
@@ -24454,10 +24827,19 @@ static int32_t subsection_map(int32_t target, int32_t mapped_val, int32_t blend_
  * arg5 = base LUT (512 entries), arg6 = num_bins, arg7/arg8/arg9 = precisions
  */
 static void subsection(int32_t *result, int32_t blend_pct,
-		       int16_t *gam_x, int16_t *gam_y, int32_t *lut,
+		       int16_t *gam_lut_a, int16_t *gam_lut_b, int32_t *lut,
 		       int32_t num_bins, int32_t prec_a, int32_t prec_b,
 		       int32_t blend_mode)
 {
+	/* OEM EXACT parameter mapping (verified from decompilation at 0x1bd74):
+	 * - subsection's OWN gamma lookups: iterate arg4 (gam_lut_b), interp arg3 (gam_lut_a)
+	 * - subsection_map calls: pass (arg3, arg4) → subsection_map iterates its param4=arg3
+	 * These are intentionally opposite! subsection does inverse gamma, subsection_map does forward.
+	 *
+	 * gam_x/gam_y below are used ONLY by the inline gamma lookups in this function.
+	 * subsection_map calls pass gam_lut_a, gam_lut_b directly (unchanged). */
+	int16_t *gam_x = gam_lut_b;  /* iterate this (OEM iterates arg4) */
+	int16_t *gam_y = gam_lut_a;  /* interpolate this (OEM reads arg3) */
 	int32_t v0_val = 2 << (prec_a & 0x1f);
 	int32_t fp;
 	int32_t half_a = (1 << (prec_a & 0x1f)) / 2;
@@ -24472,7 +24854,7 @@ static void subsection(int32_t *result, int32_t blend_pct,
 				0xfff << (prec_a & 0x1f), v0_val) + half_a)
 				>> (prec_a & 0x1f);
 		int32_t mapped = subsection_map(0x1388, map_in, blend_pct,
-				gam_x, gam_y, lut, num_bins, prec_a, prec_b,
+				gam_lut_a, gam_lut_b, lut, num_bins, prec_a, prec_b,
 				blend_mode);
 
 		/* Lookup in gam_x to find the Y value */
@@ -24507,7 +24889,7 @@ static void subsection(int32_t *result, int32_t blend_pct,
 					mapped << (prec_a & 0x1f), v0_val) + half_a)
 					>> (prec_a & 0x1f);
 			int32_t mapped2 = subsection_map(sub_arg1, map_in2, blend_pct,
-					gam_x, gam_y, lut, num_bins, prec_a, prec_b,
+					gam_lut_a, gam_lut_b, lut, num_bins, prec_a, prec_b,
 					blend_mode);
 
 			for (j = 0; j < 0x81; j++) {
@@ -24529,7 +24911,9 @@ static void subsection(int32_t *result, int32_t blend_pct,
 			if (j == 0x81)
 				result[2] = (int32_t)(int16_t)gam_y[0x80];
 
-			/* Kneepoint 1 */
+			/* OEM EXACT: Kneepoints 1 and 3 via two separate subsection_map calls.
+			 * Kneepoint 1 uses result[2] index and mapped2 alone.
+			 * Kneepoint 3 uses average of result[4]/result[2] indices and mapped/mapped2. */
 			{
 				int32_t idx2 = (fix_point_div_32(prec_a,
 						result[2] << (prec_a & 0x1f), fp) + half_a)
@@ -24537,35 +24921,66 @@ static void subsection(int32_t *result, int32_t blend_pct,
 				int32_t idx4 = (fix_point_div_32(prec_a,
 						result[4] << (prec_a & 0x1f), fp) + half_a)
 						>> (prec_a & 0x1f);
-				int32_t sub_arg2 = (lut[idx4] + lut[idx2]) / 2;
-				int32_t map_in3 = (fix_point_div_32(prec_a,
-						(mapped + mapped2) << (prec_a & 0x1f),
-						v0_val) + half_a)
-						>> (prec_a & 0x1f);
-				int32_t mapped3 = subsection_map(sub_arg2, map_in3,
-						blend_pct, gam_x, gam_y, lut, num_bins,
-						prec_a, prec_b, blend_mode);
 
-				for (j = 0; j < 0x81; j++) {
-					int32_t gx = (int32_t)(int16_t)gam_x[j];
-					if (mapped3 < gx) {
-						int16_t *gy_ptr = &gam_y[j];
-						int32_t gy_cur = (int32_t)(int16_t)*gy_ptr;
-						int32_t gy_prev = (int32_t)(int16_t)*(gam_y + j - 1);
-						int32_t gx_prev = (int32_t)(int16_t)*(gam_x + j - 1);
-						int32_t slope = fix_point_div_32(prec_a,
-							(gy_cur - gy_prev) << (prec_a & 0x1f),
-							(gx - gx_prev) << (prec_a & 0x1f));
-						int32_t interp = fix_point_mult2_32(prec_a,
-							slope, (gx - mapped3) << (prec_a & 0x1f));
-						result[3] = gy_cur - ((interp + half_a) >> (prec_a & 0x1f));
-						break;
+				/* Kneepoint 1: OEM third subsection_map call */
+				{
+					int32_t sub_arg_kp1 = lut[idx2] / 2;
+					int32_t map_in_kp1 = (fix_point_div_32(prec_a,
+							mapped2 << (prec_a & 0x1f),
+							v0_val) + half_a)
+							>> (prec_a & 0x1f);
+					int32_t mapped_kp1 = subsection_map(sub_arg_kp1, map_in_kp1,
+							blend_pct, gam_lut_a, gam_lut_b, lut, num_bins,
+							prec_a, prec_b, blend_mode);
+
+					for (j = 0; j < 0x81; j++) {
+						int32_t gx = (int32_t)(int16_t)gam_x[j];
+						if (mapped_kp1 < gx) {
+							int32_t gy_cur = (int32_t)(int16_t)gam_y[j];
+							int32_t gy_prev = (int32_t)(int16_t)gam_y[j - 1];
+							int32_t gx_prev = (int32_t)(int16_t)gam_x[j - 1];
+							int32_t slope = fix_point_div_32(prec_a,
+								(gy_cur - gy_prev) << (prec_a & 0x1f),
+								(gx - gx_prev) << (prec_a & 0x1f));
+							int32_t interp = fix_point_mult2_32(prec_a,
+								slope, (gx - mapped_kp1) << (prec_a & 0x1f));
+							result[1] = gy_cur - ((interp + half_a) >> (prec_a & 0x1f));
+							break;
+						}
 					}
+					if (j == 0x81)
+						result[1] = (int32_t)(int16_t)gam_y[0x80];
 				}
-				if (j == 0x81)
-					result[3] = (int32_t)(int16_t)gam_y[0x80];
 
-				result[1] = result[2];  /* placeholder */
+				/* Kneepoint 3: OEM fourth subsection_map call */
+				{
+					int32_t sub_arg2 = (lut[idx4] + lut[idx2]) / 2;
+					int32_t map_in3 = (fix_point_div_32(prec_a,
+							(mapped + mapped2) << (prec_a & 0x1f),
+							v0_val) + half_a)
+							>> (prec_a & 0x1f);
+					int32_t mapped3 = subsection_map(sub_arg2, map_in3,
+							blend_pct, gam_lut_a, gam_lut_b, lut, num_bins,
+							prec_a, prec_b, blend_mode);
+
+					for (j = 0; j < 0x81; j++) {
+						int32_t gx = (int32_t)(int16_t)gam_x[j];
+						if (mapped3 < gx) {
+							int32_t gy_cur = (int32_t)(int16_t)gam_y[j];
+							int32_t gy_prev = (int32_t)(int16_t)gam_y[j - 1];
+							int32_t gx_prev = (int32_t)(int16_t)gam_x[j - 1];
+							int32_t slope = fix_point_div_32(prec_a,
+								(gy_cur - gy_prev) << (prec_a & 0x1f),
+								(gx - gx_prev) << (prec_a & 0x1f));
+							int32_t interp = fix_point_mult2_32(prec_a,
+								slope, (gx - mapped3) << (prec_a & 0x1f));
+							result[3] = gy_cur - ((interp + half_a) >> (prec_a & 0x1f));
+							break;
+						}
+					}
+					if (j == 0x81)
+						result[3] = (int32_t)(int16_t)gam_y[0x80];
+				}
 			}
 		}
 
@@ -25255,8 +25670,9 @@ static int Tiziano_adr_fpga(void *arg1, uint32_t *arg2, uint32_t *arg3,
 						int32_t seg_range = (ev_hi - ev_lo) << 0xa;
 						int32_t seg_pos = (v0_9 - ev_lo) << 0xa;
 
-						var_190[0] = var_420[(blk_idx - 1) * 9];
-						/* Interpolate entries 1..4 */
+						/* OEM EXACT: Only interpolate entries 1..4.
+						 * Entries 0 and 5-8 retain their arg10 init values
+						 * (set at the top of the function), NOT from var_420. */
 						for (k = 1; k <= 4; k++) {
 							int32_t val_hi = var_420[base + k];
 							int32_t val_lo = var_420[base - 9 + k];
@@ -25275,9 +25691,6 @@ static int Tiziano_adr_fpga(void *arg1, uint32_t *arg2, uint32_t *arg3,
 								seg_pos) + 0x200) >> 0xa;
 							var_190[k] = sign ? val_lo + interp : val_lo - interp;
 						}
-						/* Copy remaining from previous level */
-						for (k = 5; k < 9; k++)
-							var_190[k] = var_420[(blk_idx - 1) * 9 + k];
 					} else {
 						for (k = 0; k < 9; k++)
 							var_190[k] = var_420[k];
@@ -25578,9 +25991,13 @@ static int Tiziano_adr_fpga(void *arg1, uint32_t *arg2, uint32_t *arg3,
 			if (weight >= 0x2711)
 				weight = 0x2710;
 
-			/* Map weight through normalized histogram */
+			/* Map weight through normalized histogram.
+			 * OEM EXACT: uses fix_point_div_32, NOT mult.
+			 * 0x19000 = 102400 = 100*1024. Division normalizes
+			 * weight (0..10000) into an index for tone curve
+			 * interpolation. Multiplication overflows → garbage. */
 			{
-				int32_t mapped_weight = (fix_point_mult2_32(0xa,
+				int32_t mapped_weight = (fix_point_div_32(0xa,
 					weight << 0xa, 0x19000) + 0x200) >> 0xa;
 
 				/* Find bracket in var_148 for mapped_weight, interpolate var_1d8 */
@@ -27944,6 +28361,42 @@ int tisp_tgain_update(uint32_t gain)
                 system_reg_read(0x7ac4), system_reg_read(0x7ac8), system_reg_read(0x7ad0));
             pr_info("MDNS_C_FALSE: 0x7ad8=0x%08x 0x7adc=0x%08x 0x7aec=0x%08x\n",
                 system_reg_read(0x7ad8), system_reg_read(0x7adc), system_reg_read(0x7aec));
+
+            /* DMSC registers — OEM addresses from BN decompilation */
+            pr_info("DMSC_UU: 0x4834=%08x 0x4838=%08x 0x483c=%08x 0x4840=%08x\n",
+                system_reg_read(0x4834), system_reg_read(0x4838),
+                system_reg_read(0x483c), system_reg_read(0x4840));
+            pr_info("DMSC_SPD: 0x4844=%08x 0x4848=%08x 0x484c=%08x 0x4850=%08x\n",
+                system_reg_read(0x4844), system_reg_read(0x4848),
+                system_reg_read(0x484c), system_reg_read(0x4850));
+            pr_info("DMSC_SPD2: 0x4854=%08x 0x4858=%08x 0x48a4=%08x 0x48a8=%08x 0x48ac=%08x\n",
+                system_reg_read(0x4854), system_reg_read(0x4858),
+                system_reg_read(0x48a4), system_reg_read(0x48a8),
+                system_reg_read(0x48ac));
+            pr_info("DMSC_SPUD: 0x485c=%08x 0x4860=%08x 0x4864=%08x 0x4868=%08x\n",
+                system_reg_read(0x485c), system_reg_read(0x4860),
+                system_reg_read(0x4864), system_reg_read(0x4868));
+            pr_info("DMSC_SPUD2: 0x486c=%08x 0x4870=%08x 0x48b0=%08x 0x48b4=%08x 0x48b8=%08x\n",
+                system_reg_read(0x486c), system_reg_read(0x4870),
+                system_reg_read(0x48b0), system_reg_read(0x48b4),
+                system_reg_read(0x48b8));
+            pr_info("DMSC_OUT: 0x4800=%08x 0x499c=%08x\n",
+                system_reg_read(0x4800), system_reg_read(0x499c));
+            /* Sharpen registers */
+            pr_info("SHARP: 0x7000=%08x 0x7004=%08x 0x7008=%08x 0x700c=%08x\n",
+                system_reg_read(0x7000), system_reg_read(0x7004),
+                system_reg_read(0x7008), system_reg_read(0x700c));
+            pr_info("SHARP2: 0x7010=%08x 0x7014=%08x 0x7018=%08x 0x701c=%08x\n",
+                system_reg_read(0x7010), system_reg_read(0x7014),
+                system_reg_read(0x7018), system_reg_read(0x701c));
+            pr_info("SHARP3: 0x7020=%08x 0x7024=%08x 0x7028=%08x\n",
+                system_reg_read(0x7020), system_reg_read(0x7024),
+                system_reg_read(0x7028));
+            /* Gamma LUT sample points (R channel) */
+            pr_info("GAMMA_R: 0x40000=%08x 0x40020=%08x 0x40040=%08x 0x40060=%08x 0x40080=%08x\n",
+                system_reg_read(0x40000), system_reg_read(0x40020),
+                system_reg_read(0x40040), system_reg_read(0x40060),
+                system_reg_read(0x40080));
         }
     }
 
@@ -31117,6 +31570,19 @@ int tiziano_ae_params_refresh(void)
                 ae_exp_th.data[0], ae_exp_th.data[1], ae_exp_th.data[2],
                 _exp_parameter.data[3],
                 _ae_parameter.data[1], _ae_parameter.data[3]);
+        pr_info("tiziano_ae_params_refresh: stable_tol=[0x%x,0x%x,0x%x,0x%x] "
+                "ev_step=[0x%x,0x%x,0x%x,0x%x,0x%x] "
+                "exp_param=[%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u]\n",
+                ae_stable_tol.data[0], ae_stable_tol.data[1],
+                ae_stable_tol.data[2], ae_stable_tol.data[3],
+                ae_ev_step.data[0], ae_ev_step.data[1],
+                ae_ev_step.data[2], ae_ev_step.data[3], ae_ev_step.data[4],
+                _exp_parameter.data[0], _exp_parameter.data[1],
+                _exp_parameter.data[2], _exp_parameter.data[3],
+                _exp_parameter.data[4], _exp_parameter.data[5],
+                _exp_parameter.data[6], _exp_parameter.data[7],
+                _exp_parameter.data[8], _exp_parameter.data[9],
+                _exp_parameter.data[10]);
     } else {
         pr_info("tiziano_ae_params_refresh: no tuning binary, using static defaults\n");
     }
