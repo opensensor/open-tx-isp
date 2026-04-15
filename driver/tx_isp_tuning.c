@@ -83,7 +83,7 @@ module_param_named(force_bypass_gib, tisp_force_bypass_gib, int, S_IRUGO | S_IWU
 MODULE_PARM_DESC(force_bypass_gib,
 			 "Force GIB bypass (default: 1 — GIB equalizes R=G=B despite correct registers)");
 
-static int tisp_force_bypass_mdns = 0; /* MDNS: enabled */
+static int tisp_force_bypass_mdns = 0; /* MDNS: enabled (OEM default) */
 module_param_named(force_bypass_mdns, tisp_force_bypass_mdns, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(force_bypass_mdns,
 			 "Force MDNS bypass (default: 0 — MDNS provides temporal denoise)");
@@ -30141,61 +30141,51 @@ int tisp_s_sdns_ratio(int ratio)
     /* Binary Ninja shows complex array processing for 16 different strength arrays */
     data_9a9c0 = ratio;
 
-    /* Process all 9 array elements (i from 0 to 0x24 in steps of 4 = 9 elements) */
-    for (i = 0; i < 9; i++) {
-        /* Update sdns_h_s_1 through sdns_h_s_16 arrays based on WDR enable state */
-        if (sdns_wdr_en) {
-            /* WDR enabled path - use WDR-specific base values */
-            if (is_low_ratio) {
-                /* Linear scaling for ratio < 129 */
-                temp_val = (ratio * sdns_wdr_base_values[i]) >> 7;
-            } else {
-                /* Non-linear scaling for higher ratios */
-                int base_val = sdns_wdr_base_values[i];
-                int headroom = (base_val < 0x10) ? (0x10 - base_val) : 0;
-                temp_val = base_val + ((headroom * (ratio - 0x80)) >> 7);
-            }
-        } else {
-            /* WDR disabled path - use standard base values */
-            if (is_low_ratio) {
-                /* Linear scaling for ratio < 129 */
-                temp_val = (ratio * sdns_std_base_values[i]) >> 7;
-            } else {
-                /* Non-linear scaling for higher ratios */
-                int base_val = sdns_std_base_values[i];
-                int headroom = (base_val < 0x10) ? (0x10 - base_val) : 0;
-                temp_val = base_val + ((headroom * (ratio - 0x80)) >> 7);
-            }
-        }
+    /* OEM EXACT: Process all 9 array elements.
+     * Each h_s channel reads its OWN base value from the tuning binary array,
+     * NOT a shared base_values array. This preserves per-channel frequency
+     * response differences that the tuning binary specifies. */
+    {
+        /* Pointers to the source arrays (tuning binary originals) */
+        uint32_t *h_s_src[16] = {
+            sdns_h_s_1_array, sdns_h_s_2_array, sdns_h_s_3_array, sdns_h_s_4_array,
+            sdns_h_s_5_array, sdns_h_s_6_array, sdns_h_s_7_array, sdns_h_s_8_array,
+            sdns_h_s_9_array, sdns_h_s_10_array, sdns_h_s_11_array, sdns_h_s_12_array,
+            sdns_h_s_13_array, sdns_h_s_14_array, sdns_h_s_15_array, sdns_h_s_16_array
+        };
+        uint32_t **h_s_dst[16] = {
+            &sdns_h_s_1_array_now, &sdns_h_s_2_array_now, &sdns_h_s_3_array_now, &sdns_h_s_4_array_now,
+            &sdns_h_s_5_array_now, &sdns_h_s_6_array_now, &sdns_h_s_7_array_now, &sdns_h_s_8_array_now,
+            &sdns_h_s_9_array_now, &sdns_h_s_10_array_now, &sdns_h_s_11_array_now, &sdns_h_s_12_array_now,
+            &sdns_h_s_13_array_now, &sdns_h_s_14_array_now, &sdns_h_s_15_array_now, &sdns_h_s_16_array_now
+        };
+        int ch;
 
-        /* Update all 16 strength arrays */
-        if (sdns_h_s_1_array_now) sdns_h_s_1_array_now[i] = temp_val;
-        if (sdns_h_s_2_array_now) sdns_h_s_2_array_now[i] = temp_val;
-        if (sdns_h_s_3_array_now) sdns_h_s_3_array_now[i] = temp_val;
-        if (sdns_h_s_4_array_now) sdns_h_s_4_array_now[i] = temp_val;
-        if (sdns_h_s_5_array_now) sdns_h_s_5_array_now[i] = temp_val;
-        if (sdns_h_s_6_array_now) sdns_h_s_6_array_now[i] = temp_val;
-        if (sdns_h_s_7_array_now) sdns_h_s_7_array_now[i] = temp_val;
-        if (sdns_h_s_8_array_now) sdns_h_s_8_array_now[i] = temp_val;
-        if (sdns_h_s_9_array_now) sdns_h_s_9_array_now[i] = temp_val;
-        if (sdns_h_s_10_array_now) sdns_h_s_10_array_now[i] = temp_val;
-        if (sdns_h_s_11_array_now) sdns_h_s_11_array_now[i] = temp_val;
-        if (sdns_h_s_12_array_now) sdns_h_s_12_array_now[i] = temp_val;
-        if (sdns_h_s_13_array_now) sdns_h_s_13_array_now[i] = temp_val;
-        if (sdns_h_s_14_array_now) sdns_h_s_14_array_now[i] = temp_val;
-        if (sdns_h_s_15_array_now) sdns_h_s_15_array_now[i] = temp_val;
-        if (sdns_h_s_16_array_now) sdns_h_s_16_array_now[i] = temp_val;
-
-        /* Update average threshold array with different scaling */
-        if (sdns_ave_thres_array_now) {
-            int base_val = sdns_ave_base_values[i];
-            if (is_low_ratio) {
-                temp_val = (ratio * base_val) >> 7;
-            } else {
-                int headroom = (base_val < 0xc8) ? (0xc8 - base_val) : 0;
-                temp_val = base_val + ((headroom * (ratio - 0x80)) >> 7);
+        for (i = 0; i < 9; i++) {
+            /* Scale each h_s channel independently from its own source array */
+            for (ch = 0; ch < 16; ch++) {
+                uint32_t base_val = h_s_src[ch][i];
+                if (is_low_ratio) {
+                    temp_val = (ratio * base_val) >> 7;
+                } else {
+                    int headroom = (base_val < 0x10) ? (0x10 - base_val) : 0;
+                    temp_val = base_val + ((headroom * (ratio - 0x80)) >> 7);
+                }
+                if (*h_s_dst[ch])
+                    (*h_s_dst[ch])[i] = temp_val;
             }
-            sdns_ave_thres_array_now[i] = temp_val;
+
+            /* Update average threshold array — OEM uses 0xc8 headroom cap (not 0x10) */
+            if (sdns_ave_thres_array_now) {
+                uint32_t base_val = sdns_ave_thres_array[i];
+                if (is_low_ratio) {
+                    temp_val = (ratio * base_val) >> 7;
+                } else {
+                    int headroom = (base_val < 0xc8) ? (0xc8 - base_val) : 0;
+                    temp_val = base_val + ((headroom * (ratio - 0x80)) >> 7);
+                }
+                sdns_ave_thres_array_now[i] = temp_val;
+            }
         }
     }
 
