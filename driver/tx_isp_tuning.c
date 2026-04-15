@@ -2586,16 +2586,17 @@ static u32 tisp_compute_top_bypass_from_params(int wdr_enable)
 
 	/* OEM non-WDR masks (from tisp_init @ 0x15f98):
 	 *   AND=0xb577fffd  OR=0x34000009
-	 * OEM OR mask only sets bits {0,3,26,28,29} — it does NOT force-bypass
-	 * GIB(5), GB(13), or MDNS(16).  Those are controlled purely by tparams.
+	 * OEM OR mask only sets bits {0,3,26,28,29}.
 	 *
-	 * All three blocks now use OEM-exact masks.  GIB(5) and GB(13) were
-	 * previously force-bypassed as a workaround for the R=G=B equalization
-	 * bug, which was traced to an ad0_cache shift off-by-one and fixed. */
+	 * TEMPORARY: Force-bypass GIB(bit5) and GB(bit13) because enabling them
+	 * kills AWB HW stats (all zones read zero). The GIB code matches OEM
+	 * but something in the GIB→AWB interaction corrupts stats collection.
+	 * AWB needs working stats to converge WB gains and fix colors.
+	 * TODO: investigate why GIB active → AWB stats dead. */
 	if (wdr_enable)
 		bypass_val = (bypass_val & 0xa1ffdf76) | 0x00880002;
 	else
-		bypass_val = (bypass_val & 0xb577fffd) | 0x34000009;
+		bypass_val = (bypass_val & 0xb577fffd) | 0x34002029;
 
 	pr_info("tisp_compute_top_bypass: final=0x%08x\n", bypass_val);
 
