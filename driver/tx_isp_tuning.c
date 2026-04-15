@@ -7156,61 +7156,20 @@ int tisp_bcsh_g_saturation(void)
     return ourISPdev->tuning_data->bcsh_saturation;
 }
 
-/* OEM hysteresis state for BCSH updates */
-static uint32_t bcsh_last_ev_shifted = 0;
-static uint32_t bcsh_last_ct = 0;
-
 int tisp_bcsh_ev_update(uint32_t ev)
 {
-    uint32_t ev_shifted;
-    uint32_t delta;
-
     if (!ourISPdev || !ourISPdev->tuning_data)
         return -ENODEV;
     ourISPdev->tuning_data->bcsh_ev = ev;
-    ev_shifted = ev >> 10;
-
-    /* OEM EXACT: Only update when BCSH_real==1 (forced) or EV delta > 0x28 */
-    if (BCSH_real == 1) {
-        tiziano_bcsh_update(ourISPdev->tuning_data);
-        BCSH_real = 0;
-        bcsh_last_ev_shifted = ev_shifted;
-        return 0;
-    }
-
-    delta = (bcsh_last_ev_shifted >= ev_shifted) ?
-            (bcsh_last_ev_shifted - ev_shifted) : (ev_shifted - bcsh_last_ev_shifted);
-    if (delta > 0x28) {
-        tiziano_bcsh_update(ourISPdev->tuning_data);
-        BCSH_real = 0;
-        bcsh_last_ev_shifted = ev_shifted;
-    }
-    return 0;
+    return tiziano_bcsh_update(ourISPdev->tuning_data);
 }
 
 int tisp_bcsh_ct_update(uint32_t ct)
 {
-    uint32_t delta;
-
     if (!tuning_ready())
         return -ENODEV;
     ourISPdev->tuning_data->wb_temp = ct;
-
-    /* OEM EXACT: Only update when BCSH_real==1 (forced) or CT delta > 0x64 */
-    if (BCSH_real == 1) {
-        tiziano_bcsh_update(ourISPdev->tuning_data);
-        BCSH_real = 0;
-        bcsh_last_ct = ct;
-        return 0;
-    }
-
-    delta = (bcsh_last_ct >= ct) ? (bcsh_last_ct - ct) : (ct - bcsh_last_ct);
-    if (delta > 0x64) {
-        tiziano_bcsh_update(ourISPdev->tuning_data);
-        BCSH_real = 0;
-        bcsh_last_ct = ct;
-    }
-    return 0;
+    return tiziano_bcsh_update(ourISPdev->tuning_data);
 }
 
 
