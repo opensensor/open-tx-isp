@@ -2661,10 +2661,7 @@ static u32 tisp_compute_top_bypass_from_params(int wdr_enable)
 	/* OEM non-WDR masks (from tisp_init @ 0x15f98):
 	 *   AND=0xb577fffd  OR=0x34000009
 	 * OEM OR mask only sets bits {0,3,26,28,29}.
-	 *
-	 * WORKAROUND: Force-bypass GIB(bit5). BLC=0 experiment proved the GIB
-	 * HW block itself kills AWB stat DMA when active — not BLC values.
-	 * Root cause is missing HW init in our tisp_init vs OEM. */
+	 * Bit 13 (GB) kept bypassed until gain interp is validated. */
 	if (wdr_enable)
 		bypass_val = (bypass_val & 0xa1ffdf76) | 0x00880002;
 	else
