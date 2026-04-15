@@ -1146,6 +1146,12 @@ int system_irq_func_set(int index, irqreturn_t (*handler)(int irq, void *dev_id)
 
 int vic_core_ops_ioctl(struct tx_isp_subdev *sd, unsigned int cmd, void *arg);
 
+/* Custom AE algorithm interface — OEM ioctls 0x800456db-0x800456de */
+extern int tx_isp_get_ae_algo_handle(void __user *arg);
+extern int tx_isp_set_ae_algo_open(void __user *arg);
+extern int tx_isp_set_ae_algo_close(void __user *arg);
+extern int tisp_ae_algo_handle(void *attr);
+
 /* Forward declarations for initialization functions */
 extern int tx_isp_vic_platform_init(void);
 extern void tx_isp_vic_platform_exit(void);
@@ -5135,6 +5141,27 @@ static long tx_isp_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned 
         // and calls tisp_s_wdr_en(0)
 
         return 0;
+    }
+    case 0x800456db: { /* TX_ISP_GET_AE_ALGO_HANDLE — OEM custom AE stats read */
+        return tx_isp_get_ae_algo_handle(argp);
+    }
+    case 0x800456dc: { /* TX_ISP_SET_AE_ALGO_HANDLE — OEM custom AE apply */
+        uint32_t ae_buf[14]; /* 0x38 bytes */
+        if (copy_from_user(ae_buf, argp, 0x38)) {
+            pr_err("[ %s:%d ] copy from user error\n",
+                   "tx_isp_set_ae_algo_handle", __LINE__);
+            return -EFAULT;
+        }
+        /* OEM: only call tisp_ae_algo_handle when ae_buf[2]==1 (var_90 check) */
+        if (ae_buf[2] == 1)
+            tisp_ae_algo_handle(ae_buf);
+        return 0;
+    }
+    case 0x800456dd: { /* TX_ISP_SET_AE_ALGO_OPEN — OEM custom AE open */
+        return tx_isp_set_ae_algo_open(argp);
+    }
+    case 0x800456de: { /* TX_ISP_SET_AE_ALGO_CLOSE — OEM custom AE close */
+        return tx_isp_set_ae_algo_close(argp);
     }
     case 0xc008561b: { // TX_ISP_SENSOR_GET_CONTROL - Get sensor control value
         struct sensor_control_arg {

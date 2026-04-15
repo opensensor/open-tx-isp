@@ -3354,6 +3354,7 @@ extern void system_reg_write(u32 reg, u32 value);
 /* External system_irq_func_set from tx_isp_core.c */
 extern int system_irq_func_set(int index, irqreturn_t (*handler)(int irq, void *dev_id));
 extern int tisp_ae_get_y_zone(void *arg1);
+extern int tisp_ae_update_zone_data(uint32_t *new_zone_data, size_t data_size);
 
 /* Forward declarations for AE interrupt functions */
 int ae0_interrupt_hist(void);
@@ -3445,6 +3446,15 @@ static uint32_t ae_ev_init_strict = 0;
 
 /* AE completion structure for synchronization */
 static struct completion ae_algo_comp;
+
+/* AE histogram data — must be before tisp_ae_get_hist_custome usage */
+static uint8_t tisp_ae_hist[0x42c];
+static uint8_t tisp_ae_hist_last[0x42c];
+static DEFINE_SPINLOCK(ae_hist_lock);  /* OEM: protects tisp_ae_hist_last access */
+
+/* Custom AE algo interface buffers (allocated by ae_algo_open ioctl 0x800456dd) */
+static uint8_t *ae_info_mine;
+static uint8_t *ae_statis_mine;
 
 /* AE parameter structures - from Binary Ninja */
 struct ae_parameter {
@@ -3886,8 +3896,16 @@ static uint32_t scene_luma_weight = 0x24;
 static uint32_t ae_wdr_mode = 0;
 
 /* Forward declarations for AE internal functions */
-static void ae0_weight_mean2(uint32_t *out_zones, uint32_t *out_wmean,
-                             uint32_t *out_total);
+static void ae0_weight_mean2(
+    uint32_t *zone_r, uint32_t *zone_g, uint32_t *zone_b,
+    uint32_t *dark_pix, uint32_t *bright_pix,
+    uint32_t *out_zones, void *zone_copy, void *ae_param,
+    uint32_t *zone_wt, void *awb_cfg, void *corr_cfg,
+    int32_t *r_corr, int32_t *b_corr,
+    int32_t corr_param_a, int32_t corr_param_b,
+    int32_t *q_ptr, int32_t mix_r, int32_t mix_b,
+    uint32_t *out_wmean, int32_t *out_ratios, int32_t *out_total,
+    uint32_t *out_b_ratio, uint32_t *out_r_ratio);
 static int ae0_tune2(uint32_t wmean, uint32_t q, uint32_t target_ev,
                      uint32_t *exp_out, uint32_t *ag_out, uint32_t *dg_out);
 static void tisp_set_ae0_ag(uint32_t ag, uint32_t dg);
@@ -4454,108 +4472,240 @@ static int tisp_ae0_ctrls_update(void)
 
 /* ae0_weight_mean2 — OEM EXACT (0x4f93c): Compute weighted mean from zone grid.
  *
- * OEM takes 23 args with separate R/G/B channels, multiple weight arrays,
- * and 64-bit accumulations.  This implementation accesses globals directly.
+ * Full 23-parameter implementation matching OEM binary.
  *
- * Per-zone processing (from BN C decompilation):
- *   zone_area = ae_param[19+row] * ae_param[4+col]  (row_spacing * col_spacing)
+ * Per-zone processing:
+ *   zone_area = ae_param[0x4c/4+row] * ae_param[0x10/4+col]
  *   raw_sum = R[i] + G[i] + B[i]
- *   norm = raw_sum / zone_area  → stored in output_zones[i]
- *   mixed = arg18 * B[i] + arg17 * R[i] + G[i]   (channel mixing)
- *   total_weight = zone_area  (simplified: no dark/bright pixel correction)
+ *   norm = raw_sum / zone_area → stored in out_zones[i]
+ *   bright = bright_pixels[i], dark = dark_pixels[i]
+ *   net = zone_area - bright - dark
+ *   total_wt = bright*mix_b + dark*mix_r + net
+ *   mixed = mix_b*B[i] + mix_r*R[i] + G[i]
+ *   correction = 1 (or AWB-aware adjustment when enabled)
  *   wmean_num += mixed * zone_weight * correction  (64-bit)
- *   wmean_den += total_weight * zone_weight * correction  (64-bit)
- *   wmean = wmean_num / wmean_den
+ *   wmean_den += total_wt * zone_weight * correction  (64-bit)
  *
- * For GC2053 default mode: arg17=1, arg18=1 → mixed = R+G+B = raw_sum.
- *
- * out_zones:  225-element output array of per-zone normalized brightness
- * out_wmean:  output weighted mean luminance
- * out_total:  output total normalized brightness sum
+ * Outputs:
+ *   *out_wmean = wmean_num / wmean_den  (weighted mean brightness)
+ *   *out_ratios = [bright_mix_ratio, dark_mix_ratio] in Q-format
+ *   *out_total += per-zone norms (accumulated)
+ *   *out_b_ratio = sum(raw_sum*b_corr) / sum(zone_area*b_corr)
+ *   *out_r_ratio = sum(raw_sum*r_corr) / sum(zone_area*r_corr)
  */
-static void ae0_weight_mean2(uint32_t *out_zones, uint32_t *out_wmean,
-                             uint32_t *out_total)
+static void ae0_weight_mean2(
+    uint32_t *zone_r,       /* arg1:  R channel per-zone sums */
+    uint32_t *zone_g,       /* arg2:  G channel per-zone sums */
+    uint32_t *zone_b,       /* arg3:  B channel per-zone sums */
+    uint32_t *dark_pix,     /* arg4:  dark pixel counts per zone */
+    uint32_t *bright_pix,   /* arg5:  bright/saturated pixel counts per zone */
+    uint32_t *out_zones,    /* arg6:  output per-zone normalized brightness */
+    void     *zone_copy,    /* arg7:  spinlock-protected copy destination (0x384 bytes) */
+    void     *ae_param,     /* arg8:  AE parameter struct (zone grid layout) */
+    uint32_t *zone_wt,      /* arg9:  per-zone weight array (225 entries) */
+    void     *awb_cfg,      /* arg10: AWB/correction config (flag at +0x24) */
+    void     *corr_cfg,     /* arg11: correction mode config (value at +4) */
+    int32_t  *r_corr,       /* arg12: R correction per-zone array */
+    int32_t  *b_corr,       /* arg13: B correction per-zone array */
+    int32_t   corr_param_a, /* arg14: correction computation parameter */
+    int32_t   corr_param_b, /* arg15: correction computation parameter */
+    int32_t  *q_ptr,        /* arg16: pointer to Q-format precision */
+    int32_t   mix_r,        /* arg17: R channel mixing weight */
+    int32_t   mix_b,        /* arg18: B channel mixing weight */
+    uint32_t *out_wmean,    /* arg19: OUTPUT weighted mean brightness */
+    int32_t  *out_ratios,   /* arg20: OUTPUT [bright_ratio, dark_ratio] */
+    int32_t  *out_total,    /* arg21: OUTPUT accumulated total (incremented) */
+    uint32_t *out_b_ratio,  /* arg22: OUTPUT B-weighted color ratio */
+    uint32_t *out_r_ratio)  /* arg23: OUTPUT R-weighted color ratio */
 {
-    uint32_t cols = _ae_parameter.data[1];
-    uint32_t rows = _ae_parameter.data[3];
-    uint32_t r, c, idx;
-    uint64_t wmean_num = 0;  /* OEM: var_cc:var_c8 pair (numerator) */
-    uint64_t wmean_den = 0;  /* OEM: var_c8:var_c8 pair (denominator) */
-    uint32_t total_norm = 0; /* OEM: *arg21 = sum of normalized zone values */
+    uint32_t *param = (uint32_t *)ae_param;
+    int32_t q = q_ptr ? *q_ptr : 10;
+    uint32_t qm = q & 31;
+    uint32_t threshold = param[0x8c / 4];  /* OEM: *(arg8 + 0x8c) */
+    uint32_t cols = param[0xc / 4];        /* OEM: *(arg8 + 0xc) = ae_param[3] */
+    uint32_t rows = param[4 / 4];          /* OEM: *(arg8 + 4) = ae_param[1] */
+    uint32_t corr_threshold = param[0x88 / 4]; /* OEM: *(arg8 + 0x88) */
+    int32_t corr_mode = corr_cfg ? *((int32_t *)corr_cfg + 1) : 1; /* *(arg11+4) */
+    int32_t corr_enabled = awb_cfg ? *((int32_t *)awb_cfg + 9) : 0; /* *(arg10+0x24) */
 
-    /* OEM: arg17/arg18 channel mixing weights.
-     * Default (sensor mode 0): both = 1 → mixed = R + G + B */
-    uint32_t mix_r = 1;  /* arg17 */
-    uint32_t mix_b = 1;  /* arg18 */
+    uint32_t r, c, idx;
+    uint32_t s1_offset = 0;   /* byte offset into zone arrays per row */
+
+    /* OEM: 9 uint32 accumulators, zeroed via memset(&var_d8_1, 0, 0x24) */
+    uint32_t acc_bright_mix = 0;  /* var_d8: sum of bright*mix_b */
+    uint32_t acc_dark_mix = 0;    /* var_d4: sum of dark*mix_r */
+    uint32_t acc_total_wt = 0;    /* var_d0: sum of total_weight */
+    uint64_t wmean_num = 0;       /* var_cc:var_c8: weighted numerator (64-bit) */
+    uint64_t wmean_den = 0;       /* var_c8:???: weighted denominator (64-bit) */
+    uint64_t acc_b_num = 0;       /* var_c4:var_c0: B correction numerator */
+    uint64_t acc_b_den = 0;       /* var_c0:var_bc: B correction denominator */
+    uint64_t acc_r_num = 0;       /* var_bc:var_b8: R correction numerator */
+    uint64_t acc_r_den = 0;       /* var_b8:???: R correction denominator */
 
     if (cols == 0) cols = 1;
     if (rows == 0) rows = 1;
-    if (cols > 15) cols = 15;
-    if (rows > 15) rows = 15;
 
+    /* Main double loop: iterate over row × col zone grid */
     for (r = 0; r < rows; r++) {
-        uint32_t row_spacing = _ae_parameter.data[19 + r];
-        if (row_spacing == 0) row_spacing = 1;
+        /* OEM: col spacing array starts at ae_param + 0x10 (= param[4+col]) */
+        uint32_t *col_spacing_p = &param[4];
+        /* OEM: zone weights for this row */
+        uint32_t *wt_p = &zone_wt[s1_offset / 4];
+        /* OEM: pointers into zone arrays at current row offset */
+        uint32_t *rp = &zone_r[s1_offset / 4];
+        uint32_t *gp = &zone_g[s1_offset / 4];
+        uint32_t *bp = &zone_b[s1_offset / 4];
+        uint32_t *outp = &out_zones[s1_offset / 4];
+        int32_t  *bcp = b_corr ? &b_corr[s1_offset / 4] : NULL;
+        int32_t  *rcp = r_corr ? &r_corr[s1_offset / 4] : NULL;
+        uint32_t *brp = bright_pix ? &bright_pix[s1_offset / 4] : NULL;
+        uint32_t *dkp = dark_pix ? &dark_pix[s1_offset / 4] : NULL;
 
         for (c = 0; c < cols; c++) {
-            uint32_t col_spacing, zone_area, raw_sum, norm, mixed;
-            uint32_t weight, total_wt;
+            /* OEM: zone_area = param[0x4c/4 + row] * col_spacing[col]
+             * param[0x4c/4] = param[19] = row spacing array */
+            uint32_t zone_area = param[0x4c / 4 + r] * col_spacing_p[c];
+            uint32_t raw_sum, norm, bright, dark, net, total_wt;
+            int32_t mixed, correction;
 
-            idx = r * cols + c;
-            if (idx >= 225)
-                break;
+            if (zone_area == 0) zone_area = 1;
 
-            col_spacing = _ae_parameter.data[4 + c];
-            if (col_spacing == 0) col_spacing = 1;
+            /* OEM: raw_sum = R[i] + G[i] + B[i] */
+            raw_sum = rp[c] + gp[c] + bp[c];
 
-            /* OEM: zone_area = ae_param[0x4c/4 + row] * ae_param[0x10/4 + col_offset] */
-            zone_area = row_spacing * col_spacing;
-
-            /* OEM: raw_sum = arg1[i] + arg2[i] + arg3[i] (R + G + B) */
-            raw_sum = ae0_zone_r[idx] + ae0_zone_g[idx] + ae0_zone_b[idx];
-
-            /* OEM: norm = raw_sum / zone_area → per-pixel brightness */
+            /* OEM: norm = raw_sum / zone_area → per-zone brightness */
             norm = raw_sum / zone_area;
-            out_zones[idx] = norm;
-            total_norm += norm;
+            outp[c] = norm;
 
-            /* OEM: channel-mixed value.
-             * mixed = arg18 * B[i] + arg17 * R[i] + G[i]
-             * With mix_r=1, mix_b=1: mixed = R + G + B = raw_sum */
-            mixed = mix_b * ae0_zone_b[idx] + mix_r * ae0_zone_r[idx]
-                    + ae0_zone_g[idx];
+            /* OEM: *arg21 += norm (accumulated total) */
+            *out_total += norm;
 
-            /* OEM: total_wt = zone_area - arg5[i] - arg4[i]
-             * (corrected for dark/bright pixel counts — arg4/arg5 default to 0) */
-            total_wt = zone_area;
+            /* OEM: B/R correction accumulation */
+            {
+                int32_t bc = bcp ? bcp[c] : 1;
+                int32_t rc = rcp ? rcp[c] : 1;
+                acc_b_num += (uint64_t)raw_sum * (uint32_t)bc;
+                acc_b_den += (uint64_t)zone_area * (uint32_t)bc;
+                acc_r_num += (uint64_t)raw_sum * (uint32_t)rc;
+                acc_r_den += (uint64_t)zone_area * (uint32_t)rc;
+            }
 
-            /* OEM: zone weight from _ae_zone_weight */
-            weight = _ae_zone_weight.data[idx];
+            /* OEM: pixel classification */
+            bright = brp ? brp[c] : 0;
+            dark = dkp ? dkp[c] : 0;
+            net = zone_area - bright - dark;
 
-            /* OEM: 64-bit weighted accumulation.
-             * wmean_num += mixed * weight * correction (correction=1 default)
-             * wmean_den += total_wt * weight * correction */
-            wmean_num += (uint64_t)mixed * weight;
-            wmean_den += (uint64_t)total_wt * weight;
+            /* OEM: total_wt = bright*mix_b + dark*mix_r + net_pixels */
+            total_wt = bright * mix_b + dark * mix_r + net;
+
+            /* OEM: mixed = mix_b*B + mix_r*R + G (channel-weighted luminance) */
+            mixed = mix_b * (int32_t)bp[c] + mix_r * (int32_t)rp[c]
+                    + (int32_t)gp[c];
+
+            /* OEM: accumulate per-category pixel sums */
+            acc_bright_mix += bright * mix_b;
+            acc_dark_mix += dark * mix_r;
+            acc_total_wt += total_wt;
+
+            /* OEM: per-zone correction factor.
+             * When *(arg10+0x24) != 0 && *(arg11+4) != 1: compute
+             * AWB-aware correction from color ratios within the zone.
+             * Default (GC2053 standard mode): correction = 1. */
+            correction = 1;
+            if (corr_enabled && corr_mode != 1) {
+                /* OEM: 3-band correction from dark/net/bright pixel ratios.
+                 * Uses fix_point_div for normalized ratios, then combines:
+                 * correction = (mult2(q, combined_ratio) >> q >> 2) + 1 */
+                uint32_t band_dark = 0, band_net = 0, band_bright = 0;
+
+                if (total_wt > 0) {
+                    band_dark = fix_point_div_32(q,
+                        ((uint32_t)(dark * mix_r)) << qm,
+                        total_wt << qm);
+                    band_net = fix_point_div_32(q,
+                        net << qm, total_wt << qm);
+                    band_bright = fix_point_div_32(q,
+                        ((uint32_t)(bright * mix_b)) << qm,
+                        total_wt << qm);
+                }
+
+                {
+                    uint32_t sum = fix_point_div_32(q,
+                            band_dark, (corr_threshold + 1) << qm);
+                    sum += fix_point_div_32(q,
+                            band_net,
+                            ((uint32_t)(threshold - 1 - corr_threshold)) << qm);
+                    sum += fix_point_div_32(q,
+                            band_bright,
+                            ((uint32_t)(256 - threshold)) << qm);
+
+                    correction = (int32_t)((fix_point_mult2_32(q, sum,
+                                    corr_param_a << qm) >> qm >> 2) + 1);
+                }
+            }
+
+            /* OEM: 64-bit weighted accumulation
+             * wmean_num += mixed * zone_weight * correction
+             * wmean_den += total_wt * zone_weight * correction */
+            {
+                int32_t weight = (int32_t)wt_p[c];
+                wmean_num += (uint64_t)((uint32_t)(mixed * weight))
+                             * (uint32_t)correction;
+                wmean_den += (uint64_t)((uint32_t)(total_wt * weight))
+                             * (uint32_t)correction;
+            }
         }
+
+        s1_offset += cols * 4;  /* advance byte offset for next row */
     }
 
-    if (out_total)
-        *out_total = total_norm;
+    /* OEM: spinlock-protected copy of per-zone brightness to output buffer.
+     * The OEM copies under its own spinlock (BN shows lock addr 0).
+     * Our caller passes ae0_zone_copy and then calls tisp_ae_update_zone_data
+     * which handles the proper spinlock in tx_isp_ae_zone.c. */
+    memcpy(zone_copy, out_zones, 0x384);
 
-    if (wmean_den == 0) {
-        *out_wmean = 1;
-        return;
+    /* OEM: B-weighted color ratio output */
+    if (acc_b_den > 0) {
+        uint64_t tmp = acc_b_num;
+        do_div(tmp, (uint32_t)acc_b_den);
+        *out_b_ratio = (uint32_t)tmp;
+    } else {
+        *out_b_ratio = 0;
     }
 
+    /* OEM: R-weighted color ratio output */
+    if (acc_r_den > 0) {
+        uint64_t tmp = acc_r_num;
+        do_div(tmp, (uint32_t)acc_r_den);
+        *out_r_ratio = (uint32_t)tmp;
+    } else {
+        *out_r_ratio = 0;
+    }
+
+    /* OEM: weighted mean brightness */
     {
-        uint64_t result = wmean_num;
-        do_div(result, (uint32_t)wmean_den);
-        *out_wmean = (uint32_t)result;
+        uint32_t wmean;
+        if (wmean_den > 0) {
+            uint64_t tmp = wmean_num;
+            do_div(tmp, (uint32_t)wmean_den);
+            wmean = (uint32_t)tmp;
+        } else {
+            wmean = 0;
+        }
+        if (wmean == 0) wmean = 1;
+        *out_wmean = wmean;
     }
 
-    if (*out_wmean == 0)
-        *out_wmean = 1;
+    /* OEM: bright/dark pixel ratio outputs in Q-format */
+    {
+        uint32_t total_q = acc_total_wt << qm;
+        if (total_q == 0) total_q = 1;
+        out_ratios[0] = fix_point_div_32(q,
+                acc_bright_mix << qm, total_q);
+        out_ratios[1] = fix_point_div_32(q,
+                acc_dark_mix << qm, total_q);
+    }
 }
 
 /* tisp_ae_target — OEM EXACT: Interpolate AE brightness target from EV tables.
@@ -5177,6 +5327,13 @@ phase_g:
             s4_2_flag = 0;  /* assume converged */
 
             if (fix_point_mult3_32(s0, s4_q, var_d4, var_d0) >= s2_2) {
+                if (s2_2 < var_b8) {
+                    uint32_t ad = fix_point_mult2_32(s0, var_d4, var_d0);
+                    if (ad > 0) {
+                        var_c4 = (fix_point_div_32(s0, s2_2, ad)) >> qm;
+                        if (var_c4 == 0) var_c4 = 1;
+                    }
+                }
                 goto phase_h_converged;
             }
 
@@ -5225,8 +5382,19 @@ phase_g:
 
             s4_2_flag = 0;
 
-            if (fix_point_mult2_32(s0, v0_118, v0_116) >= s2_2)
+            if (fix_point_mult2_32(s0, v0_118, v0_116) >= s2_2) {
+                /* Current exposure exceeds target — reduce IT.
+                 * OEM Phase H only handles the increase path.  The OEM's
+                 * reduction mechanism is unidentified (possibly in the
+                 * Tiziano_ae0_fpga wrapper or via a sensor-specific alloc).
+                 * Without this, IT can never decrease and AE is stuck. */
+                if (s2_2 < var_b8 && v0_116 > 0) {
+                    uint32_t reduced_it_q = fix_point_div_32(s0, s2_2, v0_116);
+                    var_c4 = reduced_it_q >> qm;
+                    if (var_c4 == 0) var_c4 = 1;
+                }
                 goto phase_h_converged;
+            }
 
             /* Compute needed IT ratio and max ratios */
             if (v0_116 == 0) v0_116 = 1;
@@ -5509,6 +5677,13 @@ static void tisp_set_ae0_ag(uint32_t ag, uint32_t dg)
 
     IspAeFlag = 0;  /* Clear initial convergence flag */
 
+    /* OEM EXACT: *(arg2+4) = ag_new; *(arg2+8) = dg_new;
+     * The OEM writes actual AG/DG back into _ae_reg.data[1]/data[2]
+     * (arg2 is a pointer to _ae_reg).  The cache insertion in
+     * tisp_ae0_process_impl reads from _ae_reg.data[1]/data[2]. */
+    _ae_reg.data[1] = ag_new;
+    _ae_reg.data[2] = dg_new;
+
     {
         static int ae0ag_log_cnt;
         if (ae0ag_log_cnt < 20 || (ae0ag_log_cnt & 0xff) == 0) {
@@ -5531,23 +5706,72 @@ static void tisp_set_ae0_ag(uint32_t ag, uint32_t dg)
  *   6. Pushes event 7 (EV update), event 4 (total gain), event 5 (analog gain)
  *
  * This implementation follows the OEM flow with simplified internals. */
+/* OEM: dark/bright pixel count arrays per zone.
+ * Populated by ae0_interrupt_static from HW stats.  Default zero
+ * (GC2053 doesn't report per-zone over/under-exposed pixel counts). */
+static uint32_t ae0_zone_dark[225];
+static uint32_t ae0_zone_bright[225];
+
+/* OEM: ae0_weight_mean2 output variables (persist across frames). */
+static uint32_t ae0_wm2_wmean;       /* arg19: weighted mean brightness */
+static int32_t  ae0_wm2_ratios[2];   /* arg20: [bright_ratio, dark_ratio] */
+static int32_t  ae0_wm2_total;       /* arg21: accumulated total norm */
+static uint32_t ae0_wm2_b_ratio;     /* arg22: B-weighted color ratio */
+static uint32_t ae0_wm2_r_ratio;     /* arg23: R-weighted color ratio */
+
+/* OEM: zone copy buffer for spinlock-protected output.
+ * ae0_weight_mean2 copies the per-zone brightness here under lock;
+ * tisp_ae_get_y_zone reads from this buffer for ioctl. */
+static uint32_t ae0_zone_copy[225];
+
 static int tisp_ae0_process_impl(void)
 {
     uint32_t q;
     uint32_t zones[225];
     uint32_t wmean = 0, total_wt = 0;
     uint32_t new_it, new_ag, new_dg;
+    int32_t q_val;
 
     q = _AePointPos.data[0] & 31;
     if (q == 0)
         q = 10;  /* Default Q10 fixed-point */
+    q_val = (int32_t)q;
 
-    /* ---- Step 1: Read zone data and compute weighted mean ---- */
-    /* OEM: ae0_weight_mean2 uses the separate R/G/B arrays populated by
-     * ae0_interrupt_static.  tisp_ae_get_y_zone still reads the summed
-     * zones for legacy code paths. */
-    tisp_ae_get_y_zone(zones);
-    ae0_weight_mean2(zones, &wmean, &total_wt);
+    /* ---- Step 1: Compute weighted mean via full OEM ae0_weight_mean2 ---- */
+    /* OEM: ae0_weight_mean2 takes 23 args: separate R/G/B zone arrays,
+     * dark/bright pixel counts, zone grid params, zone weights, correction
+     * config, mixing weights, and produces wmean + color ratio outputs. */
+    ae0_wm2_total = 0;  /* OEM: *arg21 is accumulated (starts at 0) */
+    ae0_weight_mean2(
+        ae0_zone_r,             /* arg1:  R channel per-zone sums */
+        ae0_zone_g,             /* arg2:  G channel per-zone sums */
+        ae0_zone_b,             /* arg3:  B channel per-zone sums */
+        ae0_zone_dark,          /* arg4:  dark pixel counts (zero default) */
+        ae0_zone_bright,        /* arg5:  bright pixel counts (zero default) */
+        zones,                  /* arg6:  output per-zone brightness */
+        ae0_zone_copy,          /* arg7:  spinlock copy destination */
+        &_ae_parameter,         /* arg8:  AE param struct (zone grid layout) */
+        _ae_zone_weight.data,   /* arg9:  per-zone weights (225 entries) */
+        NULL,                   /* arg10: AWB correction config (disabled) */
+        NULL,                   /* arg11: correction mode config (disabled) */
+        NULL,                   /* arg12: R correction array (unused) */
+        NULL,                   /* arg13: B correction array (unused) */
+        0,                      /* arg14: correction param A */
+        0,                      /* arg15: correction param B */
+        &q_val,                 /* arg16: Q-format precision pointer */
+        1,                      /* arg17: R channel mix weight (default 1) */
+        1,                      /* arg18: B channel mix weight (default 1) */
+        &ae0_wm2_wmean,         /* arg19: OUTPUT weighted mean */
+        ae0_wm2_ratios,         /* arg20: OUTPUT [bright_ratio, dark_ratio] */
+        &ae0_wm2_total,         /* arg21: OUTPUT accumulated total */
+        &ae0_wm2_b_ratio,       /* arg22: OUTPUT B-weighted ratio */
+        &ae0_wm2_r_ratio);      /* arg23: OUTPUT R-weighted ratio */
+
+    wmean = ae0_wm2_wmean;
+    total_wt = ae0_wm2_total;
+
+    /* Update the global zone data for tisp_ae_get_y_zone ioctl reads */
+    tisp_ae_update_zone_data(ae0_zone_copy, sizeof(ae0_zone_copy));
 
     /* ---- OEM Tiziano_ae0_fpga (0x51488) EXACT implementation ----
      * Unpacks sensor config, computes histogram partial sums, does histogram
@@ -5724,13 +5948,25 @@ static int tisp_ae0_process_impl(void)
         ae_scene_wmean = ae_wmean;
         ae_scene_total = total_wt;
 
-        /* OEM: Push current EV (IT*AG*DG) as FIFO value into ae0_tune2.
-         * ae0_conv_state[0] stores the luma TARGET (s5), NOT the current EV.
-         * Using the target as FIFO entry causes s6==s5 → ratio=1.0 → stuck.
-         * The correct FIFO value is the actual current exposure. */
+        /* OEM: Push AG (IspAeExp[1]) as FIFO value into ae0_tune2.
+         *
+         * Traced from OEM Tiziano_ae0_fpga: the two copy loops before the
+         * ae0_tune2 tail call copy IspAeExp into the outgoing arg area.
+         * With frame_size=0x130, ae0_tune2.arg27 maps to IspAeExp[1] = AG.
+         *
+         * With AG (Q10, typically 0x400=1024) as the FIFO value:
+         * - s5 = tisp_ae_target(var_b8) ≈ 600-1200 (after wmean scaling)
+         * - s6 = AG = 1024
+         * - ratio = s5/AG ≈ 0.6-1.2 → meaningful convergence signal
+         *
+         * The ratio drives exposure toward equilibrium where the target
+         * brightness (s5) matches the gain level (AG). When overexposed
+         * with AG=1.0x, s5 < 1024 → ratio < 1.0 → reduce exposure.
+         * With alloc_integration_time properly clipping IT to sensor max,
+         * the Phase H gain distribution handles the reduction naturally
+         * because var_b8 (and thus s2_2) starts at the clamped IT. */
         {
-            uint32_t fifo_val = fix_point_mult3_32(q, new_it << q, new_ag, new_dg);
-            ae0_tune2(ae_wmean, q, fifo_val, &new_it, &new_ag, &new_dg);
+            ae0_tune2(ae_wmean, q, new_ag, &new_it, &new_ag, &new_dg);
         }
     }
     /* OEM ae0_tune2 sets _ae_ev directly; also compute here for logging */
@@ -5795,18 +6031,17 @@ static int tisp_ae0_process_impl(void)
             dg0_cache[i] = dg0_cache[i - 1];
         }
 
-        /* Insert current values: IT from _ae_reg.data[0] (set by
-         * tisp_set_sensor_integration_time), AG from data_c46a0 and DG from
-         * data_c46ac (set by tisp_set_ae0_ag).  _ae_reg.data[1]/[2] are NOT
-         * reliably populated by tisp_set_ae0_ag — it writes to data_c46a0
-         * and data_c46ac instead. */
+        /* OEM EXACT: Insert current values from _ae_reg (post-sensor-clamp).
+         * _ae_reg.data[0]=IT (set by tisp_set_sensor_integration_time),
+         * _ae_reg.data[1]=actual AG, data[2]=DG comp (set by tisp_set_ae0_ag).
+         * ev0 = IT * AG * DG (3-way product), ad0 = AG * DG. */
         cur_ev = fix_point_mult3_32(q,
-            _ae_reg.data[0] << (q & 0x1f), data_c46a0, data_c46ac);
-        cur_ad = fix_point_mult2_32(q, data_c46a0, data_c46ac);
+            _ae_reg.data[0] << (q & 0x1f), _ae_reg.data[1], _ae_reg.data[2]);
+        cur_ad = fix_point_mult2_32(q, _ae_reg.data[1], _ae_reg.data[2]);
         ev0_cache[0] = cur_ev;
         ad0_cache[0] = cur_ad;
-        ag0_cache[0] = data_c46a0;
-        dg0_cache[0] = data_c46ac;
+        ag0_cache[0] = _ae_reg.data[1];
+        dg0_cache[0] = _ae_reg.data[2];
 
         /* OEM: on first run (data_a0e04 == 1), fill entire pipeline
          * with current values so there's no stale data in the delay. */
@@ -5819,8 +6054,8 @@ static int tisp_ae0_process_impl(void)
             }
             /* ag0/dg0: fill indices 1..ef */
             for (i = 1; i <= ef; i++) {
-                ag0_cache[i] = data_c46a0;
-                dg0_cache[i] = data_c46ac;
+                ag0_cache[i] = _ae_reg.data[1];
+                dg0_cache[i] = _ae_reg.data[2];
             }
         }
     }
@@ -15292,8 +15527,15 @@ int tisp_g_dpc_strength(uint32_t *value)
 
 
 
+/* OEM EXACT: tisp_ae_get_hist_custome (0x4f7a8)
+ * Copies the last-captured AE histogram (0x42c bytes) under spinlock. */
 int tisp_ae_get_hist_custome(void *buffer)
 {
+    unsigned long flags;
+
+    spin_lock_irqsave(&ae_hist_lock, flags);
+    memcpy(buffer, tisp_ae_hist_last, 0x42c);
+    spin_unlock_irqrestore(&ae_hist_lock, flags);
     return 0;
 }
 
@@ -15925,9 +16167,8 @@ EXPORT_SYMBOL(tiziano_wdr_init);
 
 /* ===== MISSING TIZIANO ISP PIPELINE COMPONENTS - Binary Ninja Reference ===== */
 
-/* AE data structures and globals - Based on decompiled tiziano_ae_init */
-static uint8_t tisp_ae_hist[0x42c];
-static uint8_t tisp_ae_hist_last[0x42c];
+/* AE data structures — tisp_ae_hist/tisp_ae_hist_last/ae_hist_lock/ae_info_mine/ae_statis_mine
+ * moved to ~line 3448 (before tisp_ae_get_hist_custome usage). */
 static uint8_t dmsc_sp_d_w_stren_wdr_array_ae[0x98];
 static uint32_t ae_ctrls[4];
 /* Removed duplicate declarations - using struct versions */
@@ -33183,6 +33424,227 @@ int tisp_ae_algo_handle(void *attr)
     return 0;
 }
 
+/* OEM EXACT: tx_isp_get_ae_algo_handle (0xda34)
+ * Called from ioctl 0x800456db when custom AE (ta_custom_en==1) is active.
+ * Waits for AE frame completion, gathers AE zone stats + histogram + metadata,
+ * and copies the full 0x7d8-byte ae_info_mine buffer to userspace.
+ *
+ * Layout of ae_info_mine (0x7d8 bytes total):
+ *   +0x000: 8 bytes reserved header
+ *   +0x008: AE zone data (0x384 bytes = 225 zones × u32)
+ *   +0x38c: AE histogram (0x400 bytes = 256 bins × u32)
+ *   +0x78c: histogram metadata (16 bytes)
+ *   +0x7a0: AE control attributes (8 × u32 selected from tisp_ae_ctrls)
+ *   +0x7c0: ISP core state (6 × u32: WDR, DG, IT, AG)
+ */
+int tx_isp_get_ae_algo_handle(void __user *arg)
+{
+    uint32_t ae_attr[38]; /* tisp_get_ae_attr output: 0x98 bytes */
+    uint32_t *statis;
+    uint8_t *info;
+
+    if (!ae_info_mine || !ae_statis_mine)
+        return -ENOMEM;
+
+    /* OEM: wait for AE frame processing to signal completion */
+    wait_for_completion_interruptible(&ae_algo_comp);
+
+    info = ae_info_mine;
+    statis = (uint32_t *)ae_statis_mine;
+
+    /* OEM: clear the data region (skip 8-byte header) */
+    memset(info + 8, 0, 0x7d0);
+
+    /* OEM: fill AE zone luminance data at offset +0x8 (0x384 bytes) */
+    tisp_ae_get_y_zone(info + 8);
+
+    /* OEM: fill temporary histogram buffer (0x42c bytes) */
+    tisp_g_ae_hist(ae_statis_mine);
+
+    /* OEM: copy first 0x400 bytes of histogram to ae_info_mine+0x38c */
+    memcpy(info + 0x38c, ae_statis_mine, 0x400);
+
+    /* OEM: copy histogram metadata bytes from ae_statis_mine to ae_info_mine.
+     * Offsets 0x414-0x420 are single-byte values (likely zone row/col counts),
+     * 0x400-0x410 are u16 values (zone dimensions/params),
+     * 0x424-0x428 are single-byte values. */
+    info[0x78c] = ((uint8_t *)ae_statis_mine)[0x414];
+    info[0x78d] = ((uint8_t *)ae_statis_mine)[0x418];
+    info[0x78e] = ((uint8_t *)ae_statis_mine)[0x41c];
+    info[0x78f] = ((uint8_t *)ae_statis_mine)[0x420];
+
+    /* OEM: u16 values split into byte pairs (little-endian) */
+    {
+        uint16_t v;
+        v = (uint16_t)statis[0x400/4]; /* statis+0x400 */
+        info[0x790] = (uint8_t)v;
+        info[0x791] = (uint8_t)(v >> 8);
+
+        v = (uint16_t)statis[0x404/4]; /* statis+0x404 */
+        info[0x792] = (uint8_t)v;
+        info[0x793] = (uint8_t)(v >> 8);
+
+        v = (uint16_t)statis[0x408/4]; /* statis+0x408 */
+        info[0x794] = (uint8_t)v;
+        info[0x795] = (uint8_t)(v >> 8);
+
+        v = (uint16_t)statis[0x40c/4]; /* statis+0x40c */
+        info[0x796] = (uint8_t)v;
+        info[0x797] = (uint8_t)(v >> 8);
+
+        v = (uint16_t)statis[0x410/4]; /* statis+0x410 */
+        info[0x798] = (uint8_t)v;
+        info[0x799] = (uint8_t)(v >> 8);
+    }
+
+    info[0x79a] = ((uint8_t *)ae_statis_mine)[0x424];
+    info[0x79b] = ((uint8_t *)ae_statis_mine)[0x428];
+
+    /* OEM: get AE control attributes and copy selected fields.
+     * tisp_get_ae_attr fills 0x98 bytes = 38 u32s from tisp_ae_ctrls.
+     * OEM picks specific indices into ae_info_mine. */
+    tisp_get_ae_attr(ae_attr);
+
+    ((uint32_t *)(info + 0x7a0))[0] = ae_attr[3];   /* IT */
+    ((uint32_t *)(info + 0x7a0))[1] = ae_attr[1];   /* AE mode */
+    ((uint32_t *)(info + 0x7a0))[2] = ae_attr[2];   /* AE target */
+    ((uint32_t *)(info + 0x7a0))[3] = ae_attr[4];   /* AG */
+    ((uint32_t *)(info + 0x7a0))[4] = ae_attr[19];  /* ctrl param */
+    ((uint32_t *)(info + 0x7a0))[5] = ae_attr[18];  /* ctrl param */
+    ((uint32_t *)(info + 0x7a0))[6] = ae_attr[25];  /* ctrl param */
+    ((uint32_t *)(info + 0x7a0))[7] = ae_attr[27];  /* ctrl param */
+
+    /* OEM: fill ISP core state fields.
+     * +0x7c0 = WDR mode flag (*($s0+0x17c))
+     * +0x7c4 = DG register u16 low (*(*($s0+0x120)+0xb0))
+     * +0x7c8 = DG register u16 high (*(*($s0+0x120)+0xb2))
+     * +0x7cc = max/allocated IT (*($s0+0x12c))
+     * +0x7d0 = current IT (*($s0+0x124))
+     * +0x7d4 = current AG (*($s0+0x128)) */
+    ((uint32_t *)(info + 0x7c0))[0] = ae_wdr_mode;
+    ((uint32_t *)(info + 0x7c0))[1] = (uint32_t)(uint16_t)data_c46a4;  /* DG low */
+    ((uint32_t *)(info + 0x7c0))[2] = (uint32_t)(uint16_t)data_c46ac;  /* DG high */
+    ((uint32_t *)(info + 0x7c0))[3] = data_c46a8;   /* allocated IT */
+    ((uint32_t *)(info + 0x7c0))[4] = _ae_reg.data[0]; /* current IT */
+    ((uint32_t *)(info + 0x7c0))[5] = data_c46a0;   /* current AG */
+
+    /* OEM: copy entire 0x7d8 bytes to userspace */
+    if (copy_to_user(arg, info, 0x7d8)) {
+        pr_err("[ %s:%d ] copy to user error\n", __func__, __LINE__);
+        return -EFAULT;
+    }
+
+    return 0;
+}
+EXPORT_SYMBOL(tx_isp_get_ae_algo_handle);
+
+/* OEM EXACT: tx_isp_set_ae_algo_open — ioctl 0x800456dd
+ * Opens the custom AE algorithm interface:
+ *  1. Validates version magic (0x336ac)
+ *  2. Calls tisp_ae_algo_init(1, buf) to enable custom AE
+ *  3. Fills return buffer with current AE state (IT, AG, DG, WDR)
+ *  4. Allocates ae_info_mine + ae_statis_mine buffers
+ *  5. Initializes ae_algo_comp completion
+ *  6. Returns filled buffer to userspace (0x80 bytes)
+ */
+int tx_isp_set_ae_algo_open(void __user *arg)
+{
+    uint32_t *buf;
+    int ret = 0;
+
+    buf = kmalloc(0x80, GFP_KERNEL);
+    if (!buf)
+        return -ENOMEM;
+
+    if (copy_from_user(buf, arg, 0x80)) {
+        pr_err("[ %s:%d ] copy from user error\n",
+               "tx_isp_set_ae_algo_open", __LINE__);
+        kfree(buf);
+        return -EFAULT;
+    }
+
+    /* OEM: version check — must be 0x336ac */
+    if (buf[0] != 0x336ac) {
+        pr_err("[ %s:%d ] Ae Algo Function register version error\n",
+               "tx_isp_set_ae_algo_open", __LINE__);
+        kfree(buf);
+        return -1;
+    }
+
+    /* OEM: enable custom AE — fills buf[2..6] with current IT/AG/DG */
+    tisp_ae_algo_init(1, buf);
+
+    /* OEM: fill additional fields from ISP core state.
+     * buf[0x1b] = max/allocated IT
+     * buf[3] = current IT (already filled by tisp_ae_algo_init)
+     * buf[4] = current AG linear (already filled)
+     * buf[5] = 0x400 AG base (already filled)
+     * buf[6] = DG register value (non-WDR: reg 0x1030, WDR: reg 0x1000) */
+    if (ae_wdr_mode != 0) {
+        buf[6] = system_reg_read(0x1000);
+        buf[0x12] = system_reg_read(0x100c);
+    } else {
+        buf[6] = system_reg_read(0x1030);
+    }
+
+    /* OEM: allocate custom AE interface buffers */
+    ae_info_mine = kzalloc(0x800, GFP_KERNEL);
+    ae_statis_mine = kzalloc(0x800, GFP_KERNEL);
+
+    if (!ae_info_mine || !ae_statis_mine) {
+        kfree(ae_info_mine);
+        kfree(ae_statis_mine);
+        ae_info_mine = NULL;
+        ae_statis_mine = NULL;
+        kfree(buf);
+        return -ENOMEM;
+    }
+
+    /* OEM: initialize completion for frame-sync signaling */
+    init_completion(&ae_algo_comp);
+
+    /* OEM: copy filled buffer back to userspace */
+    if (copy_to_user(arg, buf, 0x80)) {
+        pr_err("[ %s:%d ] copy to user error\n",
+               "tx_isp_set_ae_algo_open", __LINE__);
+        ret = -EFAULT;
+    }
+
+    kfree(buf);
+    return ret;
+}
+EXPORT_SYMBOL(tx_isp_set_ae_algo_open);
+
+/* OEM EXACT: tx_isp_set_ae_algo_close — ioctl 0x800456de
+ * Closes the custom AE algorithm interface:
+ *  1. Calls tisp_ae_algo_deinit() + tisp_ae_algo_init(0, NULL)
+ *  2. Frees ae_info_mine and ae_statis_mine
+ */
+int tx_isp_set_ae_algo_close(void __user *arg)
+{
+    uint32_t close_buf[2];
+
+    /* OEM: copy 8 bytes from user (ignored but must succeed) */
+    if (copy_from_user(close_buf, arg, 8)) {
+        pr_err("[ %s:%d ] copy from user error\n",
+               "tx_isp_set_ae_algo_close", __LINE__);
+        return -EFAULT;
+    }
+
+    /* OEM: disable custom AE */
+    tisp_ae_algo_deinit();
+    tisp_ae_algo_init(0, NULL);
+
+    /* OEM: free buffers */
+    kfree(ae_info_mine);
+    kfree(ae_statis_mine);
+    ae_info_mine = NULL;
+    ae_statis_mine = NULL;
+
+    return 0;
+}
+EXPORT_SYMBOL(tx_isp_set_ae_algo_close);
+
 /* OEM EXACT: apical_isp_ae_zone_weight_g_attr (0x7388) — ioctl helper */
 int apical_isp_ae_zone_weight_g_attr(void *ctrl)
 {
@@ -33387,16 +33849,21 @@ static uint32_t tisp_set_sensor_analog_gain_short(uint32_t requested_gain)
 /* The real system_irq_func_set with proper signature is in tx_isp_core.c */
 
 /* Sensor interface functions - Safe structure-based implementations */
+/* OEM EXACT: sensor_alloc_integration_time (0xca08)
+ * Calls the sensor's alloc_integration_time callback if registered,
+ * otherwise returns the input time clamped to sensor max_integration_time.
+ * GC2053 does NOT register alloc_integration_time, so the clamp path
+ * is critical — without it, IT starts at 1410 (tuning binary default)
+ * instead of 1173 (sensor max at 30fps), causing overexposure deadlock. */
 static int data_b2eec(uint32_t time, void **var_ptr)
 {
-    /* Safe sensor integration time allocation */
+    extern struct tx_isp_dev *ourISPdev;
+
     pr_debug("data_b2eec: Allocating integration time %u\n", time);
 
-    extern struct tx_isp_dev *ourISPdev;
     if (!ourISPdev || !ourISPdev->sensor) {
-        pr_err("data_b2eec: No ISP device or sensor available\n");
         if (var_ptr) *var_ptr = NULL;
-        return time; /* Return input time as fallback */
+        return time;
     }
 
     /* Use sensor's integration time allocation if available */
@@ -33407,7 +33874,17 @@ static int data_b2eec(uint32_t time, void **var_ptr)
         return result;
     }
 
-    /* Fallback: return input time */
+    /* No sensor callback: clamp to sensor max_integration_time.
+     * OEM does this implicitly via IspAeExp initialization from
+     * tiziano_ae_init_exp_th.  We must do it here because on
+     * the first frames, ae_exp_th[0] may not yet be sensor-clamped
+     * (sensor_info populates after tisp_init). */
+    {
+        uint32_t max_it = ourISPdev->sensor->attr.max_integration_time;
+        if (max_it > 0 && time > max_it)
+            time = max_it;
+    }
+
     if (var_ptr) *var_ptr = NULL;
     return time;
 }
