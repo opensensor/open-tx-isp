@@ -472,7 +472,7 @@ int tx_isp_create_vic_device(struct tx_isp_dev *isp_dev)
     pr_info("*** CRITICAL: Mapping DUAL VIC register spaces for complete VIC control ***\n");
 
     /* Primary VIC space (original CSI PHY shared space) */
-    vic_dev->vic_regs = ioremap_nocache(0x133e0000, 0x10000);
+    vic_dev->vic_regs = ioremap(0x133e0000, 0x10000);
     if (!vic_dev->vic_regs) {
         pr_err("tx_isp_create_vic_device: Failed to map primary VIC registers at 0x133e0000\n");
         kfree(vic_dev);
@@ -481,7 +481,7 @@ int tx_isp_create_vic_device(struct tx_isp_dev *isp_dev)
     pr_info("*** Primary VIC registers mapped (NC): %p (0x133e0000) ***\n", vic_dev->vic_regs);
 
     /* Secondary VIC space (isp-w01 - CSI PHY coordination space) */
-    vic_dev->vic_regs_secondary = ioremap_nocache(0x10023000, 0x1000);
+    vic_dev->vic_regs_secondary = ioremap(0x10023000, 0x1000);
     if (!vic_dev->vic_regs_secondary) {
         pr_err("tx_isp_create_vic_device: Failed to map secondary VIC registers at 0x10023000\n");
         iounmap(vic_dev->vic_regs);
@@ -1066,7 +1066,6 @@ int vic_saveraw(struct tx_isp_subdev *sd, unsigned int savenum)
     struct file *fp;
     char filename[64];
     loff_t pos = 0;
-    mm_segment_t old_fs;
 
     if (!sd || !isp_dev) {
         pr_err("No VIC or ISP device\n");
@@ -1134,9 +1133,6 @@ int vic_saveraw(struct tx_isp_subdev *sd, unsigned int savenum)
     }
 
     // Save frames to files
-    old_fs = get_fs();
-    set_fs(KERNEL_DS);
-
     for (i = 0; i < savenum; i++) {
         // Different filename format for saveraw
         snprintf(filename, sizeof(filename), "/tmp/vic_save_%d.raw", i);
@@ -1146,7 +1142,7 @@ int vic_saveraw(struct tx_isp_subdev *sd, unsigned int savenum)
             continue;
         }
 
-        ret = vfs_write(fp, capture_buf + (i * frame_size), frame_size, &pos);
+        ret = kernel_write(fp, capture_buf + (i * frame_size), frame_size, &pos);
         if (ret != frame_size) {
             pr_err("Failed to write frame %d\n", i);
         }
@@ -1154,8 +1150,6 @@ int vic_saveraw(struct tx_isp_subdev *sd, unsigned int savenum)
         filp_close(fp, NULL);
         pos = 0;
     }
-
-    set_fs(old_fs);
 
     // Restore registers
     writel(vic_ctrl & 0x11111111, vic_base + 0x7810);
@@ -1181,7 +1175,6 @@ int vic_snapraw(struct tx_isp_subdev *sd, unsigned int savenum)
     struct file *fp;
     char filename[64];
     loff_t pos = 0;
-    mm_segment_t old_fs;
     bool using_rmem = false;
     /* Extra diagnostics for logging to file */
     u32 dims_reg = 0, w_hw_snap = 0, h_hw_snap = 0;
@@ -1303,9 +1296,6 @@ int vic_snapraw(struct tx_isp_subdev *sd, unsigned int savenum)
     } while (0);
 
     // Save frames to files
-    old_fs = get_fs();
-    set_fs(KERNEL_DS);
-
     for (i = 0; i < savenum; i++) {
         snprintf(filename, sizeof(filename), "/tmp/vic_frame_%d.raw", i);
         fp = filp_open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
@@ -1314,22 +1304,20 @@ int vic_snapraw(struct tx_isp_subdev *sd, unsigned int savenum)
             continue;
         }
 
-        ret = vfs_write(fp, capture_buf + (i * frame_size), frame_size, &pos);
+        ret = kernel_write(fp, capture_buf + (i * frame_size), frame_size, &pos);
         if (ret != frame_size) {
             pr_err("Failed to write frame %d\n", i);
     /* Now append a one-line summary (after sampling so stats are valid) */
     do {
         struct file *lfp; loff_t lpos = 0; char line[160]; int len;
-        old_fs = get_fs(); set_fs(KERNEL_DS);
         lfp = filp_open("/tmp/vic_snapraw.log", O_WRONLY | O_CREAT | O_APPEND, 0644);
         if (!IS_ERR(lfp)) {
             len = snprintf(line, sizeof(line),
                 "dims=%ux%u (reg=0x%08x) stride_used=%u stride_reg=%u frame_size=%u sample(n=%zu sum=%u min=%u max=%u)\n",
                 width, height, dims_reg, stride_used, stride_reg, frame_size, sample_n, sample_sum, sample_min, sample_max);
-            vfs_write(lfp, line, len, &lpos);
+            kernel_write(lfp, line, len, &lpos);
             filp_close(lfp, NULL);
         }
-        set_fs(old_fs);
     } while (0);
 
     /* If buffer looks all-zero, retry snapshot on primary VIC bank and resample */
@@ -1358,9 +1346,9 @@ int vic_snapraw(struct tx_isp_subdev *sd, unsigned int savenum)
                 if (sum2 || mx2) {
                     /* Overwrite preview with primary-bank data */
                     struct file *fp2 = filp_open("/tmp/vic_frame_0_pri.raw", O_WRONLY | O_CREAT | O_TRUNC, 0644);
-                    if (!IS_ERR(fp2)) { loff_t p = 0; vfs_write(fp2, capture_buf, frame_size, &p); filp_close(fp2, NULL); }
+                    if (!IS_ERR(fp2)) { loff_t p = 0; kernel_write(fp2, capture_buf, frame_size, &p); filp_close(fp2, NULL); }
                     fp2 = filp_open("/tmp/snap0.raw", O_WRONLY | O_CREAT | O_TRUNC, 0644);
-                    if (!IS_ERR(fp2)) { loff_t p = 0; vfs_write(fp2, capture_buf, frame_size, &p); filp_close(fp2, NULL); }
+                    if (!IS_ERR(fp2)) { loff_t p = 0; kernel_write(fp2, capture_buf, frame_size, &p); filp_close(fp2, NULL); }
                     pr_info("vic_snapraw: primary VIC snapshot produced non-zero data (sum=%u max=%u)\n", sum2, mx2);
                 } else {
                     pr_warn("vic_snapraw: primary VIC snapshot also zero data\n");
@@ -1379,13 +1367,11 @@ int vic_snapraw(struct tx_isp_subdev *sd, unsigned int savenum)
             struct file *fp2 = filp_open("/tmp/snap0.raw", O_WRONLY | O_CREAT | O_TRUNC, 0644);
             if (!IS_ERR(fp2)) {
                 loff_t pos2 = 0;
-                vfs_write(fp2, capture_buf, frame_size, &pos2);
+                kernel_write(fp2, capture_buf, frame_size, &pos2);
                 filp_close(fp2, NULL);
             }
         }
     }
-
-    set_fs(old_fs);
 
     // Restore registers
     writel(vic_ctrl, vic_base + 0x7810);
@@ -1414,7 +1400,7 @@ int vic_snapnv12(struct tx_isp_subdev *sd, unsigned int savenum)
     u32 frame_size = 0, buf_size = 0;
     void *capture_buf = NULL; dma_addr_t dma_addr = 0;
     int i, ret = 0; unsigned long timeout;
-    struct file *fp; char filename[64]; loff_t pos = 0; mm_segment_t old_fs;
+    struct file *fp; char filename[64]; loff_t pos = 0;
 
     if (!sd || !isp_dev) return -EINVAL;
 
@@ -1455,28 +1441,24 @@ int vic_snapnv12(struct tx_isp_subdev *sd, unsigned int savenum)
 
     if (readl(vic_base + 0x7800) & 1) { pr_err("vic_snapnv12: timeout\n"); ret = -ETIMEDOUT; goto out; }
 
-    old_fs = get_fs(); set_fs(KERNEL_DS);
     for (i = 0; i < savenum; i++) {
         snprintf(filename, sizeof(filename), "/tmp/vic_frame_%d_nv12.yuv", i);
         fp = filp_open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
         if (IS_ERR(fp)) continue;
-        vfs_write(fp, capture_buf + (i * frame_size), frame_size, &pos);
+        kernel_write(fp, capture_buf + (i * frame_size), frame_size, &pos);
         filp_close(fp, NULL); pos = 0;
     }
-    set_fs(old_fs);
 
     /* Append one-line summary to file */
     do {
         struct file *lfp; loff_t lpos = 0; char line[160]; int len;
-        old_fs = get_fs(); set_fs(KERNEL_DS);
         lfp = filp_open("/tmp/vic_snapraw.log", O_WRONLY | O_CREAT | O_APPEND, 0644);
         if (!IS_ERR(lfp)) {
             len = snprintf(line, sizeof(line),
               "NV12 dims=%ux%u stride=%u (reg=%u) total_lines=%u frame_size=%u\n",
               width, height, stride, stride_reg, total_lines, frame_size);
-            vfs_write(lfp, line, len, &lpos); filp_close(lfp, NULL);
+            kernel_write(lfp, line, len, &lpos); filp_close(lfp, NULL);
         }
-        set_fs(old_fs);
     } while (0);
 
 out:
@@ -2050,12 +2032,13 @@ int isp_vic_frd_show(struct seq_file *seq, void *v)
     seq_printf(seq, " %d, %d\n", frame_count, total_errors);
 
     /* Binary Ninja: Print all error counts */
-    return seq_printf(seq, "%d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d\n",
+    seq_printf(seq, "%d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d\n",
                      vic_dev->vic_errors[0], vic_dev->vic_errors[1], vic_dev->vic_errors[2],
                      vic_dev->vic_errors[3], vic_dev->vic_errors[4], vic_dev->vic_errors[5],
                      vic_dev->vic_errors[6], vic_dev->vic_errors[7], vic_dev->vic_errors[8],
                      vic_dev->vic_errors[9], vic_dev->vic_errors[10], vic_dev->vic_errors[11],
                      vic_dev->vic_errors[12]);
+    return 0;
 }
 
 /* Dump ISP VIC FRD open - EXACT Binary Ninja implementation */
@@ -2335,7 +2318,7 @@ ssize_t isp_vic_cmd_set(struct file *file, const char __user *buf,
 			vic_dev->processing = 0;
 			wmb();
 
-			INIT_COMPLETION(vic_dev->frame_complete);
+			reinit_completion(&vic_dev->frame_complete);
 			vic_mdma_enable(vic_dev, 0, dual ? 1 : 0, savenum,
 					vic_dev->capture_buf_phys, fmt_arg);
 		}
@@ -2348,12 +2331,8 @@ ssize_t isp_vic_cmd_set(struct file *file, const char __user *buf,
 			pr_err("snapraw: timeout waiting for frame_complete\n");
 		} else {
 			/* Save frames to files */
-			mm_segment_t old_fs;
 			u32 offset = 0;
 			char filename[64];
-
-			old_fs = get_fs();
-			set_fs(KERNEL_DS);
 
 			for (i = 0; i < (int)savenum; i++) {
 				const char *ext = is_nv12 ? "nv12" : "raw";
@@ -2364,17 +2343,13 @@ ssize_t isp_vic_cmd_set(struct file *file, const char __user *buf,
 					 "/tmp/snap%d.%s", i, ext);
 				fp = filp_open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0666);
 				if (!IS_ERR(fp)) {
-					vfs_write(fp,
-						  (char *)vic_dev->capture_buf_virt + offset,
-						  frame_size, &fpos);
+					kernel_write(fp, (char *)vic_dev->capture_buf_virt + offset, frame_size, &fpos);
 					filp_close(fp, NULL);
 					pr_info("snapraw: saved %s (%u bytes)\n",
 						filename, frame_size);
 				}
 				offset += frame_size;
 			}
-
-			set_fs(old_fs);
 			seq_printf(seq, "snapraw successful\n");
 		}
 
@@ -2435,24 +2410,18 @@ ssize_t isp_vic_cmd_set(struct file *file, const char __user *buf,
 			width, height, aligned_h, frame_size, y_phys);
 
 		if (y_phys && y_phys < 0x20000000) {
-			mm_segment_t old_fs;
 			struct file *fp;
 			loff_t fpos = 0;
 			void *virt = (void *)(unsigned long)(y_phys | 0x80000000);
 
-			old_fs = get_fs();
-			set_fs(KERNEL_DS);
-
 			fp = filp_open("/tmp/snap0.raw", O_WRONLY | O_CREAT | O_TRUNC, 0666);
 			if (!IS_ERR(fp)) {
-				vfs_write(fp, (char *)virt, frame_size, &fpos);
+				kernel_write(fp, (char *)virt, frame_size, &fpos);
 				filp_close(fp, NULL);
 				pr_info("saveraw: saved /tmp/snap0.raw (%u bytes)\n", frame_size);
 			} else {
 				pr_err("saveraw: failed to open /tmp/snap0.raw\n");
 			}
-
-			set_fs(old_fs);
 		} else {
 			pr_err("saveraw: no valid frame (y_phys=0x%x)\n", y_phys);
 		}
@@ -3124,7 +3093,7 @@ int tx_isp_vic_probe(struct platform_device *pdev)
 }
 
 /* VIC remove function */
-int tx_isp_vic_remove(struct platform_device *pdev)
+void tx_isp_vic_remove(struct platform_device *pdev)
 {
     struct tx_isp_subdev *sd = platform_get_drvdata(pdev);
     struct resource *res;

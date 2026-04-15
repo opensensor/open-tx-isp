@@ -27677,7 +27677,7 @@ int tisp_event_set_cb(int event_id, void *callback)
     }
 
     /* Binary Ninja: *((arg1 << 2) + &cb) = arg2 */
-    cb[event_id] = ((isp_event_cb_t))callback;
+    cb[event_id] = (isp_event_cb_t)callback;
 
     pr_info("tisp_event_set_cb: Event %d callback set to %p\n", event_id, callback);
     return 0;
