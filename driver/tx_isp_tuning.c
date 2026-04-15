@@ -19710,13 +19710,15 @@ int tiziano_gib_dn_params_refresh(void)
 {
     tiziano_gib_params_refresh();
 
-    /* OEM EXACT: sets data_9a2ec, not GIB_CFG_DEIR_EN */
-    if (deir_en != 1)
-        data_9a2ec = 0;
-    else if (ourISPdev->day_night != 0)
-        data_9a2ec = 0;
-    else
-        data_9a2ec = deir_en;
+    /* OEM sets data_9a2ec here — skip while GIB bypassed (see tiziano_gib_init) */
+    if (!(system_reg_read(0xc) & 0x20)) {
+        if (deir_en != 1)
+            data_9a2ec = 0;
+        else if (ourISPdev->day_night != 0)
+            data_9a2ec = 0;
+        else
+            data_9a2ec = deir_en;
+    }
 
     tiziano_gib_lut_parameter();
     return 0;
@@ -19731,15 +19733,22 @@ int tiziano_gib_init(void)
 {
     tiziano_gib_params_refresh();
 
-    /* OEM EXACT: sets data_9a2ec (AE comp mode flag), NOT GIB_CFG_DEIR_EN.
-     * data_9a2ec controls histogram-based ev_list/lum_list scaling in
-     * ae0_tune2 Phase A.  OEM disables it when DEIR is off or night mode. */
-    if (deir_en != 1)
-        data_9a2ec = 0;
-    else if (ourISPdev->day_night != 0)
-        data_9a2ec = 0;
-    else
-        data_9a2ec = deir_en;
+    /* OEM sets data_9a2ec based on deir_en here. For GC2053 (deir_en=0),
+     * this would set data_9a2ec=0, disabling AE histogram scaling.
+     * However, our AE convergence depends on data_9a2ec=1 (its default)
+     * because our FIFO value (AG) differs from the OEM's. Skip this
+     * modification while GIB is bypassed to avoid breaking AE.
+     * TODO: Re-enable when GIB HW issue is resolved and FIFO value
+     * matches OEM exactly. */
+    if (!(system_reg_read(0xc) & 0x20)) {
+        /* GIB is ACTIVE (bit 5 clear) — apply OEM data_9a2ec logic */
+        if (deir_en != 1)
+            data_9a2ec = 0;
+        else if (ourISPdev->day_night != 0)
+            data_9a2ec = 0;
+        else
+            data_9a2ec = deir_en;
+    }
 
     tiziano_gib_lut_parameter();
     tiziano_gib_deir_reg(tiziano_gib_deir_r_m,
