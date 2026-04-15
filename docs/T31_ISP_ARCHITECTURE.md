@@ -209,15 +209,27 @@ These rules have repeatedly proven important:
 
 ### Still incomplete
 
-- full OEM-calibrated parameter content for AE, ADR/WDR, and denoise banks
 - exact image-quality parity for all enabled blocks
 - some runtime statistics consumers and per-frame tuning decisions
 - full confidence in every block's live enable state under all modes
+- OEM ae0_tune2 gain distribution (Phase H) needs exact threshold-based mode
+- tisp_ae_tune function (scene-adaptive EV table adjustment) not yet implemented
+
+## AE Subsystem — Deep Dive
+
+The AE (Auto-Exposure) subsystem is the most complex algorithm in the ISP driver. See `docs/AE_CONVERGENCE_ARCHITECTURE.md` for the full reverse-engineered architecture including:
+
+- OEM ae0_tune2 (0x500b8): 34-argument convergence controller with EV-domain FIFO, 64-bit interpolation, histogram-based brightness feedback
+- Critical domain mismatch discovery: `_lum_list` values (100-140000) are EV-domain targets, NOT 0-255 brightness
+- The `data_9a2ec` flag enables brightness feedback by scaling ev_list/lum_list tables based on wmean
+- Zone data format: 4-word DMA entries with packed 21-bit R/G/B per zone
+- OEM ae0_weight_mean2 (0x4f93c): separate R/G/B channel processing with 64-bit weighted accumulation
 
 ## Related Documents
 
 - `README.md`
 - `CLAUDE.md`
+- `docs/AE_CONVERGENCE_ARCHITECTURE.md` — AE convergence algorithm deep dive
 - `driver/REGMAP_ADR_YDNS.md`
 - `driver/TX_ISP_VIDEO_S_STREAM_VERIFIED.md`
 - `external/ingenic-sdk/3.10/isp/t31/OEM_TUNING_BLOB_MANIFEST.md`

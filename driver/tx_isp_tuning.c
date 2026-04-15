@@ -584,6 +584,11 @@ static uint32_t bcsh_Cxh[9] = { 0x344, 0x344, 0x344, 0x344, 0x344, 0x344, 0x344,
 static uint32_t bcsh_Cyl[9] = { 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08 }; /* OEM: 0x9a73c */
 static uint32_t bcsh_Cyh[9] = { 0x34c, 0x34c, 0x34c, 0x34c, 0x34c, 0x34c, 0x34c, 0x34c, 0x34c }; /* OEM: 0x9a718 */
 static uint32_t bcsh_B = 0x0400; /* OEM: tisp_BCSH_u32B = 0x400 */
+/* EV-interpolated contrast clipping values (OEM computes these in tiziano_bcsh_update) */
+static uint32_t bcsh_Cxl_now = 0x10;
+static uint32_t bcsh_Cxh_now = 0x344;
+static uint32_t bcsh_Cyl_now = 0x08;
+static uint32_t bcsh_Cyh_now = 0x34c;
 static uint32_t bcsh_OffsetYUVy[2] = { 0x03C0, 0x0440 }; /* OEM: 0x9a6d8 */
 static uint32_t bcsh_OffsetRGB2yuv[3] = { 0x0400, 0x0400, 0x0400 }; /* OEM: 0x9a668..0x9a670 */
 static uint32_t bcsh_clip0[4] = { 0x0000, 0x03ff, 0x0000, 0x03ff }; /* OEM: tisp_BCSH_au32clip 0x9a6c8 */
@@ -1897,6 +1902,21 @@ static void tiziano_bcsh_reg_apply(struct isp_tuning_data *tuning)
         system_reg_write(BASE + 0x000c, PACK16(bcsh_clip0[2], bcsh_clip0[3]));
         system_reg_write(BASE + 0x0010, PACK16(bcsh_clip1[2], bcsh_clip1[3]));
         system_reg_write(BASE + 0x0014, PACK16(bcsh_clip2[2], bcsh_clip2[3]));
+    }
+
+    /* OEM EXACT: Recompute OffsetRGB2yuv from current OffsetRGB using MMatrix.
+     * OEM calls tiziano_bcsh_Toffset_RGB2YUV in every update cycle. Without
+     * this, bcsh_OffsetRGB2yuv stays at the static default {0x400,0x400,0x400}
+     * after any OffsetRGB change (including day/night switch). */
+    {
+        uint32_t *rgb = bcsh_wdr_enabled ? bcsh_OffsetRGB_wdr : bcsh_OffsetRGB;
+        int32_t rgb_in[3] = { (int32_t)rgb[0], (int32_t)rgb[1], (int32_t)rgb[2] };
+        int32_t yuv_out[3];
+        if (tiziano_bcsh_Toffset_RGB2YUV(yuv_out, rgb_in) == 0) {
+            bcsh_OffsetRGB2yuv[0] = (uint32_t)yuv_out[0];
+            bcsh_OffsetRGB2yuv[1] = (uint32_t)yuv_out[1];
+            bcsh_OffsetRGB2yuv[2] = (uint32_t)yuv_out[2];
+        }
     }
 
     /* 0x8018..0x8020: Offset data (OEM arg4=Offset0, arg5=Offset1)
@@ -6881,71 +6901,80 @@ static int apical_isp_ev_g_attr(struct tx_isp_dev *dev, struct isp_core_ctrl *ct
 static int tiziano_bcsh_update(struct isp_tuning_data *tuning)
 {
     uint32_t ev_shifted = tuning->bcsh_ev >> 10;
-    uint32_t interp_values[8];
     int i;
+    int idx = -1;
+    uint32_t weight = 0;
 
-    // Check if EV is below min threshold
+    /* Find interpolation index and weight */
     if (tuning->bcsh_au32EvList_now[0] > ev_shifted) {
-        // Use minimum values
+        idx = 0; weight = 0; /* below min → use index 0 */
+    } else if (ev_shifted >= tuning->bcsh_au32EvList_now[8]) {
+        idx = 8; weight = 0; /* above max → use index 8 */
+    } else {
+        for (i = 0; i < 8; i++) {
+            uint32_t ev_low = tuning->bcsh_au32EvList_now[i];
+            uint32_t ev_high = tuning->bcsh_au32EvList_now[i + 1];
+            if (ev_shifted >= ev_low && ev_shifted < ev_high) {
+                uint32_t range = ev_high - ev_low;
+                idx = i;
+                weight = range ? (((ev_shifted - ev_low) << 8) / range) : 0;
+                break;
+            }
+        }
+    }
+
+    if (idx < 0) idx = 0; /* safety fallback */
+
+    /* Interpolate S-lists */
+    if (idx == 0 && weight == 0 && tuning->bcsh_au32EvList_now[0] > ev_shifted) {
+        /* Below min: use endpoint */
         tuning->bcsh_saturation_value = tuning->bcsh_au32SminListS_now[0];
         tuning->bcsh_saturation_max = tuning->bcsh_au32SmaxListS_now[0];
         tuning->bcsh_saturation_min = tuning->bcsh_au32SminListM_now[0];
         tuning->bcsh_saturation_mult = tuning->bcsh_au32SmaxListM_now[0];
-        /* Apply to hardware */
-        tiziano_bcsh_reg_apply(tuning);
-        return 0;
-    }
-
-    // Check if EV is above max threshold
-    if (ev_shifted >= tuning->bcsh_au32EvList_now[8]) {
-        // Use maximum values
-        tuning->bcsh_saturation_value  = tuning->bcsh_au32SminListS_now[8];
+    } else if (idx == 8) {
+        /* Above max: use endpoint */
+        tuning->bcsh_saturation_value = tuning->bcsh_au32SminListS_now[8];
         tuning->bcsh_saturation_max = tuning->bcsh_au32SmaxListS_now[8];
         tuning->bcsh_saturation_min = tuning->bcsh_au32SminListM_now[8];
         tuning->bcsh_saturation_mult = tuning->bcsh_au32SmaxListM_now[8];
-        // Set other max values...
-        /* Apply to hardware */
-        tiziano_bcsh_reg_apply(tuning);
-        return 0;
+    } else {
+        /* Interpolate between idx and idx+1 */
+        #define INTERP8(arr, ix, w) ((arr)[ix] + ((((arr)[(ix)+1] - (arr)[ix]) * (w)) >> 8))
+        tuning->bcsh_saturation_value = INTERP8(tuning->bcsh_au32SminListS_now, idx, weight);
+        tuning->bcsh_saturation_max = INTERP8(tuning->bcsh_au32SmaxListS_now, idx, weight);
+        tuning->bcsh_saturation_min = INTERP8(tuning->bcsh_au32SminListM_now, idx, weight);
+        tuning->bcsh_saturation_mult = INTERP8(tuning->bcsh_au32SmaxListM_now, idx, weight);
+        #undef INTERP8
     }
 
-    // Find interpolation interval
-    for (i = 0; i < 8; i++) {
-        uint32_t ev_low = tuning->bcsh_au32EvList_now[i];
-        uint32_t ev_high = tuning->bcsh_au32EvList_now[i + 1];
+    /* OEM EXACT: Interpolate Cxl/Cxh/Cyl/Cyh contrast clipping ranges.
+     * OEM does this in tiziano_bcsh_update alongside S-list interpolation. */
+    {
+        uint32_t *cxl = bcsh_wdr_enabled ? bcsh_Cxl_wdr : bcsh_Cxl;
+        uint32_t *cxh = bcsh_wdr_enabled ? bcsh_Cxh_wdr : bcsh_Cxh;
+        uint32_t *cyl = bcsh_wdr_enabled ? bcsh_Cyl_wdr : bcsh_Cyl;
+        uint32_t *cyh = bcsh_wdr_enabled ? bcsh_Cyh_wdr : bcsh_Cyh;
 
-        if (ev_shifted >= ev_low && ev_shifted < ev_high) {
-            // Linear interpolation between points
-            uint32_t range = ev_high - ev_low;
-            uint32_t dist = ev_shifted - ev_low;
-            uint32_t weight = range ? (dist << 8) / range : 0;  // Fixed point 8.8
-
-            // Interpolate SminListS
-            uint32_t v1 = tuning->bcsh_au32SminListS_now[i];
-            uint32_t v2 = tuning->bcsh_au32SminListS_now[i + 1];
-            tuning->bcsh_saturation_value = v1 + (((v2 - v1) * weight) >> 8);
-
-            // Interpolate SmaxListS
-            v1 = tuning->bcsh_au32SmaxListS_now[i];
-            v2 = tuning->bcsh_au32SmaxListS_now[i + 1];
-            tuning->bcsh_saturation_max = v1 + (((v2 - v1) * weight) >> 8);
-
-            // Interpolate SminListM
-            v1 = tuning->bcsh_au32SminListM_now[i];
-            v2 = tuning->bcsh_au32SminListM_now[i + 1];
-            tuning->bcsh_saturation_min = v1 + (((v2 - v1) * weight) >> 8);
-
-            // Interpolate SmaxListM
-            v1 = tuning->bcsh_au32SmaxListM_now[i];
-            v2 = tuning->bcsh_au32SmaxListM_now[i + 1];
-            tuning->bcsh_saturation_mult = v1 + (((v2 - v1) * weight) >> 8);
-
-            break;
+        if (idx == 8 || (idx == 0 && weight == 0 && tuning->bcsh_au32EvList_now[0] > ev_shifted)) {
+            int ei = (idx == 8) ? 8 : 0;
+            bcsh_Cxl_now = cxl[ei];
+            bcsh_Cxh_now = cxh[ei];
+            bcsh_Cyl_now = cyl[ei];
+            bcsh_Cyh_now = cyh[ei];
+        } else {
+            bcsh_Cxl_now = cxl[idx] + (((cxl[idx+1] - cxl[idx]) * weight) >> 8);
+            bcsh_Cxh_now = cxh[idx] + (((cxh[idx+1] - cxh[idx]) * weight) >> 8);
+            bcsh_Cyl_now = cyl[idx] + (((cyl[idx+1] - cyl[idx]) * weight) >> 8);
+            bcsh_Cyh_now = cyh[idx] + (((cyh[idx+1] - cyh[idx]) * weight) >> 8);
         }
     }
 
     /* Apply to hardware */
     tiziano_bcsh_reg_apply(tuning);
+
+    /* OEM EXACT: clear BCSH_real after update (not before) */
+    BCSH_real = 0;
     return 0;
 }
 
@@ -7138,24 +7167,61 @@ int tisp_bcsh_g_saturation(void)
     return ourISPdev->tuning_data->bcsh_saturation;
 }
 
+/* OEM hysteresis state for BCSH updates */
+static uint32_t bcsh_last_ev_shifted = 0;
+static uint32_t bcsh_last_ct = 0;
+
 int tisp_bcsh_ev_update(uint32_t ev)
 {
+    uint32_t ev_shifted;
+    uint32_t delta;
+
     if (!ourISPdev || !ourISPdev->tuning_data)
         return -ENODEV;
     ourISPdev->tuning_data->bcsh_ev = ev;
-    /* Minimal OEM-aligned behavior: apply update immediately */
-    BCSH_real = 0;
-    return tiziano_bcsh_update(ourISPdev->tuning_data);
+    ev_shifted = ev >> 10;
+
+    /* OEM EXACT: Only update when BCSH_real==1 (forced) or EV delta > 0x28 */
+    if (BCSH_real == 1) {
+        tiziano_bcsh_update(ourISPdev->tuning_data);
+        BCSH_real = 0;
+        bcsh_last_ev_shifted = ev_shifted;
+        return 0;
+    }
+
+    delta = (bcsh_last_ev_shifted >= ev_shifted) ?
+            (bcsh_last_ev_shifted - ev_shifted) : (ev_shifted - bcsh_last_ev_shifted);
+    if (delta > 0x28) {
+        tiziano_bcsh_update(ourISPdev->tuning_data);
+        BCSH_real = 0;
+        bcsh_last_ev_shifted = ev_shifted;
+    }
+    return 0;
 }
 
 int tisp_bcsh_ct_update(uint32_t ct)
 {
+    uint32_t delta;
+
     if (!tuning_ready())
         return -ENODEV;
-    /* OEM stores CT for BCSH CCM interpolation */
     ourISPdev->tuning_data->wb_temp = ct;
-    BCSH_real = 0;
-    return tiziano_bcsh_update(ourISPdev->tuning_data);
+
+    /* OEM EXACT: Only update when BCSH_real==1 (forced) or CT delta > 0x64 */
+    if (BCSH_real == 1) {
+        tiziano_bcsh_update(ourISPdev->tuning_data);
+        BCSH_real = 0;
+        bcsh_last_ct = ct;
+        return 0;
+    }
+
+    delta = (bcsh_last_ct >= ct) ? (bcsh_last_ct - ct) : (ct - bcsh_last_ct);
+    if (delta > 0x64) {
+        tiziano_bcsh_update(ourISPdev->tuning_data);
+        BCSH_real = 0;
+        bcsh_last_ct = ct;
+    }
+    return 0;
 }
 
 
@@ -28636,6 +28702,12 @@ void tiziano_af_dn_params_refresh(void)
 static int tiziano_bcsh_dn_params_refresh(void)
 {
 	tiziano_bcsh_params_refresh();
+	/* OEM EXACT: sync the _now arrays so tiziano_bcsh_update sees the
+	 * newly-loaded day/night EvList and S-list values. Without this,
+	 * the tuning_data->bcsh_au32*_now[] arrays stay stale from the
+	 * previous mode. */
+	if (ourISPdev && ourISPdev->tuning_data)
+		tiziano_bcsh_sync_active_bank(ourISPdev->tuning_data);
 	BCSH_real = 1;
 	if (ourISPdev && ourISPdev->tuning_data)
 		tiziano_bcsh_update(ourISPdev->tuning_data);
@@ -28797,10 +28869,26 @@ static void tiziano_bcsh_dump2(void)
  * tiziano_bcsh_compute_slopes, so this exists for compatibility. */
 static void tiziano_bcsh_TransitParam(void)
 {
-    /* TransitParam computation is handled inline by tiziano_bcsh_reg_apply.
-     * Full OEM implementation requires ~50 globals from the BCSH subsystem
-     * (StrenCal, Svalue, Cslope, HDP/HBP/HLSP, OffsetYUV, etc.) which are
-     * already managed by our surrogate implementation. */
+    /* OEM tiziano_bcsh_TransitParam (0x29698) computes:
+     * 1. StrenCal-scaled saturation from user saturation × EV-interpolated base
+     * 2. Contrast C-slope clipping from Cxl/Cxh/Cyl/Cyh interpolated values
+     * 3. HDP/HBP/HLSP slope computations
+     *
+     * Items 2-3 are handled by tiziano_bcsh_compute_slopes in reg_apply.
+     * Item 1: feed the interpolated saturation_value through to data_c52fc
+     * so cm_control sees the EV-adjusted saturation. */
+    if (ourISPdev && ourISPdev->tuning_data) {
+        uint32_t sat = ourISPdev->tuning_data->bcsh_saturation_value;
+        uint32_t user_sat = ourISPdev->tuning_data->bcsh_saturation;
+        /* OEM StrenCal scales: result = base * (user/128) clamped to [0, max] */
+        if (user_sat != 0x80 && sat != 0) {
+            uint32_t scaled = (sat * user_sat) >> 7;
+            if (scaled > 0x1800) scaled = 0x1800;
+            data_c52fc = scaled;
+        } else {
+            data_c52fc = sat;
+        }
+    }
 }
 
 /* OEM: tiziano_deflicker_expt_tune — deflicker exposure tuning.

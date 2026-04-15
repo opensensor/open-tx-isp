@@ -83,12 +83,31 @@ The OEM tuning manifest shows that several subsystems still rely on synthetic, z
 
 Based on `OEM_TUNING_BLOB_MANIFEST.md`, the biggest remaining data-quality gaps are:
 
-1. **AE tables**
+1. ~~**AE tables**~~ — RESOLVED: ae0_ev_list and _lum_list now loaded from tuning binary; ae0_tune2 reimplemented with OEM-exact EV-domain convergence, EV FIFO, and histogram-based brightness feedback (data_9a2ec). See `docs/AE_CONVERGENCE_ARCHITECTURE.md`.
 2. **ADR/WDR tone-mapping tables**
 3. **BCSH / CCM / WB tables**
 4. **MDNS / RDNS / SDNS banks**
 
 Important interpretation: even if register sequencing is correct, visibly wrong output can persist if the active tables are still synthetic.
+
+## AE Subsystem — Current Status (2026-04-14)
+
+The AE convergence controller has been reimplemented to match the OEM ae0_tune2 (0x500b8). Key findings and status:
+
+### Resolved
+- **Domain mismatch**: _lum_list values are EV-domain targets (100-140K), not 0-255 brightness. The OEM compares target/FIFO_average (both EV domain), not target/wmean.
+- **Brightness feedback**: `data_9a2ec=1` enables histogram-based scaling of ev_list/lum_list tables by `(256 - wmean/2) / 256`. This is the mechanism that connects scene brightness to EV-domain convergence.
+- **EV FIFO**: 15-entry temporal smoothing using previous-frame tisp_ae_target outputs (stable lum_list values), not volatile IT*AG*DG products.
+- **Cold-start ramp**: Emergency brightness-based ratio (target=128/wmean, capped 2x) active when wmean < 10 to bootstrap from black image.
+- **Zone data**: Separate R/G/B per-zone arrays extracted from 4-word AE DMA entries.
+- **ae0_weight_mean2**: Reimplemented with OEM algorithm (separate R/G/B, 64-bit weighted accumulation, channel mixing).
+
+### Remaining Work
+- Full OEM gain distribution (Phase H): threshold-based mode using data_c46a8 reference
+- tisp_ae_tune function: scene-adaptive EV table adjustment (arg28 callback in OEM)
+- Anti-flicker correction factor in ae0_weight_mean2
+- OEM arg4/arg5 dark/bright pixel correction in ae0_weight_mean2
+- Complete OEM Tiziano_ae0_fpga histogram processing (mode 1 highlight weighting)
 
 ## Highest-Value Remaining Technical Hypotheses
 
