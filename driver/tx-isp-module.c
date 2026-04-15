@@ -617,7 +617,7 @@ static DEFINE_MUTEX(i2c_client_mutex);
  * Stock flow:
  *   private_request_module(1, arg2, arg3)
  *   if (addr != 0)
- *     client = private_i2c_new_device(adapter, info)
+ *     client = private_i2c_new_client_device(adapter, info)
  *     if (client != 0)
  *       dev = client->dev
  *       if (dev != 0 && try_module_get(dev->driver->owner))
@@ -645,8 +645,8 @@ static struct tx_isp_subdev *isp_i2c_new_subdev_board(struct i2c_adapter *adapte
     if (info->addr == 0)
         return NULL;
 
-    /* Stock: private_i2c_new_device(adapter, info) */
-    client = i2c_new_device(adapter, info);
+    /* Stock: private_i2c_new_client_device(adapter, info) */
+    client = i2c_new_client_device(adapter, info);
     if (!client)
         return NULL;
 
@@ -730,7 +730,7 @@ struct completed_node {
     struct list_head list;
     u32 seq;
     u32 index;
-    struct timeval ts; /* timestamp captured at completion time */
+    s64 ts_us; /* timestamp captured at completion time */
 };
 
 /* Node for queued_buffers: tracks buffer index queued by userspace */
@@ -813,7 +813,7 @@ static int frame_channel_track_buffer(struct frame_channel_device *fcd,
     tracked->bytesused = buffer->bytesused;
     tracked->flags = buffer->flags;
     tracked->field = buffer->field;
-    tracked->timestamp = buffer->timestamp;
+    tracked->timestamp_us = buffer->timestamp_us;
     tracked->sequence = buffer->sequence;
     tracked->memory = buffer->memory;
     tracked->length = buffer->length;
@@ -1280,15 +1280,18 @@ static inline u32 frame_channel_format_sizeimage(u32 pixfmt, u32 width, u32 heig
     }
 }
 
-/* Monotonic timestamp helper: fill timeval from CLOCK_MONOTONIC with kernel-version fallback */
-static inline void fill_timeval_mono(struct timeval *tv)
+/* Monotonic timestamp helper - returns microseconds since boot */
+static inline s64 get_timestamp_us(void)
 {
-#if defined(ktime_get_ts64) || (LINUX_VERSION_CODE >= KERNEL_VERSION(4,20,0))
-    struct timespec64 ts;
-    ktime_get_ts64(&ts);
-    tv->tv_sec = ts.tv_sec;
-    tv->tv_usec = ts.tv_nsec / 1000;
-#elif (LINUX_VERSION_CODE >= KERNEL_VERSION(3,17,0))
+    return ktime_to_us(ktime_get());
+}
+
+/* Legacy wrapper for code that still passes a pointer */
+static inline void fill_timeval_mono(void *tv_unused)
+{
+    /* No-op on modern kernels - use get_timestamp_us() instead */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,0,0)
+    struct timeval *tv = tv_unused;
     struct timespec ts;
     ktime_get_ts(&ts);
     tv->tv_sec = ts.tv_sec;
@@ -2004,7 +2007,7 @@ int frame_channel_open(struct inode *inode, struct file *file)
     spin_lock_init(&fcd->state.buffer_lock);
     fcd->state.pre_dequeue_index = 0;
     fcd->state.pre_dequeue_seq = 0;
-    memset(&fcd->state.pre_dequeue_ts, 0, sizeof(fcd->state.pre_dequeue_ts));
+    memset(&fcd->state.pre_dequeue_ts_us, 0, sizeof(fcd->state.pre_dequeue_ts_us));
     frame_channel_clear_tracked_buffers(fcd);
 
 
@@ -3797,7 +3800,7 @@ long frame_channel_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned 
             state->current_buffer.bytesused = buffer.bytesused;
             state->current_buffer.flags = buffer.flags;
             state->current_buffer.field = buffer.field;
-            state->current_buffer.timestamp = buffer.timestamp;
+            state->current_buffer.timestamp = buffer.timestamp_us;
             state->current_buffer.sequence = buffer.sequence;
             state->current_buffer.memory = buffer.memory;
             state->current_buffer.length = buffer.length;
@@ -3905,7 +3908,7 @@ long frame_channel_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned 
         /* Now that we have a physical address, populate v4l2_buffer for VIC and forward */
 
             uint32_t field;
-            struct timeval timestamp;
+            s64 timestamp_us;
             struct v4l2_timecode timecode;
             uint32_t sequence;
             uint32_t memory;
@@ -3943,7 +3946,7 @@ long frame_channel_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned 
             uint32_t bytesused;
             uint32_t flags;
             uint32_t field;
-            struct timeval timestamp;
+            s64 timestamp_us;
             struct v4l2_timecode timecode;
             uint32_t sequence;
             uint32_t memory;
@@ -3999,7 +4002,7 @@ long frame_channel_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned 
         {
             struct frame_buffer *tracked = NULL;
             u32 delivered_seq = state->sequence;
-            struct timeval delivered_ts;
+            s64 delivered_ts_us;
             u32 delivered_idx;
             u32 done_phys = state->last_done_phys;
             int match_found = 0;
@@ -4022,7 +4025,7 @@ long frame_channel_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned 
             if (!match_found)
                 delivered_idx = delivered_seq % (state->buffer_count ? state->buffer_count : 3);
 
-            fill_timeval_mono(&delivered_ts);
+            delivered_ts_us = get_timestamp_us();
 
             /* Look up the tracked buffer from QBUF to get correct userptr */
             tracked = frame_channel_get_tracked_buffer(fcd, delivered_idx);
@@ -4039,7 +4042,7 @@ long frame_channel_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned 
             if (tracked && tracked->length && buffer.bytesused > tracked->length)
                 buffer.bytesused = tracked->length;
             buffer.field = tracked ? tracked->field : V4L2_FIELD_NONE;
-            buffer.timestamp = delivered_ts;
+            buffer.timestamp_us = delivered_ts_us;
             buffer.sequence = delivered_seq;
             buffer.memory = tracked ? tracked->memory :
                            (state->current_buffer.memory ? state->current_buffer.memory : V4L2_MEMORY_MMAP);
@@ -5346,10 +5349,9 @@ static int tx_isp_platform_probe(struct platform_device *pdev)
     return 0;
 }
 
-static int tx_isp_platform_remove(struct platform_device *pdev)
+static void tx_isp_platform_remove(struct platform_device *pdev)
 {
     pr_info("tx_isp_platform_remove called\n");
-    return 0;
 }
 
 static struct platform_driver tx_isp_driver = {
@@ -7672,7 +7674,6 @@ MODULE_INFO(supported, "T31 ISP Hardware");
 
 /* V4L2 symbol dependencies - declare what we need */
 MODULE_ALIAS("char-major-81-*");  /* V4L2 device major number */
-MODULE_DEVICE_TABLE(platform, tx_isp_platform_device_ids);
 
 /* Platform device ID table for proper device matching */
 static struct platform_device_id tx_isp_platform_device_ids[] = {
@@ -7680,3 +7681,4 @@ static struct platform_device_id tx_isp_platform_device_ids[] = {
     { "tx-isp-t31", 0 },
     { }
 };
+MODULE_DEVICE_TABLE(platform, tx_isp_platform_device_ids);
