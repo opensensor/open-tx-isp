@@ -1704,6 +1704,166 @@ int tx_isp_vic_start(struct tx_isp_vic_device *vic_dev)
                 readl(vic_regs + 0x100), readl(vic_regs + 0x10c),
                 readl(vic_regs + 0x110), readl(vic_regs + 0x1a4));
 
+    } else if (interface_type == TX_SENSOR_DATA_INTERFACE_DVP) {
+        /* DVP - OEM Binary Ninja 00010804-00010b44 */
+        struct tx_isp_dvp_bus *dvp = &sensor_attr->dvp;
+        u32 mbus_code = 0;
+        u32 vic_input_fmt = 0;
+
+        pr_info("DVP interface configuration\n");
+
+        /* VIC mode = DVP (3) */
+        writel(3, vic_regs + 0xc);
+
+        /* Get mbus format code from sensor */
+        if (isp_dev && isp_dev->sensor)
+            mbus_code = isp_dev->sensor->video.mbus.code;
+
+        /* OEM exact mbus_code → VIC input format switch.
+         * Determines the DVP data format bits for VIC register 0x10. */
+        if (mbus_code >= 0x3010) {
+            if (mbus_code >= 0x3200 && mbus_code < 0x3210) {
+                /* RGBIR 10-bit native */
+                goto dvp_10bit_native;
+            } else if (mbus_code >= 0x3300 && mbus_code < 0x3310) {
+                /* RGBIR 12-bit → special format */
+                goto dvp_special;
+            } else if (mbus_code >= 0x3100 && mbus_code < 0x3110) {
+                /* RGBIR 8-bit → 8-bit interleaved */
+                goto dvp_8bit_interleaved;
+            } else if (mbus_code >= 0x3013 && mbus_code < 0x3015) {
+                /* DPCM8 Bayer → 8-bit interleaved */
+                goto dvp_8bit_interleaved;
+            } else if (mbus_code >= 0x3010 && mbus_code < 0x3013) {
+                /* 12-bit Bayer → special format */
+                goto dvp_special;
+            } else if (mbus_code >= 0x3110) {
+                goto dvp_fmt_unsupported;
+            }
+        } else if (mbus_code >= 0x300e && mbus_code < 0x3010) {
+            /* 10-bit Bayer GBRG/RGGB (0x300e, 0x300f) */
+            goto dvp_10bit_native;
+        } else if (mbus_code == 0x300a) {
+            /* 10-bit SGRBG */
+            goto dvp_10bit_native;
+        } else if (mbus_code == 0x3008) {
+            /* 10-bit SGBRG → special format */
+            goto dvp_special;
+        } else if (mbus_code == 0x3007) {
+            /* 10-bit SBGGR */
+            goto dvp_10bit_native;
+        } else if (mbus_code >= 0x3001 && mbus_code < 0x3003) {
+            /* 8-bit Bayer interleaved (2x8) */
+            vic_input_fmt = 0xc0000;
+            goto dvp_8bit_interleaved;
+        } else if (mbus_code == 0x2011 ||
+                   (mbus_code >= 0x2002 && mbus_code < 0x2006)) {
+            vic_input_fmt = 0xc0000;
+        } else if (mbus_code == 0x1008) {
+            vic_input_fmt = 0x80000;
+        } else if (mbus_code == 0x1006) {
+            vic_input_fmt = 0xa0000;
+        } else {
+            goto dvp_fmt_unsupported;
+        }
+        goto dvp_apply;
+
+dvp_10bit_native:
+        if (dvp->mode != SENSOR_DVP_SONY_MODE) {
+            if (dvp->gpio == DVP_PA_LOW_10BIT) {
+                vic_input_fmt = 0x20000;
+            } else if (dvp->gpio == DVP_PA_HIGH_10BIT) {
+                vic_input_fmt = 0x120000;
+            } else {
+                pr_err("%s[%d] VIC failed to config DVP mode!(10bits-sensor)\n",
+                       __func__, __LINE__);
+                return -1;
+            }
+        } else {
+            if (dvp->gpio == DVP_PA_LOW_10BIT) {
+                vic_input_fmt = 0x30000;
+            } else if (dvp->gpio == DVP_PA_HIGH_10BIT) {
+                vic_input_fmt = 0x130000;
+            } else {
+                pr_err("%s[%d] VIC failed to config DVP SONY mode!(10bits-sensor)\n",
+                       __func__, __LINE__);
+                return -1;
+            }
+        }
+        goto dvp_apply;
+
+dvp_8bit_interleaved:
+        /* vic_input_fmt keeps value from entry (0xc0000 for Bayer8, 0 for RGBIR8) */
+        if (dvp->gpio == DVP_PA_HIGH_8BIT)
+            vic_input_fmt = 0x100000;
+        else if (dvp->gpio != DVP_PA_LOW_8BIT) {
+            pr_err("%s[%d] VIC failed to config DVP mode!(8bits-sensor)\n",
+                   __func__, __LINE__);
+            return -1;
+        }
+        goto dvp_apply;
+
+dvp_special:
+        vic_input_fmt = 0x40000;
+        if (dvp->mode == SENSOR_DVP_SONY_MODE)
+            vic_input_fmt = 0x50000;
+        goto dvp_apply;
+
+dvp_fmt_unsupported:
+        pr_err("%s[%d] VIC do not support this format 0x%x\n",
+               __func__, __LINE__, mbus_code);
+        return -1;
+
+dvp_apply:
+        /* Apply DVP polarity: hsync_polar==2 → bit 1, vsync_polar==2 → bit 0 */
+        if (dvp->polar.hsync_polar == 2)
+            vic_input_fmt |= 2;
+        if (dvp->polar.vsync_polar == 2)
+            vic_input_fmt |= 1;
+
+        /* Blanking configuration */
+        if (dvp->blanking.vblanking)
+            writel(dvp->blanking.vblanking, vic_regs + 0x3c);
+
+        /* Line width with hblanking */
+        writel(((u32)dvp->blanking.hblanking << 16) + actual_width, vic_regs + 0x18);
+
+        /* VIC input format: dvp_hcomp_en in bit 31, format bits in lower bits */
+        writel((dvp->dvp_hcomp_en << 31) | vic_input_fmt, vic_regs + 0x10);
+
+        /* Geometry register */
+        writel((actual_width << 16) | actual_height, vic_regs + 0x4);
+
+        /* VIC reset + start sequence (OEM exact: 2 → 4 → poll → 1) */
+        writel(2, vic_regs + 0x0);
+        writel(4, vic_regs + 0x0);
+
+        /* Start sensor streaming — DVP needs data flowing after VIC is configured */
+        if (isp_dev && isp_dev->sensor) {
+            struct tx_isp_subdev *sensor_sd = &isp_dev->sensor->sd;
+            if (sensor_sd->ops && sensor_sd->ops->video &&
+                sensor_sd->ops->video->s_stream) {
+                pr_info("tx_isp_vic_start: starting sensor DVP stream\n");
+                sensor_sd->ops->video->s_stream(sensor_sd, 1);
+            }
+        }
+
+        if (vic_wait_reg0_zero_timeout(vic_dev, vic_regs, 100,
+                                       "tx_isp_vic_start DVP") < 0) {
+            pr_err("tx_isp_vic_start: DVP reset stalled\n");
+        }
+        writel(1, vic_regs + 0x0);
+
+        /* Frame mode registers (DVP uses 0x4210, not MIPI's 0x4440) */
+        writel(0x100010, vic_regs + 0x1a4);
+        writel(0x4210, vic_regs + 0x1ac);
+        writel(0x10, vic_regs + 0x1b0);
+        writel(0, vic_regs + 0x1b4);
+        wmb();
+
+        pr_info("tx_isp_vic_start: DVP config done, mbus=0x%x gpio=%d mode=%d fmt=0x%x\n",
+                mbus_code, dvp->gpio, dvp->mode, vic_input_fmt);
+
     } else if (interface_type == TX_SENSOR_DATA_INTERFACE_BT601) {
         /* BT601 - Binary Ninja 00010688-000107d4 */
         pr_info("BT601 interface configuration\n");
