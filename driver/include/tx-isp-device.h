@@ -599,7 +599,7 @@ struct tx_isp_channel_state {
     u32 pre_dequeue_index;                 /* Index reserved for pre-dequeue consumption */
 
     u32 pre_dequeue_seq;                  /* Sequence reserved for pre-dequeue */
-    struct timeval pre_dequeue_ts;        /* Timestamp captured at completion */
+    s64 pre_dequeue_ts_us;        /* Timestamp captured at completion */
 
 
     /* OEM-aligned completion for 0x400456bf polling (offset 0x2d4) */

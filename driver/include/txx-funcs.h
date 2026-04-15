@@ -55,7 +55,7 @@ struct jz_driver_common_interfaces {
 	struct resource * (*priv_request_mem_region)(resource_size_t start, resource_size_t n,
 				   const char *name);
 	void (*priv_release_mem_region)(resource_size_t start, resource_size_t n);
-	void __iomem * (*priv_ioremap)(phys_t offset, unsigned long size);
+	void __iomem * (*priv_ioremap)(phys_addr_t offset, unsigned long size);
 	void (*iounmap)(const volatile void __iomem *addr);
 	unsigned int reserve_platform[8];
 

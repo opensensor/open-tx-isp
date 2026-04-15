@@ -185,7 +185,7 @@ struct frame_node {
     /* Buffer management */
     uint32_t sequence;         // 0x40: Frame sequence number
     uint32_t total_size;       // 0x44: Total size including metadata
-    struct timespec timestamp; // 0x48: Frame timestamp
+    struct timespec64 timestamp; // 0x48: Frame timestamp
 
     /* USERPTR management */
     unsigned long userptr;   // 0x50: Userspace buffer pointer
@@ -220,7 +220,7 @@ struct __attribute__((packed, aligned(4))) frame_qbuf_request {
     __u32 bytesused;
     __u32 flags;
     __u32 field;
-    struct timeval timestamp;
+    s64 timestamp_us; /* microseconds since boot */
     __u32 sequence;
     __u32 memory;
     union {
@@ -239,7 +239,7 @@ struct __attribute__((packed, aligned(4))) frame_buffer {
     __u32 bytesused;
     __u32 flags;
     __u32 field;
-    struct timeval timestamp;
+    s64 timestamp_us; /* microseconds since boot */
     __u32 sequence;
     __u32 memory;
     union {

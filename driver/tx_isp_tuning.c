@@ -1,3 +1,4 @@
+#include <linux/version.h>
 #include <linux/module.h>
 
 #include <linux/platform_device.h>
@@ -2348,7 +2349,6 @@ static int tisp_alloc_param_block(void **dst, const char *name)
 static int tisp_read_file_into_buffer(const char *path, void **out_buf, int *out_size)
 {
 	struct file *fp;
-	mm_segment_t old_fs;
 	loff_t pos = 0;
 	void *buf;
 	int size;
@@ -2373,10 +2373,16 @@ static int tisp_read_file_into_buffer(const char *path, void **out_buf, int *out
 		return -ENOMEM;
 	}
 
-	old_fs = get_fs();
-	set_fs(KERNEL_DS);
-	ret = vfs_read(fp, (char *)buf, size, &pos);
-	set_fs(old_fs);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,14,0)
+	ret = kernel_read(fp, (char *)buf, size, &pos);
+#else
+	{
+		mm_segment_t old_fs = get_fs();
+		set_fs(KERNEL_DS);
+		ret = vfs_read(fp, (char *)buf, size, &pos);
+		set_fs(old_fs);
+	}
+#endif
 	filp_close(fp, NULL);
 
 	if (ret != size) {
@@ -8600,7 +8606,8 @@ struct af_zone_data af_zone_data = {
 
 
 /* Event callback function array - Binary Ninja reference */
-static int (*cb[32])(void) = {NULL};
+typedef int (*isp_event_cb_t)();
+static isp_event_cb_t cb[32] = {NULL};
 
 /* ISP event callback function array - Binary Ninja reference */
 void (*isp_event_func_cb[32])(void) = {NULL};
@@ -27670,7 +27677,7 @@ int tisp_event_set_cb(int event_id, void *callback)
     }
 
     /* Binary Ninja: *((arg1 << 2) + &cb) = arg2 */
-    cb[event_id] = ((int (*)(void)))callback;
+    cb[event_id] = ((isp_event_cb_t))callback;
 
     pr_info("tisp_event_set_cb: Event %d callback set to %p\n", event_id, callback);
     return 0;
