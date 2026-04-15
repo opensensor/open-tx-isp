@@ -2662,11 +2662,9 @@ static u32 tisp_compute_top_bypass_from_params(int wdr_enable)
 	 *   AND=0xb577fffd  OR=0x34000009
 	 * OEM OR mask only sets bits {0,3,26,28,29}.
 	 *
-	 * TEMPORARY: Force-bypass GIB(bit5) and GB(bit13) because enabling them
-	 * kills AWB HW stats (all zones read zero). The GIB code matches OEM
-	 * but something in the GIB→AWB interaction corrupts stats collection.
-	 * AWB needs working stats to converge WB gains and fix colors.
-	 * TODO: investigate why GIB active → AWB stats dead. */
+	 * WORKAROUND: Force-bypass GIB(bit5). BLC=0 experiment proved the GIB
+	 * HW block itself kills AWB stat DMA when active — not BLC values.
+	 * Root cause is missing HW init in our tisp_init vs OEM. */
 	if (wdr_enable)
 		bypass_val = (bypass_val & 0xa1ffdf76) | 0x00880002;
 	else
@@ -6312,6 +6310,10 @@ int tisp_init(void *sensor_info_arg, char *param_name)
     reg_1c = tisp_sensor_program_bayer(tisp_si_bayer(&sensor_params));
     system_reg_write(0x1c, reg_1c);
 
+    /* NOTE: OEM calls sensor_init(&sensor_ctrl) here to populate callback
+     * function pointers. Our code already has these wired through
+     * ourISPdev->sensor->attr.sensor_ctrl from module init. */
+
     /* Binary Ninja: Call tisp_set_csc_version(0) */
     tisp_set_csc_version(0);
 
@@ -6530,17 +6532,11 @@ int tisp_init(void *sensor_info_arg, char *param_name)
     system_reg_write(0x800, 1);  /* CRITICAL: This starts ISP processing */
     pr_info("*** tisp_init: ISP processing engine STARTED (reg 0x800=1) ***\n");
 
-    /* Post-engine-start gain refresh: ensures all gain-dependent blocks
-     * (GIB BLC, DMSC, sharpen, SDNS, DPC, LSC, YDNS, RDNS, MDNS) have
-     * their registers programmed while the ISP engine is running.
-     * OEM doesn't call this explicitly, but our stat engines lose data
-     * without it — the first tisp_tgain_update via event 4 fires too late. */
+    /* Initial gain refresh: programs all gain-dependent blocks (DMSC,
+     * sharpen, SDNS, DPC, LSC, YDNS, RDNS, MDNS) with their startup
+     * register values. Without this, blocks stay unconfigured until
+     * the first AE gain change fires event 4. */
     tisp_tgain_update(0);
-
-    /* NOTE: GIB is bypassed (bit 5=1) due to HW equalization issue.
-     * When GIB is active, AWB stats show R=G=B regardless of register
-     * values. Tested: zero BLC, bit12=0, post-engine reprogram — all
-     * produce R=G=B. Root cause needs binary-level comparison vs OEM. */
 
     /* Core register dump to compare with OEM for GIB investigation */
     pr_info("ISP_CORE: 0x00=%08x 0x04=%08x 0x08=%08x 0x0c=%08x\n",
@@ -6584,33 +6580,11 @@ int tisp_init(void *sensor_info_arg, char *param_name)
         return param_init_ret;
     }
 
-    /* AE zone/weight register programming — uses OEM's tiziano_ae_set_hardware_param()
-     * to pack _ae_parameter[] into registers 0xa004-0xa028 (AE0) and 0xa804-0xa828 (AE1).
-     * shortcut=0 writes all 10 registers; system_reg_write_ae() latches via 0xa000/0xa800. */
-    tiziano_ae_set_hardware_param(0, _ae_parameter.data, 0);
-    tiziano_ae_set_hardware_param(1, _ae_parameter.data, 0);
-    /* AWB stats enable: 0xb000=1 was written during tiziano_awb_init BEFORE
-     * the ISP engine started (0x800=1).  The hardware ignores 0xb000 writes
-     * when the engine is off, so the latch didn't take.  Re-write it now
-     * that the engine is running.  The OEM recovers from this same ordering
-     * because awb_interrupt_static → tiziano_awb_set_lum_th_freq →
-     * system_reg_write_awb(1,...) re-latches 0xb000=1 on the first frame.
-     * We do it explicitly here for determinism. */
-    system_reg_write(0xb000, 1);
-    pr_info("tisp_init: AE zone config: ae_param[0..3]=%u,%u,%u,%u => 0xa004=%08x (OEM=0x0)\n",
-            _ae_parameter.data[0], _ae_parameter.data[1],
-            _ae_parameter.data[2], _ae_parameter.data[3],
-            system_reg_read(0xa004));
-    pr_info("tisp_init: Stats DMA enable check: 0xa000=%08x 0xa04c=%08x 0xa050=%08x 0xb000=%08x 0xb04c=%08x 0xb050=%08x\n",
-            system_reg_read(0xa000), system_reg_read(0xa04c), system_reg_read(0xa050),
-            system_reg_read(0xb000), system_reg_read(0xb04c), system_reg_read(0xb050));
-
     /* Seed BCSH with a neutral daylight CT (5000 K) so frames produced before
      * AWB converges do not carry the cold-green default (~9984 K). */
     tisp_ct_update(5000);
 
-    pr_info("*** tisp_init: ISP HARDWARE PIPELINE FULLY INITIALIZED - THIS SHOULD TRIGGER REGISTER ACTIVITY ***\n");
-    pr_info("*** tisp_init: All hardware blocks enabled, registers configured, events ready ***\n");
+    pr_info("*** tisp_init: ISP HARDWARE PIPELINE FULLY INITIALIZED ***\n");
 
     return 0;
 }
@@ -19151,6 +19125,9 @@ static int tisp_gib_gain_interpolation(uint32_t gain)
     uint32_t blc_gb = tisp_simple_intp(hi, lo, tiziano_gib_deirm_blc_gb_linear);
     uint32_t blc_b  = tisp_simple_intp(hi, lo, tiziano_gib_deirm_blc_b_linear);
     uint32_t blc_ir = tisp_simple_intp(hi, lo, tiziano_gib_deirm_blc_ir_linear);
+
+    /* NOTE: BLC=0 experiment confirmed GIB block itself kills AWB stats,
+     * not the BLC values. Root cause is in GIB HW init, not BLC arithmetic. */
     uint32_t bayer = system_reg_read(8) & 0x1f;
     uint32_t ch0, ch1, ch2, ch3, ch4;
 
