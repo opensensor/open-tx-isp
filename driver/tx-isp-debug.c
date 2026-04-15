@@ -143,25 +143,17 @@ loff_t private_vfs_llseek(struct file *file, loff_t offset, int whence)
 	return vfs_llseek(file, offset, whence);
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,18,0)
 mm_segment_t private_get_fs(void)
 {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5,10,0)
 	return get_fs();
-#else
-	/* set_fs/get_fs removed; return KERNEL_DS as a harmless sentinel */
-	return KERNEL_DS;
-#endif
 }
 
 void private_set_fs(mm_segment_t val)
 {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5,10,0)
 	set_fs(val);
-#else
-	/* No-op on modern kernels */
-	(void)val;
-#endif
 }
+#endif
 
 
 

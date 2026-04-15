@@ -1283,11 +1283,10 @@ void dump_csi_reg(struct tx_isp_subdev *sd)
     pr_info("==========================================\n");
 }
 
-/* Write buffer to file at csi_dump_path using kernel I/O (3.10 style) */
+/* Write buffer to file at csi_dump_path */
 static void csi_write_file(const char *buf, size_t len)
 {
     struct file *filp;
-    mm_segment_t old_fs;
     loff_t pos = 0;
 
     filp = filp_open(csi_dump_path, O_WRONLY | O_CREAT | O_APPEND, 0644);
@@ -1296,14 +1295,16 @@ static void csi_write_file(const char *buf, size_t len)
         return;
     }
 
-    old_fs = get_fs();
-    set_fs(KERNEL_DS);
-#if defined(HAVE_KERNEL_WRITE)
-    kernel_write(filp, buf, len, &filp->f_pos);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,14,0)
+    kernel_write(filp, buf, len, &pos);
 #else
-    vfs_write(filp, buf, len, &pos);
+    {
+        mm_segment_t old_fs = get_fs();
+        set_fs(KERNEL_DS);
+        vfs_write(filp, buf, len, &pos);
+        set_fs(old_fs);
+    }
 #endif
-    set_fs(old_fs);
 
     filp_close(filp, NULL);
 }

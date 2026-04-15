@@ -1,5 +1,6 @@
 #ifndef __TXX_DRV_FUNCS_H__
 #define __TXX_DRV_FUNCS_H__
+#include <linux/version.h>
 #include <linux/mm.h>
 #include <linux/fs.h>
 #include <linux/clk.h>
@@ -166,8 +167,10 @@ struct jz_driver_common_interfaces {
 	ssize_t (*priv_vfs_read)(struct file *file, char __user *buf, size_t count, loff_t *pos);
 	ssize_t (*priv_vfs_write)(struct file *file, const char __user *buf, size_t count, loff_t *pos);
 	loff_t (*priv_vfs_llseek)(struct file *file, loff_t offset, int whence);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,18,0)
 	mm_segment_t (*priv_get_fs)(void);
 	void (*priv_set_fs)(mm_segment_t val);
+#endif
 	void (*priv_dma_cache_sync)(struct device *dev, void *vaddr, size_t size,
 			 enum dma_data_direction direction);
 
@@ -321,8 +324,10 @@ int private_filp_close(struct file *filp, fl_owner_t id);
 ssize_t private_vfs_read(struct file *file, char __user *buf, size_t count, loff_t *pos);
 ssize_t private_vfs_write(struct file *file, const char __user *buf, size_t count, loff_t *pos);
 loff_t private_vfs_llseek(struct file *file, loff_t offset, int whence);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,18,0)
 mm_segment_t private_get_fs(void);
 void private_set_fs(mm_segment_t val);
+#endif
 void private_dma_cache_sync(struct device *dev, void *vaddr, size_t size,
 			 enum dma_data_direction direction);
 void private_getrawmonotonic(struct timespec *ts);
@@ -333,4 +338,9 @@ void private_get_isp_priv_mem(unsigned int *phyaddr, unsigned int *size);
 
 int private_driver_get_interface(void);
 
-#endif /*__TXX_DRV_FUNCS_H__*/
+/* Compat: PDE_DATA renamed to pde_data in 5.17 */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,17,0)
+#define PDE_DATA(inode) pde_data(inode)
+#endif
+
+#endif
