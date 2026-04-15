@@ -23294,13 +23294,14 @@ int tiziano_dpc_init(void)
     data_9ab10 = 0xFFFFFFFF;
     tiziano_dpc_params_refresh();
 
-    /* Deferred init: do NOT call tisp_dpc_par_refresh here.
-     * That would write DPC registers with zero/default config before
-     * libimp has sent real tuning data, causing streaming hangs.
-     * tisp_dpc_set_par_cfg will do the first HW write with real params. */
-    dpc_params_received = 0;
+    /* OEM EXACT: Initialize DPC hardware immediately from tuning binary.
+     * OEM calls tisp_dpc_par_refresh(0x10000, 0x10000, 1) directly in
+     * tiziano_dpc_init — no deferral. Without this, DPC is never enabled
+     * and dead/hot pixels degrade image sharpness. */
+    dpc_params_received = 1;
+    tisp_dpc_par_refresh(0x10000, 0x10000, 1);
 
-    pr_info("tiziano_dpc_init: tables loaded, HW deferred until tuning params arrive\n");
+    pr_info("tiziano_dpc_init: DPC HW programmed from tuning binary (OEM-exact)\n");
     return 0;
 }
 
