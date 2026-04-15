@@ -1904,20 +1904,11 @@ static void tiziano_bcsh_reg_apply(struct isp_tuning_data *tuning)
         system_reg_write(BASE + 0x0014, PACK16(bcsh_clip2[2], bcsh_clip2[3]));
     }
 
-    /* OEM EXACT: Recompute OffsetRGB2yuv from current OffsetRGB using MMatrix.
-     * OEM calls tiziano_bcsh_Toffset_RGB2YUV in every update cycle. Without
-     * this, bcsh_OffsetRGB2yuv stays at the static default {0x400,0x400,0x400}
-     * after any OffsetRGB change (including day/night switch). */
-    {
-        uint32_t *rgb = bcsh_wdr_enabled ? bcsh_OffsetRGB_wdr : bcsh_OffsetRGB;
-        int32_t rgb_in[3] = { (int32_t)rgb[0], (int32_t)rgb[1], (int32_t)rgb[2] };
-        int32_t yuv_out[3];
-        if (tiziano_bcsh_Toffset_RGB2YUV(yuv_out, rgb_in) == 0) {
-            bcsh_OffsetRGB2yuv[0] = (uint32_t)yuv_out[0];
-            bcsh_OffsetRGB2yuv[1] = (uint32_t)yuv_out[1];
-            bcsh_OffsetRGB2yuv[2] = (uint32_t)yuv_out[2];
-        }
-    }
+    /* NOTE: tiziano_bcsh_Toffset_RGB2YUV was called here to recompute
+     * bcsh_OffsetRGB2yuv from bcsh_OffsetRGB via MMatrix, but with default
+     * OffsetRGB={0,0,0} the MMatrix transform produced wrong UV offsets that
+     * corrupted color. Reverted to static {0x400,0x400,0x400} which produces
+     * correct color output. TODO: investigate proper OffsetRGB initialization. */
 
     /* 0x8018..0x8020: Offset data (OEM arg4=Offset0, arg5=Offset1)
      * Offset0 = [OffsetYUVy[0], 0x400, 0x400]
@@ -28884,26 +28875,10 @@ static void tiziano_bcsh_dump2(void)
  * tiziano_bcsh_compute_slopes, so this exists for compatibility. */
 static void tiziano_bcsh_TransitParam(void)
 {
-    /* OEM tiziano_bcsh_TransitParam (0x29698) computes:
-     * 1. StrenCal-scaled saturation from user saturation × EV-interpolated base
-     * 2. Contrast C-slope clipping from Cxl/Cxh/Cyl/Cyh interpolated values
-     * 3. HDP/HBP/HLSP slope computations
-     *
-     * Items 2-3 are handled by tiziano_bcsh_compute_slopes in reg_apply.
-     * Item 1: feed the interpolated saturation_value through to data_c52fc
-     * so cm_control sees the EV-adjusted saturation. */
-    if (ourISPdev && ourISPdev->tuning_data) {
-        uint32_t sat = ourISPdev->tuning_data->bcsh_saturation_value;
-        uint32_t user_sat = ourISPdev->tuning_data->bcsh_saturation;
-        /* OEM StrenCal scales: result = base * (user/128) clamped to [0, max] */
-        if (user_sat != 0x80 && sat != 0) {
-            uint32_t scaled = (sat * user_sat) >> 7;
-            if (scaled > 0x1800) scaled = 0x1800;
-            data_c52fc = scaled;
-        } else {
-            data_c52fc = sat;
-        }
-    }
+    /* Stub — full TransitParam computes StrenCal saturation scaling,
+     * contrast slopes, HDP/HBP/HLSP slopes. These are partially handled
+     * by tiziano_bcsh_compute_slopes in reg_apply. data_c52fc (saturation
+     * for cm_control) is managed by jz_isp_ccm EV interpolation path. */
 }
 
 /* OEM: tiziano_deflicker_expt_tune — deflicker exposure tuning.
