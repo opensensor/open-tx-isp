@@ -18627,7 +18627,18 @@ static int Tiziano_awb_fpga(const uint32_t *stats_r,
 			pr_info("Tiziano_awb_fpga[%u]: NO active zones "
 				"(all stats zero? pix_thr=%u)\n",
 				awb_no_zones_count, _pixel_cnt_th);
-		return 0;
+		/* OEM does NOT early-return here. When data_88458 is non-zero
+		 * (first frame or after DN switch), the OEM always falls through
+		 * to fill AWB history from seed/CT values and apply initial WB
+		 * gains. Our early return created a deadlock: zero stats on first
+		 * frames (before AWB HW gate latches) → no gains applied →
+		 * AWB never bootstraps. Only skip when history is already
+		 * initialized and we're in steady-state. */
+		if (!awb_history_reset && awb_history_count > 0)
+			return 0;
+		pr_info("Tiziano_awb_fpga: zero zones but history_reset=%u count=%u — bootstrapping from seed\n",
+			awb_history_reset, awb_history_count);
+		force_recalc = 1;
 	}
 
 	if (!force_recalc) {
