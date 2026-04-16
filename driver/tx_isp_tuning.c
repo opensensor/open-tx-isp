@@ -10394,6 +10394,12 @@ int tisp_dpc_param_array_set(int param_id, void *in_buf, int *size_buf)
 
     memcpy(dest_ptr, in_buf, data_size);
     *size_buf = data_size;
+
+    /* OEM EXACT: refresh DPC HW registers after every array update.
+     * Without this, DPC registers contain stale/partial data after
+     * tisp_dpc_set_par_cfg loops through all 31 param IDs. */
+    tisp_dpc_all_reg_refresh(data_9ab10 + 0x200);
+
     pr_debug("tisp_dpc_param_array_set: ID=0x%x, size=%d\n", param_id, data_size);
     return 0;
 }
@@ -23843,6 +23849,11 @@ void tiziano_dpc_params_refresh(void)
     memcpy(dpc_base_m3_fthres, dpc_d_m3_fthres_array, 9 * sizeof(u32));
     memcpy(dpc_base_m3_dthres, dpc_d_m3_dthres_array, 9 * sizeof(u32));
     dpc_base_saved = 1;
+
+    /* OEM EXACT: re-apply DPC strength if it was changed from default (0x80).
+     * Without this, freshly loaded arrays won't be re-interpolated. */
+    if (dpc_strength_stored != 0x80)
+        tisp_s_dpc_str_internal(dpc_strength_stored);
 }
 
 /* OEM EXACT: tisp_s_dpc_str_internal — interpolate DPC threshold arrays
@@ -23888,7 +23899,7 @@ static void tisp_s_dpc_str_internal(uint32_t strength)
         }
     }
 
-    tisp_dpc_all_reg_refresh(total_gain_old + 0x200);
+    tisp_dpc_all_reg_refresh(data_9ab10 + 0x200);
 }
 
 /* OEM EXACT: tisp_s_dpc_strength wrapper (0x64c9c) */
