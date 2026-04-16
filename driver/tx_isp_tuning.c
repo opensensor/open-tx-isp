@@ -28168,7 +28168,8 @@ int system_yvu_or_yuv(int arg1, int arg2, int arg3)
 	else
 		val = (byte0 << 16) | (byte1 << 8) | byte2; /* YVU order */
 
-	return system_reg_write(arg2, val);
+	system_reg_write(arg2, val);
+	return 0;
 }
 
 /* OEM EXACT: tisp_top_read (0x6843c) — read ISP top register */
