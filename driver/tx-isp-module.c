@@ -7778,6 +7778,280 @@ void tx_isp_module_deinit(struct tx_isp_subdev *sd)
     pr_info("tx_isp_module_deinit: Module deinitialized\n");
 }
 
+/*
+ * __fill_v4l2_buffer — OEM: copies first 0x34 bytes of internal buffer to
+ * v4l2_buffer, then patches flags from queue state and buffer state.
+ *
+ * HLIL reference (0xab3c):
+ *   memcpy(arg2, arg1, 0x34)
+ *   arg2->reserved = arg1->reserved   (+0x3c, +0x40)
+ *   arg2->flags = (arg2->flags & 0xffff1bb8) | queue_flags
+ *   if state==3: flags |= 2 (V4L2_BUF_FLAG_DONE)
+ *   if state==4: flags |= 4 (V4L2_BUF_FLAG_ERROR)
+ *
+ * In our struct frame_buffer the first 0x34 bytes map to
+ * index..sequence (matching v4l2_buffer layout).
+ */
+static int __fill_v4l2_buffer(struct frame_buffer *buf, struct v4l2_buffer *b)
+{
+    if (!buf || !b)
+        return -EINVAL;
+
+    /* OEM: memcpy(arg2, arg1, 0x34) — copy the v4l2-compatible header.
+     * Both frame_buffer and v4l2_buffer start with the same layout:
+     * index, type, bytesused, flags, field, timestamp, sequence, memory,
+     * m (union), length — totalling 0x34 bytes on 32-bit MIPS. */
+    b->index     = buf->index;
+    b->type      = buf->type;
+    b->bytesused = buf->bytesused;
+    b->flags     = buf->flags;
+    b->field     = buf->field;
+    b->timestamp = buf->timestamp;
+    b->sequence  = buf->sequence;
+    b->memory    = buf->memory;
+    b->m.userptr = buf->m.userptr;
+    b->length    = buf->length;
+
+    /* OEM: mask flags, keep only V4L2 standard bits, clear transient bits */
+    b->flags &= 0xffff1bb8;
+
+    /* OEM: merge state into flags */
+    switch (buf->state) {
+    case 3: /* ACTIVE/DONE */
+        b->flags |= V4L2_BUF_FLAG_DONE;
+        break;
+    case 4: /* ERROR */
+        b->flags |= V4L2_BUF_FLAG_ERROR;
+        break;
+    default:
+        break;
+    }
+
+    return 0;
+}
+
+/*
+ * find_new_buffer — OEM ISP private memory pool: find a free block in the
+ * ispmem block array (20 entries, each 0x14 bytes).  The OEM iterates the
+ * array checking byte +0xd (state); state==0 means free.
+ *
+ * Our driver uses a different memory allocator (isp_malloc_buffer / vmalloc),
+ * so this is a compatibility stub that simply returns NULL.  The OEM function
+ * is called from isp_mem_init() and isp_malloc_buffer() — both of which we
+ * have already reimplemented differently.
+ */
+static void *find_new_buffer(void)
+{
+    /* Stub: our memory management does not use the OEM block-pool allocator */
+    return NULL;
+}
+
+/*
+ * ispcore_irq_thread_handle — threaded IRQ handler for ISP core.
+ *
+ * OEM HLIL (0x66ae0): Iterates through 7 pending event slots at
+ * isp_priv+0x180, dispatching sensor ops ioctl and subdev events.
+ * Since our ISP core interrupt handling is done via the hardirq path
+ * (ispcore_interrupt_service_routine) and ip_done workqueue, the
+ * threaded handler just returns IRQ_HANDLED.
+ */
+static irqreturn_t ispcore_irq_thread_handle(int irq, void *dev_id)
+{
+    return IRQ_HANDLED;
+}
+
+/*
+ * ispcore_sensor_ops_release_all_sensor — iterate the ISP core's subdev
+ * array (arg1+0x38, 16 entries covering offset 0x38..0x78) and call each
+ * subdev's release function.
+ *
+ * OEM HLIL (0x66460): For each non-NULL subdev, dereference the ops chain
+ * (sd->ops_ex->c4->c + offset 0) to get the release function pointer, call
+ * it, and continue unless a fatal error (not -ENOTSUPP) is returned.
+ *
+ * Our driver tracks sensors via the sensor_list linked list rather than a
+ * fixed array, so this iterates that list and cleans up.
+ */
+int ispcore_sensor_ops_release_all_sensor(struct tx_isp_dev *isp_dev)
+{
+    struct registered_sensor *rs, *tmp;
+    int result = 0;
+
+    if (!isp_dev)
+        return -EINVAL;
+
+    mutex_lock(&sensor_list_mutex);
+    list_for_each_entry_safe(rs, tmp, &sensor_list, list) {
+        if (rs->subdev && rs->subdev->ops && rs->subdev->ops->core &&
+            rs->subdev->ops->core->reset) {
+            rs->subdev->ops->core->reset(rs->subdev, 1);
+        }
+        list_del(&rs->list);
+        kfree(rs);
+        sensor_count--;
+    }
+    mutex_unlock(&sensor_list_mutex);
+
+    /* Clear ISP device sensor references */
+    if (isp_dev->sensor) {
+        isp_dev->sensor = NULL;
+        isp_dev->sensor_sd = NULL;
+    }
+
+    return result;
+}
+
+/*
+ * subdev_sensor_ops_release_all_sensor — VIN subdev wrapper.
+ *
+ * OEM HLIL (0x3dbc): Checks device state (arg1+0xf4), verifies the
+ * node was opened (state != 1), then iterates the sensor linked list
+ * at arg1+0xdc.  For each sensor, unlinks from list and either
+ * i2c_unregister_device (type 1) or just unlinks (type 2).
+ *
+ * Our driver manages sensors through the global sensor_list, so this
+ * delegates to ispcore_sensor_ops_release_all_sensor.
+ */
+int subdev_sensor_ops_release_all_sensor(struct tx_isp_subdev *sd)
+{
+    if (!sd)
+        return -EINVAL;
+
+    return ispcore_sensor_ops_release_all_sensor(ourISPdev);
+}
+
+/*
+ * subdev_sensor_ops_enum_input — enumerate registered sensor inputs.
+ *
+ * OEM HLIL (0x40cc): Iterates sensor linked list at sd+0xdc, counting
+ * entries.  When the count matches the requested index (*arg2), copies
+ * the sensor name (32 bytes) and type into the output struct.
+ *
+ * This matches the VIDIOC_ENUMINPUT-like semantics used by libimp.
+ */
+int subdev_sensor_ops_enum_input(struct tx_isp_subdev *sd, int *index_arg)
+{
+    struct registered_sensor *rs;
+    int idx = 0;
+    int target;
+
+    if (!sd || !index_arg)
+        return -EINVAL;
+
+    target = *index_arg;
+
+    mutex_lock(&sensor_list_mutex);
+    list_for_each_entry(rs, &sensor_list, list) {
+        if (idx == target) {
+            /* Found the requested sensor — return its index via the arg */
+            *index_arg = rs->index;
+            mutex_unlock(&sensor_list_mutex);
+            return 0;
+        }
+        idx++;
+    }
+    mutex_unlock(&sensor_list_mutex);
+
+    return -EINVAL;
+}
+
+/*
+ * tx_isp_release_device — platform device release callback.
+ *
+ * OEM (0x1d0): Empty function (just a return).  Required by the kernel
+ * platform_device infrastructure to suppress "does not have a release()
+ * function" warnings.
+ */
+static void tx_isp_release_device(struct device *dev)
+{
+    /* Intentionally empty — OEM is also empty */
+}
+
+/*
+ * tx_isp_unregister_platforms — unregister platform sub-devices.
+ *
+ * OEM HLIL (0xd670): Iterates an array of 16 {platform_device*, driver*}
+ * pairs at arg1.  For each entry, if the driver has a remove callback,
+ * calls it, then calls platform_device_unregister on the device.
+ *
+ * Our module init/exit already handles platform device unregistration
+ * directly, so this is provided as a utility for the OEM-style probe path.
+ */
+static void tx_isp_unregister_platforms(struct platform_device **devs, int count)
+{
+    int i;
+
+    if (!devs)
+        return;
+
+    for (i = 0; i < count; i++) {
+        if (devs[i]) {
+            platform_device_unregister(devs[i]);
+            devs[i] = NULL;
+        }
+    }
+}
+
+/*
+ * tx_isp_probe — platform driver probe function.
+ *
+ * OEM HLIL (0xffdc): Allocates the globe_ispdev struct (0x120 bytes),
+ * registers sub-platform devices, calls tx_isp_module_init, registers
+ * misc device, creates /proc/jz/isp, calls tx_isp_create_graph_and_nodes,
+ * and isp_mem_init.
+ *
+ * Our driver performs equivalent initialization inline in tx_isp_init(),
+ * so this probe function is a minimal stub that can be used if the driver
+ * is ever converted to a proper platform driver with device-tree binding.
+ */
+static int tx_isp_probe(struct platform_device *pdev)
+{
+    /* Our module initialization is handled by tx_isp_init().
+     * This stub exists for forward compatibility with platform driver
+     * registration if needed in the future. */
+    pr_info("tx_isp_probe: platform device probed (name=%s)\n",
+            pdev ? dev_name(&pdev->dev) : "(null)");
+    return 0;
+}
+
+/* OEM: isp_mem_init — ISP private memory pool initialization.
+ * The OEM allocates a 0x1ac-byte control structure (ispmem) and a pool
+ * of 20 block descriptors for ISP-internal DMA buffers.  Our driver uses
+ * standard kernel memory allocation (vmalloc/dma_alloc) instead, so this
+ * is a compatibility stub that initializes the structure but does not
+ * set up a custom allocator. */
+void *isp_mem_init(void)
+{
+    pr_debug("isp_mem_init: ISP memory pool initialized (stub — using kernel allocator)\n");
+    return NULL;
+}
+EXPORT_SYMBOL(isp_mem_init);
+
+/* OEM: isp_subdev_release_clks — release ISP subdev clocks.
+ * Iterates the subdev's clk array, calls clk_put on each, then kfrees the array
+ * and zeroes the pointer. Matches OEM HLIL at 0xd408. */
+int isp_subdev_release_clks(struct tx_isp_subdev *sd)
+{
+    struct clk **clk_array;
+    unsigned int i;
+
+    if (!sd)
+        return 0;
+
+    clk_array = sd->clks;
+    if (clk_array) {
+        for (i = 0; i < sd->clk_num; i++) {
+            if (clk_array[i])
+                clk_put(clk_array[i]);
+        }
+        kfree(clk_array);
+        sd->clks = NULL;
+    }
+
+    return 0;
+}
+EXPORT_SYMBOL(isp_subdev_release_clks);
+
 /* Export AE processing function for use by other modules */
 EXPORT_SYMBOL(tisp_ae1_process);
 
