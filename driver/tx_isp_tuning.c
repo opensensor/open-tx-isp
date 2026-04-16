@@ -8434,7 +8434,6 @@ static int apical_isp_core_ops_s_ctrl(struct tx_isp_dev *dev, struct isp_core_ct
 
             tuning->running_mode = ctrl->value;
             if (prev_running_mode != ctrl->value) {
-                tx_isp_arm_day_night_drop_window(ctrl->value);
                 /* OEM: switching running mode triggers a full day/night
                  * parameter refresh — AWB gains, CCM, BCSH colour matrix,
                  * etc. are reloaded from the day or night tuning binary.

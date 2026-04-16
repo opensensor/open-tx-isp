@@ -1094,12 +1094,6 @@ static int tx_isp_detect_and_register_sensors(struct tx_isp_dev *isp_dev);
 static int tx_isp_init_hardware_interrupts(struct tx_isp_dev *isp_dev);
 static int tx_isp_activate_sensor_pipeline(struct tx_isp_dev *isp_dev, const char *sensor_name);
 
-void tx_isp_arm_day_night_drop_window(unsigned int running_mode)
-{
-	/* Stub -- day/night frame drop recycling not yet wired up */
-	pr_debug("[DAYNIGHT] arm drop window: running_mode=%u (stub)\n", running_mode);
-}
-EXPORT_SYMBOL_GPL(tx_isp_arm_day_night_drop_window);
 void tx_isp_hardware_frame_done_handler(struct tx_isp_dev *isp_dev, int channel);
 static int tx_isp_ispcore_activate_module_complete(struct tx_isp_dev *isp_dev);
 void __iomem *tx_isp_get_vic_primary_regs(void);
