@@ -2661,12 +2661,11 @@ static u32 tisp_compute_top_bypass_from_params(int wdr_enable)
 	/* OEM non-WDR masks (from tisp_init @ 0x15f98):
 	 *   AND=0xb577fffd  OR=0x34000009
 	 * OEM OR mask only sets bits {0,3,26,28,29}.
-	 * GIB(bit5) force-bypassed until HW init root cause identified.
-	 * GB(bit13) is tparams[13]=1 (bypassed) in tuning binary. */
+	 * GIB(bit5) and LSC LUT gate(bit6) controlled by tuning binary. */
 	if (wdr_enable)
 		bypass_val = (bypass_val & 0xa1ffdf76) | 0x00880002;
 	else
-		bypass_val = (bypass_val & 0xb577fffd) | 0x34000069;
+		bypass_val = (bypass_val & 0xb577fffd) | 0x34000009;
 
 	pr_info("tisp_compute_top_bypass: final=0x%08x\n", bypass_val);
 
