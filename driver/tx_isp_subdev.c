@@ -1296,8 +1296,6 @@ void tx_isp_subdev_auto_link(struct platform_device *pdev, struct tx_isp_subdev 
                 pr_err("*** No available slot for sensor '%s' ***\n", dev_name);
             }
         }
-    } else {
-        pr_info("*** DEBUG: Unknown device name '%s' - no specific auto-link handling ***\n", dev_name);
     }
 
     tx_isp_setup_default_links(ourISPdev);
