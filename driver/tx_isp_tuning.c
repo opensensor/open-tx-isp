@@ -142,6 +142,7 @@ int tisp_ccm_ev_update(void);
 static int tiziano_awb_set_hardware_param(void);
 int tisp_ae_s_comp(uint8_t comp_x);
 static int tisp_dpc_all_reg_refresh(uint32_t gain);
+static uint32_t data_9ab10 = 0xFFFFFFFF;  /* DPC gain cache (OEM: 0xFFFFFFFF = first-call sentinel) */
 static void tisp_s_dpc_str_internal(uint32_t strength);
 int tisp_s_dpc_strength(uint32_t strength);
 static int tisp_set_defog_strength(uint8_t *strength_ptr);
@@ -23770,7 +23771,6 @@ uint32_t *dpc_d_m3_dthres_array_now = NULL;
 uint32_t *dpc_d_m3_fthres_array_now = NULL;
 
 /* DPC state variables - Binary Ninja reference */
-static uint32_t data_9ab10 = 0xFFFFFFFF;  /* DPC state cache */
 static int dpc_wdr_en = 0;
 
 /* DPC interpolated value cache — populated by tisp_dpc_intp() */
