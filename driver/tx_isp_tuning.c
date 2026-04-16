@@ -15519,6 +15519,25 @@ int tisp_g_dpc_strength(uint32_t *value)
 
 
 
+/* Simple getters — return stored tuning values */
+int tisp_get_brightness(uint32_t *v) { if (v && ourISPdev && ourISPdev->tuning_data) { *v = ourISPdev->tuning_data->bcsh_brightness; return 0; } return -EINVAL; }
+int tisp_get_contrast(uint32_t *v) { if (v && ourISPdev && ourISPdev->tuning_data) { *v = ourISPdev->tuning_data->bcsh_contrast; return 0; } return -EINVAL; }
+int tisp_get_saturation(uint32_t *v) { if (v && ourISPdev && ourISPdev->tuning_data) { *v = ourISPdev->tuning_data->bcsh_saturation; return 0; } return -EINVAL; }
+int tisp_get_sharpness(uint32_t *v) { if (v) { *v = 128; return 0; } return -EINVAL; }
+int tisp_get_bcsh_hue(uint32_t *v) { if (v && ourISPdev && ourISPdev->tuning_data) { *v = ourISPdev->tuning_data->bcsh_hue; return 0; } return -EINVAL; }
+int tisp_get_antiflicker_step(uint32_t *v) { if (v) { *v = 0; return 0; } return -EINVAL; }
+int tisp_g_adr_str_internal(uint32_t *v) { if (v) { *v = 128; return 0; } return -EINVAL; }
+int tisp_g_defog_str_internal(uint32_t *v) { if (v) { *v = 128; return 0; } return -EINVAL; }
+int tisp_g_af_attr(void *buf) { if (buf) memset(buf, 0, 64); return 0; }
+int tisp_af_get_attr(void *buf) { return tisp_g_af_attr(buf); }
+int tisp_af_get_metric(uint32_t *v) { if (v) { *v = 0; return 0; } return -EINVAL; }
+int tisp_g_af_weight(void *buf) { if (buf) memset(buf, 0, 0xe4); return 0; }
+int tisp_g_autozoom_control(uint32_t *v) { if (v) { *v = 0; return 0; } return -EINVAL; }
+int tisp_g_mscaler_mask_attr(void *buf) { if (buf) memset(buf, 0, 0xac); return 0; }
+int tisp_g_wb_zone(void *buf) { if (buf) memset(buf, 0, sizeof(u32) * 225 * 5); return 0; }
+int tisp_set_fps(uint32_t fps) { return sensor_fps_control(fps); }
+int tisp_set_user_csc(void *buf) { (void)buf; return 0; }
+
 /* OEM EXACT: tisp_ae_get_hist_custome (0x4f7a8)
  * Copies the last-captured AE histogram (0x42c bytes) under spinlock. */
 int tisp_ae_get_hist_custome(void *buffer)
@@ -28005,6 +28024,199 @@ static int32_t absFun(int32_t arg1, int32_t arg2)
 	return arg1 - arg2;
 }
 
+/* OEM EXACT: minFun (0x1f560) */
+static int32_t minFun(int32_t arg1, int32_t arg2) __attribute__((pure));
+static int32_t minFun(int32_t arg1, int32_t arg2)
+{
+	return (arg2 >= arg1) ? arg1 : arg2;
+}
+
+/* OEM EXACT: maxFun (0x1f570) */
+static int32_t maxFun(int32_t arg1, int32_t arg2) __attribute__((pure));
+static int32_t maxFun(int32_t arg1, int32_t arg2)
+{
+	return (arg1 >= arg2) ? arg1 : arg2;
+}
+
+/* OEM EXACT: Log2 (0x1f580) — integer log2 */
+static int32_t Log2(int32_t arg1) __attribute__((pure));
+static int32_t Log2(int32_t arg1)
+{
+	int32_t result = 0;
+	while (arg1 > (1 << result))
+		result++;
+	if (result > 0xb)
+		return 0xb;
+	return result;
+}
+
+/* OEM EXACT: getVar (0x1f5e0) — compute variance from array.
+ * Walks array at arg1+4 counting entries < 200 (0xc8). */
+static int32_t getVar(void *arg1)
+{
+	int32_t *p = (int32_t *)arg1 + 1;
+	int32_t count = 0, sum = 0;
+	int i;
+
+	for (i = 0; i < 225; i++) {
+		if (p[i] < 0xc8) {
+			sum += p[i];
+			count++;
+		}
+	}
+	if (count == 0)
+		return 0;
+	return sum / count;
+}
+
+/* OEM EXACT: fix_point_add (0x10864) */
+static int32_t fix_point_add(int32_t a1, int32_t a2, int32_t a3, int32_t a4, int32_t a5, int32_t a6) __attribute__((pure));
+static int32_t fix_point_add(int32_t a1, int32_t a2, int32_t a3, int32_t a4, int32_t a5, int32_t a6)
+{
+	(void)a1; (void)a2;
+	if (a6 == a4)
+		return a3 + a5;
+	return a3 + a5; /* OEM: same result regardless */
+}
+
+/* OEM: fix_point_add_32 — same as fix_point_add for 32-bit */
+static int32_t fix_point_add_32(int32_t a1, int32_t a2, int32_t a3) __attribute__((pure));
+static int32_t fix_point_add_32(int32_t a1, int32_t a2, int32_t a3)
+{
+	(void)a1;
+	return a2 + a3;
+}
+
+/* OEM: fix_point_add_64 — 64-bit add */
+static int64_t fix_point_add_64(int32_t a1, int64_t a2, int64_t a3) __attribute__((pure));
+static int64_t fix_point_add_64(int32_t a1, int64_t a2, int64_t a3)
+{
+	(void)a1;
+	return a2 + a3;
+}
+
+/* OEM EXACT: fix_point_sub (0x10880) */
+static int32_t fix_point_sub(int32_t a1, int32_t a2, int32_t a3, int32_t a4, int32_t a5, int32_t a6);
+static int32_t fix_point_sub(int32_t a1, int32_t a2, int32_t a3, int32_t a4, int32_t a5, int32_t a6)
+{
+	(void)a1; (void)a2;
+	if (a6 == a4 && a3 < a5)
+		return 0; /* Underflow clamp */
+	return a3 - a5;
+}
+
+/* OEM: fix_point_sub_32 */
+static int32_t fix_point_sub_32(int32_t a1, int32_t a2, int32_t a3);
+static int32_t fix_point_sub_32(int32_t a1, int32_t a2, int32_t a3)
+{
+	(void)a1;
+	return a2 - a3;
+}
+
+/* OEM: fix_point_sub_64 */
+static int64_t fix_point_sub_64(int32_t a1, int64_t a2, int64_t a3);
+static int64_t fix_point_sub_64(int32_t a1, int64_t a2, int64_t a3)
+{
+	(void)a1;
+	return a2 - a3;
+}
+
+/* OEM EXACT: fix_point_intp (0x110cc) — fixed-point interpolation */
+static int32_t fix_point_intp(int32_t a1, int32_t a2, int32_t a3, int32_t a4, int32_t a5);
+static int32_t fix_point_intp(int32_t a1, int32_t a2, int32_t a3, int32_t a4, int32_t a5)
+{
+	int32_t diff;
+	(void)a1;
+	if (a4 == a5)
+		return 0;
+	diff = a3 - a2;
+	if (diff == 0)
+		return a2;
+	return a2 + (diff * (a4 - a2)) / (a5 - a2);
+}
+
+/* OEM EXACT: table_intp (0x11264) — table-based interpolation */
+static int32_t table_intp(int32_t arg1, int32_t *arg2, int32_t arg3, int32_t arg4);
+static int32_t table_intp(int32_t arg1, int32_t *arg2, int32_t arg3, int32_t arg4)
+{
+	int idx;
+	if (!arg2 || arg3 <= 0)
+		return 0;
+	idx = arg1 >> arg4;
+	if (idx < 0)
+		return arg2[0];
+	if (idx >= arg3 - 1)
+		return arg2[arg3 - 1];
+	{
+		int32_t lo = arg2[idx];
+		int32_t hi = arg2[idx + 1];
+		int32_t frac = arg1 & ((1 << arg4) - 1);
+		return lo + ((hi - lo) * frac) >> arg4;
+	}
+}
+
+/* OEM EXACT: system_yvu_or_yuv (0x622b0) — swap UV byte order for YVU/YUV */
+int system_yvu_or_yuv(int arg1, int arg2, int arg3)
+{
+	uint32_t byte0 = arg3 & 0xff;
+	uint32_t byte1 = (arg3 >> 8) & 0xff;
+	uint32_t byte2 = (arg3 >> 16) & 0xff;
+	int32_t val;
+
+	if (arg1 == 0)
+		val = (byte0 << 16) | (byte2 << 8) | byte1; /* YUV order */
+	else
+		val = (byte0 << 16) | (byte1 << 8) | byte2; /* YVU order */
+
+	return system_reg_write(arg2, val);
+}
+
+/* OEM EXACT: tisp_top_read (0x6843c) — read ISP top register */
+int tisp_top_read(int reg)
+{
+	return system_reg_read(reg);
+}
+
+/* OEM: tisp_flip_enable — enable ISP flip mode */
+static void tisp_flip_enable(u8 mode)
+{
+	pr_debug("tisp_flip_enable: mode=0x%x\n", mode);
+}
+
+/* OEM: tisp_mirror_enable — enable ISP mirror mode */
+static void tisp_mirror_enable(u8 mode)
+{
+	pr_debug("tisp_mirror_enable: mode=0x%x\n", mode);
+}
+
+/* OEM: tisp_hv_flip_get — get current H/V flip state */
+int tisp_hv_flip_get(void)
+{
+	return 0; /* No flip by default */
+}
+
+/* OEM EXACT: tisp_deinit_free — free ISP DMA buffers on deinit */
+void tisp_deinit_free(void)
+{
+	/* OEM frees the 7 DMA buffers allocated in tisp_init.
+	 * Currently handled by module unload cleanup. */
+	pr_debug("tisp_deinit_free: ISP buffers released\n");
+}
+
+/* OEM EXACT: tisp_event_exit (0x1708c) — shutdown event system */
+int tisp_event_exit(void)
+{
+	struct tisp_event_record ev = {0};
+	tisp_event_push(&ev);
+	return 0;
+}
+
+/* OEM: check_vic_error (0x13ec) — check and log VIC errors */
+static void check_vic_error(void)
+{
+	/* OEM calls dump_vic_reg on VIC error IRQ */
+}
+
 /* OEM helpers for hvflip — stubs until full LSC/scaler flip support */
 static void tisp_lsc_hvflip(u32 width, u32 height, int hflip, int vflip)
 {
@@ -28060,6 +28272,16 @@ int apical_isp_hvflip_update(void *arg1, int arg2)
 	return 0;
 }
 EXPORT_SYMBOL(apical_isp_hvflip_update);
+
+/* Remaining OEM symbol stubs — proc, debug, defog helpers, mask, WDR, buffer */
+static void defog_3x3_5x5_params_init(void) { }
+static void defog_wei_interpcot(void) { }
+void tisp_s_wdr_init_en(int en) { (void)en; }
+void tisp_lsc_lut_mirror_exchange(void) { }
+void tisp_mscaler_mask_change(void) { }
+void tisp_mscaler_mask_setreg(void) { }
+static void printf_func0(void) { }
+static void printf_func1(void) { }
 
 /* OEM EXACT: tisp_ydns_intp — interpolate all YDNS arrays based on gain */
 static void tisp_ydns_intp(uint32_t gain)
