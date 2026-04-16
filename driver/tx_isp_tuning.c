@@ -2556,7 +2556,7 @@ static int tiziano_load_parameters(const char *param_name)
 		if (!sensor_name && ourISPdev && ourISPdev->sensor_name[0])
 			sensor_name = ourISPdev->sensor_name;
 		if (!sensor_name)
-			sensor_name = "gc2053";
+			sensor_name = "unknown";
 		snprintf(std_path, sizeof(std_path), "/etc/sensor/%s-t31.bin", sensor_name);
 		std_bin_path = std_path;
 	}
