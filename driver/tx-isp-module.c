@@ -1093,6 +1093,7 @@ static int tx_isp_send_event_to_remote_local(void *subdev, int event_type, void 
 static int tx_isp_detect_and_register_sensors(struct tx_isp_dev *isp_dev);
 static int tx_isp_init_hardware_interrupts(struct tx_isp_dev *isp_dev);
 static int tx_isp_activate_sensor_pipeline(struct tx_isp_dev *isp_dev, const char *sensor_name);
+static int __submit_buffer_to_msca(int channel, u32 phys_addr);
 
 void tx_isp_hardware_frame_done_handler(struct tx_isp_dev *isp_dev, int channel);
 static int tx_isp_ispcore_activate_module_complete(struct tx_isp_dev *isp_dev);
@@ -1364,6 +1365,41 @@ int frame_chan_event(void *priv, int event, void *data)
         state->sequence++;
         complete(&state->frame_done);
         wake_up_interruptible(&state->frame_wait);
+
+        /* OEM frame-done requeue: mark completed buffer as DONE,
+         * then submit the next queued buffer to MSCA immediately.
+         * This is the third __enqueue_in_driver call site from OEM. */
+        {
+            unsigned long oem_flags;
+            int bi, next_idx = -1;
+            u32 next_phys = 0;
+            u32 y_done = state->last_done_phys;
+
+            spin_lock_irqsave(&fcd->oem_buf_lock, oem_flags);
+            /* Mark completed buffer as DONE */
+            if (y_done) {
+                for (bi = 0; bi < fcd->oem_buf_count && bi < 64; bi++) {
+                    if (fcd->oem_bufs[bi].state == 3 &&
+                        fcd->oem_bufs[bi].phys_addr == y_done) {
+                        fcd->oem_bufs[bi].state = 4; /* DONE */
+                        break;
+                    }
+                }
+            }
+            /* Find next queued buffer to submit */
+            for (bi = 0; bi < fcd->oem_buf_count && bi < 64; bi++) {
+                if (fcd->oem_bufs[bi].state == 1) {
+                    next_phys = fcd->oem_bufs[bi].phys_addr;
+                    fcd->oem_bufs[bi].state = 3; /* ACTIVE */
+                    next_idx = bi;
+                    break;
+                }
+            }
+            spin_unlock_irqrestore(&fcd->oem_buf_lock, oem_flags);
+
+            if (next_idx >= 0 && next_phys)
+                __submit_buffer_to_msca(fcd->channel_num, next_phys);
+        }
         return 0;
     }
     case TX_ISP_EVENT_FRAME_QBUF: /* 0x3000008 */
@@ -2011,6 +2047,9 @@ int frame_channel_open(struct inode *inode, struct file *file)
     init_waitqueue_head(&fcd->state.frame_wait);
     init_completion(&fcd->state.frame_done);
     atomic_set(&fcd->state.frame_ready_count, 0);
+    spin_lock_init(&fcd->oem_buf_lock);
+    memset(fcd->oem_bufs, 0, sizeof(fcd->oem_bufs));
+    fcd->oem_buf_count = 0;
 
     /* Set default format based on channel if not already set */
     if (fcd->state.width == 0) {
@@ -3673,6 +3712,9 @@ long frame_channel_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned 
             state->state = 3;   /* OEM ready state after buffers are prepared */
             state->flags = 0;
             frame_channel_clear_tracked_buffers(fcd);
+            /* Reset OEM buffer rotation state for new allocation */
+            memset(fcd->oem_bufs, 0, sizeof(fcd->oem_bufs));
+            fcd->oem_buf_count = reqbuf.count;
             state->current_buffer.type = reqbuf.type;
             state->current_buffer.memory = reqbuf.memory;
             state->current_buffer.length = buffer_size;
@@ -3887,6 +3929,17 @@ long frame_channel_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned 
                      channel, buffer_phys_addr, uv_addr, w, h, aligned_h);
         }
 
+        /* OEM buffer rotation: track state for frame-done requeue.
+         * When the next frame completes, the ISR can submit the next
+         * queued buffer without waiting for userspace QBUF. */
+        if (buffer.index < 64 && fcd) {
+            unsigned long oem_flags;
+            spin_lock_irqsave(&fcd->oem_buf_lock, oem_flags);
+            fcd->oem_bufs[buffer.index].phys_addr = buffer_phys_addr;
+            fcd->oem_bufs[buffer.index].state = 3; /* ACTIVE — already submitted to HW above */
+            spin_unlock_irqrestore(&fcd->oem_buf_lock, oem_flags);
+        }
+
         /* Copy buffer back to user space */
         if (copy_to_user(argp, &buffer, sizeof(buffer))) {
             pr_err("*** QBUF: Failed to copy buffer back to user ***\n");
@@ -4069,6 +4122,14 @@ long frame_channel_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned 
                 channel, buffer.index, buffer.sequence, buffer.memory,
                 (unsigned long)((buffer.memory == V4L2_MEMORY_USERPTR) ? buffer.m.userptr : 0),
                 buffer.length);
+
+        /* Reset OEM buffer state to FREE for re-use */
+        if (buffer.index < 64 && fcd) {
+            unsigned long oem_flags;
+            spin_lock_irqsave(&fcd->oem_buf_lock, oem_flags);
+            fcd->oem_bufs[buffer.index].state = 0; /* FREE */
+            spin_unlock_irqrestore(&fcd->oem_buf_lock, oem_flags);
+        }
 
         if (copy_to_user(argp, &buffer, sizeof(buffer)))
             return -EFAULT;
@@ -6792,6 +6853,32 @@ static int ispvic_frame_channel_qbuf(struct tx_isp_vic_device *vic_dev, void *bu
  * NOTE: Currently not called — our QBUF handler programs MSCA inline.
  * Implemented to match OEM for future buffer management integration.
  */
+
+/* __submit_buffer_to_msca - Send buffer to ISP core via event 0x3000005.
+ * Constructs a vic_buffer_entry and dispatches through ispcore_pad_event_handle,
+ * which writes per-channel MSCA Y/UV DMA addresses.
+ * Equivalent to OEM __enqueue_in_driver but using our struct layout. */
+static int __submit_buffer_to_msca(int channel, u32 phys_addr)
+{
+    struct vic_buffer_entry entry;
+    struct tx_isp_subdev *remote_sd;
+
+    if (!ourISPdev || channel < 0 || channel >= 3)
+        return -EINVAL;
+
+    /* Find the remote subdev for this channel's pad link */
+    remote_sd = ourISPdev->subdevs[3]; /* ISP core subdev handles 0x3000005 */
+    if (!remote_sd)
+        return -ENODEV;
+
+    memset(&entry, 0, sizeof(entry));
+    INIT_LIST_HEAD(&entry.list);
+    entry.buffer_addr = phys_addr;
+    entry.channel = channel;
+
+    return tx_isp_send_event_to_remote(remote_sd, 0x3000005, &entry);
+}
+
 static int __enqueue_in_driver(void *arg1)
 {
     u32 *buf;

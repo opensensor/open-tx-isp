@@ -633,6 +633,15 @@ struct frame_channel_device {
     int field;                           /* Offset 0x3c - *($s0 + 0x3c) */
     void *buffer_array[64];              /* Buffer array for index lookup */
 
+    /* OEM buffer rotation — per-buffer state for MSCA DMA rotation.
+     * States: 0=FREE, 1=QUEUED, 3=ACTIVE(HW), 4=DONE */
+    struct {
+        u32 phys_addr;
+        u32 state;
+    } oem_bufs[64];
+    int oem_buf_count;
+    spinlock_t oem_buf_lock;
+
     /* CRITICAL: Add validation magic number to detect corruption */
     uint32_t magic;                      /* Magic number for validation */
 } __attribute__((aligned(8), packed));   /* MIPS-safe alignment */
