@@ -146,6 +146,7 @@ static uint32_t data_9ab10 = 0xFFFFFFFF;  /* DPC gain cache (OEM: 0xFFFFFFFF = f
 static uint32_t dpc_ratio = 0x80;         /* DPC strength stored (OEM: data_8ab14 / dpc_ratio) */
 static void tisp_s_dpc_str_internal(uint32_t strength);
 static int tisp_g_dpc_str_internal(uint32_t *value);
+int tisp_g_defog_str_internal(uint32_t *v);
 int tisp_s_dpc_strength(uint32_t strength);
 static int tisp_set_defog_strength(uint8_t *strength_ptr);
 int tisp_s_2dns_ratio(int ratio);
