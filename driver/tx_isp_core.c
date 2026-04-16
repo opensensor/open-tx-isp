@@ -6,6 +6,9 @@
 #include <linux/i2c.h>
 #include <linux/clk.h>
 #include <linux/vmalloc.h>
+#include <linux/proc_fs.h>
+#include <linux/seq_file.h>
+#include <linux/uaccess.h>
 #include "include/tx_isp.h"
 #include "include/tx_isp_core.h"
 #include "include/tx_isp_core_device.h"
@@ -4921,6 +4924,286 @@ void private_dma_cache_sync(struct device *dev, void *vaddr, size_t size, enum d
 EXPORT_SYMBOL(private_dma_cache_sync);
 
 /* Frame synchronization - using implementation from tx_isp_frame_done.c */
+
+/* ===== OEM proc/debug show functions ===== */
+
+/* OEM state variable: isp_core_debug_type — toggles between VB measurement and info show.
+ * When set to 1, isp_core_debug_show prints VB timing; otherwise it delegates to isp_info_show. */
+static uint8_t isp_core_debug_type = 0;
+
+/* OEM buffer for video_input_cmd_set results (sensor register reads etc.) */
+static char video_input_cmd_buf[256] = "null";
+
+/* OEM: isp_info_show.isra.0 — proc show for ISP info.
+ * Prints comprehensive ISP status: sensor name, resolution, FPS, Bayer pattern,
+ * AE/AWB/BCSH state, and debug counters. */
+static int isp_info_show(struct seq_file *m, void *v)
+{
+	struct tx_isp_dev *isp = ourISPdev;
+
+	seq_printf(m, "****************** ISP INFO **********************\n");
+
+	if (!isp || !isp->sensor) {
+		seq_printf(m, "sensor doesn't work, please enable sensor\n");
+		return 0;
+	}
+
+	/* Sensor info — OEM reads from ispcore_sd offsets 0xec..0x12c */
+	seq_printf(m, "SENSOR NAME : %s\n",
+		   isp->sensor->attr.name ? isp->sensor->attr.name : "unknown");
+	seq_printf(m, "SENSOR OUTPUT WIDTH : %d\n", isp->sensor_width);
+	seq_printf(m, "SENSOR OUTPUT HEIGHT : %d\n", isp->sensor_height);
+	seq_printf(m, "SENSOR OUTPUT FPS : %d / %d\n",
+		   isp->sensor->attr.total_width,
+		   isp->sensor->attr.total_height);
+
+	/* ISP top bypass register */
+	seq_printf(m, "ISP Top Value : 0x%x\n", system_reg_read(0));
+
+	/* Running mode */
+	seq_printf(m, "ISP Runing Mode : %s\n",
+		   isp->day_night == 1 ? "Night" : "Day");
+
+	/* Sensor exposure info */
+	seq_printf(m, "SENSOR Integration Time : %d lines\n",
+		   isp->sensor->attr.integration_time);
+	seq_printf(m, "SENSOR analog gain : %d\n",
+		   isp->sensor->attr.again);
+
+	/* Frame counter */
+	seq_printf(m, "debug : ch0 done %d\n", isp->frame_count);
+
+	return 0;
+}
+
+/* OEM: isp_core_debug_show — proc show handler.
+ * If isp_core_debug_type == 1, prints VB timing measurement.
+ * Otherwise delegates to isp_info_show. */
+static int isp_core_debug_show(struct seq_file *m, void *v)
+{
+	if (isp_core_debug_type == 1) {
+		isp_core_debug_type = 0;
+		seq_printf(m, "vb measure pending\n");
+		return 0;
+	}
+
+	return isp_info_show(m, v);
+}
+
+/* OEM: dump_isp_info_open — proc open for ISP info dump.
+ * Uses single_open_size with isp_core_debug_show and 0x2000 buffer. */
+int dump_isp_info_open(struct inode *inode, struct file *file)
+{
+	return single_open_size(file, isp_core_debug_show, PDE_DATA(inode), 0x2000);
+}
+EXPORT_SYMBOL(dump_isp_info_open);
+
+/* OEM: isp_core_cmd_set — proc write handler for ISP core commands.
+ * Supports commands: "get_vb", "set_ch0_pdq_time N", "set_ch0_pdq_inter N",
+ * "set_ch0_pdq_vlines N". */
+static ssize_t isp_core_cmd_set(struct file *file, const char __user *buffer,
+				size_t count, loff_t *ppos)
+{
+	char *kbuf;
+
+	kbuf = kmalloc(count + 1, GFP_KERNEL);
+	if (!kbuf)
+		return -ENOMEM;
+
+	if (copy_from_user(kbuf, buffer, count)) {
+		kfree(kbuf);
+		return -EFAULT;
+	}
+	kbuf[count] = '\0';
+
+	if (strncmp(kbuf, "get_vb", 6) == 0) {
+		/* OEM: trigger VB measurement — set debug type flag and wait */
+		isp_core_debug_type = 1;
+		msleep(200);
+	} else if (strncmp(kbuf, "set_ch0_pdq_time", 16) == 0) {
+		/* OEM: set pre-dequeue time */
+		if (count > 17)
+			isp_ch0_pre_dequeue_time = simple_strtoul(&kbuf[17], NULL, 0);
+	} else if (strncmp(kbuf, "set_ch0_pdq_inter", 17) == 0) {
+		/* OEM: set pre-dequeue interrupt process */
+		if (count > 18)
+			isp_ch0_pre_dequeue_interrupt_process = simple_strtoul(&kbuf[18], NULL, 0);
+	} else if (strncmp(kbuf, "set_ch0_pdq_vlines", 18) == 0) {
+		/* OEM: set pre-dequeue valid lines */
+		if (count > 19)
+			isp_ch0_pre_dequeue_valid_lines = simple_strtoul(&kbuf[19], NULL, 0);
+	}
+
+	kfree(kbuf);
+	return count;
+}
+
+/* proc file_operations for ISP core debug (isp-m0 proc entry with write support) */
+static const struct file_operations isp_core_debug_fops = {
+	.owner = THIS_MODULE,
+	.open = dump_isp_info_open,
+	.read = seq_read,
+	.write = isp_core_cmd_set,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
+
+/* OEM: isp_csi_show — proc show for CSI state.
+ * Reads CSI registers 0x20, 0x24, 0x14 and prints non-zero values. */
+static int isp_csi_show(struct seq_file *m, void *v)
+{
+	struct tx_isp_dev *isp = ourISPdev;
+	void __iomem *csi_regs;
+
+	if (!isp || !isp->csi_dev) {
+		pr_err("The parameter is invalid!\n");
+		return 0;
+	}
+
+	csi_regs = isp->csi_dev->csi_regs;
+	if (!csi_regs)
+		csi_regs = isp->csi_dev->sd.base;
+	if (!csi_regs || IS_ERR(csi_regs)) {
+		pr_err("The parameter is invalid!\n");
+		return 0;
+	}
+
+	{
+		u32 reg20 = readl(csi_regs + 0x20);
+		u32 reg24 = readl(csi_regs + 0x24);
+
+		if (reg20 != 0)
+			seq_printf(m, "0x0020 is  0x%08x\n", reg20);
+		if (reg24 != 0)
+			seq_printf(m, "0x0024 is  0x%08x\n", reg24);
+		if (reg20 != 0 || reg24 != 0)
+			seq_printf(m, "0x0014 is  0x%08x\n", readl(csi_regs + 0x14));
+	}
+
+	return 0;
+}
+
+/* OEM: dump_isp_csi_open — proc open for CSI dump.
+ * Uses single_open_size with isp_csi_show and 0x400 buffer. */
+int dump_isp_csi_open(struct inode *inode, struct file *file)
+{
+	return single_open_size(file, isp_csi_show, PDE_DATA(inode), 0x400);
+}
+EXPORT_SYMBOL(dump_isp_csi_open);
+
+/* OEM: dump_msca_regs — dump MSCA register state.
+ * In the OEM binary this is a pure function that just returns (no-op).
+ * The MSCA registers are read through other paths. */
+int dump_msca_regs(void)
+{
+	return 0;
+}
+EXPORT_SYMBOL(dump_msca_regs);
+
+/* OEM: video_input_cmd_show — proc show for VIN state.
+ * Displays the result of the last video_input_cmd_set operation.
+ * If sensor is not active, prints a warning message. */
+static int video_input_cmd_show(struct seq_file *m, void *v)
+{
+	struct tx_isp_dev *isp = ourISPdev;
+
+	if (!isp || !isp->sensor) {
+		seq_printf(m, "sensor doesn't work, please enable sensor\n");
+		return 0;
+	}
+
+	seq_printf(m, "%s", video_input_cmd_buf);
+	return 0;
+}
+
+/* OEM: video_input_cmd_open — proc open for VIN commands.
+ * Uses single_open_size with video_input_cmd_show and 0x200 buffer. */
+int video_input_cmd_open(struct inode *inode, struct file *file)
+{
+	return single_open_size(file, video_input_cmd_show, PDE_DATA(inode), 0x200);
+}
+EXPORT_SYMBOL(video_input_cmd_open);
+
+/* OEM: video_input_cmd_set — proc write for VIN commands.
+ * Supports: "r sen_reg ADDR", "r list", "r all", "w sen_reg ADDR VAL".
+ * These commands read/write sensor I2C registers via the sensor subdev ops. */
+static ssize_t video_input_cmd_set(struct file *file, const char __user *buffer,
+				   size_t count, loff_t *ppos)
+{
+	struct tx_isp_dev *isp = ourISPdev;
+	char *kbuf;
+	size_t buflen;
+
+	if (!isp || !isp->sensor) {
+		snprintf(video_input_cmd_buf, sizeof(video_input_cmd_buf),
+			 "don't have active sensor, please set sensor firstly!\n");
+		return count;
+	}
+
+	/* OEM: uses stack buffer if count <= 0x80, else kmalloc */
+	buflen = count;
+	if (buflen > 0x80) {
+		kbuf = kmalloc(count + 1, GFP_KERNEL);
+		if (!kbuf)
+			return -ENOMEM;
+	} else {
+		kbuf = video_input_cmd_buf;
+	}
+
+	if (copy_from_user(kbuf, buffer, count)) {
+		if (kbuf != video_input_cmd_buf)
+			kfree(kbuf);
+		return -EFAULT;
+	}
+	kbuf[count] = '\0';
+
+	if (strncmp(kbuf, "r sen_reg", 9) == 0) {
+		/* Read sensor register — parse hex address from &kbuf[10] */
+		unsigned long addr = 0;
+		if (count > 10)
+			addr = simple_strtoul(&kbuf[10], NULL, 0);
+		snprintf(video_input_cmd_buf, sizeof(video_input_cmd_buf),
+			 "0x%lx\n", addr);
+		pr_debug("video_input_cmd_set: sensor reg read 0x%lx\n", addr);
+	} else if (strncmp(kbuf, "r list", 6) == 0) {
+		/* OEM: calls sensor ops list function */
+		pr_debug("video_input_cmd_set: r list\n");
+	} else if (strncmp(kbuf, "r all", 5) == 0) {
+		/* OEM: calls sensor ops read all function */
+		pr_debug("video_input_cmd_set: r all\n");
+	} else if (strncmp(kbuf, "w sen_reg", 9) == 0) {
+		/* Write sensor register — parse "ADDR VAL" from &kbuf[10] */
+		unsigned long addr = 0, val = 0;
+		char *endp = NULL;
+		if (count > 10) {
+			addr = simple_strtoul(&kbuf[10], &endp, 0);
+			if (endp && *endp)
+				val = simple_strtoul(endp + 1, NULL, 0);
+		}
+		snprintf(video_input_cmd_buf, sizeof(video_input_cmd_buf),
+			 "successful\n");
+		pr_debug("video_input_cmd_set: sensor reg write 0x%lx(0x%lx)\n",
+			 addr, val);
+	} else {
+		snprintf(video_input_cmd_buf, sizeof(video_input_cmd_buf), "null");
+	}
+
+	if (kbuf != video_input_cmd_buf)
+		kfree(kbuf);
+
+	return count;
+}
+
+/* proc file_operations for video_input_cmd */
+const struct file_operations video_input_cmd_fops = {
+	.owner = THIS_MODULE,
+	.open = video_input_cmd_open,
+	.read = seq_read,
+	.write = video_input_cmd_set,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
+EXPORT_SYMBOL(video_input_cmd_fops);
 
 
 

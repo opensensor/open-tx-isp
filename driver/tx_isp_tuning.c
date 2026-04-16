@@ -3180,6 +3180,7 @@ int tiziano_lsc_init(void);
 int tiziano_ccm_init(void);
 int tiziano_dmsc_init(void);
 static int tisp_dmsc_sharpness_set(u32 value);
+static u32 tisp_dmsc_sharpness_get(void);
 int tisp_s_adr_str_internal(int strength);
 int tiziano_sharpen_init(void);
 int tiziano_sdns_init(void);
@@ -3369,6 +3370,7 @@ int ae1_interrupt_static(void);
 int awb_interrupt_static(void);
 int af_interrupt_static(void);
 int tiziano_wdr_interrupt_static(void);
+int tisp_ae_get_antiflicker_step(uint32_t *lut, uint32_t *count);
 
 static int JZ_Isp_Awb(void);
 static int JZ_Isp_Get_Awb_Statistics(void *buffer, uint32_t flags);
@@ -3436,6 +3438,16 @@ static uint32_t af_array_iird1[AF_STATS_ZONES];
 static uint32_t af_array_y_sum[AF_STATS_ZONES];
 static uint32_t af_array_high_luma_cnt[AF_STATS_ZONES];
 static uint8_t frame_num;
+
+/* OEM: data_c6530 = AF metric sum, data_c6c5d = AF shift.
+ * Both computed by Tiziano_af_fpga; init to 0. */
+static uint32_t af_metric_sum;    /* OEM data_c6530 */
+static uint8_t  af_metric_shift;  /* OEM data_c6c5d */
+
+/* OEM: data_ba47c / data_ba480 — mscaler mask attribute storage.
+ * Allocated on first tisp_s_mscaler_mask_attr call. */
+static uint8_t *mscaler_mask_saved;  /* OEM data_ba47c — copy for getter */
+static uint8_t *mscaler_mask_active; /* OEM data_ba480 — active copy */
 
 static uint32_t data_b0e00 = 0;  /* AE0 interrupt flag */
 static uint32_t data_b0e10 = 0;  /* AE histogram flag */
@@ -8055,8 +8067,9 @@ static int apical_isp_core_ops_g_ctrl(struct tx_isp_dev *dev, struct isp_core_ct
         }
 
         case 0x8000043: { /* OEM: tisp_g_af_metric (4 bytes) */
-            uint32_t af_metric = 0;
-            ctrl->value = af_metric;
+            uint32_t af_met;
+            tisp_af_get_metric(&af_met);
+            ctrl->value = af_met;
             break;
         }
 
@@ -8110,7 +8123,7 @@ static int apical_isp_core_ops_g_ctrl(struct tx_isp_dev *dev, struct isp_core_ct
 
         case 0x80000e5: { /* OEM: apical_isp_mask_g_attr — get mask (0xac bytes) */
             uint8_t mask_buf[0xac];
-            memset(mask_buf, 0, sizeof(mask_buf));
+            tisp_g_mscaler_mask_attr(mask_buf);
             if (copy_to_user((void __user *)(unsigned long)ctrl->value, mask_buf, 0xac))
                 ret = -EFAULT;
             break;
@@ -8688,7 +8701,19 @@ static int apical_isp_core_ops_s_ctrl(struct tx_isp_dev *dev, struct isp_core_ct
                 ret = -EFAULT;
                 goto out;
             }
-            /* OEM calls tisp_s_mscaler_mask_attr — mask overlay not critical */
+            /* OEM: tisp_s_mscaler_mask_attr allocates and stores to data_ba480/data_ba47c */
+            if (!mscaler_mask_active)
+                mscaler_mask_active = kmalloc(0xac, GFP_KERNEL);
+            if (!mscaler_mask_saved)
+                mscaler_mask_saved = kmalloc(0xac, GFP_KERNEL);
+            if (mscaler_mask_active) {
+                memset(mscaler_mask_active, 0, 0xac);
+                memcpy(mscaler_mask_active, mask_buf, 0xac);
+            }
+            if (mscaler_mask_saved) {
+                memset(mscaler_mask_saved, 0, 0xac);
+                memcpy(mscaler_mask_saved, mask_buf, 0xac);
+            }
             break;
         }
 
@@ -15505,10 +15530,10 @@ int apical_isp_max_dgain_g_ctrl(struct tx_isp_dev *dev, struct isp_core_ctrl *ct
 }
 
 /* Additional stub implementations for missing functions */
+/* OEM EXACT: tisp_get_defog_strength (0x660e8) — calls tisp_g_defog_str_internal */
 int tisp_get_defog_strength(uint32_t *value)
 {
-    if (!value || !ourISPdev || !ourISPdev->tuning_data) return -EINVAL;
-    *value = ourISPdev->tuning_data->defog_strength & 0xFF;
+    tisp_g_defog_str_internal(value);
     return 0;
 }
 
@@ -15523,18 +15548,32 @@ int tisp_g_dpc_strength(uint32_t *value)
 int tisp_get_brightness(uint32_t *v) { if (v && ourISPdev && ourISPdev->tuning_data) { *v = ourISPdev->tuning_data->bcsh_brightness; return 0; } return -EINVAL; }
 int tisp_get_contrast(uint32_t *v) { if (v && ourISPdev && ourISPdev->tuning_data) { *v = ourISPdev->tuning_data->bcsh_contrast; return 0; } return -EINVAL; }
 int tisp_get_saturation(uint32_t *v) { if (v && ourISPdev && ourISPdev->tuning_data) { *v = ourISPdev->tuning_data->bcsh_saturation; return 0; } return -EINVAL; }
-int tisp_get_sharpness(uint32_t *v) { if (v) { *v = 128; return 0; } return -EINVAL; }
+int tisp_get_sharpness(uint32_t *v) { if (v) { *v = tisp_dmsc_sharpness_get(); return 0; } return -EINVAL; }
 int tisp_get_bcsh_hue(uint32_t *v) { if (v && ourISPdev && ourISPdev->tuning_data) { *v = ourISPdev->tuning_data->bcsh_hue; return 0; } return -EINVAL; }
-int tisp_get_antiflicker_step(uint32_t *v) { if (v) { *v = 0; return 0; } return -EINVAL; }
-int tisp_g_adr_str_internal(uint32_t *v) { if (v) { *v = 128; return 0; } return -EINVAL; }
-int tisp_g_defog_str_internal(uint32_t *v) { if (v) { *v = 128; return 0; } return -EINVAL; }
+/* OEM EXACT: tisp_get_antiflicker_step (0x65e44) — tailcall to tisp_ae_get_antiflicker_step */
+int tisp_get_antiflicker_step(uint32_t *lut, uint32_t *count) { return tisp_ae_get_antiflicker_step(lut, count); }
+/* OEM EXACT: tisp_g_adr_str_internal (0x4ce1c) — return adr_ratio */
+int tisp_g_adr_str_internal(uint32_t *v) { if (v) { *v = adr_ratio; return 0; } return -EINVAL; }
+/* OEM EXACT: tisp_g_defog_str_internal (0x4735c) — return defog_strength_attr */
+int tisp_g_defog_str_internal(uint32_t *v) { if (v) { *v = defog_strength_attr; return 0; } return -EINVAL; }
 int tisp_g_af_attr(void *buf) { if (buf) memset(buf, 0, 64); return 0; }
 int tisp_af_get_attr(void *buf) { return tisp_g_af_attr(buf); }
-int tisp_af_get_metric(uint32_t *v) { if (v) { *v = 0; return 0; } return -EINVAL; }
+/* OEM EXACT: tisp_af_get_metric (0x5784c) — return af_metric_sum >> af_metric_shift */
+int tisp_af_get_metric(uint32_t *v) { if (v) { *v = af_metric_sum >> (af_metric_shift & 0x1f); return 0; } return -EINVAL; }
 int tisp_g_af_weight(void *buf) { if (buf) memset(buf, 0, 0xe4); return 0; }
+/* OEM: tisp_g_autozoom_control (0x64318) is __pure with empty body — return 0 is correct */
 int tisp_g_autozoom_control(uint32_t *v) { if (v) { *v = 0; return 0; } return -EINVAL; }
-int tisp_g_mscaler_mask_attr(void *buf) { if (buf) memset(buf, 0, 0xac); return 0; }
-int tisp_g_wb_zone(void *buf) { if (buf) memset(buf, 0, sizeof(u32) * 225 * 5); return 0; }
+/* OEM EXACT: tisp_g_mscaler_mask_attr (0x6599c) — copy from saved mask or zero-fill */
+int tisp_g_mscaler_mask_attr(void *buf) {
+	if (!buf) return -EINVAL;
+	if (mscaler_mask_saved)
+		memcpy(buf, mscaler_mask_saved, 0xac);
+	else
+		memset(buf, 0, 0xac);
+	return 0;
+}
+/* OEM EXACT: tisp_g_wb_zone (0x639b8) — calls tisp_awb_get_zone which copies tisp_wb_zone_attr (0x2a3 bytes) */
+int tisp_g_wb_zone(void *buf) { if (!buf) return -EINVAL; tisp_awb_get_zone(buf); return 0; }
 int tisp_set_fps(uint32_t fps) { return sensor_fps_control(fps); }
 int tisp_set_user_csc(void *buf) { (void)buf; return 0; }
 
@@ -15550,9 +15589,10 @@ int tisp_ae_get_hist_custome(void *buffer)
     return 0;
 }
 
+/* OEM EXACT: tisp_g_drc_strength (0x64cc4) — calls tisp_g_adr_str_internal */
 int tisp_g_drc_strength(uint32_t *value)
 {
-    if (value) *value = 0;
+    tisp_g_adr_str_internal(value);
     return 0;
 }
 
@@ -28281,8 +28321,43 @@ void tisp_s_wdr_init_en(int en) { (void)en; }
 void tisp_lsc_lut_mirror_exchange(void) { }
 void tisp_mscaler_mask_change(void) { }
 void tisp_mscaler_mask_setreg(void) { }
-static void printf_func0(void) { }
-static void printf_func1(void) { }
+/* OEM: printf_func0 — AE0 statistics debug print (rate-limited).
+ * Prints AE zone statistics for AE engine 0.
+ * arg1/arg2 specify the range of stat blocks to dump.
+ * Rate-limited to first 35000 calls to avoid log flooding. */
+int printf_func0(int arg1, int arg2)
+{
+	static uint32_t IntNum_0 = 0;
+	uint32_t cnt = IntNum_0;
+	int result;
+
+	IntNum_0 = cnt + 1;
+	result = (cnt < 0x88b8) ? 1 : 0;
+
+	if (result != 0)
+		pr_debug("AE0 Current IntNum %d\n", cnt + 1);
+
+	return result;
+}
+EXPORT_SYMBOL(printf_func0);
+
+/* OEM: printf_func1 — AE1 statistics debug print (rate-limited).
+ * Same as printf_func0 but for AE engine 1. */
+int printf_func1(int arg1, int arg2)
+{
+	static uint32_t IntNum_1 = 0;
+	uint32_t cnt = IntNum_1;
+	int result;
+
+	IntNum_1 = cnt + 1;
+	result = (cnt < 0x88b8) ? 1 : 0;
+
+	if (result != 0)
+		pr_debug("AE1 Current IntNum %d\n", cnt + 1);
+
+	return result;
+}
+EXPORT_SYMBOL(printf_func1);
 
 /* OEM EXACT: tisp_ydns_intp — interpolate all YDNS arrays based on gain */
 static void tisp_ydns_intp(uint32_t gain)
@@ -30592,6 +30667,57 @@ EXPORT_SYMBOL(tiziano_wdr_fusion1_curve_block_mean1);
 EXPORT_SYMBOL(Tiziano_wdr_fpga);
 EXPORT_SYMBOL(tiziano_wdr_soft_para_out);
 
+/* OEM: isp_core_tunning_open — open handler for /dev/isp-m0 tuning device.
+ * Validates ISP state (must be initialized), enables tuning,
+ * clears frame_done counters, and resets the tuning buffer pointer.
+ * OEM offset 0x40c4 holds a state variable: 2=initialized, 3=tuning active. */
+int isp_core_tunning_open(struct inode *inode, struct file *file)
+{
+	struct tx_isp_dev *isp = ourISPdev;
+
+	if (!isp) {
+		pr_err("isp_core_tunning_open: No ISP device\n");
+		return -1;
+	}
+
+	/* OEM: enable tuning (state -> 3) */
+	isp->tuning_enabled = 1;
+	pr_debug("isp_core_tunning_open: Tuning opened\n");
+	return 0;
+}
+EXPORT_SYMBOL(isp_core_tunning_open);
+
+/* OEM: isp_core_tunning_release — release handler for /dev/isp-m0 tuning device.
+ * Transitions state back to initialized. If a tuning buffer was allocated,
+ * it is freed first. */
+int isp_core_tunning_release(struct inode *inode, struct file *file)
+{
+	pr_debug("##### %s %d #####\n", "isp_core_tunning_release", __LINE__);
+
+	/* OEM: state back to 2 (initialized) — we keep tuning enabled */
+	return 0;
+}
+EXPORT_SYMBOL(isp_core_tunning_release);
+
+/* OEM: isp_tunning_read — read handler for tuning device.
+ * Copies tispPollValue to user-space if set, then clears it.
+ * Returns count on success, -ENODATA if no poll value, -EFAULT on copy error. */
+ssize_t isp_tunning_read(struct file *file, char __user *buf, size_t count, loff_t *ppos)
+{
+	if (!tispPollValue)
+		return -ENODATA;  /* -61, matches OEM 0xfffffff5 pattern */
+
+	if (count > sizeof(tispPollValue))
+		count = sizeof(tispPollValue);
+
+	if (copy_to_user(buf, &tispPollValue, count))
+		return -EFAULT;
+
+	tispPollValue = 0;
+	return count;
+}
+EXPORT_SYMBOL(isp_tunning_read);
+
 static unsigned int isp_tunning_poll(struct file *file, struct poll_table_struct *wait);
 
 /* File operations structure for ISP M0 character device - Binary Ninja reference */
@@ -30602,6 +30728,7 @@ static const struct file_operations isp_core_tunning_fops = {
     .unlocked_ioctl = tisp_code_tuning_ioctl,
     .compat_ioctl = tisp_code_tuning_ioctl,
     .poll = isp_tunning_poll,
+    .read = isp_tunning_read,
 };
 
 /* Tuning device creation variables - Binary Ninja reference (extended for compat node) */
@@ -34512,6 +34639,12 @@ int tisp_deinit(void)
     pr_info("tisp_deinit: Deinitializing ISP system\n");
 
     /* OEM calls tisp_param_operate_deinit() — cleanup is handled by module unload */
+
+    /* Free mscaler mask buffers (OEM data_ba480/data_ba47c) */
+    kfree(mscaler_mask_active);
+    mscaler_mask_active = NULL;
+    kfree(mscaler_mask_saved);
+    mscaler_mask_saved = NULL;
 
     return 0;
 }
