@@ -1604,21 +1604,28 @@ irqreturn_t ispcore_interrupt_service_routine(int irq, void *dev_id)
     }
 
     /* OEM EXACT: error bits 0x200/0x100 trigger exception_handle() pipeline
-     * reset when the exception-enable flag is set. Without this reset, ISP
-     * pipeline errors at startup leave the AE stats DMA engine producing
-     * data only on alternate banks (50% dead frames). */
+     * reset when the exception-enable flag is set. OEM sequence (0x6865c):
+     *   1. Request ISP release (reg 0x24 bit 0)
+     *   2. Stop VIC (VIC_CTRL = 4)
+     *   3. Poll reg 0x28 bit 0 for release ack
+     *   4. Pipeline flush (reg 0x20 bit 2 set then clear)
+     *   5. Restart ISP (reg 0x800 = 1)
+     *   6. Restart VIC (VIC_CTRL = 1)
+     * Without VIC stop/restart, data flows during the flush leaving the
+     * pipeline corrupted — AE/AWB stats die after mode switches. */
     {
         static u32 isp_err_200_count, isp_err_100_count;
         if (interrupt_status & 0x200) {
             if (vic_dev->exception_enable) {
-                /* OEM exception_handle: flush → poll → reset → restart */
                 u32 r;
                 system_reg_write(0x24, system_reg_read(0x24) | 1);
+                writel(4, vic_regs + 0x0);  /* VIC stop */
                 do { r = system_reg_read(0x28); } while (!(r & 1));
                 r = system_reg_read(0x20);
                 system_reg_write(0x20, r | 4);
                 system_reg_write(0x20, r & ~4);
                 system_reg_write(0x800, 1);
+                writel(1, vic_regs + 0x0);  /* VIC run */
             }
             isp_err_200_count++;
         }
@@ -1626,11 +1633,13 @@ irqreturn_t ispcore_interrupt_service_routine(int irq, void *dev_id)
             if (vic_dev->exception_enable) {
                 u32 r;
                 system_reg_write(0x24, system_reg_read(0x24) | 1);
+                writel(4, vic_regs + 0x0);  /* VIC stop */
                 do { r = system_reg_read(0x28); } while (!(r & 1));
                 r = system_reg_read(0x20);
                 system_reg_write(0x20, r | 4);
                 system_reg_write(0x20, r & ~4);
                 system_reg_write(0x800, 1);
+                writel(1, vic_regs + 0x0);  /* VIC run */
             }
             isp_err_100_count++;
         }
