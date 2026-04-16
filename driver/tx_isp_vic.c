@@ -515,9 +515,9 @@ int tx_isp_create_vic_device(struct tx_isp_dev *isp_dev)
      */
     vic_raw_regs_set(vic_dev, vic_dev->vic_regs);
 
-    /* Initialize VIC device dimensions - CRITICAL: Use actual sensor output dimensions */
-    vic_dev->width = 1920;  /* GC2053 actual output width */
-    vic_dev->height = 1080; /* GC2053 actual output height */
+    /* Initialize VIC device dimensions — defaults overwritten by sensor attr sync */
+    vic_dev->width = 1920;
+    vic_dev->height = 1080;
     vic_dev->stride = vic_dev->width;
     vic_dev->pixel_format = V4L2_PIX_FMT_NV12;
     vic_raw_dims_set(vic_dev, vic_dev->width, vic_dev->height);

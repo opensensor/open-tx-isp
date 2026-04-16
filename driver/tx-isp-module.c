@@ -1847,7 +1847,7 @@ static int sensor_get_id(void) {
     /* Binary Ninja: return zx.d(*(*(g_ispcore + 0x120) + 4)) */
 
     if (!ourISPdev || !ourISPdev->sensor || !ourISPdev->sensor->video.attr) {
-        return 0x2053; /* Default GC2053 chip ID */
+        return 0; /* No sensor registered yet */
     }
 
     /* Return sensor chip ID from attributes */
