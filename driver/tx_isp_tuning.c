@@ -3861,11 +3861,13 @@ static uint32_t data_a0df0 = 0;    /* AE DN state flag (OEM: data_a0df0) */
 static uint32_t data_a0e08 = 0;    /* AE DN state flag (OEM: data_a0e08) */
 static uint32_t data_a0c08 = 0x80; /* AE compensation target (OEM: data_a0c08) */
 static uint8_t  ae_comp_x = 0x80;  /* AE compensation input (OEM: ae_comp_x) */
-static uint32_t data_9a2ec = 1;    /* Comp AE mode flag — enables histogram-based
-                                     * ev_list/lum_list scaling in ae0_tune2 Phase A.
-                                     * This is the critical brightness feedback loop:
-                                     * wmean → scale tables → target shifts → EV changes.
-                                     * Without it, convergence is pure EV-domain with no
+static uint32_t data_9a2ec = 0;    /* OEM init: 0x0. DEIR enable flag for GIB.
+                                     * Set to 0 for standard Bayer (deir_en=0) sensors.
+                                     * Controls bit 16 of GIB reg 0x106c and gates
+                                     * histogram-based ev/lum scaling in ae0_tune2.
+                                     * Previous value of 1 was WRONG — caused ae0_tune2
+                                     * to scale ev_list/lum_list by wmean when it shouldn't,
+                                     * and wrote wrong DEIR enable to GIB HW. Without it, convergence is pure EV-domain with no
                                      * brightness feedback. */
 static uint32_t data_c46d0 = 0;    /* AE gain distribution mode */
 static uint32_t ftune_wmeans_state = 0; /* OEM: ftune_wmeans.32574 */
