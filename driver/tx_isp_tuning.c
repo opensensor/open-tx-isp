@@ -63,9 +63,12 @@ extern const char *tx_isp_get_default_bin_path(void);
 extern void tx_isp_wakeup_frame_channels(void);
 
 
+#define TISP_TOP_BYPASS_DPC_BIT	BIT(2)
+#define TISP_TOP_BYPASS_LSC_HW_BIT	BIT(4)
+#define TISP_TOP_BYPASS_GIB_BIT	BIT(5)
+#define TISP_TOP_BYPASS_LSC_LUT_BIT	BIT(6)
 #define TISP_TOP_BYPASS_ADR_BIT	BIT(7)
 #define TISP_TOP_BYPASS_DEFOG_BIT	BIT(11)
-#define TISP_TOP_BYPASS_GIB_BIT	BIT(5)
 #define TISP_TOP_BYPASS_MDNS_BIT	BIT(16)
 
 static int tisp_force_bypass_adr = 0; /* ADR algorithm now ported — enable by default */
@@ -78,10 +81,17 @@ module_param_named(force_bypass_defog, tisp_force_bypass_defog, int, S_IRUGO | S
 MODULE_PARM_DESC(force_bypass_defog,
 			 "Debug isolate FOV issues by forcing Defog bypass (default: 0)");
 
-static int tisp_force_bypass_gib = 0; /* GIB: enabled — write-gate 0x1070 issue TBD */
+static int tisp_force_bypass_dpc = 0;
+module_param_named(force_bypass_dpc, tisp_force_bypass_dpc, int, S_IRUGO | S_IWUSR);
+MODULE_PARM_DESC(force_bypass_dpc, "Force DPC (bit 2) bypass for AWB bisection");
+
+static int tisp_force_bypass_lsc = 0;
+module_param_named(force_bypass_lsc, tisp_force_bypass_lsc, int, S_IRUGO | S_IWUSR);
+MODULE_PARM_DESC(force_bypass_lsc, "Force LSC LUT gate (bit 6) bypass for AWB bisection");
+
+static int tisp_force_bypass_gib = 0;
 module_param_named(force_bypass_gib, tisp_force_bypass_gib, int, S_IRUGO | S_IWUSR);
-MODULE_PARM_DESC(force_bypass_gib,
-			 "Force GIB bypass (default: 1 — GIB equalizes R=G=B despite correct registers)");
+MODULE_PARM_DESC(force_bypass_gib, "Force GIB (bit 5) bypass");
 
 static int tisp_force_bypass_mdns = 0; /* MDNS: enabled (OEM default) */
 module_param_named(force_bypass_mdns, tisp_force_bypass_mdns, int, S_IRUGO | S_IWUSR);
@@ -94,12 +104,16 @@ static u32 tisp_apply_debug_top_bypass_overrides(u32 bypass_val, const char *rea
 {
 	u32 force_mask = 0;
 
+	if (tisp_force_bypass_dpc)
+		force_mask |= TISP_TOP_BYPASS_DPC_BIT;
+	if (tisp_force_bypass_lsc)
+		force_mask |= TISP_TOP_BYPASS_LSC_LUT_BIT;
+	if (tisp_force_bypass_gib)
+		force_mask |= TISP_TOP_BYPASS_GIB_BIT;
 	if (tisp_force_bypass_adr)
 		force_mask |= TISP_TOP_BYPASS_ADR_BIT;
 	if (tisp_force_bypass_defog)
 		force_mask |= TISP_TOP_BYPASS_DEFOG_BIT;
-	if (tisp_force_bypass_gib)
-		force_mask |= TISP_TOP_BYPASS_GIB_BIT;
 	if (tisp_force_bypass_mdns)
 		force_mask |= TISP_TOP_BYPASS_MDNS_BIT;
 
