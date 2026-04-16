@@ -134,15 +134,6 @@ static u32 tisp_apply_debug_top_bypass_overrides(u32 bypass_val, const char *rea
 	return bypass_val;
 }
 
-static int isp_trigger_frame_data_transfer(struct tx_isp_dev *dev)
-{
-	if (!dev)
-		return -EINVAL;
-
-	/* Safe placeholder until the OEM DMA-ready path is restored. */
-	pr_debug("isp_trigger_frame_data_transfer: stubbed no-op\n");
-	return 0;
-}
 
 /* Forward declarations for functions used before definition */
 static int tisp_sharpen_all_reg_refresh(void);
@@ -7201,26 +7192,6 @@ static int isp_core_tuning_event(struct tx_isp_dev *dev, uint32_t event)
             break;
 
         case ISP_TUNING_EVENT_DMA_READY:
-            pr_info("*** ISP_TUNING_EVENT_DMA_READY: DMA buffer ready for processing ***\n");
-            /* This event indicates that DMA has transferred frame data to buffer */
-            /* and ISP can now process it */
-            if (dev->core_regs) {
-                /* Enable ISP processing of the DMA buffer */
-                writel(1, ourISPdev->core_regs + 0x8000);  /* Enable ISP processing */
-                pr_info("isp_core_tuning_event: ISP processing enabled for DMA buffer\n");
-
-                /* CRITICAL: Trigger frame transfer from sensor to DMA buffer */
-                /* This is what's missing - we need to copy sensor data to ISP buffer */
-                pr_info("*** TRIGGERING FRAME DATA TRANSFER FROM SENSOR TO DMA BUFFER ***\n");
-
-                /* Call the actual frame data transfer implementation */
-                int transfer_ret = isp_trigger_frame_data_transfer(dev);
-                if (transfer_ret == 0) {
-                    pr_info("*** FRAME DATA TRANSFER COMPLETED SUCCESSFULLY ***\n");
-                } else {
-                    pr_err("*** FRAME DATA TRANSFER FAILED: %d ***\n", transfer_ret);
-                }
-            }
             break;
 
         case ISP_TUNING_EVENT_DN:
