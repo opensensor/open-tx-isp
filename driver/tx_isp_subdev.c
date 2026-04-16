@@ -1254,7 +1254,8 @@ void tx_isp_subdev_auto_link(struct platform_device *pdev, struct tx_isp_subdev 
         } else {
             pr_err("*** CRITICAL ERROR: Core device not found in subdev private data ***\n");
         }
-    } else if (strstr(dev_name, "sensor") != NULL || sd->grp_id == 5) {
+    } else {
+        /* Any device not matching isp-w*, isp-m0 is assumed to be a sensor */
         /* CRITICAL: This is a sensor device - check if already registered to prevent duplicates */
         pr_info("*** DETECTED SENSOR DEVICE: '%s' - checking for existing registration ***\n", dev_name);
 
