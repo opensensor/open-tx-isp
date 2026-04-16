@@ -27996,6 +27996,71 @@ static uint32_t tisp_simple_intp(int gain_hi, int gain_lo, const uint32_t *array
 	return (u32)((val >> 16) + ((val & 0x8000) >> 15));
 }
 
+/* OEM EXACT: absFun (0x1f5cc) — absolute difference of two values */
+static int32_t absFun(int32_t arg1, int32_t arg2) __attribute__((pure));
+static int32_t absFun(int32_t arg1, int32_t arg2)
+{
+	if (arg2 >= arg1)
+		return arg2 - arg1;
+	return arg1 - arg2;
+}
+
+/* OEM helpers for hvflip — stubs until full LSC/scaler flip support */
+static void tisp_lsc_hvflip(u32 width, u32 height, int hflip, int vflip)
+{
+	/* OEM calls tisp_lsc_mirror_flip / tisp_lsc_upside_down_lut based on
+	 * hflip/vflip. Requires full LSC LUT manipulation. */
+	pr_debug("tisp_lsc_hvflip: w=%u h=%u hflip=%d vflip=%d\n",
+		 width, height, hflip, vflip);
+}
+
+static void tisp_s_mscaler_hvflip_mask(u8 mask)
+{
+	/* OEM writes MSCA scaler flip control based on mask bits.
+	 * bit 0 = horizontal flip, bit 1 = vertical flip */
+	pr_debug("tisp_s_mscaler_hvflip_mask: 0x%x\n", mask);
+}
+
+static void tisp_hv_flip_enable(u8 mask)
+{
+	/* OEM writes ISP Bayer pattern swap for flip.
+	 * Adjusts CFA register to compensate for sensor mirror/flip. */
+	pr_debug("tisp_hv_flip_enable: 0x%x\n", mask);
+}
+
+/* OEM EXACT: apical_isp_hvflip_update (0x547c) — handle sensor H/V flip.
+ * Called from s_ctrl when HFLIP (0x980914) or VFLIP (0x980915) changes.
+ * arg1 = ISP dev private, arg2 = combined flip state (bit0=hflip, bit1=vflip) */
+int apical_isp_hvflip_update(void *arg1, int arg2)
+{
+	u32 *dev = (u32 *)arg1;
+	u8 flip_mask;
+	int hflip = 0, vflip = 0;
+
+	/* OEM: *(arg1 + 0x134) = sensor type flag.
+	 * When == 1, decode arg2 into separate h/v flags for LSC. */
+	if (dev && dev[0x134 / 4] == 1) {
+		switch (arg2) {
+		case 0: hflip = 0; vflip = 1; break;
+		case 1: hflip = 0; vflip = 0; break;
+		case 2: hflip = 1; vflip = 1; break;
+		case 3: hflip = 1; vflip = 1; break;
+		default: break;
+		}
+		tisp_lsc_hvflip(dev[0x124 / 4], dev[0x128 / 4], hflip, vflip);
+		dev[0x1ac / 4] = arg2;
+		dev[0x1a8 / 4] = 1;
+		flip_mask = (u8)(arg2 & 0xfd);
+	} else {
+		flip_mask = (u8)(arg2 & 0xff);
+	}
+
+	tisp_s_mscaler_hvflip_mask(flip_mask);
+	tisp_hv_flip_enable(flip_mask);
+	return 0;
+}
+EXPORT_SYMBOL(apical_isp_hvflip_update);
+
 /* OEM EXACT: tisp_ydns_intp — interpolate all YDNS arrays based on gain */
 static void tisp_ydns_intp(uint32_t gain)
 {
