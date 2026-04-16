@@ -264,6 +264,7 @@ struct tx_isp_dev {
     struct awb_info *awb_info;
     uint32_t wdr_mode;
     uint32_t day_night;
+    uint32_t dn_pending;       /* OEM 0x178: pending DN transition (1=night,2=day,3=cust), cleared by ISR */
     uint32_t custom_mode;
     uint32_t poll_state;
     wait_queue_head_t poll_wait;

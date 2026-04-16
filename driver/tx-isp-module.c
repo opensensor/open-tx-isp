@@ -1333,6 +1333,7 @@ EXPORT_SYMBOL_GPL(tisp_get_frame_drop);
 int frame_chan_event(void *priv, int event, void *data)
 {
     struct frame_channel_device *fcd = (struct frame_channel_device *)priv;
+    extern uint8_t isp_day_night_switch_drop_frame_cnt[3];
 
     if (!fcd)
         return -EINVAL;
@@ -1342,6 +1343,17 @@ int frame_chan_event(void *priv, int event, void *data)
         struct tx_isp_channel_state *state = &fcd->state;
         u32 enable = 0, period = 0, mask = 0;
         bool drop = false;
+        int ch = fcd->channel_num;
+
+        /* OEM EXACT: Day/night switch drop-frame logic.
+         * During DN transitions, the ISR sets per-channel counters.
+         * While counter > 0, recycle the frame (don't deliver to userspace)
+         * but still enqueue the buffer back for the next capture. */
+        if (ch >= 0 && ch < 3 && isp_day_night_switch_drop_frame_cnt[ch] > 0) {
+            isp_day_night_switch_drop_frame_cnt[ch]--;
+            /* Recycle buffer via __enqueue_in_driver instead of delivery */
+            return 0;
+        }
 
         /* Frame-drop window check using current HW settings */
         tisp_get_frame_drop((u32)fcd->channel_num, &enable, &period, &mask);

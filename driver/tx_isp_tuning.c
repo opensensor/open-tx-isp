@@ -7119,8 +7119,12 @@ static int tisp_day_or_night_s_ctrl(uint32_t mode)
 	tparams_active = selected;
 
 	/* OEM sets day_night immediately after memcpy, before bypass computation */
-	if (ourISPdev)
+	if (ourISPdev) {
 		ourISPdev->day_night = active_mode;
+		/* OEM 0x62380: signal ISR to set drop-frame counters.
+		 * 1=night transition, 2=day transition */
+		ourISPdev->dn_pending = active_mode ? 1 : 2;
+	}
 
 	pr_info("%s: applying %s mode wdr=%u\n",
 		__func__, active_mode ? "night" : "day", !!data_b2e74);
@@ -14795,6 +14799,7 @@ int tisp_cust_mode_s_ctrl(uint32_t mode)
         if (ourISPdev) {
             uint32_t dn = ourISPdev->day_night;
             ourISPdev->day_night = ((dn & ~2) == 0) ? 2 : 3;
+            ourISPdev->dn_pending = 3;  /* custom mode transition */
         }
     } else if (mode == 0) {
         /* OEM: restore day or night params based on current day_night state */
@@ -19561,6 +19566,29 @@ static int tisp_gib_gain_interpolation(uint32_t gain)
     system_reg_write_gib(1, 0x1060, ch0);
     system_reg_write_gib(1, 0x1064, (ch2 << 16) | ch1);
     system_reg_write_gib(1, 0x1068, (ch4 << 16) | ch3);
+
+    /* Readback verification for first 3 calls — detect gate failures */
+    {
+        static int gib_gate_verify_count;
+        if (gib_gate_verify_count < 3) {
+            u32 rb_1060 = system_reg_read(0x1060);
+            u32 rb_1064 = system_reg_read(0x1064);
+            u32 rb_1068 = system_reg_read(0x1068);
+            u32 exp_1064 = (ch2 << 16) | ch1;
+            u32 exp_1068 = (ch4 << 16) | ch3;
+            pr_info("GIB_GATE_VERIFY[%d]: wrote 0x1060=%08x read=%08x %s\n",
+                    gib_gate_verify_count, ch0, rb_1060,
+                    (rb_1060 == ch0) ? "OK" : "MISMATCH");
+            pr_info("GIB_GATE_VERIFY[%d]: wrote 0x1064=%08x read=%08x %s\n",
+                    gib_gate_verify_count, exp_1064, rb_1064,
+                    (rb_1064 == exp_1064) ? "OK" : "MISMATCH");
+            pr_info("GIB_GATE_VERIFY[%d]: wrote 0x1068=%08x read=%08x %s\n",
+                    gib_gate_verify_count, exp_1068, rb_1068,
+                    (rb_1068 == exp_1068) ? "OK" : "MISMATCH");
+            gib_gate_verify_count++;
+        }
+    }
+
     tisp_gib_blc_ag = gain;
     return 0;
 }
@@ -19763,15 +19791,13 @@ int tiziano_gib_dn_params_refresh(void)
 {
     tiziano_gib_params_refresh();
 
-    /* OEM sets data_9a2ec here — skip while GIB bypassed (see tiziano_gib_init) */
-    if (!(system_reg_read(0xc) & 0x20)) {
-        if (deir_en != 1)
-            data_9a2ec = 0;
-        else if (ourISPdev->day_night != 0)
-            data_9a2ec = 0;
-        else
-            data_9a2ec = deir_en;
-    }
+    /* OEM EXACT: unconditionally set data_9a2ec based on deir_en */
+    if (deir_en != 1)
+        data_9a2ec = 0;
+    else if (ourISPdev->day_night != 0)
+        data_9a2ec = 0;
+    else
+        data_9a2ec = deir_en;
 
     tiziano_gib_lut_parameter();
     return 0;
@@ -19786,38 +19812,47 @@ int tiziano_gib_init(void)
 {
     tiziano_gib_params_refresh();
 
-    /* OEM sets data_9a2ec based on deir_en here. For GC2053 (deir_en=0),
-     * this would set data_9a2ec=0, disabling AE histogram scaling.
-     * However, our AE convergence depends on data_9a2ec=1 (its default)
-     * because our FIFO value (AG) differs from the OEM's. Skip this
-     * modification while GIB is bypassed to avoid breaking AE.
-     * TODO: Re-enable when GIB HW issue is resolved and FIFO value
-     * matches OEM exactly. */
-    if (!(system_reg_read(0xc) & 0x20)) {
-        /* GIB is ACTIVE (bit 5 clear) — apply OEM data_9a2ec logic */
-        if (deir_en != 1)
-            data_9a2ec = 0;
-        else if (ourISPdev->day_night != 0)
-            data_9a2ec = 0;
-        else
-            data_9a2ec = deir_en;
-    }
+    /* OEM EXACT: unconditionally set data_9a2ec based on deir_en.
+     * For standard Bayer sensors (deir_en=0), data_9a2ec=0. */
+    if (deir_en != 1)
+        data_9a2ec = 0;
+    else if (ourISPdev->day_night != 0)
+        data_9a2ec = 0;
+    else
+        data_9a2ec = deir_en;
 
     tiziano_gib_lut_parameter();
     tiziano_gib_deir_reg(tiziano_gib_deir_r_m,
                           tiziano_gib_deir_g_m,
                           tiziano_gib_deir_b_m);
 
-    pr_info("GIB_REGS: 0x1030=%08x 0x1034=%08x 0x1038=%08x 0x103c=%08x 0x1040=%08x\n",
-        system_reg_read(0x1030), system_reg_read(0x1034),
-        system_reg_read(0x1038), system_reg_read(0x103c),
-        system_reg_read(0x1040));
-    pr_info("GIB_BLC: 0x1060=%08x 0x1064=%08x 0x1068=%08x 0x106c=%08x 0x1070=%08x\n",
-        system_reg_read(0x1060), system_reg_read(0x1064),
-        system_reg_read(0x1068), system_reg_read(0x106c),
-        system_reg_read(0x1070));
-    pr_info("GIB_STATE: bypass=0x%08x reg8=0x%08x deir_en=%d\n",
-        system_reg_read(0xc), system_reg_read(0x8), GIB_CFG_DEIR_EN);
+    /* GIB register readback verification — check if gate writes took effect */
+    {
+        u32 r1038 = system_reg_read(0x1038);
+        u32 r103c = system_reg_read(0x103c);
+        u32 r1060 = system_reg_read(0x1060);
+        u32 r1064 = system_reg_read(0x1064);
+        u32 r1068 = system_reg_read(0x1068);
+        u32 r106c = system_reg_read(0x106c);
+        u32 exp_1038 = (GIB_CFG_WGT_HI << 16) | GIB_CFG_WGT_LO;
+        u32 exp_106c = (data_9a2ec << 16) | (GIB_CFG_DEIR_MODE << 3) | GIB_CFG_DEIR_STR;
+
+        pr_info("GIB_INIT: 0x1038=%08x(exp=%08x) 0x103c=%08x\n", r1038, exp_1038, r103c);
+        pr_info("GIB_INIT: 0x1060=%08x 0x1064=%08x 0x1068=%08x\n", r1060, r1064, r1068);
+        pr_info("GIB_INIT: 0x106c=%08x(exp=%08x) data_9a2ec=%u deir_en=%u\n",
+                r106c, exp_106c, data_9a2ec, deir_en);
+        pr_info("GIB_INIT: bypass=0x%08x reg8=0x%08x GIB_bit5=%s\n",
+                system_reg_read(0xc), system_reg_read(0x8),
+                (system_reg_read(0xc) & 0x20) ? "BYPASSED" : "ACTIVE");
+
+        /* Verify gate writes took effect */
+        if (r1038 != exp_1038)
+            pr_err("GIB_INIT: 0x1038 MISMATCH! wrote %08x read %08x — direct write may have failed\n",
+                    exp_1038, r1038);
+        if (r106c != exp_106c)
+            pr_err("GIB_INIT: 0x106c MISMATCH! wrote %08x read %08x — gate write may have failed\n",
+                    exp_106c, r106c);
+    }
 
     return 0;
 }

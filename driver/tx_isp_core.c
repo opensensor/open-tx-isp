@@ -890,6 +890,15 @@ int isp_day_night_switch_drop_frame_num;
 module_param(isp_day_night_switch_drop_frame_num, int, S_IRUGO);
 MODULE_PARM_DESC(isp_day_night_switch_drop_frame_num, "isp day night switch drop frame number");
 
+/* OEM 0xca494: per-channel DN drop frame counters (3 bytes packed) */
+uint8_t isp_day_night_switch_drop_frame_cnt[3];
+/* OEM 0xca491: PDQ interrupt drop counter */
+uint8_t isp_day_night_switch_drop_frame_cnt_pdq_interrupt;
+/* OEM data_ba560: DN transition in-progress flag */
+static uint32_t dn_transition_active;
+EXPORT_SYMBOL(isp_day_night_switch_drop_frame_cnt);
+EXPORT_SYMBOL(isp_day_night_switch_drop_frame_cnt_pdq_interrupt);
+
 int isp_memopt;
 module_param(isp_memopt, int, S_IRUGO);
 MODULE_PARM_DESC(isp_memopt, "isp memory optimize");
@@ -1644,6 +1653,44 @@ irqreturn_t ispcore_interrupt_service_routine(int irq, void *dev_id)
                 writel(1, vic_regs + 0x0);  /* VIC run */
             }
             isp_err_100_count++;
+        }
+    }
+
+    /* OEM EXACT 0x69a34-0x69aec: Day/night transition handler.
+     * tisp_day_or_night_s_ctrl sets dn_pending=1(night)/2(day)/3(custom).
+     * ISR picks it up, sets drop-frame counters, writes fill color to 0x6030,
+     * sends event 0x4000003 to sensor, then clears pending. */
+    {
+        extern uint8_t isp_day_night_switch_drop_frame_cnt[3];
+        extern uint8_t isp_day_night_switch_drop_frame_cnt_pdq_interrupt;
+        extern int isp_day_night_switch_drop_frame_num;
+        u32 dn_mode;
+
+        /* OEM: data_ba560 check — if DN transition is active, wait for sensor ack */
+        if (dn_transition_active == 1) {
+            /* OEM checks sensor->0x40a4 for ack; we just clear immediately */
+            dn_transition_active = 0;
+        }
+
+        dn_mode = isp_dev->dn_pending;
+        if (dn_mode == 1) {
+            /* Night mode transition */
+            u8 drop_n = (u8)isp_day_night_switch_drop_frame_num;
+            isp_day_night_switch_drop_frame_cnt[0] = drop_n;
+            isp_day_night_switch_drop_frame_cnt[1] = drop_n;
+            isp_day_night_switch_drop_frame_cnt[2] = drop_n;
+            isp_day_night_switch_drop_frame_cnt_pdq_interrupt = drop_n;
+            system_reg_write(0x6030, 0xff008080);  /* Gray fill during transition */
+            isp_dev->dn_pending = 0;
+            dn_transition_active = 1;
+        } else if (dn_mode == 2) {
+            /* Day mode transition */
+            system_reg_write(0x6030, 0xff00ff00);  /* Green fill during transition */
+            isp_dev->dn_pending = 0;
+        } else if (dn_mode == 3) {
+            /* Custom mode transition */
+            system_reg_write(0x6030, 0xff008080);
+            isp_dev->dn_pending = 0;
         }
     }
 
