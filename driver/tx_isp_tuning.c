@@ -28091,19 +28091,38 @@ static void tisp_ydns_param_cfg(void)
     }
 }
 
-/* OEM EXACT: tisp_simple_intp — simple gain-based interpolation across 9-entry array.
- * gain_hi selects the array index, gain_lo interpolates between entries. */
+/* OEM EXACT: tisp_simple_intp — 32-bit interpolation matching OEM at 0x11300.
+ * OEM uses abs/sign approach: computes |array[hi+1]-array[hi]| * gain_lo / 65536,
+ * then adds or subtracts from array[hi]. Pure 32-bit arithmetic, no s64. */
 static uint32_t tisp_simple_intp(int gain_hi, int gain_lo, const uint32_t *array)
 {
-	s64 val;
+    uint32_t curr, next_val, diff, scaled;
+    int subtract;
+
     if (gain_hi < 0) gain_hi = 0;
     if (gain_hi >= 8) return array[8];
-	val = (s64)array[gain_hi] << 16;
-    if (gain_lo != 0 && gain_hi < 8) {
-		s64 next = (s64)array[gain_hi + 1] << 16;
-		val += ((next - val) * gain_lo) >> 16;
+
+    curr = array[gain_hi];
+    next_val = array[gain_hi + 1];
+
+    if (curr == next_val || gain_lo == 0)
+        return curr;
+
+    if (curr >= next_val) {
+        diff = curr - next_val;
+        subtract = 1;
+    } else {
+        diff = next_val - curr;
+        subtract = 0;
     }
-	return (u32)((val >> 16) + ((val & 0x8000) >> 15));
+
+    /* OEM: scaled = (diff * gain_lo) >> 16, with rounding from bit 15 */
+    {
+        uint32_t product = diff * gain_lo;
+        scaled = (product >> 16) + ((product >> 15) & 1);
+    }
+
+    return subtract ? (curr - scaled) : (curr + scaled);
 }
 
 /* OEM EXACT: absFun (0x1f5cc) — absolute difference of two values */
