@@ -6775,19 +6775,54 @@ static int ispvic_frame_channel_qbuf(struct tx_isp_vic_device *vic_dev, void *bu
     return 0;
 }
 
-/* __enqueue_in_driver - Buffer enqueue stub.
- * MSCA DMA FIFO writes are now done directly in the QBUF ioctl handler,
- * so this function is a no-op placeholder for any remaining callers.
+/* __enqueue_in_driver - OEM EXACT (0xa3cc): submit buffer to VIC/MSCA.
+ * Sets buffer state to QUEUED (3) and sends event 0x3000005 to the
+ * channel's remote subdev, which programs MSCA DMA addresses.
+ *
+ * OEM calls this from: QBUF ioctl, frame-done requeue, streamon bulk.
+ * arg1 is the OEM's internal vb2-like buffer struct:
+ *   +0x44 = channel context pointer
+ *   +0x48 = buffer state (set to 3 = QUEUED)
+ *   +0x4c = secondary state (set to 3)
+ *   +0x68 = buffer entry data (passed as event payload)
+ * Channel context:
+ *   +0x298 = remote subdev pointer
+ *   +0x29c = channel number
+ *
+ * NOTE: Currently not called — our QBUF handler programs MSCA inline.
+ * Implemented to match OEM for future buffer management integration.
  */
-static int __enqueue_in_driver(void *buffer_struct)
+static int __enqueue_in_driver(void *arg1)
 {
-    if (!buffer_struct)
-        return 0xfffffdfd;
+    u32 *buf;
+    void **channel_ctx;
+    struct tx_isp_subdev *sd;
+    int result;
 
-    /* MSCA DMA FIFO writes are handled in frame_channel_unlocked_ioctl QBUF.
-     * VIC MDMA bank rotation is not used in the MSCA output path.
-     */
-    return 0;
+    if (!arg1)
+        return -ENOIOCTLCMD;
+
+    buf = (u32 *)arg1;
+    channel_ctx = *(void ***)((u8 *)arg1 + 0x44);
+    buf[0x48 / 4] = 3;
+    buf[0x4c / 4] = 3;
+
+    if (!channel_ctx)
+        return -EINVAL;
+
+    sd = *(struct tx_isp_subdev **)((u8 *)channel_ctx + 0x298);
+    if (!sd)
+        return -EINVAL;
+
+    result = tx_isp_send_event_to_remote(sd, 0x3000005,
+                                          (void *)((u8 *)arg1 + 0x68));
+
+    if (result != 0 && result != -ENOIOCTLCMD) {
+        u32 chan = *(u32 *)((u8 *)channel_ctx + 0x29c);
+        pr_err("Failed to qbuf to driver; chan%d!\n", chan);
+    }
+
+    return result;
 }
 
 
