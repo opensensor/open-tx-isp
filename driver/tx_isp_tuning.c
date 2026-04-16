@@ -143,7 +143,9 @@ static int tiziano_awb_set_hardware_param(void);
 int tisp_ae_s_comp(uint8_t comp_x);
 static int tisp_dpc_all_reg_refresh(uint32_t gain);
 static uint32_t data_9ab10 = 0xFFFFFFFF;  /* DPC gain cache (OEM: 0xFFFFFFFF = first-call sentinel) */
+static uint32_t dpc_ratio = 0x80;         /* DPC strength stored (OEM: data_8ab14 / dpc_ratio) */
 static void tisp_s_dpc_str_internal(uint32_t strength);
+static int tisp_g_dpc_str_internal(uint32_t *value);
 int tisp_s_dpc_strength(uint32_t strength);
 static int tisp_set_defog_strength(uint8_t *strength_ptr);
 int tisp_s_2dns_ratio(int ratio);
@@ -15512,8 +15514,7 @@ int tisp_get_defog_strength(uint32_t *value)
 
 int tisp_g_dpc_strength(uint32_t *value)
 {
-    if (value) *value = 0;
-    return 0;
+    return tisp_g_dpc_str_internal(value);
 }
 
 
@@ -23756,7 +23757,6 @@ static uint32_t dpc_base_m1_fthres[9];
 static uint32_t dpc_base_m3_dthres[9];
 static uint32_t dpc_base_m3_fthres[9];
 static int dpc_base_saved;
-static uint32_t dpc_strength_stored = 128; /* OEM data_8ab14 */
 
 /* WDR DPC parameter arrays */
 uint32_t dpc_d_m1_dthres_wdr_array[16] = {0x10, 0x18, 0x20, 0x28, 0x30, 0x38, 0x40, 0x48, 0x50, 0x58, 0x60, 0x68, 0x70, 0x78, 0x80, 0x88};
@@ -23852,8 +23852,8 @@ void tiziano_dpc_params_refresh(void)
 
     /* OEM EXACT: re-apply DPC strength if it was changed from default (0x80).
      * Without this, freshly loaded arrays won't be re-interpolated. */
-    if (dpc_strength_stored != 0x80)
-        tisp_s_dpc_str_internal(dpc_strength_stored);
+    if (dpc_ratio != 0x80)
+        tisp_s_dpc_str_internal(dpc_ratio);
 }
 
 /* OEM EXACT: tisp_s_dpc_str_internal — interpolate DPC threshold arrays
@@ -23864,7 +23864,7 @@ static void tisp_s_dpc_str_internal(uint32_t strength)
 {
     int i;
 
-    dpc_strength_stored = strength;
+    dpc_ratio = strength;
 
     if (!dpc_base_saved) {
         memcpy(dpc_base_m1_fthres, dpc_d_m1_fthres_array, 9 * sizeof(u32));
@@ -23900,6 +23900,13 @@ static void tisp_s_dpc_str_internal(uint32_t strength)
     }
 
     tisp_dpc_all_reg_refresh(data_9ab10 + 0x200);
+}
+
+/* OEM EXACT: tisp_g_dpc_str_internal (0x41b24) — returns stored DPC strength */
+static int tisp_g_dpc_str_internal(uint32_t *value)
+{
+    *value = dpc_ratio;
+    return dpc_ratio;
 }
 
 /* OEM EXACT: tisp_s_dpc_strength wrapper (0x64c9c) */
