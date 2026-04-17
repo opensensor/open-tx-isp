@@ -6106,21 +6106,14 @@ static int tiziano_ae0_fpga_run(void)
     if (new_dg == 0) new_dg = 0x400;  /* Unity digital gain (Q10) */
 
     /* OEM arg27 = value pushed into the EV FIFO each frame.
-     * CRITICAL: The OEM passes the PREVIOUS FRAME's tisp_ae_target output
-     * (ae0_conv_state[0]), NOT the current IT*AG*DG product.  The lum_list
-     * values (100-10000) are stable across frames, keeping the FIFO ratio
-     * s5/s6 ≈ 1.0.  Pushing the volatile IT*AG*DG product caused massive
-     * oscillation: AG spikes → huge FIFO → ratio → 0 → ev clamped to min.
+     * The FIFO lives in the lum_list target domain, not the raw EV domain.
+     * OEM Phase C shifts in the previous frame's tisp_ae_target output
+     * (ae0_conv_state[0]).  Feeding AG here was a placeholder and keeps the
+     * ratio s5/s6 biased toward "increase exposure" even in bright scenes.
      *
-     * OEM Tiziano_ae0_fpga: when processing_mode ($s4)==1, inflates wmean
-     * via histogram tail weighting before Phase A scaling.  This breaks the
-     * convergence deadlock when wmean≈0 by making the scaled tables produce
-     * a non-unity ratio.  Without this inflation, both s5 and s6 scale
-     * identically → ratio=1.0 → no exposure change → stuck dark.
-     *
-     * Our histogram inflation: when wmean is very low and conv_state[0] is
-     * near the minimum EV, use the midpoint of the ev_list as the FIFO seed.
-     * This gives the convergence logic a real target to ramp toward. */
+     * On the first frame ae0_conv_state[0] is still zero, so seed from the
+     * current unscaled tisp_ae_target(cur_ev) result to avoid a zero-filled
+     * FIFO cold start. */
     /* OEM Tiziano_ae0_fpga: Unpack sensor config (arg13 = ae_sensor_config).
      * $s4 = processing_mode, $s1 = hist_bin_threshold, $s7 = dark_threshold,
      * $s5 = curve_strength, $v1_1 = overexp_th, $v1 = underexp_th */
@@ -6208,11 +6201,14 @@ static int tiziano_ae0_fpga_run(void)
         ae_scene_wmean = ae_wmean;
         ae_scene_total = total_wt;
 
-        /* Keep the existing FIFO input while the AE DMA/stat semantics are
-         * still being verified. A previous attempt to seed this from the
-         * interpolated target forced s5==s6 on frame 0 and deadlocked AE. */
         {
-            ae0_tune2(ae_wmean, q, new_ag, &new_it, &new_ag, &new_dg);
+            uint32_t cur_ev_q = fix_point_mult3_32(q, new_it << q, new_ag, new_dg);
+            uint32_t fifo_val = ae0_conv_state[0];
+
+            if (fifo_val == 0)
+                fifo_val = tisp_ae_target(cur_ev_q, q);
+
+            ae0_tune2(ae_wmean, q, fifo_val, &new_it, &new_ag, &new_dg);
         }
     }
     /* OEM ae0_tune2 sets _ae_ev directly; also compute here for logging */
