@@ -881,12 +881,17 @@ int tx_isp_subdev_init(struct platform_device *pdev, struct tx_isp_subdev *sd,
                                         resource_size(mem_res),
                                         pdev->name);
             if (!sd->res) {
-                /* Binary Ninja: isp_printf(2, "The parameter is invalid!\n", "tx_isp_subdev_init") */
-                pr_err("tx_isp_subdev_init: request_mem_region failed for %s (0x%08x-0x%08x)\n",
-                       dev_name(&pdev->dev), (u32)mem_res->start, (u32)mem_res->end);
-                isp_printf(2, "The parameter is invalid!\n", "tx_isp_subdev_init");
-                ret = 0xfffffff0;
-                goto cleanup_irq;
+                if (strcmp(dev_name(&pdev->dev), "isp-m0") != 0) {
+                    /* Binary Ninja: isp_printf(2, "The parameter is invalid!\n", "tx_isp_subdev_init") */
+                    pr_err("tx_isp_subdev_init: request_mem_region failed for %s (0x%08x-0x%08x)\n",
+                           dev_name(&pdev->dev), (u32)mem_res->start, (u32)mem_res->end);
+                    isp_printf(2, "The parameter is invalid!\n", "tx_isp_subdev_init");
+                    ret = 0xfffffff0;
+                    goto cleanup_irq;
+                }
+
+                pr_warn("tx_isp_subdev_init: isp-m0 mem_region busy for 0x%08x-0x%08x, continuing with shared ioremap\n",
+                        (u32)mem_res->start, (u32)mem_res->end);
             }
 
             /* Binary Ninja: private_ioremap($a0_19, $v0_22[1] + 1 - $a0_19) */

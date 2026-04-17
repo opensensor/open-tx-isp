@@ -280,6 +280,10 @@ static int ispcore_msca_out_fmt_from_pixelformat(u32 pixelformat, u32 *out_fmt)
 
     switch (pixelformat) {
     case V4L2_PIX_FMT_NV12:
+        /* The live MSCA/channel path expects 0 for NV12 on this ISP port.
+         * Using 7 here causes persistent 0x200/0x600 core IRQ faults with
+         * err=0x40 and kills the stream, even though the VIC snapshot helper
+         * uses 7 in its own MDMA format field. */
         *out_fmt = 0x0;
         return 0;
     case V4L2_PIX_FMT_NV21:
@@ -411,6 +415,7 @@ static void ispcore_get_channel_format(int channel_id, struct frame_image_format
 }
 
 extern struct tx_isp_fs_device *dump_fsd;
+extern int tisp_gib_bypass_active(void);
 
 /* Forward declaration for VIC device creation from tx_isp_vic.c */
 extern int tx_isp_create_vic_device(struct tx_isp_dev *isp_dev);
@@ -1283,10 +1288,43 @@ int ispcore_video_s_stream(struct tx_isp_subdev *sd, int enable)
         if (v0_3 == 3) {
             isp_dev->state = 4;
 
-            /* OEM: set exception_enable on VIC device so ISR calls
-             * exception_handle (pipeline reset) on error interrupts. */
-            if (vic_dev)
-                vic_dev->exception_enable = 1;
+            /* Re-arm AE stats DMA on stream restart.
+             * The userspace startup sequence toggles link_stream 1->0->1 before
+             * channels begin consuming frames. AE IRQs continue to report bank
+             * rotation, but only the first bank or two carry valid data unless
+             * the bank base/commit registers are re-written on the second
+             * stream-on. */
+            {
+                u32 ae0_phys = system_reg_read(0xa02c);
+                if (ae0_phys) {
+                    system_reg_write(0xa02c, ae0_phys);
+                    system_reg_write(0xa030, ae0_phys + 0x1000);
+                    system_reg_write(0xa034, ae0_phys + 0x2000);
+                    system_reg_write(0xa038, ae0_phys + 0x3000);
+                    system_reg_write(0xa03c, ae0_phys + 0x4000);
+                    system_reg_write(0xa040, ae0_phys + 0x4800);
+                    system_reg_write(0xa044, ae0_phys + 0x5000);
+                    system_reg_write(0xa048, ae0_phys + 0x5800);
+                    system_reg_write(0xa04c, 0x33);
+                    pr_info("ispcore_s_stream: re-armed AE0 DMA (phys=0x%08x)\n", ae0_phys);
+                }
+            }
+
+            {
+                u32 ae1_phys = system_reg_read(0xa82c);
+                if (ae1_phys) {
+                    system_reg_write(0xa82c, ae1_phys);
+                    system_reg_write(0xa830, ae1_phys + 0x1000);
+                    system_reg_write(0xa834, ae1_phys + 0x2000);
+                    system_reg_write(0xa838, ae1_phys + 0x3000);
+                    system_reg_write(0xa83c, ae1_phys + 0x4000);
+                    system_reg_write(0xa840, ae1_phys + 0x4800);
+                    system_reg_write(0xa844, ae1_phys + 0x5000);
+                    system_reg_write(0xa848, ae1_phys + 0x5800);
+                    system_reg_write(0xa84c, 0x33);
+                    pr_info("ispcore_s_stream: re-armed AE1 DMA (phys=0x%08x)\n", ae1_phys);
+                }
+            }
 
             /* Re-arm AWB stats DMA on stream restart.
              * The AWB DMA engine may be single-shot: after cycling through
@@ -1301,6 +1339,29 @@ int ispcore_video_s_stream(struct tx_isp_subdev *sd, int enable)
                     system_reg_write(0xb048, awb_phys + 0x3000);
                     system_reg_write(0xb04c, 3);
                     pr_info("ispcore_s_stream: re-armed AWB DMA (phys=0x%08x)\n", awb_phys);
+                    {
+                        int awb_ret = tiziano_awb_stream_start_refresh();
+                        pr_info("ispcore_s_stream: re-applied AWB hardware params on stream enable (ret=%d)\n",
+                                awb_ret);
+                    }
+                }
+            }
+
+            /* Re-apply GIB after stream-on.
+             * At init time, the first GIB programming attempt can land before
+             * the ISP pipeline is fully live: the logs show 0x1038/0x106c
+             * mismatches there, while later per-frame updates only refresh the
+             * BLC subset (0x1060/0x1064/0x1068). Replaying the OEM GIB
+             * parameter/lut programming here targets the registers that were
+             * failing at init, once streaming is active. */
+            {
+                if (tisp_gib_bypass_active()) {
+                    pr_info("ispcore_s_stream: skipping GIB re-apply because bypass is active\n");
+                } else {
+                    extern int tiziano_gib_dn_params_refresh(void);
+                    int gib_ret = tiziano_gib_dn_params_refresh();
+                    pr_info("ispcore_s_stream: re-applied GIB config on stream enable (ret=%d)\n",
+                            gib_ret);
                 }
             }
         }
@@ -1382,8 +1443,8 @@ int ispcore_video_s_stream(struct tx_isp_subdev *sd, int enable)
     /* OEM BN: *(*(arg1 + 0xb8) + 0xb0) = mask; then tx_isp_[en|dis]able_irq(arg1)
      * arg1 = sd (core subdev), *(arg1 + 0xb8) = sd->base = ISP core register base.
      * Register 0xb0 = ISP core hardware interrupt mask.
-     * NOTE: sd->base is NULL because isp-m0 has no IORESOURCE_MEM (VIN already
-     * claims 0x13300000). Fall back to isp_dev->core_regs which maps the same phys addr.
+     * Prefer sd->base now that isp-m0 owns the named core MMIO resource;
+     * fall back to isp_dev->core_regs only during early bring-up.
      */
     {
         void __iomem *core_base = sd->base ? sd->base : isp_dev->core_regs;
@@ -1614,8 +1675,13 @@ irqreturn_t ispcore_interrupt_service_routine(int irq, void *dev_id)
             queue_work_on(0, fs_workqueue, &fs_work);
     }
 
-    /* OEM EXACT: error bits 0x200/0x100 trigger exception_handle() pipeline
-     * reset when the exception-enable flag is set. OEM sequence (0x6865c):
+    /* OEM EXACT: error bits 0x200/0x100 trigger exception_handle() only when
+     * the ISP WDR mode flag (+0x17c in the OEM core object) is set. In linear
+     * mode these IRQs are logged but do not force a pipeline reset. Our
+     * previous port incorrectly tied this to vic_dev->exception_enable and
+     * force-armed it during every stream-on, which reset the live pipeline on
+     * the normal startup 0x500 interrupt pattern and killed AE/AWB stats after
+     * the first frames. OEM sequence (0x6865c):
      *   1. Request ISP release (reg 0x24 bit 0)
      *   2. Stop VIC (VIC_CTRL = 4)
      *   3. Poll reg 0x28 bit 0 for release ack
@@ -1626,8 +1692,13 @@ irqreturn_t ispcore_interrupt_service_routine(int irq, void *dev_id)
      * pipeline corrupted — AE/AWB stats die after mode switches. */
     {
         static u32 isp_err_200_count, isp_err_100_count;
+        int allow_exception_reset = 0;
+
+        if (isp_dev)
+            allow_exception_reset = !!isp_dev->wdr_mode;
+
         if (interrupt_status & 0x200) {
-            if (vic_dev->exception_enable) {
+            if (allow_exception_reset) {
                 u32 r;
                 system_reg_write(0x24, system_reg_read(0x24) | 1);
                 writel(4, vic_regs + 0x0);  /* VIC stop */
@@ -1641,7 +1712,7 @@ irqreturn_t ispcore_interrupt_service_routine(int irq, void *dev_id)
             isp_err_200_count++;
         }
         if (interrupt_status & 0x100) {
-            if (vic_dev->exception_enable) {
+            if (allow_exception_reset) {
                 u32 r;
                 system_reg_write(0x24, system_reg_read(0x24) | 1);
                 writel(4, vic_regs + 0x0);  /* VIC stop */
@@ -1911,19 +1982,16 @@ int tx_isp_init_memory_mappings(struct tx_isp_dev *isp)
 {
     pr_info("Initializing ISP memory mappings\n");
 
-    /* Map ISP Core registers — must cover the full ISP register space
-     * including the LSC LUT area at offset 0x28000..0x2A8FF.
-     * OEM system_reg_write() writes to offsets up to ~0x2A8xx.
-     * Previous 0x10000 (64KB) mapping silently dropped all LSC writes,
-     * causing the colored-blob artifacts. */
-    /* OEM system_reg_write() writes to offsets up to 0x80180 (DEIR coefficient LUTs).
-     * Map 0x90000 (576KB) to cover all ISP register space including DEIR. */
-    isp->core_regs = ioremap(0x13300000, 0x90000);
+    /* Map the full isp-m0 resource window.
+     * OEM tx_isp_subdev_init() ioremaps the core subdev's named "isp-device"
+     * resource, and OEM system_reg_write() dereferences that base directly.
+     * Keep core_regs aligned with the same 1MB physical span. */
+    isp->core_regs = ioremap(0x13300000, 0x100000);
     if (!isp->core_regs) {
         pr_err("Failed to map ISP core registers\n");
         return -ENOMEM;
     }
-    pr_info("ISP core registers mapped at 0x13300000 size 0x90000\n");
+    pr_info("ISP core registers mapped at 0x13300000 size 0x100000\n");
 
     /* Set global ISP register base for tuning subsystem */
     extern void __iomem *isp_reg_base;
@@ -5251,7 +5319,3 @@ const struct file_operations video_input_cmd_fops = {
 	.release = single_release,
 };
 EXPORT_SYMBOL(video_input_cmd_fops);
-
-
-
-

@@ -88,11 +88,12 @@ int tx_isp_create_vin_device(struct tx_isp_dev *isp_dev)
     vin_dev->state = TX_ISP_MODULE_SLAKE;
     vin_dev->frame_count = 0;
 
-    /* CRITICAL FIX: VIN is part of ISP core on T31 - use ISP core registers instead of separate mapping */
-    /* This prevents memory mapping conflicts that cause crashes */
-    if (isp_dev->core_regs) {
-        vin_dev->base = isp_dev->core_regs;
-        pr_info("*** VIN USING ISP CORE REGISTERS: %p (no separate mapping needed) ***\n", vin_dev->base);
+    /* VIN uses the shared core MMIO base. OEM low-level helpers dereference the
+     * core subdev base first, so prefer isp_dev->sd.base and only fall back to
+     * the early core_regs mapping before subdev init has populated sd.base. */
+    if (isp_dev->sd.base || isp_dev->core_regs) {
+        vin_dev->base = isp_dev->sd.base ? isp_dev->sd.base : isp_dev->core_regs;
+        pr_info("*** VIN USING SHARED CORE REGISTERS: %p ***\n", vin_dev->base);
     } else {
         pr_err("tx_isp_create_vin_device: ISP core registers not available\n");
         ret = -ENOMEM;
@@ -964,7 +965,6 @@ int tx_isp_vin_probe(struct platform_device *pdev)
 {
     struct tx_isp_vin_device *vin = NULL;
     struct tx_isp_subdev *sd = NULL;
-    struct resource *res;
     int ret = 0;
 
     mcp_log_info("vin_probe: starting VIN probe", 0);
@@ -987,31 +987,10 @@ int tx_isp_vin_probe(struct platform_device *pdev)
     vin->state = TX_ISP_MODULE_SLAKE;
     vin->frame_count = 0;
 
-    /* Get memory resource */
-    res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-    if (!res) {
-        mcp_log_error("vin_probe: failed to get memory resource", 0);
-        ret = -ENODEV;
-        goto err_free_vin;
-    }
-
-    /* Map VIN registers */
-    vin->base = ioremap(res->start, resource_size(res));
-    if (!vin->base) {
-        mcp_log_error("vin_probe: failed to map registers", res->start);
-        ret = -ENOMEM;
-        goto err_free_vin;
-    }
-    mcp_log_info("vin_probe: registers mapped", res->start);
-
-    /* Get IRQ resource */
-    vin->irq = platform_get_irq(pdev, 0);
-    if (vin->irq < 0) {
-        mcp_log_error("vin_probe: failed to get IRQ", vin->irq);
-        ret = vin->irq;
-        goto err_unmap;
-    }
-    mcp_log_info("vin_probe: IRQ obtained", vin->irq);
+    /* OEM vin_probe() does not own a private MMIO mapping. VIN operates
+     * through tx_isp_subdev_init() and the shared core register window. */
+    vin->base = NULL;
+    vin->irq = 0;
 
     /* OEM tx_isp_vin_probe() does not fetch or enable a dedicated VIN clock. */
     vin->vin_clk = NULL;
@@ -1021,7 +1000,14 @@ int tx_isp_vin_probe(struct platform_device *pdev)
     ret = tx_isp_subdev_init(pdev, sd, &vin_subdev_ops);
     if (ret) {
         mcp_log_error("vin_probe: subdev init failed", ret);
-        goto err_unmap;
+        goto err_free_vin;
+    }
+
+    if (ourISPdev) {
+        if (ourISPdev->sd.base)
+            vin->base = ourISPdev->sd.base;
+        else
+            vin->base = ourISPdev->core_regs;
     }
 
     /* Set platform data */
@@ -1032,9 +1018,6 @@ int tx_isp_vin_probe(struct platform_device *pdev)
 
     mcp_log_info("vin_probe: VIN probe completed successfully", 0);
     return 0;
-
-err_unmap:
-    iounmap(vin->base);
 err_free_vin:
     kfree(vin);
     mcp_log_error("vin_probe: VIN probe failed", ret);
@@ -1074,12 +1057,6 @@ int tx_isp_vin_remove(struct platform_device *pdev)
         clk_disable_unprepare(vin->vin_clk);
         clk_put(vin->vin_clk);
         mcp_log_info("vin_remove: clock disabled", 0);
-    }
-
-    /* Unmap registers */
-    if (vin->base) {
-        iounmap(vin->base);
-        mcp_log_info("vin_remove: registers unmapped", 0);
     }
 
     /* Free device structure */

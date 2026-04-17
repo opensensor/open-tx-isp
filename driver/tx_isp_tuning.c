@@ -71,27 +71,27 @@ extern void tx_isp_wakeup_frame_channels(void);
 #define TISP_TOP_BYPASS_DEFOG_BIT	BIT(11)
 #define TISP_TOP_BYPASS_MDNS_BIT	BIT(16)
 
-static int tisp_force_bypass_adr = 0; /* ADR algorithm now ported — enable by default */
+static int tisp_force_bypass_adr = 1; /* Keep ADR bypassed until the port matches OEM exposure */
 module_param_named(force_bypass_adr, tisp_force_bypass_adr, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(force_bypass_adr,
 			 "Force ADR bypass (default: 1 to preserve known-good image sequencing)");
 
-static int tisp_force_bypass_defog = 0; /* Defog now fully implemented — enable by default */
+static int tisp_force_bypass_defog = 1; /* Keep defog bypassed until exposure/tone mapping is stable */
 module_param_named(force_bypass_defog, tisp_force_bypass_defog, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(force_bypass_defog,
-			 "Debug isolate FOV issues by forcing Defog bypass (default: 0)");
+			 "Force Defog bypass (default: 1 while bring-up still over-brightens)");
 
 static int tisp_force_bypass_dpc = 0;
 module_param_named(force_bypass_dpc, tisp_force_bypass_dpc, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(force_bypass_dpc, "Force DPC (bit 2) bypass for AWB bisection");
 
-static int tisp_force_bypass_lsc = 0;
+static int tisp_force_bypass_lsc = 1; /* Keep LSC bypassed until the stats path is stable */
 module_param_named(force_bypass_lsc, tisp_force_bypass_lsc, int, S_IRUGO | S_IWUSR);
-MODULE_PARM_DESC(force_bypass_lsc, "Force LSC LUT gate (bit 6) bypass for AWB bisection");
+MODULE_PARM_DESC(force_bypass_lsc, "Force LSC bypass (bits 4 and 6) (default: 1 during bring-up)");
 
-static int tisp_force_bypass_gib = 0;
+static int tisp_force_bypass_gib = 1; /* Keep GIB bypassed until the gate/state mismatch is resolved */
 module_param_named(force_bypass_gib, tisp_force_bypass_gib, int, S_IRUGO | S_IWUSR);
-MODULE_PARM_DESC(force_bypass_gib, "Force GIB (bit 5) bypass");
+MODULE_PARM_DESC(force_bypass_gib, "Force GIB (bit 5) bypass (default: 1 during bring-up)");
 
 static int tisp_force_bypass_mdns = 0; /* MDNS: enabled (OEM default) */
 module_param_named(force_bypass_mdns, tisp_force_bypass_mdns, int, S_IRUGO | S_IWUSR);
@@ -107,7 +107,7 @@ static u32 tisp_apply_debug_top_bypass_overrides(u32 bypass_val, const char *rea
 	if (tisp_force_bypass_dpc)
 		force_mask |= TISP_TOP_BYPASS_DPC_BIT;
 	if (tisp_force_bypass_lsc)
-		force_mask |= TISP_TOP_BYPASS_LSC_LUT_BIT;
+		force_mask |= TISP_TOP_BYPASS_LSC_HW_BIT | TISP_TOP_BYPASS_LSC_LUT_BIT;
 	if (tisp_force_bypass_gib)
 		force_mask |= TISP_TOP_BYPASS_GIB_BIT;
 	if (tisp_force_bypass_adr)
@@ -132,6 +132,22 @@ static u32 tisp_apply_debug_top_bypass_overrides(u32 bypass_val, const char *rea
 	}
 
 	return bypass_val;
+}
+
+int tisp_gib_bypass_active(void)
+{
+	return tisp_force_bypass_gib ? 1 : 0;
+}
+EXPORT_SYMBOL(tisp_gib_bypass_active);
+
+static int tisp_adr_bypass_active(void)
+{
+	return tisp_force_bypass_adr ? 1 : 0;
+}
+
+static int tisp_lsc_bypass_active(void)
+{
+	return tisp_force_bypass_lsc ? 1 : 0;
 }
 
 
@@ -2632,7 +2648,6 @@ static u32 tisp_compute_top_bypass_from_params(int wdr_enable)
 {
 	u32 *params = (u32 *)(tparams_active ? tparams_active : tparams_day);
 	u32 bypass_val;
-	int linear_day_mode;
 	int i;
 
 	/* Debug: direct bypass override from module parameter */
@@ -2678,19 +2693,6 @@ static u32 tisp_compute_top_bypass_from_params(int wdr_enable)
 		bypass_val = (bypass_val & 0xa1fffff6) | 0x00880002;
 	else
 		bypass_val = (bypass_val & 0xb577fffd) | 0x34000009;
-
-	/* The port's ADR/defog implementations still over-brighten linear day
-	 * output even when AE has already bottomed out exposure. Keep both blocks
-	 * bypassed for non-WDR day mode so startup and day/night refreshes match
-	 * the intended exposure more closely. */
-	linear_day_mode = !wdr_enable && params == tparams_day;
-	if (linear_day_mode) {
-		u32 old_bypass = bypass_val;
-		bypass_val |= TISP_TOP_BYPASS_ADR_BIT | TISP_TOP_BYPASS_DEFOG_BIT;
-		if (bypass_val != old_bypass)
-			pr_info("tisp_compute_top_bypass: linear day forcing ADR/Defog bypass 0x%08x -> 0x%08x\n",
-				old_bypass, bypass_val);
-	}
 
 	pr_info("tisp_compute_top_bypass: final=0x%08x\n", bypass_val);
 
@@ -3775,7 +3777,9 @@ static uint32_t ae0_zone_b[225];   /* Per-zone B channel sum */
 static uint32_t ae0_zone_dark[225];
 static uint32_t ae0_zone_bright[225];
 
-/* Global data pointers for parameter addressing */
+/* Global data pointers for parameter addressing.
+ * IspAe0WmeanParam remains an OEM-era wrapper handle; do not assume its
+ * runtime layout matches the decoded AE plane arrays. */
 static uint32_t *IspAe0WmeanParam = NULL;
 static uint32_t data_d4658 = 0;
 static uint32_t data_d465c = 0;
@@ -3968,6 +3972,83 @@ static void ae0_weight_mean2(
 static int ae0_tune2(uint32_t wmean, uint32_t q, uint32_t target_ev,
                      uint32_t *exp_out, uint32_t *ag_out, uint32_t *dg_out);
 static void tisp_set_ae0_ag(uint32_t ag, uint32_t dg);
+static int tiziano_gib_lut_parameter(void);
+static void tiziano_ae0_select_mix_weights(int32_t *mix_r, int32_t *mix_b);
+static void tiziano_ae0_select_wrapper_inputs(void **awb_cfg, void **corr_cfg,
+					      int32_t **r_corr, int32_t **b_corr,
+					      int32_t *corr_param_a,
+					      int32_t *corr_param_b);
+
+static void tiziano_ae0_select_mix_weights(int32_t *mix_r, int32_t *mix_b)
+{
+    uint32_t processing_mode = ae_sensor_config[0];
+    uint32_t selector = _ae_stat.data[3];
+    int32_t sel_r = 1;
+    int32_t sel_b = 1;
+
+    /* OEM Tiziano_ae0_fpga (0x51488):
+     *   processing_mode == 0 -> mix = 1,1
+     *   processing_mode == 1 -> mix = cfg[6],cfg[5]
+     *   else selector (_ae_stat[3]) chooses among cfg[5..10]
+     *
+     * Our port does not yet fully populate ae_sensor_config[5..10] for every
+     * sensor, so keep the OEM branch selection but fall back to unity when a
+     * selected slot is still zero. */
+    if (processing_mode == 0) {
+        sel_r = 1;
+        sel_b = 1;
+    } else if (processing_mode == 1) {
+        sel_r = (int32_t)ae_sensor_config[6];
+        sel_b = (int32_t)ae_sensor_config[5];
+    } else if (selector == 2) {
+        sel_r = (int32_t)ae_sensor_config[6];
+        sel_b = (int32_t)ae_sensor_config[5];
+    } else if (selector == 1) {
+        sel_r = (int32_t)ae_sensor_config[8];
+        sel_b = (int32_t)ae_sensor_config[7];
+    } else if (selector == 0) {
+        sel_r = (int32_t)ae_sensor_config[10];
+        sel_b = (int32_t)ae_sensor_config[9];
+    } else {
+        sel_r = 0;
+        sel_b = 0;
+    }
+
+    if (sel_r == 0)
+        sel_r = 1;
+    if (sel_b == 0)
+        sel_b = 1;
+
+    *mix_r = sel_r;
+    *mix_b = sel_b;
+}
+
+static void tiziano_ae0_select_wrapper_inputs(void **awb_cfg, void **corr_cfg,
+					      int32_t **r_corr, int32_t **b_corr,
+					      int32_t *corr_param_a,
+					      int32_t *corr_param_b)
+{
+    if (awb_cfg)
+        *awb_cfg = &_scene_para;
+    if (corr_cfg)
+        *corr_cfg = &_scene_para;
+
+    /* OEM address setup keeps these AE scene-weight arrays adjacent to the
+     * AE stat/lut inputs. They are the safest local candidates for the
+     * per-zone correction arrays until the full wrapper descriptor is proven. */
+    if (r_corr)
+        *r_corr = (int32_t *)_scene_roui_weight.data;
+    if (b_corr)
+        *b_corr = (int32_t *)_scene_roi_weight.data;
+
+    /* Leave the scalar correction coefficients neutral for now.
+     * This enables OEM-style pointer plumbing without inventing coefficient
+     * semantics that are not yet confirmed from the binary. */
+    if (corr_param_a)
+        *corr_param_a = 0;
+    if (corr_param_b)
+        *corr_param_b = 0;
+}
 
 /* Data section variables */
 static uint32_t data_d0878[256];
@@ -4011,6 +4092,20 @@ static u32 tisp_sensor_fps_from_raw(u32 raw_fps)
         return num;
 
     return (num + (den / 2)) / den;
+}
+
+static bool tisp_sensor_is_named(const char *name)
+{
+    return name && ourISPdev && ourISPdev->sensor_name[0] &&
+           strcmp(ourISPdev->sensor_name, name) == 0;
+}
+
+static u32 tisp_sensor_native_fps(u32 requested_fps)
+{
+    if (tisp_sensor_is_named("sc2336") && requested_fps > 25)
+        return 25;
+
+    return requested_fps;
 }
 
 static void tisp_sensor_split_raw_fps(u32 raw_fps, u32 *num, u32 *den)
@@ -4411,6 +4506,8 @@ static int tisp_ae0_get_hist(void *buffer, int mode, int flag);
 static int tisp_ae1_get_hist(void *buffer);
 static int tisp_ae0_ctrls_update(void);
 static int tisp_ae0_process_impl(void);
+static int tiziano_ae0_fpga_run(void);
+int Tiziano_ae0_fpga(void);
 int tisp_ae_g_scene_luma(uint32_t *out);
 static int tisp_event_push(void *event);
 static int system_reg_write_ae(int ae_id, uint32_t reg, uint32_t value);
@@ -5824,35 +5921,45 @@ static uint32_t ae0_wm2_r_ratio;     /* arg23: R-weighted color ratio */
  * tisp_ae_get_y_zone reads from this buffer for ioctl. */
 static uint32_t ae0_zone_copy[225];
 
-static int tisp_ae0_process_impl(void)
+static int tiziano_ae0_fpga_run(void)
 {
     uint32_t q;
     uint32_t zones[225];
     uint32_t wmean = 0, total_wt = 0;
     uint32_t new_it, new_ag, new_dg;
     int32_t q_val;
-    uint32_t *ae_plane_base;
     uint32_t *zone_r_plane;
     uint32_t *zone_g_plane;
     uint32_t *zone_b_plane;
     uint32_t *zone_dark_plane;
     uint32_t *zone_bright_plane;
+    void *awb_cfg = NULL;
+    void *corr_cfg = NULL;
+    int32_t *r_corr = NULL;
+    int32_t *b_corr = NULL;
+    int32_t mix_r = 1;
+    int32_t mix_b = 1;
+    int32_t corr_param_a = 0;
+    int32_t corr_param_b = 0;
 
     q = _AePointPos.data[0] & 31;
     if (q == 0)
         q = 10;  /* Default Q10 fixed-point */
     q_val = (int32_t)q;
 
-    /* OEM tisp_ae0_process_impl passes IspAe0WmeanParam rooted at
-     * IspAeStatic into Tiziano_ae0_fpga, which then slices the contiguous
-     * AE planes internally before calling ae0_weight_mean2. Mirror that
-     * layout here instead of relying on shadow arrays. */
-    ae_plane_base = IspAe0WmeanParam ? IspAe0WmeanParam : IspAeStatic;
-    zone_r_plane = &ae_plane_base[AE_STATS_PLANE_R * AE_ZONE_COUNT_MAX];
-    zone_g_plane = &ae_plane_base[AE_STATS_PLANE_G * AE_ZONE_COUNT_MAX];
-    zone_b_plane = &ae_plane_base[AE_STATS_PLANE_B * AE_ZONE_COUNT_MAX];
-    zone_dark_plane = &ae_plane_base[AE_STATS_PLANE_DARK * AE_ZONE_COUNT_MAX];
-    zone_bright_plane = &ae_plane_base[AE_STATS_PLANE_BRIGHT * AE_ZONE_COUNT_MAX];
+    /* Keep IspAe0WmeanParam as an opaque OEM wrapper handle.
+     * The proven local mapping for ae0_weight_mean2 inputs is the decoded
+     * per-plane arrays populated by tisp_ae0_get_statistics(). */
+    zone_r_plane = ae0_zone_r;
+    zone_g_plane = ae0_zone_g;
+    zone_b_plane = ae0_zone_b;
+    zone_dark_plane = ae0_zone_dark;
+    zone_bright_plane = ae0_zone_bright;
+
+    tiziano_ae0_select_mix_weights(&mix_r, &mix_b);
+    tiziano_ae0_select_wrapper_inputs(&awb_cfg, &corr_cfg,
+				      &r_corr, &b_corr,
+				      &corr_param_a, &corr_param_b);
 
     /* ---- Step 1: Compute weighted mean via full OEM ae0_weight_mean2 ---- */
     /* OEM: ae0_weight_mean2 takes 23 args: separate R/G/B zone arrays,
@@ -5869,15 +5976,15 @@ static int tisp_ae0_process_impl(void)
         ae0_zone_copy,          /* arg7:  spinlock copy destination */
         &_ae_parameter,         /* arg8:  AE param struct (zone grid layout) */
         _ae_zone_weight.data,   /* arg9:  per-zone weights (225 entries) */
-        NULL,                   /* arg10: AWB correction config (disabled) */
-        NULL,                   /* arg11: correction mode config (disabled) */
-        NULL,                   /* arg12: R correction array (unused) */
-        NULL,                   /* arg13: B correction array (unused) */
-        0,                      /* arg14: correction param A */
-        0,                      /* arg15: correction param B */
+        awb_cfg,                /* arg10: AWB/correction config */
+        corr_cfg,               /* arg11: correction mode config */
+        r_corr,                 /* arg12: R correction array */
+        b_corr,                 /* arg13: B correction array */
+        corr_param_a,           /* arg14: correction param A */
+        corr_param_b,           /* arg15: correction param B */
         &q_val,                 /* arg16: Q-format precision pointer */
-        1,                      /* arg17: R channel mix weight (default 1) */
-        1,                      /* arg18: B channel mix weight (default 1) */
+        mix_r,                  /* arg17: R channel mix weight */
+        mix_b,                  /* arg18: B channel mix weight */
         &ae0_wm2_wmean,         /* arg19: OUTPUT weighted mean */
         ae0_wm2_ratios,         /* arg20: OUTPUT [bright_ratio, dark_ratio] */
         &ae0_wm2_total,         /* arg21: OUTPUT accumulated total */
@@ -5888,11 +5995,15 @@ static int tisp_ae0_process_impl(void)
         static int ae_wm2_diag;
         if (ae_wm2_diag < 8) {
             uint32_t zone_area = _ae_parameter.data[19] * _ae_parameter.data[4];
-            pr_info("AE_WM2[%d]: z0 r=%u g=%u b=%u dark=%u bright=%u area=%u norm=%u\n",
+            int32_t corr_enabled = awb_cfg ? *((int32_t *)awb_cfg + 9) : 0;
+            int32_t corr_mode = corr_cfg ? *((int32_t *)corr_cfg + 1) : 1;
+            pr_info("AE_WM2[%d]: z0 r=%u g=%u b=%u dark=%u bright=%u area=%u norm=%u mix=%d/%d sel=%u mode=%u corr=%d/%d rc=%d bc=%d\n",
                 ae_wm2_diag,
                 zone_r_plane[0], zone_g_plane[0], zone_b_plane[0],
                 zone_dark_plane[0], zone_bright_plane[0],
-                zone_area, zones[0]);
+                zone_area, zones[0], mix_r, mix_b, _ae_stat.data[3],
+                ae_sensor_config[0], corr_enabled, corr_mode,
+                r_corr ? r_corr[0] : 0, b_corr ? b_corr[0] : 0);
             ae_wm2_diag++;
         }
     }
@@ -6065,23 +6176,9 @@ static int tisp_ae0_process_impl(void)
         ae_scene_wmean = ae_wmean;
         ae_scene_total = total_wt;
 
-        /* OEM: Push AG (IspAeExp[1]) as FIFO value into ae0_tune2.
-         *
-         * Traced from OEM Tiziano_ae0_fpga: the two copy loops before the
-         * ae0_tune2 tail call copy IspAeExp into the outgoing arg area.
-         * With frame_size=0x130, ae0_tune2.arg27 maps to IspAeExp[1] = AG.
-         *
-         * With AG (Q10, typically 0x400=1024) as the FIFO value:
-         * - s5 = tisp_ae_target(var_b8) ≈ 600-1200 (after wmean scaling)
-         * - s6 = AG = 1024
-         * - ratio = s5/AG ≈ 0.6-1.2 → meaningful convergence signal
-         *
-         * The ratio drives exposure toward equilibrium where the target
-         * brightness (s5) matches the gain level (AG). When overexposed
-         * with AG=1.0x, s5 < 1024 → ratio < 1.0 → reduce exposure.
-         * With alloc_integration_time properly clipping IT to sensor max,
-         * the Phase H gain distribution handles the reduction naturally
-         * because var_b8 (and thus s2_2) starts at the clamped IT. */
+        /* Keep the existing FIFO input while the AE DMA/stat semantics are
+         * still being verified. A previous attempt to seed this from the
+         * interpolated target forced s5==s6 on frame 0 and deadlocked AE. */
         {
             ae0_tune2(ae_wmean, q, new_ag, &new_it, &new_ag, &new_dg);
         }
@@ -6259,6 +6356,11 @@ static int tisp_ae0_process_impl(void)
     }
 
     return 0;
+}
+
+static int tisp_ae0_process_impl(void)
+{
+    return Tiziano_ae0_fpga();
 }
 
 static int tisp_event_push(void *event)
@@ -6825,9 +6927,7 @@ int tisp_init(void *sensor_info_arg, char *param_name)
                        tisp_si_fps(&sensor_params));
     tiziano_gib_init();
     /* OEM does NOT call tisp_gb_init() here in non-WDR mode.
-     * GB init is only in the WDR path (OEM tisp_init decompilation confirms).
-     * GB uses the same 0x1070 gate as GIB — calling it here corrupts GIB's
-     * double-buffered register state. */
+     * GB init is its own path (0x22c7c) and is not part of OEM linear GIB init. */
     tiziano_lsc_init();
     tiziano_ccm_init();
     tiziano_dmsc_init();
@@ -6873,12 +6973,6 @@ int tisp_init(void *sensor_info_arg, char *param_name)
     system_reg_write(0x1c, 8);
     system_reg_write(0x800, 1);  /* CRITICAL: This starts ISP processing */
     pr_info("*** tisp_init: ISP processing engine STARTED (reg 0x800=1) ***\n");
-
-    /* Initial gain refresh: programs all gain-dependent blocks (DMSC,
-     * sharpen, SDNS, DPC, LSC, YDNS, RDNS, MDNS) with their startup
-     * register values. Without this, blocks stay unconfigured until
-     * the first AE gain change fires event 4. */
-    tisp_tgain_update(0);
 
     /* Core register dump to compare with OEM for GIB investigation */
     pr_info("ISP_CORE: 0x00=%08x 0x04=%08x 0x08=%08x 0x0c=%08x\n",
@@ -8488,8 +8582,21 @@ static int apical_isp_core_ops_s_ctrl(struct tx_isp_dev *dev, struct isp_core_ct
             uint32_t fps_den = fps_packed & 0xFFFF;
             int fps_ret;
             int effective_fps;
+            bool fps_overridden = false;
 
             pr_info("*** SET FPS: Received packed FPS 0x%x -> %d/%d FPS ***\n", fps_packed, fps_num, fps_den);
+
+            effective_fps = fps_den > 0 ? fps_num / fps_den : 25;
+            effective_fps = tisp_sensor_native_fps(effective_fps);
+
+            if ((u32)effective_fps != (fps_den > 0 ? fps_num / fps_den : 25)) {
+                fps_num = effective_fps;
+                fps_den = 1;
+                fps_overridden = true;
+                pr_info("*** SET FPS: overriding client request to native %u FPS for sensor %s ***\n",
+                        effective_fps,
+                        (ourISPdev && ourISPdev->sensor_name[0]) ? ourISPdev->sensor_name : "unknown");
+            }
 
             /* Store in tuning data - this is what the client expects */
             if (ourISPdev && ourISPdev->tuning_data) {
@@ -8499,11 +8606,10 @@ static int apical_isp_core_ops_s_ctrl(struct tx_isp_dev *dev, struct isp_core_ct
                 pr_info("*** SET FPS: Stored %d/%d in tuning data ***\n", fps_num, fps_den);
 
                 /* CRITICAL: Now call the actual sensor FPS control */
-                effective_fps = fps_den > 0 ? fps_num / fps_den : 25;
-
                 fps_ret = sensor_fps_control(effective_fps);
                 if (fps_ret == 0) {
-                    pr_info("*** SET FPS: Sensor FPS control successful - %d FPS set ***\n", effective_fps);
+                    pr_info("*** SET FPS: Sensor FPS control successful - %d FPS set%s ***\n",
+                            effective_fps, fps_overridden ? " (native override)" : "");
                 } else {
                     pr_warn("*** SET FPS: Sensor FPS control failed: %d ***\n", fps_ret);
                 }
@@ -8525,23 +8631,23 @@ static int apical_isp_core_ops_s_ctrl(struct tx_isp_dev *dev, struct isp_core_ct
 //            }
 
             break;
-        }
-        case 0x80000e1: { // ISP Running Mode (Day=0, Night=1)
-            uint32_t prev_running_mode = tuning->running_mode;
+	        }
+	        case 0x80000e1: { // ISP Running Mode (Day=0, Night=1)
+	            uint32_t prev_running_mode = tuning->running_mode;
 
-            tuning->running_mode = ctrl->value;
-            if (prev_running_mode != ctrl->value) {
-                /* OEM: switching running mode triggers a full day/night
-                 * parameter refresh — AWB gains, CCM, BCSH colour matrix,
-                 * etc. are reloaded from the day or night tuning binary.
-                 * Without this, switching to night mode (IR) keeps daylight
-                 * colour corrections active, producing a pink/magenta image. */
-                tisp_day_or_night_s_ctrl(ctrl->value);
-                pr_info("Set control: RUNNING_MODE %u -> %u (day/night switch applied)\n",
-                    prev_running_mode, ctrl->value);
-            }
-            break;
-        }
+	            tuning->running_mode = ctrl->value;
+	            if (prev_running_mode != ctrl->value) {
+	                /* OEM: switching running mode triggers a full day/night
+	                 * parameter refresh — AWB gains, CCM, BCSH colour matrix,
+	                 * etc. are reloaded from the day or night tuning binary.
+	                 * Without this, switching to night mode (IR) keeps daylight
+	                 * colour corrections active, producing a pink/magenta image. */
+	                tisp_day_or_night_s_ctrl(ctrl->value);
+	                pr_info("Set control: RUNNING_MODE %u -> %u (day/night switch applied)\n",
+	                    prev_running_mode, ctrl->value);
+	            }
+	            break;
+	        }
         case 0x80000e2: { /* OEM: tisp_s_module_control — writes lower 19 bits of reg 0xc */
             u32 reg_val = system_reg_read(0xc);
             u32 new_bypass = (ctrl->value & 0x7ffff) | (reg_val & 0xfff80000);
@@ -13380,6 +13486,15 @@ int tiziano_awb_dn_params_refresh(void)
 	return tiziano_awb_set_hardware_param();
 }
 
+int tiziano_awb_stream_start_refresh(void)
+{
+	if (awb_frz != 0)
+		return 0;
+
+	pr_info("tiziano_awb_stream_start_refresh: re-applying AWB hardware params on stream enable\n");
+	return tiziano_awb_set_hardware_param();
+}
+
 int tisp_awb_param_array_get(int param_id, void *out_buf, int *size_buf)
 {
     if (!out_buf || !size_buf) {
@@ -14153,7 +14268,10 @@ int tisp_lsc_param_array_set(int param_id, void *in_buf, int *size_buf)
     lsc_last_str = 0;
     lsc_force_update = 1;
     *size_buf = data_size;
-    tisp_lsc_write_lut_datas();
+    if (!tisp_lsc_bypass_active())
+        tisp_lsc_write_lut_datas();
+    else
+        lsc_force_update = 0;
     pr_debug("tisp_lsc_param_array_set: ID=0x%x, size=%d\n", param_id, data_size);
     return 0;
 }
@@ -17413,6 +17531,14 @@ static uint32_t awb_ratio_to_mf_gain(uint32_t point_pos, uint32_t ratio)
 	return (gain_q + rounding) >> q;
 }
 
+static bool awb_has_saved_live_state(void)
+{
+	return awb_gain_original[0] != 0 &&
+		awb_gain_original[1] != 0 &&
+		awb_gain_track[0] != 0 &&
+		awb_gain_track[1] != 0;
+}
+
 /* OEM func_zone_ct_weight — adjusts a zone's CT mesh weight based on how
  * far the zone's inverse-CT (1000000/CT) falls relative to the CT-weight
  * boundary defined by arg2[0..3].  When the zone is well within the
@@ -18712,18 +18838,25 @@ static int Tiziano_awb_fpga(const uint32_t *stats_r,
 			pr_info("Tiziano_awb_fpga[%u]: NO active zones "
 				"(all stats zero? pix_thr=%u)\n",
 				awb_no_zones_count, _pixel_cnt_th);
-		/* OEM does NOT early-return here. When data_88458 is non-zero
-		 * (first frame or after DN switch), the OEM always falls through
-		 * to fill AWB history from seed/CT values and apply initial WB
-		 * gains. Our early return created a deadlock: zero stats on first
-		 * frames (before AWB HW gate latches) → no gains applied →
-		 * AWB never bootstraps. Only skip when history is already
-		 * initialized and we're in steady-state. */
+		/* OEM does not early-return here, but the tuning seed is visibly
+		 * wrong on several sensors in our generic port. Prefer preserving
+		 * the last live AWB state across transitions, and otherwise hold
+		 * current gains until real zones arrive instead of committing a
+		 * new seed-derived color cast from empty stats. */
 		if (!awb_history_reset && awb_history_count > 0)
 			return 0;
-		pr_info("Tiziano_awb_fpga: zero zones but history_reset=%u count=%u — bootstrapping from seed\n",
-			awb_history_reset, awb_history_count);
-		force_recalc = 1;
+		if (awb_has_saved_live_state()) {
+			pr_info("Tiziano_awb_fpga: zero zones with reset state; restoring last live AWB rg/bg=%u/%u ct=%u\n",
+				awb_gain_original[0], awb_gain_original[1],
+				_awb_ct ? _awb_ct : _awb_ct_last);
+			awb_history_fill(awb_gain_original[0],
+					 awb_gain_original[1],
+					 _awb_ct ? _awb_ct : _awb_ct_last);
+			Tiziano_awb_set_gain(_awb_mf_para, _AwbPointPos[0], _wb_static);
+			return 0;
+		}
+		pr_info("Tiziano_awb_fpga: zero zones with no live history; holding previous gains until valid AWB stats arrive\n");
+		return 0;
 	}
 
 	if (!force_recalc) {
@@ -19332,6 +19465,8 @@ int tiziano_wdr_interrupt_static(void)
 
 int tiziano_awb_init(uint32_t height, uint32_t width)
 {
+	const uint32_t *mf_words = (const uint32_t *)_awb_mf_para;
+
     pr_info("tiziano_awb_init: Initializing Auto White Balance (%dx%d)\n", width, height);
 
     /* OEM EXACT: reset state */
@@ -19346,7 +19481,18 @@ int tiziano_awb_init(uint32_t height, uint32_t width)
      * 0xb004-0xb034 via system_reg_write_awb() threshold writes. */
 	    if (awb_frz == 0) {
         tiziano_awb_set_hardware_param();
-	        Tiziano_awb_set_gain(_awb_mf_para, _AwbPointPos[0], _wb_static);
+		if (awb_has_saved_live_state()) {
+			pr_info("tiziano_awb_init: restoring saved live AWB state rg/bg=%u/%u ct=%u\n",
+				awb_gain_original[0], awb_gain_original[1], _awb_ct);
+			awb_history_fill(awb_gain_original[0],
+					 awb_gain_original[1],
+					 _awb_ct ? _awb_ct : _awb_ct_last);
+			Tiziano_awb_set_gain(_awb_mf_para, _AwbPointPos[0], _wb_static);
+		} else {
+			pr_info("tiziano_awb_init: deferring seeded AWB gain apply until valid stats (mf_seed=[%u,%u,%u,%u,%u,%u])\n",
+				mf_words[0], mf_words[1], mf_words[2],
+				mf_words[3], mf_words[4], mf_words[5]);
+		}
 	    }
 	tisp_event_set_cb(0xa, JZ_Isp_Awb);
 	system_irq_func_set(0x1e, awb_interrupt_static_wrapper);
@@ -19861,6 +20007,9 @@ static int tiziano_gib_deir_ir_interpolation(uint32_t ir_val)
  * Called with current IR value; updates DEIR coefficients if delta exceeds threshold. */
 int tisp_gib_deir_ir_update(uint32_t ir_val)
 {
+    if (tisp_gib_bypass_active())
+        return 0;
+
     gib_ir_value[0] = ir_val;
 
     if (GIB_CFG_DEIR_EN == 1 && gib_ir_mode[0] == 1) {
@@ -19885,6 +20034,11 @@ EXPORT_SYMBOL(tisp_gib_deir_ir_update);
  * Reloads GIB parameters and updates LUT, but does NOT reprogram DEIR coefficients. */
 int tiziano_gib_dn_params_refresh(void)
 {
+    if (tisp_gib_bypass_active()) {
+        pr_info("tiziano_gib_dn_params_refresh: skipping GIB refresh because bypass is active\n");
+        return 0;
+    }
+
     tiziano_gib_params_refresh();
 
     /* OEM EXACT: unconditionally set data_9a2ec based on deir_en */
@@ -19906,6 +20060,11 @@ EXPORT_SYMBOL(tiziano_gib_dn_params_refresh);
  * here; those are WDR-only (tisp_gb_init at 0x22c7c, called from WDR path). */
 int tiziano_gib_init(void)
 {
+    if (tisp_gib_bypass_active()) {
+        pr_info("tiziano_gib_init: skipping GIB init because bypass is active\n");
+        return 0;
+    }
+
     tiziano_gib_params_refresh();
 
     /* OEM EXACT: unconditionally set data_9a2ec based on deir_en.
@@ -20116,6 +20275,14 @@ int tisp_lsc_write_lut_datas(void)
 
     pr_debug("tisp_lsc_write_lut_datas: Writing LSC LUT data\n");
 
+    if (tisp_lsc_bypass_active()) {
+        lsc_ct_update_flag = 0;
+        lsc_gain_update_flag = 0;
+        lsc_force_update = 0;
+        pr_info("tisp_lsc_write_lut_datas: skipping LUT write because LSC bypass is active\n");
+        return 0;
+    }
+
     lsc_count += 1;
 
     /* Binary Ninja: Check update flags */
@@ -20280,6 +20447,14 @@ int tisp_lsc_write_lut_datas(void)
 /* tiziano_lsc_init - Binary Ninja EXACT implementation */
 int tiziano_lsc_init(void)
 {
+    if (tisp_lsc_bypass_active()) {
+        lsc_last_mode = 5;
+        lsc_last_str = 0;
+        lsc_force_update = 0;
+        pr_info("tiziano_lsc_init: skipping LSC init because bypass is active\n");
+        return 0;
+    }
+
     pr_info("tiziano_lsc_init: Initializing Lens Shading Correction\n");
 
     /* Binary Ninja: Select mesh strength based on WDR mode */
@@ -30134,6 +30309,12 @@ static int tiziano_dmsc_dn_params_refresh(void)
  * Decompiled at 0x230b8: params_refresh + force LUT rewrite flag. */
 static int tiziano_lsc_dn_params_refresh(void)
 {
+	if (tisp_lsc_bypass_active()) {
+		lsc_force_update = 0;
+		pr_info("tiziano_lsc_dn_params_refresh: skipping LSC refresh because bypass is active\n");
+		return 0;
+	}
+
 	tiziano_lsc_params_refresh();
 	lsc_force_update = 1;
 	return 0;
@@ -30606,13 +30787,11 @@ static int tiziano_isp_csc_g_attr(void __user *uptr)
 }
 
 /* OEM: Tiziano_ae0_fpga — core AE0 processing algorithm.
- * OEM at 0x51488. Extremely complex — calls ae0_weight_mean2 + ae0_tune2.
- * Our AE processing is handled by tisp_ae0_process_impl which calls
- * the same subfunctions directly. This wrapper exists for OEM compatibility. */
+ * OEM at 0x51488. The real algorithm lives behind this wrapper and is
+ * reached from tisp_ae0_process_impl(), matching the OEM control flow. */
 int Tiziano_ae0_fpga(void)
 {
-    /* AE0 processing is handled by tisp_ae0_process_impl */
-    return 0;
+    return tiziano_ae0_fpga_run();
 }
 
 /* OEM: Tiziano_ae1_fpga — AE1 processing (WDR mode).
@@ -32770,6 +32949,20 @@ int tisp_s_adr_str_internal(int strength)
     int i;
     uint32_t temp_val;
 
+    if (tisp_adr_bypass_active()) {
+        adr_ratio = strength;
+        pr_info("tisp_s_adr_str_internal: ADR bypass active, ignoring strength update %d\n",
+                strength);
+        return 0;
+    }
+
+    if (!adr_mapb1_list_now || !adr_mapb2_list_now ||
+        !adr_mapb3_list_now || !adr_mapb4_list_now) {
+        pr_warn("tisp_s_adr_str_internal: ADR tables not initialized, skipping strength update %d\n",
+                strength);
+        return -EINVAL;
+    }
+
     pr_info("tisp_s_adr_str_internal: Setting ADR strength to %d\n", strength);
 
     /* Binary Ninja shows complex ADR strength calculation with multiple arrays */
@@ -33480,7 +33673,10 @@ void *tiziano_ae_para_addr(void)
 {
     pr_debug("tiziano_ae_para_addr: Setting up AE parameter addresses\n");
 
-    /* Binary Ninja: Set up main AE parameter pointers */
+    /* Binary Ninja: Set up main AE parameter pointers.
+     * Keep IspAe0WmeanParam anchored to the historical AE stats root while
+     * the live weighted-mean path consumes the explicitly decoded ae0_zone_*
+     * arrays from tisp_ae0_get_statistics(). */
     IspAe0WmeanParam = (uint32_t *)&IspAeStatic;
     data_d4658 = (uint32_t)&data_d0878;
     data_d465c = (uint32_t)&data_d0bfc;

@@ -848,20 +848,17 @@ struct vic_event_callback {
     int (*event_handler)(void*, int, void*); /* +0x1c: Event handler function */
 } __attribute__((packed));
 
-/* T31 ISP platform device with CORRECT IRQ resources - FIXED for stock driver compatibility */
-/* CRITICAL FIX: Stock driver uses TWO separate IRQs - 37 (isp-m0) and 38 (isp-w02) */
+/* Top-level TX ISP platform device.
+ * Keep this as the umbrella/coordination device with IRQ resources only.
+ * OEM low-level MMIO ownership belongs to the isp-m0 core subdevice, not to
+ * the parent tx-isp wrapper device. */
 static struct resource tx_isp_resources[] = {
     [0] = {
-        .start = 0x13300000,           /* T31 ISP base address */
-        .end   = 0x133FFFFF,           /* T31 ISP end address */
-        .flags = IORESOURCE_MEM,
-    },
-    [1] = {
         .start = 37,                   /* T31 ISP IRQ 37 (isp-m0) - PRIMARY ISP PROCESSING */
         .end   = 37,
         .flags = IORESOURCE_IRQ,
     },
-    [2] = {
+    [1] = {
         .start = 38,                   /* T31 ISP IRQ 38 (isp-w02) - SECONDARY ISP CHANNEL */
         .end   = 38,
         .flags = IORESOURCE_IRQ,
@@ -978,14 +975,11 @@ struct platform_device tx_isp_csi_platform_device = {
     },
 };
 
-/* VIN platform device resources - CORRECTED IRQ */
+/* VIN platform device resources.
+ * OEM vin_probe() relies on tx_isp_subdev_init() and the shared core MMIO
+ * base; it does not need to own the 0x13300000 core window. */
 static struct resource tx_isp_vin_resources[] = {
     [0] = {
-        .start = 0x13300000,           /* T31 VIN base address (part of ISP) */
-        .end   = 0x1330FFFF,           /* T31 VIN end address */
-        .flags = IORESOURCE_MEM,
-    },
-    [1] = {
         .start = 37,                   /* T31 VIN IRQ 37 - MATCHES STOCK DRIVER isp-m0 */
         .end   = 37,
         .flags = IORESOURCE_IRQ,
@@ -1063,10 +1057,17 @@ struct platform_device tx_isp_fs_platform_device = {
     },
 };
 
-/* ISP Core platform device resources - CORRECTED IRQ */
-/* FIXED: Removed memory resource to avoid conflict with VIN - CORE is a logical device */
+/* ISP Core platform device resources.
+ * OEM system_reg_write() dereferences ispcore_sd->base, which is filled by
+ * tx_isp_subdev_init() from isp-m0's named "isp-device" memory resource. */
 static struct resource tx_isp_core_resources[] = {
     [0] = {
+        .name  = "isp-device",
+        .start = 0x13300000,
+        .end   = 0x133FFFFF,
+        .flags = IORESOURCE_MEM,
+    },
+    [1] = {
         .start = 37,                   /* T31 ISP Core IRQ 37 - MATCHES STOCK DRIVER isp-m0 */
         .end   = 37,
         .flags = IORESOURCE_IRQ,
@@ -1161,20 +1162,39 @@ static int tx_isp_hardware_init(struct tx_isp_dev *isp_dev);
 void system_reg_write(u32 reg, u32 value);
 
 /* system_reg_write - OEM-lean implementation.
- * OEM objdump shows just 6 instructions: load ourISPdev, load core_regs,
- * add offset, store value, return. NO null checks, NO logging, NO wmb().
- * Our previous 75-instruction version caused the 0x1070 write-gate to
- * auto-close before the value write arrived, breaking GIB/GB. */
+ * OEM decompilation is: *(*(ispcore_sd + 0xb8) + reg) = value.
+ * Prefer the core subdev MMIO base (ourISPdev->sd.base); fall back to the
+ * early core_regs mapping only before the core subdev has been fully seeded. */
 void system_reg_write(u32 reg, u32 value)
 {
-    volatile u32 *addr = (volatile u32 *)(ourISPdev->core_regs + reg);
+    void __iomem *base = NULL;
+    volatile u32 *addr;
+
+    if (ourISPdev) {
+        if (ourISPdev->sd.base)
+            base = ourISPdev->sd.base;
+        else
+            base = ourISPdev->core_regs;
+    }
+
+    addr = (volatile u32 *)(base + reg);
     *addr = value;
 }
 
 /* system_reg_read - OEM-lean implementation (mirrors system_reg_write). */
 u32 system_reg_read(u32 reg)
 {
-    volatile u32 *addr = (volatile u32 *)(ourISPdev->core_regs + reg);
+    void __iomem *base = NULL;
+    volatile u32 *addr;
+
+    if (ourISPdev) {
+        if (ourISPdev->sd.base)
+            base = ourISPdev->sd.base;
+        else
+            base = ourISPdev->core_regs;
+    }
+
+    addr = (volatile u32 *)(base + reg);
     return *addr;
 }
 EXPORT_SYMBOL_GPL(system_reg_read);
