@@ -3492,6 +3492,7 @@ static struct completion ae_algo_comp;
 static uint8_t tisp_ae_hist[0x42c];
 static uint8_t tisp_ae_hist_last[0x42c];
 static DEFINE_SPINLOCK(ae_hist_lock);  /* OEM: protects tisp_ae_hist_last access */
+static uint32_t ae_hist_bins[256];
 
 /* Custom AE algo interface buffers (allocated by ae_algo_open ioctl 0x800456dd) */
 static uint8_t *ae_info_mine;
@@ -3906,10 +3907,7 @@ static uint32_t data_9a2ec = 0;    /* OEM/GIB DEIR enable bit mirrored into reg 
 static uint32_t ae_hist_scale_enable = 1; /* Local debug gate.
                                            * OEM only enters Phase A histogram scaling when
                                            * data_9a2ec == 1; for normal Bayer mode it stays off. */
-static uint32_t ae_hist_tail_enable = 0; /* Disable histogram-tail inflation until
-                                          * IspAeStatic is backed by a true 256-bin histogram.
-                                          * Today it contains per-zone stats, so treating it as
-                                          * bins corrupts ae_wmean and drives overexposure. */
+static uint32_t ae_hist_tail_enable = 1;
 static uint32_t data_c46d0 = 0;    /* AE gain distribution mode */
 static uint32_t ftune_wmeans_state = 0; /* OEM: ftune_wmeans.32574 */
 
@@ -4616,23 +4614,67 @@ static int tisp_ae1_get_statistics(void *buffer, uint32_t flags)
 
 static int tisp_ae0_get_hist(void *buffer, int mode, int flag)
 {
-    /* AE0 histogram collection - reads from ISP AE0 histogram registers */
-    if (!buffer) {
+    unsigned long irq_flags;
+    const uint32_t *src = (const uint32_t *)buffer;
+    uint32_t *hist_words = (uint32_t *)tisp_ae_hist;
+    uint32_t total = 0;
+    uint32_t dark_sum = 0;
+    uint32_t mid1_sum = 0;
+    uint32_t mid2_sum = 0;
+    uint32_t mid3_sum = 0;
+    uint32_t bright_sum = 0;
+    uint32_t dark_end = 0x40;
+    uint32_t mid1_end = 0x90;
+    uint32_t mid2_end = 0xc0;
+    uint32_t mid3_end = 0xf0;
+    int i;
+
+    if (!buffer)
         return -EINVAL;
+
+    memset(tisp_ae_hist, 0, sizeof(tisp_ae_hist));
+
+    /* OEM ae0_interrupt_hist passes the DMA buffer directly here. The vendor
+     * code unpacks 21-bit histogram bins from that buffer instead of reading
+     * live histogram registers again. */
+    for (i = 0; i < 256; i++) {
+        uint32_t sample;
+
+        if (mode == 1 && flag == 1)
+            sample = src[0x100 + i] & 0x1fffff;
+        else
+            sample = src[i] & 0x1fffff;
+
+        ae_hist_bins[i] = sample;
+        hist_words[i] = sample;
+        total += sample;
+
+        if ((uint32_t)i < dark_end)
+            dark_sum += sample;
+        else if ((uint32_t)i < mid1_end)
+            mid1_sum += sample;
+        else if ((uint32_t)i < mid2_end)
+            mid2_sum += sample;
+        else if ((uint32_t)i < mid3_end)
+            mid3_sum += sample;
+        else
+            bright_sum += sample;
     }
 
-    extern struct tx_isp_dev *ourISPdev;
-    if (!ourISPdev || !ourISPdev->core_regs) {
-        return -ENODEV;
-    }
+    /* The 0x42c ioctl payload is 0x400 bytes of histogram bins followed by
+     * five 32-bit summary buckets and padding. */
+    hist_words[0x100] = dark_sum;
+    hist_words[0x101] = mid1_sum;
+    hist_words[0x102] = mid2_sum;
+    hist_words[0x103] = mid3_sum;
+    hist_words[0x104] = bright_sum;
 
-    /* Read AE0 histogram from hardware registers */
-    uint32_t *hist = (uint32_t *)buffer;
-    for (int i = 0; i < 512; i++) {
-        hist[i] = readl(ourISPdev->core_regs + 0xa400 + (i * 4));
-    }
+    spin_lock_irqsave(&ae_hist_lock, irq_flags);
+    memcpy(tisp_ae_hist_last, tisp_ae_hist, sizeof(tisp_ae_hist));
+    spin_unlock_irqrestore(&ae_hist_lock, irq_flags);
 
-    pr_debug("AE0 histogram collected: mode=%d, flag=%d\n", mode, flag);
+    pr_debug("AE0 histogram unpacked from DMA: mode=%d flag=%d total=%u\n",
+             mode, flag, total);
     return 0;
 }
 
@@ -5941,6 +5983,7 @@ static int tiziano_ae0_fpga_run(void)
     int32_t mix_b = 1;
     int32_t corr_param_a = 0;
     int32_t corr_param_b = 0;
+    int hi;
 
     q = _AePointPos.data[0] & 31;
     if (q == 0)
@@ -6088,11 +6131,18 @@ static int tiziano_ae0_fpga_run(void)
         uint32_t s5_curve = ae_sensor_config[6]; /* curve strength */
         uint32_t ae_wmean = wmean;
 
-        /* IspAeStatic currently holds per-zone AE samples, not a true 256-bin
-         * histogram. Keep these diagnostics disabled until the real histogram
-         * DMA path is wired up. */
-        ae_hist_bright_sum = 0;
         ae_hist_dark_sum = 0;
+        ae_hist_bright_sum = 0;
+
+        if (s7_dark > 0xff)
+            s7_dark = 0xff;
+        if (s1_bin > 0xff)
+            s1_bin = 0xff;
+
+        for (hi = 0; hi <= (int)s7_dark; hi++)
+            ae_hist_dark_sum += ae_hist_bins[hi];
+        for (hi = (int)s1_bin; hi < 256; hi++)
+            ae_hist_bright_sum += ae_hist_bins[hi];
 
         /* OEM: Histogram tail quadratic weighting ($s4==1 path).
          * Computes weighted sum of bright histogram bins above threshold
@@ -6100,12 +6150,10 @@ static int tiziano_ae0_fpga_run(void)
          * This is the critical mechanism that breaks the convergence
          * deadlock when wmean ≈ 0 (dark scene at minimum exposure). */
         if (s4_mode == 1 && ae_hist_tail_enable == 1) {
-            uint32_t hist_th = (*(uint32_t *)((uint8_t *)&_exp_parameter + 0x8c));
+            uint32_t hist_th = s1_bin;
             uint32_t curve_str;
             uint32_t v1_4 = 0;
-            int hi;
 
-            /* OEM: i_4 = *(arg7 + 0x8c) = _exp_parameter byte offset 0x8c */
             if (hist_th == 0) hist_th = 128;
             if (hist_th < 0xff)
                 hist_th = (hist_th * 2) / 3;
@@ -6126,7 +6174,7 @@ static int tiziano_ae0_fpga_run(void)
                         (curve_str - 1) << 16,
                         fix_point_mult2_32(16, norm_pos, norm_pos));
                 v1_4 += fix_point_mult2_32(5,
-                        IspAeStatic[hi] << 5, weight >> 11) >> 5;
+                        ae_hist_bins[hi] << 5, weight >> 11) >> 5;
             }
 
             /* OEM: var_54 = (v1_4 + zone_area_product) * wmean / zone_area_product
@@ -6154,22 +6202,6 @@ static int tiziano_ae0_fpga_run(void)
 
                 if (ae_wmean > 255) ae_wmean = 255;
                 if (ae_wmean < 1) ae_wmean = 1;
-            }
-        }
-
-        if (ae_hist_tail_enable == 1) {
-            /* OEM: The histogram buffer retains residual data across frames.
-             * Our dead DMA bank frames have exactly zero in IspAeStatic,
-             * producing ae_wmean=1 which stalls convergence.  Carry over
-             * the previous inflated wmean on dead-bank frames so the
-             * convergence keeps ramping. */
-            static uint32_t ae_wmean_persist = 128;
-            if (wmean > 1 || ae_wmean > 1) {
-                /* Alive frame: update persistent wmean */
-                ae_wmean_persist = ae_wmean;
-            } else {
-                /* Dead bank frame: use previous wmean */
-                ae_wmean = ae_wmean_persist;
             }
         }
 
