@@ -6527,11 +6527,10 @@ EXPORT_SYMBOL(tiziano_ae_set_hardware_param);
  *
  * OEM decompilation (0x192a0):
  *   1. Read status from 0xa050, compute bank offset: (status << 8) & 0x3000
- *   2. Cache sync the 0x1000-byte DMA bank (OEM helper is a no-op on T31)
- *   3. Loop 225 zones: read word[0] of each 4-word entry, mask & 0x1fffff
- *   4. Call tisp_ae_update_zone_data(&zones, 0x384)
- *   5. Handle DMSC flag
- *   6. Push event 4 with args[0] = 0x10000
+ *   2. Cache sync the 0x1000-byte DMA bank
+ *   3. Call tisp_ae0_get_statistics(bank + data_b2f3c, 0xf001f001)
+ *   4. If data_b0e00 == 1, clear it and zero dmsc_fc_t3_stren_intp[1]
+ *   5. Return 1
  */
 int ae0_interrupt_static(void)
 {
@@ -6551,90 +6550,8 @@ int ae0_interrupt_static(void)
      * be a no-op since XBurst1 ISP DMA is likely cache-coherent. */
     private_dma_cache_sync(NULL, dma, 0x1000, 0);
 
-    /* OEM path: decode the packed AE DMA bank into six per-zone planes. */
+    /* OEM path: decode the packed AE DMA bank into per-zone planes. */
     tisp_ae0_get_statistics(dma, 0xf001f001);
-
-    {
-        extern int tisp_ae_update_zone_data(uint32_t *new_zone_data, size_t data_size);
-        uint32_t zones[225];
-        int i;
-
-        for (i = 0; i < 225; i++) {
-            zones[i] = ae0_zone_r[i] + ae0_zone_g[i] + ae0_zone_b[i];
-        }
-
-        {
-            static int ae_zone_log;
-            if (ae_zone_log < 5) {
-                /* Scan all 225 zones across all 4 words to find where data lives */
-                int nz_w0 = 0, nz_w1 = 0, nz_w2 = 0, nz_w3 = 0;
-                int first_nz_w0 = -1, first_nz_w1 = -1;
-                for (i = 0; i < 225; i++) {
-                    if (dma[i*4+0] & 0x1fffff) { nz_w0++; if (first_nz_w0 < 0) first_nz_w0 = i; }
-                    if (dma[i*4+1] & 0x1fffff) { nz_w1++; if (first_nz_w1 < 0) first_nz_w1 = i; }
-                    if (dma[i*4+2]) nz_w2++;
-                    if (dma[i*4+3]) nz_w3++;
-                }
-                pr_info("AE0_SCAN[%d]: status=0x%x bank=%u nz_w0=%d nz_w1=%d nz_w2=%d nz_w3=%d "
-                        "1st_nz_w0=%d 1st_nz_w1=%d\n",
-                        ae_zone_log, ae0_status, bank_offset >> 12,
-                        nz_w0, nz_w1, nz_w2, nz_w3, first_nz_w0, first_nz_w1);
-                /* Dump zone 0 all 4 words, plus zone 1, 112, 224 word[0..1] */
-                pr_info("AE0_RAW[%d]: z0=[%08x %08x %08x %08x] z1=[%08x %08x] "
-                        "z112=[%08x %08x] z224=[%08x %08x]\n",
-                        ae_zone_log,
-                        dma[0], dma[1], dma[2], dma[3],
-                        dma[4], dma[5],
-                        dma[448], dma[449],
-                        dma[896], dma[897]);
-                /* Also check if data might start at a word offset */
-                pr_debug("AE0_OFF[%d]: dma[-1..3]=%08x %08x %08x %08x %08x "
-                        "w1_z0=%u w1_z1=%u w1_z224=%u\n",
-                        ae_zone_log,
-                        (bank_offset >= 4) ? *(dma-1) : 0xDEAD,
-                        dma[0], dma[1], dma[2], dma[3],
-                        dma[1] & 0x1fffff, dma[5] & 0x1fffff, dma[897] & 0x1fffff);
-                ae_zone_log++;
-            }
-        }
-
-        /* Stats death transition detector: log when zones transition from
-         * alive (diverse values) to dead (all same or all zero). */
-        {
-            static int ae_stat_frame;
-            static int ae_was_alive;
-            static int ae_dead_logged;
-            int nz = 0, all_same = 1;
-            uint32_t first_val = zones[0];
-            for (i = 0; i < 225; i++) {
-                if (zones[i]) nz++;
-                if (zones[i] != first_val) all_same = 0;
-            }
-            ae_stat_frame++;
-            int alive = (nz > 50 && !all_same);
-            if (ae_was_alive && !alive && ae_dead_logged < 5) {
-                pr_info("AE_DEATH[%d]: bank=%u z0=%u z112=%u z224=%u nz=%d same=%d "
-                    "bypass=0x%08x GIB_regs: 1060=%08x 1064=%08x 1068=%08x "
-                    "raw: w0=%08x w1=%08x\n",
-                    ae_stat_frame, bank_offset >> 12,
-                    zones[0], zones[112], zones[224], nz, all_same,
-                    system_reg_read(0xc),
-                    system_reg_read(0x1060), system_reg_read(0x1064),
-                    system_reg_read(0x1068),
-                    dma[0], dma[1]);
-                ae_dead_logged++;
-            }
-            if (!ae_was_alive && alive) {
-                pr_info("AE_ALIVE[%d]: bank=%u z0=%u z112=%u z224=%u nz=%d\n",
-                    ae_stat_frame, bank_offset >> 12,
-                    zones[0], zones[112], zones[224], nz);
-                ae_dead_logged = 0;  /* reset so we catch next death */
-            }
-            ae_was_alive = alive;
-        }
-
-        tisp_ae_update_zone_data(zones, sizeof(zones));
-    }
 
     /* Binary Ninja: Handle DMSC interrupt flag */
     if (data_b0e00 == 1) {
@@ -6644,10 +6561,6 @@ int ae0_interrupt_static(void)
             dmsc_ptr[1] = 0;  /* *(dmsc_fc_t3_stren_intp + 4) = 0 */
         }
     }
-
-    /* OEM ae0_interrupt_static does NOT push events — events 4/5/7 are
-     * pushed by tisp_ae0_process_impl after the exposure algorithm runs.
-     * Previously we pushed event 4 here with 0x10000 which was incorrect. */
 
     return 1;
 }
@@ -13274,6 +13187,10 @@ static uint32_t _awb_cluster_ext2;     /* data_a9e50 */
 static uint8_t  tisp_wb_zone_attr[0x2a3]; /* AWB zone attribute blob */
 static uint32_t awb_ev_data;           /* data_983b0 equivalent */
 static int      awb_first;             /* OEM awb_first gate for one-time HW param pack */
+static uint32_t awb_zero_zone_count;
+static uint32_t awb_zero_zone_fallback_active;
+
+#define AWB_ZERO_ZONE_FALLBACK_FRAMES 8
 
 /* AWB params_refresh globals */
 static uint8_t  tisp_wb_attr[0x1c];
@@ -13318,43 +13235,53 @@ static uint32_t Cluster_rgbg_index_max[CIDX_MAX_ENTRIES * 3]; /* OEM 0xa7574 */
 void tiziano_awb_params_refresh(void)
 {
     const u8 *p = (const u8 *)(tparams_active ? tparams_active : tparams_day);
+    const u8 *awb_src = p;
     if (!p || !tuning_bin_loaded) {
         pr_info("tiziano_awb_params_refresh: no tuning bin, skipping\n");
         return;
     }
 
-    memcpy(_awb_parameter,          p + 0x1010, 0xb4);
-    memcpy(&_pixel_cnt_th,          p + 0x10C4, 4);
-    memcpy(_awb_lowlight_rg_th,     p + 0x10C8, 8);
-    memcpy(_AwbPointPos,            p + 0x10D0, 8);
-    memcpy(_awb_cof,                p + 0x10D8, 8);
-    memcpy(_awb_mode,               p + 0x10F8, 0xc);
-    memcpy(_wb_static,              p + 0x110C, 8);
-    memcpy(_light_src,              p + 0x1114, 0x50);
-    memcpy(&_light_src_num,         p + 0x1164, 4);
-    memcpy(_rg_pos,                 p + 0x1168, 0x3c);
-    memcpy(_bg_pos,                 p + 0x11A4, 0x3c);
-    memcpy(_awb_ct_th_ot_luxhigh,   p + 0x11E0, 0x10);
-    memcpy(_awb_ct_th_ot_luxlow,    p + 0x11F0, 0x10);
-    memcpy(_awb_ct_th_in,           p + 0x1200, 0x10);
-    memcpy(_awb_ct_para_ot,         p + 0x1210, 8);
-    memcpy(_awb_ct_para_in,         p + 0x1218, 8);
-    memcpy(_awb_dis_tw,             p + 0x1220, 0xc);
-    memcpy(_rgbg_weight,            p + 0x122C, 0x384);
-    memcpy(_color_temp_mesh,        p + 0x15B0, 0x384);
-    memcpy(_awb_wght,               p + 0x1934, 0x384);
-    memcpy(_rgbg_weight_ot,         p + 0x1CB8, 0x384);
-    memcpy(_ls_w_lut,               p + 0x203C, 0x808);
+    if (tisp_sensor_is_named("sc2336") &&
+        tparams_active == tparams_day &&
+        tparams_night) {
+        awb_src = (const u8 *)tparams_night;
+        pr_info("tiziano_awb_params_refresh: sc2336 day-mode override using night AWB tables\n");
+    }
+
+    memcpy(_awb_parameter,          awb_src + 0x1010, 0xb4);
+    memcpy(&_pixel_cnt_th,          awb_src + 0x10C4, 4);
+    memcpy(_awb_lowlight_rg_th,     awb_src + 0x10C8, 8);
+    memcpy(_AwbPointPos,            awb_src + 0x10D0, 8);
+    memcpy(_awb_cof,                awb_src + 0x10D8, 8);
+    memcpy(_awb_mode,               awb_src + 0x10F8, 0xc);
+    memcpy(_wb_static,              awb_src + 0x110C, 8);
+    memcpy(_light_src,              awb_src + 0x1114, 0x50);
+    memcpy(&_light_src_num,         awb_src + 0x1164, 4);
+    memcpy(_rg_pos,                 awb_src + 0x1168, 0x3c);
+    memcpy(_bg_pos,                 awb_src + 0x11A4, 0x3c);
+    memcpy(_awb_ct_th_ot_luxhigh,   awb_src + 0x11E0, 0x10);
+    memcpy(_awb_ct_th_ot_luxlow,    awb_src + 0x11F0, 0x10);
+    memcpy(_awb_ct_th_in,           awb_src + 0x1200, 0x10);
+    memcpy(_awb_ct_para_ot,         awb_src + 0x1210, 8);
+    memcpy(_awb_ct_para_in,         awb_src + 0x1218, 8);
+    memcpy(_awb_dis_tw,             awb_src + 0x1220, 0xc);
+    memcpy(_rgbg_weight,            awb_src + 0x122C, 0x384);
+    memcpy(_color_temp_mesh,        awb_src + 0x15B0, 0x384);
+    memcpy(_awb_wght,               awb_src + 0x1934, 0x384);
+    memcpy(_rgbg_weight_ot,         awb_src + 0x1CB8, 0x384);
+    memcpy(_ls_w_lut,               awb_src + 0x203C, 0x808);
 
     if (awb_dn_refresh_flag == 0) {
-        memcpy(_awb_mf_para, p + 0x10E0, 0x18);
-        memcpy(&_awb_ct,     p + 0x1104, 4);
-        memcpy(&_awb_ct_last, p + 0x1108, 4);
+        memcpy(_awb_mf_para, awb_src + 0x10E0, 0x18);
+        memcpy(&_awb_ct,     awb_src + 0x1104, 4);
+        memcpy(&_awb_ct_last, awb_src + 0x1108, 4);
     }
     awb_dn_refresh_flag = 0;
 	awb_history_reset = 1;
 	awb_history_count = 0;
 	awb_zone_cache_valid = 0;
+	awb_zero_zone_count = 0;
+	awb_zero_zone_fallback_active = 0;
 
 
     {
@@ -13611,6 +13538,30 @@ static int tisp_dmsc_param_array_info(int param_id, void **buf, int *size)
 	*buf = tisp_dmsc_param_store[idx];
 	*size = tisp_dmsc_param_sizes[idx];
 	return 0;
+}
+
+static void tiziano_awb_apply_awb_thresholds(int lowlight, const char *reason)
+{
+	u32 normal_rg = (AWB_RG_TH_HIGH() << 16) | AWB_RG_TH_LOW();
+	u32 normal_bg = (AWB_BG_TH_HIGH() << 16) | AWB_BG_TH_LOW();
+	u32 lowlight_rg = ((_awb_lowlight_rg_th[1] & 0x0fff) << 16) |
+		(_awb_lowlight_rg_th[0] & 0x0fff);
+
+	if (awb_frz != 0 || awb_algo_mode == 1)
+		return;
+
+	if (lowlight) {
+		system_reg_write_awb(1, 0xb028, lowlight_rg);
+		system_reg_write_awb(1, 0xb02c, 0x03ff0001);
+	} else {
+		system_reg_write_awb(1, 0xb028, normal_rg);
+		system_reg_write_awb(1, 0xb02c, normal_bg);
+	}
+
+	pr_info("AWB_THRESH: %s -> %s thresholds (rg=0x%08x bg=0x%08x)\n",
+		reason ? reason : "update",
+		lowlight ? "relaxed" : "normal",
+		system_reg_read(0xb028), system_reg_read(0xb02c));
 }
 
 int tisp_dmsc_param_array_get(int param_id, void *out_buf, int *size_buf)
@@ -18832,12 +18783,17 @@ static int Tiziano_awb_fpga(const uint32_t *stats_r,
 	fpga_diag_count++;
 
 	if (rg_pix_cnt == 0 && bg_pix_cnt == 0) {
-		static unsigned int awb_no_zones_count;
-		awb_no_zones_count++;
-		if (awb_no_zones_count <= 3 || (awb_no_zones_count % 300) == 0)
+		awb_zero_zone_count++;
+		if (awb_zero_zone_count <= 3 || (awb_zero_zone_count % 300) == 0)
 			pr_info("Tiziano_awb_fpga[%u]: NO active zones "
 				"(all stats zero? pix_thr=%u)\n",
-				awb_no_zones_count, _pixel_cnt_th);
+				awb_zero_zone_count, _pixel_cnt_th);
+		if (!awb_zero_zone_fallback_active &&
+		    awb_zero_zone_count >= AWB_ZERO_ZONE_FALLBACK_FRAMES &&
+		    awb_mode_flag == 0) {
+			tiziano_awb_apply_awb_thresholds(1, "zero-zone fallback");
+			awb_zero_zone_fallback_active = 1;
+		}
 		/* OEM does not early-return here, but the tuning seed is visibly
 		 * wrong on several sensors in our generic port. Prefer preserving
 		 * the last live AWB state across transitions, and otherwise hold
@@ -18857,6 +18813,14 @@ static int Tiziano_awb_fpga(const uint32_t *stats_r,
 		}
 		pr_info("Tiziano_awb_fpga: zero zones with no live history; holding previous gains until valid AWB stats arrive\n");
 		return 0;
+	}
+
+	if (awb_zero_zone_count != 0)
+		awb_zero_zone_count = 0;
+	if (awb_zero_zone_fallback_active) {
+		if (awb_mode_flag == 0)
+			tiziano_awb_apply_awb_thresholds(0, "zones recovered");
+		awb_zero_zone_fallback_active = 0;
 	}
 
 	if (!force_recalc) {
@@ -19466,11 +19430,14 @@ int tiziano_wdr_interrupt_static(void)
 int tiziano_awb_init(uint32_t height, uint32_t width)
 {
 	const uint32_t *mf_words = (const uint32_t *)_awb_mf_para;
+	const bool defer_seed_until_live = tisp_sensor_is_named("sc2336");
 
     pr_info("tiziano_awb_init: Initializing Auto White Balance (%dx%d)\n", width, height);
 
     /* OEM EXACT: reset state */
     awb_first = 0;
+    awb_zero_zone_count = 0;
+    awb_zero_zone_fallback_active = 0;
     memset(tisp_wb_attr, 0, 0x1c);
 
     /* OEM EXACT: load AWB params from tuning bin BEFORE hardware config */
@@ -19488,8 +19455,13 @@ int tiziano_awb_init(uint32_t height, uint32_t width)
 					 awb_gain_original[1],
 					 _awb_ct ? _awb_ct : _awb_ct_last);
 			Tiziano_awb_set_gain(_awb_mf_para, _AwbPointPos[0], _wb_static);
+		} else if (!defer_seed_until_live) {
+			pr_info("tiziano_awb_init: applying OEM seeded AWB gain (mf_seed=[%u,%u,%u,%u,%u,%u])\n",
+				mf_words[0], mf_words[1], mf_words[2],
+				mf_words[3], mf_words[4], mf_words[5]);
+			Tiziano_awb_set_gain(_awb_mf_para, _AwbPointPos[0], _wb_static);
 		} else {
-			pr_info("tiziano_awb_init: deferring seeded AWB gain apply until valid stats (mf_seed=[%u,%u,%u,%u,%u,%u])\n",
+			pr_info("tiziano_awb_init: deferring seeded AWB gain apply until valid stats for sc2336 (mf_seed=[%u,%u,%u,%u,%u,%u])\n",
 				mf_words[0], mf_words[1], mf_words[2],
 				mf_words[3], mf_words[4], mf_words[5]);
 		}
