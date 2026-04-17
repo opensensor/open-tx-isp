@@ -76,18 +76,18 @@ module_param_named(force_bypass_adr, tisp_force_bypass_adr, int, S_IRUGO | S_IWU
 MODULE_PARM_DESC(force_bypass_adr,
 			 "Force ADR bypass (default: 1 to preserve known-good image sequencing)");
 
-static int tisp_force_bypass_defog = 1; /* Keep defog bypassed until exposure/tone mapping is stable */
+static int tisp_force_bypass_defog = 0; /* Keep Defog enabled by default; bypass only for targeted isolation */
 module_param_named(force_bypass_defog, tisp_force_bypass_defog, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(force_bypass_defog,
-			 "Force Defog bypass (default: 1 while bring-up still over-brightens)");
+			 "Force Defog bypass (default: 0 — keep OEM Defog path active unless isolating it)");
 
 static int tisp_force_bypass_dpc = 0;
 module_param_named(force_bypass_dpc, tisp_force_bypass_dpc, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(force_bypass_dpc, "Force DPC (bit 2) bypass for AWB bisection");
 
-static int tisp_force_bypass_lsc = 1; /* Keep LSC bypassed until the stats path is stable */
+static int tisp_force_bypass_lsc = 1; /* Bypass LSC by default while isolating suspected lens-shading issues */
 module_param_named(force_bypass_lsc, tisp_force_bypass_lsc, int, S_IRUGO | S_IWUSR);
-MODULE_PARM_DESC(force_bypass_lsc, "Force LSC bypass (bits 4 and 6) (default: 1 during bring-up)");
+MODULE_PARM_DESC(force_bypass_lsc, "Force LSC bypass (bits 4 and 6) (default: 1 — isolate suspected lens-shading issues)");
 
 static int tisp_force_bypass_gib = 1; /* Keep GIB bypassed until the gate/state mismatch is resolved */
 module_param_named(force_bypass_gib, tisp_force_bypass_gib, int, S_IRUGO | S_IWUSR);
@@ -97,6 +97,11 @@ static int tisp_force_bypass_mdns = 0; /* MDNS: enabled (OEM default) */
 module_param_named(force_bypass_mdns, tisp_force_bypass_mdns, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(force_bypass_mdns,
 			 "Force MDNS bypass (default: 0 — MDNS provides temporal denoise)");
+
+static int tisp_ae_use_dark_bright_stats = 0; /* GC2053 stats appear to mis-map dark/bright counts; keep them disabled until verified */
+module_param_named(ae_use_dark_bright_stats, tisp_ae_use_dark_bright_stats, int, S_IRUGO | S_IWUSR);
+MODULE_PARM_DESC(ae_use_dark_bright_stats,
+			 "Use per-zone AE dark/bright pixel counters (default: 0 — ignore suspect counters and weight AE from RGB sums only)");
 
 extern uint32_t system_reg_read(u32 reg);
 
@@ -2435,6 +2440,8 @@ extern int tiziano_clm_dn_params_refresh(void);
 extern int tiziano_gamma_lut_parameter(void);
 extern int tiziano_adr_params_refresh(void);
 static int tiziano_adr_gamma_refresh(void);
+static void tiziano_adr_params_init(void);
+static int tiziano_adr_5x5_param(void);
 extern void tiziano_dpc_params_refresh(void);
 static void tiziano_bcsh_params_refresh(void);
 static void tiziano_rdns_params_refresh(void);
@@ -4556,6 +4563,7 @@ static int tisp_ae0_get_statistics(void *buffer, uint32_t flags)
     uint32_t *plane_bright = &IspAeStatic[AE_STATS_PLANE_BRIGHT * AE_ZONE_COUNT_MAX];
     uint32_t *plane_extra = &IspAeStatic[AE_STATS_PLANE_EXTRA * AE_ZONE_COUNT_MAX];
     uint32_t idx;
+    static int dark_bright_log_once;
 
     if (!buffer)
         return -EINVAL;
@@ -4581,12 +4589,19 @@ static int tisp_ae0_get_statistics(void *buffer, uint32_t flags)
         uint32_t w1 = src[1];
         uint32_t w2 = src[2];
         uint32_t w3 = src[3];
+        uint32_t dark_raw = ((w2 & 0xfff) << 1) | (w1 >> 31);
+        uint32_t bright_raw = (w2 & 0x1fff000) >> 12;
 
         plane_r[idx] = w0 & 0x1fffff;
         plane_g[idx] = ((w1 & 0x3ff) << 11) | (w0 >> 21);
         plane_b[idx] = (w1 & 0x7ffffc00) >> 10;
-        plane_dark[idx] = ((w2 & 0xfff) << 1) | (w1 >> 31);
-        plane_bright[idx] = (w2 & 0x1fff000) >> 12;
+        if (tisp_ae_use_dark_bright_stats) {
+            plane_dark[idx] = dark_raw;
+            plane_bright[idx] = bright_raw;
+        } else {
+            plane_dark[idx] = 0;
+            plane_bright[idx] = 0;
+        }
         plane_extra[idx] = ((w3 & 0x3fff) << 7) | (w2 >> 25);
 
         ae0_zone_r[idx] = plane_r[idx];
@@ -4594,6 +4609,13 @@ static int tisp_ae0_get_statistics(void *buffer, uint32_t flags)
         ae0_zone_b[idx] = plane_b[idx];
         ae0_zone_dark[idx] = plane_dark[idx];
         ae0_zone_bright[idx] = plane_bright[idx];
+
+        if (!tisp_ae_use_dark_bright_stats && !dark_bright_log_once && idx == 0 &&
+            (dark_raw != 0 || bright_raw != 0)) {
+            pr_info("AE0 statistics: ignoring raw dark/bright counters (raw dark=%u bright=%u) until sensor mapping is verified\n",
+                    dark_raw, bright_raw);
+            dark_bright_log_once = 1;
+        }
     }
 
     pr_debug("AE0 statistics unpacked: rows=%u cols=%u zones=%u flags=0x%x\n",
@@ -10759,7 +10781,11 @@ int tisp_adr_param_array_set(int param_id, void *in_buf, int *size_buf)
             ev_changed = 1;
             break;
     }
-    if (dst && len) memcpy(dst, in_buf, len);
+    if (dst && len) {
+        memcpy(dst, in_buf, len);
+        tiziano_adr_params_init();
+        ev_changed = 1;
+    }
     *size_buf = len;
     return 0;
 }
@@ -27910,8 +27936,6 @@ int tiziano_adr_init(uint32_t width, uint32_t height)
             w02 = param_adr_weight_02_1072_1440; w12 = param_adr_weight_12_1072_1440;
             w22 = param_adr_weight_22_1072_1440; w21 = param_adr_weight_21_1072_1440;
         }
-        /* OEM fallback: tiziano_adr_5x5_param() for unknown resolutions — not yet ported */
-
         if (cwd) {
             memcpy(param_adr_centre_w_dis_array_tmp, cwd, sizeof(param_adr_centre_w_dis_array_tmp));
             memcpy(param_adr_weight_20_lut_array_tmp, w20, sizeof(param_adr_weight_20_lut_array_tmp));
@@ -27921,7 +27945,9 @@ int tiziano_adr_init(uint32_t width, uint32_t height)
             memcpy(param_adr_weight_21_lut_array_tmp, w21, sizeof(param_adr_weight_21_lut_array_tmp));
             pr_info("tiziano_adr_init: loaded ADR LUTs for %ux%u\n", width, height);
         } else {
-            pr_warn("tiziano_adr_init: no ADR LUT data for %ux%u, using zeros\n", width, height);
+            tiziano_adr_5x5_param();
+            pr_info("tiziano_adr_init: generated ADR 5x5 LUTs for %ux%u fallback\n",
+                    width, height);
         }
     }
 
@@ -30145,20 +30171,32 @@ int tisp_again_update(uint32_t gain)
     return 0;
 }
 
+/* OEM EXACT: tisp_adr_ev_update (0x47530) */
+static int tisp_adr_ev_update(uint32_t ev, uint32_t aux_ev)
+{
+    ev_changed = 1;
+    ev_now = (aux_ev << 22) | (ev >> 10);
+    return 0;
+}
+
 /* OEM EXACT: tisp_ev_update calls sub-module EV update functions.
  * ADR (bit 7), defog (bit 11), WDR (bit 3) are gated on bypass register 0xc. */
 int tisp_ev_update(uint32_t ev, uint32_t aux_ev)
 {
+    uint32_t reg_0c;
+
     data_9a454 = ev;
 
     tisp_awb_ev_update(ev);
     tisp_ccm_ev_update();
     tisp_bcsh_ev_update(ev);
 
-    /* OEM also calls these gated on bypass bits in reg 0xc — not yet implemented:
-     * if ((reg_0c & 0x80) == 0)  tisp_adr_ev_update(ev, aux_ev);
-     * if ((reg_0c & 0x800) == 0) tisp_defog_ev_update(ev, aux_ev);
-     * if ((reg_0c & 8) == 0)     tisp_wdr_ev_update(ev, aux_ev); */
+    reg_0c = system_reg_read(0xc);
+    if ((reg_0c & 0x80) == 0)
+        tisp_adr_ev_update(ev, aux_ev);
+
+    /* OEM also gates defog and WDR EV updates here. Those paths are still
+     * handled separately until their parity work is complete. */
 
     return 0;
 }
@@ -30828,15 +30866,146 @@ static int tiziano_adr_5x5_param_distance(int32_t cx, int32_t cy,
     return 0;
 }
 
+/* Integer square root for the ADR 5x5 geometry scaler. */
+static uint32_t tisp_isqrt_u64(uint64_t val)
+{
+    uint64_t res = 0;
+    uint64_t bit = 1ULL << 62;
+
+    while (bit > val)
+        bit >>= 2;
+
+    while (bit != 0) {
+        if (val >= res + bit) {
+            val -= res + bit;
+            res = (res >> 1) + bit;
+        } else {
+            res >>= 1;
+        }
+        bit >>= 2;
+    }
+
+    return (uint32_t)res;
+}
+
 /* OEM: tiziano_adr_5x5_param — ADR 5x5 spatial weight computation.
  * OEM at 0x4acd8. Complex spatial weighting for ADR tone mapping.
  * Computes weight LUTs from image geometry and distance tables. */
 static int tiziano_adr_5x5_param(void)
 {
-    /* ADR 5x5 spatial param computation — requires many ADR-specific
-     * globals (adr_lut arrays, param_adr_weight arrays, etc.).
-     * ADR processing works without this spatial weighting —
-     * the kneepoint/LUT path handles tone mapping. */
+    static const uint32_t oem_adr_centre_w_dis_base[31] = {
+        0x8411, 0x60ea, 0x5091, 0x45cd, 0x3dc2, 0x3756, 0x31fd, 0x2d69,
+        0x2968, 0x25d9, 0x22a5, 0x1fbc, 0x1d10, 0x1a9a, 0x1851, 0x162e,
+        0x142e, 0x124c, 0x1085, 0x0ed6, 0x0d3c, 0x0bb6, 0x0a41, 0x08dd,
+        0x0788, 0x0640, 0x0505, 0x03d5, 0x02b1, 0x0196, 0x0085
+    };
+    uint32_t lut7_counter[32] = {0};
+    uint32_t lut8_counter[32] = {0};
+    uint32_t lut12_counter[32] = {0};
+    uint32_t lut1_value_sum[32] = {0};
+    uint32_t lut2_value_sum[32] = {0};
+    uint32_t lut3_value_sum[32] = {0};
+    uint32_t lut6_value_sum[32] = {0};
+    uint32_t lut11_value_sum[32] = {0};
+    uint32_t col_step, row_step;
+    uint32_t row_start, row_stop, col_start, col_stop;
+    uint32_t row_half, col_half, row_mid, col_mid, row_far, col_far;
+    uint32_t scale, scale_sq;
+    uint32_t x, y;
+    int i;
+
+    if (width_def == 0 || height_def == 0)
+        return -EINVAL;
+
+    col_step = (width_def + 3) / 6;
+    row_step = (height_def + 2) >> 2;
+    row_start = row_step << 1;
+    row_stop = row_start + row_step;
+    col_start = col_step << 1;
+    col_stop = col_start + col_step;
+    row_half = (row_step + 1) >> 1;
+    col_half = (col_step + 1) >> 1;
+    row_mid = row_step + row_half;
+    col_mid = col_step + col_half;
+    row_far = row_step + row_mid;
+    col_far = col_step + col_mid;
+
+    /* OEM scales the base center-distance table by a geometry-derived radius. */
+    scale = tisp_isqrt_u64((uint64_t)row_mid * row_mid +
+                           (uint64_t)col_mid * col_mid) / 3;
+    scale_sq = scale * scale;
+    for (i = 0; i < ARRAY_SIZE(oem_adr_centre_w_dis_base); i++) {
+        uint64_t scaled = (uint64_t)oem_adr_centre_w_dis_base[i] * scale_sq + 0x20000;
+        param_adr_centre_w_dis_array_tmp[i] = (uint32_t)div_u64(scaled, 1 << 18);
+    }
+
+    for (y = row_start; y <= row_stop; y++) {
+        for (x = col_start; x <= col_stop; x++) {
+            uint32_t bin_main;
+            uint32_t bin_02;
+            uint32_t bin_20;
+
+            bin_main = (uint32_t)tiziano_adr_5x5_param_distance(
+                y, x, row_mid, col_mid, (const int32_t *)param_adr_centre_w_dis_array_tmp);
+            lut7_counter[bin_main] += 1;
+            lut1_value_sum[bin_main] += (uint32_t)tiziano_adr_5x5_param_distance(
+                y, x, row_half, col_half, (const int32_t *)param_adr_centre_w_dis_array_tmp);
+            lut2_value_sum[bin_main] += (uint32_t)tiziano_adr_5x5_param_distance(
+                y, x, row_mid, col_half, (const int32_t *)param_adr_centre_w_dis_array_tmp);
+            lut6_value_sum[bin_main] += (uint32_t)tiziano_adr_5x5_param_distance(
+                y, x, row_half, col_mid, (const int32_t *)param_adr_centre_w_dis_array_tmp);
+
+            bin_02 = (uint32_t)tiziano_adr_5x5_param_distance(
+                y, x, row_far, col_mid, (const int32_t *)param_adr_centre_w_dis_array_tmp);
+            lut8_counter[bin_02] += 1;
+            lut3_value_sum[bin_02] += (uint32_t)tiziano_adr_5x5_param_distance(
+                y, x, row_far, col_half, (const int32_t *)param_adr_centre_w_dis_array_tmp);
+
+            bin_20 = (uint32_t)tiziano_adr_5x5_param_distance(
+                y, x, row_mid, col_far, (const int32_t *)param_adr_centre_w_dis_array_tmp);
+            lut12_counter[bin_20] += 1;
+            lut11_value_sum[bin_20] += (uint32_t)tiziano_adr_5x5_param_distance(
+                y, x, row_half, col_far, (const int32_t *)param_adr_centre_w_dis_array_tmp);
+        }
+    }
+
+    for (i = 0; i < 32; i++) {
+        uint32_t cnt = lut7_counter[i];
+
+        if ((cnt | i) == 0) {
+            param_adr_weight_22_lut_array_tmp[i] = 0;
+            param_adr_weight_12_lut_array_tmp[i] = 0;
+            param_adr_weight_21_lut_array_tmp[i] = 0;
+        } else if (cnt != 0) {
+            uint32_t round = cnt / 2;
+            param_adr_weight_22_lut_array_tmp[i] = (lut1_value_sum[i] + round) / cnt;
+            param_adr_weight_12_lut_array_tmp[i] = (lut2_value_sum[i] + round) / cnt;
+            param_adr_weight_21_lut_array_tmp[i] = (lut6_value_sum[i] + round) / cnt;
+        } else {
+            param_adr_weight_22_lut_array_tmp[i] = param_adr_weight_22_lut_array_tmp[i - 1];
+            param_adr_weight_12_lut_array_tmp[i] = param_adr_weight_12_lut_array_tmp[i - 1];
+            param_adr_weight_21_lut_array_tmp[i] = param_adr_weight_21_lut_array_tmp[i - 1];
+        }
+
+        cnt = lut8_counter[i];
+        if ((cnt | i) == 0) {
+            param_adr_weight_02_lut_array_tmp[i] = 0;
+        } else if (cnt != 0) {
+            param_adr_weight_02_lut_array_tmp[i] = (lut3_value_sum[i] + cnt / 2) / cnt;
+        } else {
+            param_adr_weight_02_lut_array_tmp[i] = param_adr_weight_02_lut_array_tmp[i - 1];
+        }
+
+        cnt = lut12_counter[i];
+        if ((cnt | i) == 0) {
+            param_adr_weight_20_lut_array_tmp[i] = 0;
+        } else if (cnt != 0) {
+            param_adr_weight_20_lut_array_tmp[i] = (lut11_value_sum[i] + cnt / 2) / cnt;
+        } else {
+            param_adr_weight_20_lut_array_tmp[i] = param_adr_weight_20_lut_array_tmp[i - 1];
+        }
+    }
+
     return 0;
 }
 
