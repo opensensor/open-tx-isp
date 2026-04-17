@@ -30556,6 +30556,7 @@ static void tiziano_bcsh_TransitParam(void)
      * Applies user saturation/contrast/brightness controls via StrenCal,
      * computes Cslope0/1/2, Sstep0/1, HDP/HBP/HLSP slopes. */
     struct isp_tuning_data *tuning = ourISPdev ? ourISPdev->tuning_data : NULL;
+    uint32_t *rgb_off;
     uint8_t user_sat, user_contrast, user_brightness;
     uint32_t brightness_scaled;
     uint32_t *Sth, *HDP, *HBP, *HLSP;
@@ -30571,8 +30572,12 @@ static void tiziano_bcsh_TransitParam(void)
     HDP = bcsh_wdr_enabled ? bcsh_HDP_wdr : bcsh_HDP;
     HBP = bcsh_wdr_enabled ? bcsh_HBP_wdr : bcsh_HBP;
     HLSP = bcsh_wdr_enabled ? bcsh_HLSP_wdr : bcsh_HLSP;
+    rgb_off = bcsh_wdr_enabled ? bcsh_OffsetRGB_wdr : bcsh_OffsetRGB;
 
-    /* OEM: reset OffsetRGB2yuv[1,2] = 0x400 every call */
+    /* OEM offset path: derive the converted luma offset from the active
+     * RGB coefficients, then reset the chroma offsets back to neutral. */
+    tiziano_bcsh_Toffset_RGB2YUV((int32_t *)bcsh_OffsetRGB2yuv,
+                                 (const int32_t *)rgb_off);
     bcsh_OffsetRGB2yuv[1] = 0x400;
     bcsh_OffsetRGB2yuv[2] = 0x400;
 
