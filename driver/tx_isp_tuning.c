@@ -2632,6 +2632,7 @@ static u32 tisp_compute_top_bypass_from_params(int wdr_enable)
 {
 	u32 *params = (u32 *)(tparams_active ? tparams_active : tparams_day);
 	u32 bypass_val;
+	int linear_day_mode;
 	int i;
 
 	/* Debug: direct bypass override from module parameter */
@@ -2674,9 +2675,22 @@ static u32 tisp_compute_top_bypass_from_params(int wdr_enable)
 	 * OEM OR mask only sets bits {0,3,26,28,29}.
 	 * GIB(bit5) and LSC LUT gate(bit6) controlled by tuning binary. */
 	if (wdr_enable)
-		bypass_val = (bypass_val & 0xa1ffdf76) | 0x00880002;
+		bypass_val = (bypass_val & 0xa1fffff6) | 0x00880002;
 	else
 		bypass_val = (bypass_val & 0xb577fffd) | 0x34000009;
+
+	/* The port's ADR/defog implementations still over-brighten linear day
+	 * output even when AE has already bottomed out exposure. Keep both blocks
+	 * bypassed for non-WDR day mode so startup and day/night refreshes match
+	 * the intended exposure more closely. */
+	linear_day_mode = !wdr_enable && params == tparams_day;
+	if (linear_day_mode) {
+		u32 old_bypass = bypass_val;
+		bypass_val |= TISP_TOP_BYPASS_ADR_BIT | TISP_TOP_BYPASS_DEFOG_BIT;
+		if (bypass_val != old_bypass)
+			pr_info("tisp_compute_top_bypass: linear day forcing ADR/Defog bypass 0x%08x -> 0x%08x\n",
+				old_bypass, bypass_val);
+	}
 
 	pr_info("tisp_compute_top_bypass: final=0x%08x\n", bypass_val);
 
@@ -3246,6 +3260,7 @@ static int tisp_lsc_gain_update(uint32_t gain);
 static uint32_t tisp_simple_intp(int gain_hi, int gain_lo, const uint32_t *array);
 static int tisp_gb_blc_again_interp(uint32_t gain, int channel);
 static int tisp_gb_params_refresh(void);
+int tisp_gb_dn_params_refresh(void);
 static int tisp_gb_init_reg(void);
 
 /* Event processing thread function */
@@ -3460,9 +3475,13 @@ static uint32_t ta_custom_en = 0; /* Custom AE enable flag */
 /* OEM: ae_ev_init_en / ae_ev_init_strict — set by tisp_s_ev_start (ctrl 0x80000e6).
  * When ae_ev_init_en == 1, the AE algorithm's per-frame function uses
  * ae_ev_init_strict to seed the initial exposure value, then clears the flag.
- * Without this, AE never properly initializes and exposure stays at defaults. */
+ * Without this, AE never properly initializes and exposure stays at defaults.
+ *
+ * OEM .data defaults (from tx-isp-t31.ko):
+ *   ae_ev_init_en      @ 0xc4734 = 0   (BSS)
+ *   ae_ev_init_strict  @ 0xa0e0c = 0x1f4  (500) */
 static uint32_t ae_ev_init_en = 0;
-static uint32_t ae_ev_init_strict = 0;
+static uint32_t ae_ev_init_strict = 0x1f4;
 
 /* AE completion structure for synchronization */
 static struct completion ae_algo_comp;
@@ -3729,8 +3748,23 @@ static struct ae_ev_list ae1_comp_ev_list = { .data = {
 	0x12c, 0x15e
 }};
 
-/* ISP AE Static structure */
-static uint32_t IspAeStatic[256];  /* AE statistics buffer */
+/* OEM AE0/AE1 statistics layout:
+ * tisp_ae[01]_get_statistics() unpacks six 15x15 planes into a single
+ * contiguous backing buffer rooted at IspAeStatic. */
+#define AE_ZONE_COLS_MAX        15
+#define AE_ZONE_ROWS_MAX        15
+#define AE_ZONE_COUNT_MAX       (AE_ZONE_COLS_MAX * AE_ZONE_ROWS_MAX)
+#define AE_STATS_PLANE_COUNT    6
+#define AE_STATS_PLANE_R        0
+#define AE_STATS_PLANE_G        1
+#define AE_STATS_PLANE_B        2
+/* OEM tisp_ae0_get_statistics writes the 6 planes in this exact order:
+ * R, G, B, extra, dark, bright. */
+#define AE_STATS_PLANE_EXTRA    3
+#define AE_STATS_PLANE_DARK     4
+#define AE_STATS_PLANE_BRIGHT   5
+
+static uint32_t IspAeStatic[AE_ZONE_COUNT_MAX * AE_STATS_PLANE_COUNT];
 
 /* OEM: Separate R/G/B per-zone arrays — ae0_weight_mean2 takes these as
  * arg1/arg2/arg3 (via Tiziano_ae0_fpga args 1-3).  ae0_interrupt_static
@@ -3738,6 +3772,8 @@ static uint32_t IspAeStatic[256];  /* AE statistics buffer */
 static uint32_t ae0_zone_r[225];   /* Per-zone R channel sum */
 static uint32_t ae0_zone_g[225];   /* Per-zone G channel sum */
 static uint32_t ae0_zone_b[225];   /* Per-zone B channel sum */
+static uint32_t ae0_zone_dark[225];
+static uint32_t ae0_zone_bright[225];
 
 /* Global data pointers for parameter addressing */
 static uint32_t *IspAe0WmeanParam = NULL;
@@ -3861,14 +3897,15 @@ static uint32_t data_a0df0 = 0;    /* AE DN state flag (OEM: data_a0df0) */
 static uint32_t data_a0e08 = 0;    /* AE DN state flag (OEM: data_a0e08) */
 static uint32_t data_a0c08 = 0x80; /* AE compensation target (OEM: data_a0c08) */
 static uint8_t  ae_comp_x = 0x80;  /* AE compensation input (OEM: ae_comp_x) */
-static uint32_t data_9a2ec = 0;    /* OEM init: 0x0. DEIR enable flag for GIB.
-                                     * Set to 0 for standard Bayer (deir_en=0) sensors.
-                                     * Controls bit 16 of GIB reg 0x106c and gates
-                                     * histogram-based ev/lum scaling in ae0_tune2.
-                                     * Previous value of 1 was WRONG — caused ae0_tune2
-                                     * to scale ev_list/lum_list by wmean when it shouldn't,
-                                     * and wrote wrong DEIR enable to GIB HW. Without it, convergence is pure EV-domain with no
-                                     * brightness feedback. */
+static uint32_t data_9a2ec = 0;    /* OEM/GIB DEIR enable bit mirrored into reg 0x106c.
+                                     * Keep this tied to GIB hardware state only. */
+static uint32_t ae_hist_scale_enable = 1; /* Local debug gate.
+                                           * OEM only enters Phase A histogram scaling when
+                                           * data_9a2ec == 1; for normal Bayer mode it stays off. */
+static uint32_t ae_hist_tail_enable = 0; /* Disable histogram-tail inflation until
+                                          * IspAeStatic is backed by a true 256-bin histogram.
+                                          * Today it contains per-zone stats, so treating it as
+                                          * bins corrupts ae_wmean and drives overexposure. */
 static uint32_t data_c46d0 = 0;    /* AE gain distribution mode */
 static uint32_t ftune_wmeans_state = 0; /* OEM: ftune_wmeans.32574 */
 
@@ -4054,10 +4091,15 @@ EXPORT_SYMBOL(tisp_sensor_info_update);
 static uint32_t tisp_gb_dgain_shift[2] = {0, 0};
 static uint32_t tisp_gb_dgain_rgbir_l[4] = {0x400, 0x400, 0x400, 0x400};
 static uint32_t tisp_gb_dgain_rgbir_s[4] = {0x400, 0x400, 0x400, 0x400};
-/* OEM static default: all 5 channels initialized to blc_ir_linear values.
- * OEM binary at 0x9a310: tisp_gb_blc_ir[0x2d] = {0x41,0x3f,0x43,0x42,0x3f,...} × 5
- * These are RUNTIME values set by libimp; static init is zeros. */
-static uint32_t tisp_gb_blc_offset[45] = {0};
+/* OEM .data pre-initialized values from 0x9a310. Pattern per channel (9 entries):
+ * {65, 63, 67, 66, 63, 63, 63, 63, 63}. */
+static uint32_t tisp_gb_blc_offset[45] = {
+    65,63,67,66,63,63,63,63,63,
+    65,63,67,66,63,63,63,63,63,
+    65,63,67,66,63,63,63,63,63,
+    65,63,67,66,63,63,63,63,63,
+    65,63,67,66,63,63,63,63,63,
+};
 static uint32_t tisp_gb_blc_min_en[2] = {0, 0};
 static uint32_t tisp_gb_blc_min[9] = {0};     /* 9-entry BLC minimum curve */
 static uint32_t tisp_gb_blc_ag[2] = {0, 0};   /* last gain for channel 0/1 */
@@ -4397,23 +4439,59 @@ void private_complete(struct completion *comp)
 
 static int tisp_ae0_get_statistics(void *buffer, uint32_t flags)
 {
-    /* AE0 statistics collection - reads from ISP AE0 statistics registers */
-    if (!buffer) {
+    uint32_t cols = flags >> 28;
+    uint32_t rows = (flags & 0x0000f000) >> 12;
+    uint32_t zones;
+    uint32_t *src = buffer;
+    uint32_t *plane_r = &IspAeStatic[AE_STATS_PLANE_R * AE_ZONE_COUNT_MAX];
+    uint32_t *plane_g = &IspAeStatic[AE_STATS_PLANE_G * AE_ZONE_COUNT_MAX];
+    uint32_t *plane_b = &IspAeStatic[AE_STATS_PLANE_B * AE_ZONE_COUNT_MAX];
+    uint32_t *plane_dark = &IspAeStatic[AE_STATS_PLANE_DARK * AE_ZONE_COUNT_MAX];
+    uint32_t *plane_bright = &IspAeStatic[AE_STATS_PLANE_BRIGHT * AE_ZONE_COUNT_MAX];
+    uint32_t *plane_extra = &IspAeStatic[AE_STATS_PLANE_EXTRA * AE_ZONE_COUNT_MAX];
+    uint32_t idx;
+
+    if (!buffer)
         return -EINVAL;
+
+    if (cols == 0 || cols > AE_ZONE_COLS_MAX)
+        cols = AE_ZONE_COLS_MAX;
+    if (rows == 0 || rows > AE_ZONE_ROWS_MAX)
+        rows = AE_ZONE_ROWS_MAX;
+
+    zones = cols * rows;
+    if (zones > AE_ZONE_COUNT_MAX)
+        return -EINVAL;
+
+    memset(IspAeStatic, 0, sizeof(IspAeStatic));
+    memset(ae0_zone_r, 0, sizeof(ae0_zone_r));
+    memset(ae0_zone_g, 0, sizeof(ae0_zone_g));
+    memset(ae0_zone_b, 0, sizeof(ae0_zone_b));
+    memset(ae0_zone_dark, 0, sizeof(ae0_zone_dark));
+    memset(ae0_zone_bright, 0, sizeof(ae0_zone_bright));
+
+    for (idx = 0; idx < zones; idx++, src += 4) {
+        uint32_t w0 = src[0];
+        uint32_t w1 = src[1];
+        uint32_t w2 = src[2];
+        uint32_t w3 = src[3];
+
+        plane_r[idx] = w0 & 0x1fffff;
+        plane_g[idx] = ((w1 & 0x3ff) << 11) | (w0 >> 21);
+        plane_b[idx] = (w1 & 0x7ffffc00) >> 10;
+        plane_dark[idx] = ((w2 & 0xfff) << 1) | (w1 >> 31);
+        plane_bright[idx] = (w2 & 0x1fff000) >> 12;
+        plane_extra[idx] = ((w3 & 0x3fff) << 7) | (w2 >> 25);
+
+        ae0_zone_r[idx] = plane_r[idx];
+        ae0_zone_g[idx] = plane_g[idx];
+        ae0_zone_b[idx] = plane_b[idx];
+        ae0_zone_dark[idx] = plane_dark[idx];
+        ae0_zone_bright[idx] = plane_bright[idx];
     }
 
-    extern struct tx_isp_dev *ourISPdev;
-    if (!ourISPdev || !ourISPdev->core_regs) {
-        return -ENODEV;
-    }
-
-    /* Read AE0 statistics from hardware registers */
-    uint32_t *stats = (uint32_t *)buffer;
-    for (int i = 0; i < 256; i++) {
-        stats[i] = readl(ourISPdev->core_regs + 0xa000 + (i * 4));
-    }
-
-    pr_debug("AE0 statistics collected with flags=0x%x\n", flags);
+    pr_debug("AE0 statistics unpacked: rows=%u cols=%u zones=%u flags=0x%x\n",
+             rows, cols, zones, flags);
     return 0;
 }
 
@@ -4887,10 +4965,7 @@ static int ae0_tune2(uint32_t wmean, uint32_t q, uint32_t target_ev,
     /* OEM arg11: EV interpolation parameters */
     uint32_t var_dc = ae_ev_step.data[0];
     uint32_t var_e0 = ae_ev_step.data[1];
-    uint32_t a3_3 = 256; /* 0.25 in Q10 → ±25% per frame (1.25x cap).
-                           * Tuning binary has 4 (0.4%/frame) which is
-                           * too slow — takes ~7s to converge. 256 gives
-                           * stable 1.25x convergence without oscillation. */
+    uint32_t a3_3 = ae_ev_step.data[2];
     uint32_t a3_4 = ae_ev_step.data[3];
     uint32_t v0_1 = ae_ev_step.data[4];
 
@@ -4956,7 +5031,7 @@ static int ae0_tune2(uint32_t wmean, uint32_t q, uint32_t target_ev,
         local_lum[i] = _lum_list.data[i];
     }
 
-    if (data_9a2ec == 1) {
+    if (data_9a2ec == 1 && ae_hist_scale_enable == 1) {
         /* Histogram-based wmean computation from 256 bins.
          * OEM uses IspAeStatic[256] histogram; our wmean is already
          * computed by ae0_weight_mean2 and passed as parameter.
@@ -5756,11 +5831,28 @@ static int tisp_ae0_process_impl(void)
     uint32_t wmean = 0, total_wt = 0;
     uint32_t new_it, new_ag, new_dg;
     int32_t q_val;
+    uint32_t *ae_plane_base;
+    uint32_t *zone_r_plane;
+    uint32_t *zone_g_plane;
+    uint32_t *zone_b_plane;
+    uint32_t *zone_dark_plane;
+    uint32_t *zone_bright_plane;
 
     q = _AePointPos.data[0] & 31;
     if (q == 0)
         q = 10;  /* Default Q10 fixed-point */
     q_val = (int32_t)q;
+
+    /* OEM tisp_ae0_process_impl passes IspAe0WmeanParam rooted at
+     * IspAeStatic into Tiziano_ae0_fpga, which then slices the contiguous
+     * AE planes internally before calling ae0_weight_mean2. Mirror that
+     * layout here instead of relying on shadow arrays. */
+    ae_plane_base = IspAe0WmeanParam ? IspAe0WmeanParam : IspAeStatic;
+    zone_r_plane = &ae_plane_base[AE_STATS_PLANE_R * AE_ZONE_COUNT_MAX];
+    zone_g_plane = &ae_plane_base[AE_STATS_PLANE_G * AE_ZONE_COUNT_MAX];
+    zone_b_plane = &ae_plane_base[AE_STATS_PLANE_B * AE_ZONE_COUNT_MAX];
+    zone_dark_plane = &ae_plane_base[AE_STATS_PLANE_DARK * AE_ZONE_COUNT_MAX];
+    zone_bright_plane = &ae_plane_base[AE_STATS_PLANE_BRIGHT * AE_ZONE_COUNT_MAX];
 
     /* ---- Step 1: Compute weighted mean via full OEM ae0_weight_mean2 ---- */
     /* OEM: ae0_weight_mean2 takes 23 args: separate R/G/B zone arrays,
@@ -5768,11 +5860,11 @@ static int tisp_ae0_process_impl(void)
      * config, mixing weights, and produces wmean + color ratio outputs. */
     ae0_wm2_total = 0;  /* OEM: *arg21 is accumulated (starts at 0) */
     ae0_weight_mean2(
-        ae0_zone_r,             /* arg1:  R channel per-zone sums */
-        ae0_zone_g,             /* arg2:  G channel per-zone sums */
-        ae0_zone_b,             /* arg3:  B channel per-zone sums */
-        ae0_zone_dark,          /* arg4:  dark pixel counts (zero default) */
-        ae0_zone_bright,        /* arg5:  bright pixel counts (zero default) */
+        zone_r_plane,           /* arg1:  R channel per-zone sums */
+        zone_g_plane,           /* arg2:  G channel per-zone sums */
+        zone_b_plane,           /* arg3:  B channel per-zone sums */
+        zone_dark_plane,        /* arg4:  dark/coverage plane */
+        zone_bright_plane,      /* arg5:  bright/saturated plane */
         zones,                  /* arg6:  output per-zone brightness */
         ae0_zone_copy,          /* arg7:  spinlock copy destination */
         &_ae_parameter,         /* arg8:  AE param struct (zone grid layout) */
@@ -5791,6 +5883,19 @@ static int tisp_ae0_process_impl(void)
         &ae0_wm2_total,         /* arg21: OUTPUT accumulated total */
         &ae0_wm2_b_ratio,       /* arg22: OUTPUT B-weighted ratio */
         &ae0_wm2_r_ratio);      /* arg23: OUTPUT R-weighted ratio */
+
+    {
+        static int ae_wm2_diag;
+        if (ae_wm2_diag < 8) {
+            uint32_t zone_area = _ae_parameter.data[19] * _ae_parameter.data[4];
+            pr_info("AE_WM2[%d]: z0 r=%u g=%u b=%u dark=%u bright=%u area=%u norm=%u\n",
+                ae_wm2_diag,
+                zone_r_plane[0], zone_g_plane[0], zone_b_plane[0],
+                zone_dark_plane[0], zone_bright_plane[0],
+                zone_area, zones[0]);
+            ae_wm2_diag++;
+        }
+    }
 
     wmean = ae0_wm2_wmean;
     total_wt = ae0_wm2_total;
@@ -5872,31 +5977,18 @@ static int tisp_ae0_process_impl(void)
         uint32_t s5_curve = ae_sensor_config[6]; /* curve strength */
         uint32_t ae_wmean = wmean;
 
-        /* OEM: Compute histogram partial sums from IspAeStatic.
-         * a3_2 = sum of bins from s1+1 to 255 (bright tail)
-         * t1_1 = sum of bins from 0 to s7-1 (dark region) */
-        {
-            uint32_t a3_2 = 0, t1_1 = 0;
-            int hi;
-
-            /* Bright tail sum: bins s1+1..255 */
-            for (hi = (int)s1_bin + 1; hi < 256; hi++)
-                a3_2 += IspAeStatic[hi];
-
-            /* Dark region sum: bins 0..s7-1 */
-            for (hi = 0; hi < (int)s7_dark && hi < 256; hi++)
-                t1_1 += IspAeStatic[hi];
-
-            ae_hist_bright_sum = a3_2;
-            ae_hist_dark_sum = t1_1;
-        }
+        /* IspAeStatic currently holds per-zone AE samples, not a true 256-bin
+         * histogram. Keep these diagnostics disabled until the real histogram
+         * DMA path is wired up. */
+        ae_hist_bright_sum = 0;
+        ae_hist_dark_sum = 0;
 
         /* OEM: Histogram tail quadratic weighting ($s4==1 path).
          * Computes weighted sum of bright histogram bins above threshold
          * using quadratic curve, then inflates wmean (var_54).
          * This is the critical mechanism that breaks the convergence
          * deadlock when wmean ≈ 0 (dark scene at minimum exposure). */
-        if (s4_mode == 1) {
+        if (s4_mode == 1 && ae_hist_tail_enable == 1) {
             uint32_t hist_th = (*(uint32_t *)((uint8_t *)&_exp_parameter + 0x8c));
             uint32_t curve_str;
             uint32_t v1_4 = 0;
@@ -5954,12 +6046,12 @@ static int tisp_ae0_process_impl(void)
             }
         }
 
-        /* OEM: The histogram buffer retains residual data across frames.
-         * Our dead DMA bank frames have exactly zero in IspAeStatic,
-         * producing ae_wmean=1 which stalls convergence.  Carry over
-         * the previous inflated wmean on dead-bank frames so the
-         * convergence keeps ramping. */
-        {
+        if (ae_hist_tail_enable == 1) {
+            /* OEM: The histogram buffer retains residual data across frames.
+             * Our dead DMA bank frames have exactly zero in IspAeStatic,
+             * producing ae_wmean=1 which stalls convergence.  Carry over
+             * the previous inflated wmean on dead-bank frames so the
+             * convergence keeps ramping. */
             static uint32_t ae_wmean_persist = 128;
             if (wmean > 1 || ae_wmean > 1) {
                 /* Alive frame: update persistent wmean */
@@ -6357,40 +6449,17 @@ int ae0_interrupt_static(void)
      * be a no-op since XBurst1 ISP DMA is likely cache-coherent. */
     private_dma_cache_sync(NULL, dma, 0x1000, 0);
 
-    /* OEM EXACT: Extract zone luminance as R+G+B from packed 4-word AE DMA entries.
-     *
-     * OEM tisp_ae0_get_statistics unpacks 6 channels per zone:
-     *   Ch0 (R) = word[0] & 0x1fffff
-     *   Ch1 (G) = (word[1] & 0x3ff) << 11 | word[0] >> 21
-     *   Ch2 (B) = (word[1] & 0x7ffffc00) >> 10
-     *
-     * OEM ae0_weight_mean2 computes zone luminance as R+G+B.
-     * Previously we only read Ch0 (R), giving ~1/3 of actual luminance → wmean too low. */
+    /* OEM path: decode the packed AE DMA bank into six per-zone planes. */
+    tisp_ae0_get_statistics(dma, 0xf001f001);
+
     {
         extern int tisp_ae_update_zone_data(uint32_t *new_zone_data, size_t data_size);
         uint32_t zones[225];
-        uint32_t *src = dma;
         int i;
 
         for (i = 0; i < 225; i++) {
-            uint32_t w0 = src[0];
-            uint32_t w1 = src[1];
-            uint32_t r = w0 & 0x1fffff;
-            uint32_t g = ((w1 & 0x3ff) << 11) | (w0 >> 21);
-            uint32_t b = (w1 & 0x7ffffc00) >> 10;
-            /* OEM: store R/G/B separately for ae0_weight_mean2 */
-            ae0_zone_r[i] = r;
-            ae0_zone_g[i] = g;
-            ae0_zone_b[i] = b;
-            zones[i] = r + g + b;
-            /* OEM: IspAeStatic[i] = Channel 0 (R) value, used by
-             * Tiziano_ae0_fpga histogram processing */
-            IspAeStatic[i] = r;
-            src += 4;  /* Advance 4 words (16 bytes) to next zone */
+            zones[i] = ae0_zone_r[i] + ae0_zone_g[i] + ae0_zone_b[i];
         }
-        /* Clear entries 225-255 (unused histogram bins) */
-        for (i = 225; i < 256; i++)
-            IspAeStatic[i] = 0;
 
         {
             static int ae_zone_log;
@@ -7143,8 +7212,10 @@ static int tisp_day_or_night_s_ctrl(uint32_t mode)
 		system_reg_write(0xc, new_bypass);
 	}
 
-	/* OEM EXACT call order (decompiled at 0x62300): all 18 _dn_ variants.
-	 * RDNS disabled: kills AWB/AE stats mid-stream (root cause TBD). */
+	/* OEM EXACT call order (decompiled at 0x62300): all _dn_ variants.
+	 * RDNS disabled: kills AWB/AE stats mid-stream (root cause TBD).
+	 * GB params MUST be refreshed regardless of GB bypass bit — GIB
+	 * shares the 0x1000-0x1070 register space and reads GB BLC refs. */
 	tiziano_defog_dn_params_refresh();
 	tiziano_ae_dn_params_refresh();
 	tiziano_awb_dn_params_refresh();
@@ -7153,6 +7224,7 @@ static int tisp_day_or_night_s_ctrl(uint32_t mode)
 	tiziano_mdns_dn_params_refresh();
 	tiziano_sdns_dn_params_refresh();
 	tiziano_gib_dn_params_refresh();
+	tisp_gb_dn_params_refresh();
 	tiziano_lsc_dn_params_refresh();
 	tiziano_ccm_dn_params_refresh();
 	tiziano_clm_dn_params_refresh();
@@ -13022,13 +13094,24 @@ static inline uint32_t awb_param_word(int idx)
 #define AWB_LUM_FREQ_MODE()   awb_param_word(44)
 static uint32_t _pixel_cnt_th;
 static uint32_t _awb_lowlight_rg_th[2];
-static uint32_t _AwbPointPos[2];
-static uint32_t _awb_cof[2];
-static uint8_t  _awb_mf_para[0x18];
+/* OEM .data section defaults (matched 1:1 against OEM binary @ 0x99f5c..0x99f78).
+ * These are critical because libimp's ioctl 0x800000a (tisp_s_awb_start) can
+ * fire BEFORE tisp_init/tiziano_awb_params_refresh overwrites them from the
+ * tuning blob. */
+static uint32_t _AwbPointPos[2] = { 0xa, 0 };
+static uint32_t _awb_cof[2] = { 1, 4 };
+static uint8_t  _awb_mf_para[0x18] = {
+    0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00,
+    0x00, 0x01, 0x00, 0x00,
+    0x00, 0x01, 0x00, 0x00,
+    0x00, 0x01, 0x00, 0x00,
+    0x00, 0x01, 0x00, 0x00,
+};
 /* _awb_mode moved to top of file */
-static uint32_t _awb_ct;
-static uint32_t _awb_ct_last;
-static uint32_t _wb_static[2];
+static uint32_t _awb_ct = 0x1388;
+static uint32_t _awb_ct_last = 0x1388;
+static uint32_t _wb_static[2] = { 0x400, 0x400 };
 static uint8_t  _light_src[0x50];
 static uint32_t _light_src_num;
 static uint8_t  _rg_pos[0x3c];

@@ -110,76 +110,43 @@ int fs_slake_module(struct tx_isp_subdev *sd)
 }
 EXPORT_SYMBOL(fs_slake_module);
 
-/* fs_activate_module - EXACT Binary Ninja implementation */
+/* fs_activate_module - OEM EXACT implementation at 0xa320.
+ * Walks fs_dev channel array and transitions each channel's state 1->2,
+ * then transitions fs_dev->initialized 1->2. If fs_dev->initialized is
+ * not 1, returns 0 without doing anything. */
 int fs_activate_module(struct tx_isp_subdev *sd)
 {
-    int result = 0xffffffea;
-    int a2_1;
+    struct tx_isp_fs_device *fs_dev;
+    struct tx_isp_frame_channel *channels;
+    int i;
 
-    pr_info("*** fs_activate_module: EXACT Binary Ninja implementation ***\n");
+    if (!sd || (uintptr_t)sd >= 0xfffff001)
+        return -EINVAL;
 
-    /* Binary Ninja: if (arg1 != 0) */
-    if (sd != NULL) {
-        /* Binary Ninja: if (arg1 u>= 0xfffff001) */
-        if ((uintptr_t)sd >= 0xfffff001) {
-            return 0xffffffea;
-        }
+    fs_dev = (struct tx_isp_fs_device *)tx_isp_get_subdevdata(sd);
+    if (!fs_dev)
+        return -EINVAL;
 
-        result = 0;
+    if (fs_dev->initialized != 1)
+        return 0;
 
-        /* Binary Ninja: if (*(arg1 + 0xe4) == 1) */
-        /* SAFE: Check FS device state - assuming state is at a reasonable offset */
-        /* For now, assume FS is always ready for activation */
-        int fs_state = 1;  /* Assume state 1 = ready for activation */
-
-        if (fs_state == 1) {
-            /* Binary Ninja: int32_t $a2_1 = 0 */
-            a2_1 = 0;
-
-            /* Binary Ninja: while (true) loop with channel processing */
-            while (true) {
-                /* Binary Ninja: if ($a2_1 s>= *(arg1 + 0xe0)) */
-                /* SAFE: Assume max channels = 1 for FS */
-                int max_channels = 1;
-
-                if (a2_1 >= max_channels) {
-                    /* Binary Ninja: *(arg1 + 0xe4) = 2 */
-                    /* SAFE: Set FS state to 2 (activated) */
-                    pr_info("*** fs_activate_module: FS state set to 2 (activated) ***\n");
-
-                    /* Binary Ninja: return 0 */
-                    pr_info("*** fs_activate_module: SUCCESS ***\n");
-                    return 0;
-                }
-
-                /* Binary Ninja: void* $v0_3 = $a2_1 * 0x2ec + *(arg1 + 0xdc) */
-                /* Binary Ninja: if (*($v0_3 + 0x2d0) != 1) */
-                /* SAFE: Assume channel is ready */
-                int channel_state = 1;
-
-                if (channel_state != 1) {
-                    break;
-                }
-
-                /* Binary Ninja: *($v0_3 + 0x2d0) = 2 */
-                /* SAFE: Set channel state to 2 (activated) */
-                pr_info("*** fs_activate_module: Channel %d activated ***\n", a2_1);
-
-                /* Binary Ninja: $a2_1 += 1 */
-                a2_1 += 1;
-            }
-
-            /* Binary Ninja: isp_printf(2, &$LC0, $a2_1) */
-            isp_printf(2, (unsigned char*)"fs_activate_module: Channel error at %d\n", a2_1);
-
-            /* Binary Ninja: return 0xffffffff */
-            return 0xffffffff;
-        }
+    channels = (struct tx_isp_frame_channel *)fs_dev->channel_buffer;
+    if (!channels) {
+        fs_dev->initialized = 2;
+        return 0;
     }
 
-    /* Binary Ninja: return result */
-    pr_info("*** fs_activate_module: result=0x%x ***\n", result);
-    return result;
+    for (i = 0; i < fs_dev->channel_count; i++) {
+        if (channels[i].state != 1) {
+            isp_printf(2, (unsigned char *)
+                "The state of channel%d is invalid when be activated!\n", i);
+            return -EINVAL;
+        }
+        channels[i].state = 2;
+    }
+
+    fs_dev->initialized = 2;
+    return 0;
 }
 EXPORT_SYMBOL(fs_activate_module);
 
@@ -195,6 +162,7 @@ static struct tx_isp_subdev_sensor_ops fs_sensor_ops = {
 
 /* FS internal operations - EXACT Binary Ninja implementation */
 static struct tx_isp_subdev_internal_ops fs_internal_ops = {
+    .activate_module = fs_activate_module,
     .slake_module = fs_slake_module,
 };
 
