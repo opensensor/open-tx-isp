@@ -13263,46 +13263,38 @@ static uint32_t Cluster_rgbg_index_max[CIDX_MAX_ENTRIES * 3]; /* OEM 0xa7574 */
 void tiziano_awb_params_refresh(void)
 {
     const u8 *p = (const u8 *)(tparams_active ? tparams_active : tparams_day);
-    const u8 *awb_src = p;
     if (!p || !tuning_bin_loaded) {
         pr_info("tiziano_awb_params_refresh: no tuning bin, skipping\n");
         return;
     }
 
-    if (tisp_sensor_is_named("sc2336") &&
-        tparams_active == tparams_day &&
-        tparams_night) {
-        awb_src = (const u8 *)tparams_night;
-        pr_info("tiziano_awb_params_refresh: sc2336 day-mode override using night AWB tables\n");
-    }
-
-    memcpy(_awb_parameter,          awb_src + 0x1010, 0xb4);
-    memcpy(&_pixel_cnt_th,          awb_src + 0x10C4, 4);
-    memcpy(_awb_lowlight_rg_th,     awb_src + 0x10C8, 8);
-    memcpy(_AwbPointPos,            awb_src + 0x10D0, 8);
-    memcpy(_awb_cof,                awb_src + 0x10D8, 8);
-    memcpy(_awb_mode,               awb_src + 0x10F8, 0xc);
-    memcpy(_wb_static,              awb_src + 0x110C, 8);
-    memcpy(_light_src,              awb_src + 0x1114, 0x50);
-    memcpy(&_light_src_num,         awb_src + 0x1164, 4);
-    memcpy(_rg_pos,                 awb_src + 0x1168, 0x3c);
-    memcpy(_bg_pos,                 awb_src + 0x11A4, 0x3c);
-    memcpy(_awb_ct_th_ot_luxhigh,   awb_src + 0x11E0, 0x10);
-    memcpy(_awb_ct_th_ot_luxlow,    awb_src + 0x11F0, 0x10);
-    memcpy(_awb_ct_th_in,           awb_src + 0x1200, 0x10);
-    memcpy(_awb_ct_para_ot,         awb_src + 0x1210, 8);
-    memcpy(_awb_ct_para_in,         awb_src + 0x1218, 8);
-    memcpy(_awb_dis_tw,             awb_src + 0x1220, 0xc);
-    memcpy(_rgbg_weight,            awb_src + 0x122C, 0x384);
-    memcpy(_color_temp_mesh,        awb_src + 0x15B0, 0x384);
-    memcpy(_awb_wght,               awb_src + 0x1934, 0x384);
-    memcpy(_rgbg_weight_ot,         awb_src + 0x1CB8, 0x384);
-    memcpy(_ls_w_lut,               awb_src + 0x203C, 0x808);
+    memcpy(_awb_parameter,          p + 0x1010, 0xb4);
+    memcpy(&_pixel_cnt_th,          p + 0x10C4, 4);
+    memcpy(_awb_lowlight_rg_th,     p + 0x10C8, 8);
+    memcpy(_AwbPointPos,            p + 0x10D0, 8);
+    memcpy(_awb_cof,                p + 0x10D8, 8);
+    memcpy(_awb_mode,               p + 0x10F8, 0xc);
+    memcpy(_wb_static,              p + 0x110C, 8);
+    memcpy(_light_src,              p + 0x1114, 0x50);
+    memcpy(&_light_src_num,         p + 0x1164, 4);
+    memcpy(_rg_pos,                 p + 0x1168, 0x3c);
+    memcpy(_bg_pos,                 p + 0x11A4, 0x3c);
+    memcpy(_awb_ct_th_ot_luxhigh,   p + 0x11E0, 0x10);
+    memcpy(_awb_ct_th_ot_luxlow,    p + 0x11F0, 0x10);
+    memcpy(_awb_ct_th_in,           p + 0x1200, 0x10);
+    memcpy(_awb_ct_para_ot,         p + 0x1210, 8);
+    memcpy(_awb_ct_para_in,         p + 0x1218, 8);
+    memcpy(_awb_dis_tw,             p + 0x1220, 0xc);
+    memcpy(_rgbg_weight,            p + 0x122C, 0x384);
+    memcpy(_color_temp_mesh,        p + 0x15B0, 0x384);
+    memcpy(_awb_wght,               p + 0x1934, 0x384);
+    memcpy(_rgbg_weight_ot,         p + 0x1CB8, 0x384);
+    memcpy(_ls_w_lut,               p + 0x203C, 0x808);
 
     if (awb_dn_refresh_flag == 0) {
-        memcpy(_awb_mf_para, awb_src + 0x10E0, 0x18);
-        memcpy(&_awb_ct,     awb_src + 0x1104, 4);
-        memcpy(&_awb_ct_last, awb_src + 0x1108, 4);
+        memcpy(_awb_mf_para, p + 0x10E0, 0x18);
+        memcpy(&_awb_ct,     p + 0x1104, 4);
+        memcpy(&_awb_ct_last, p + 0x1108, 4);
     }
     awb_dn_refresh_flag = 0;
 	awb_history_reset = 1;
