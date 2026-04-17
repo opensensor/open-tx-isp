@@ -104,7 +104,6 @@ extern uint32_t system_reg_read(u32 reg);
 static u32 tisp_apply_debug_top_bypass_overrides(u32 bypass_val, const char *reason)
 {
 	u32 force_mask = 0;
-	u32 sensor_force_mask = 0;
 
 	if (tisp_force_bypass_dpc)
 		force_mask |= TISP_TOP_BYPASS_DPC_BIT;
@@ -119,19 +118,12 @@ static u32 tisp_apply_debug_top_bypass_overrides(u32 bypass_val, const char *rea
 	if (tisp_force_bypass_mdns)
 		force_mask |= TISP_TOP_BYPASS_MDNS_BIT;
 
-	/* sc2336 repeatedly loses AWB zones in linear/day mode while AE stays
-	 * alive. Until the DPC/AWB interaction is matched to OEM, keep DPC
-	 * bypassed on this sensor to avoid seeded magenta fallback. */
-	if (tisp_sensor_is_named("sc2336"))
-		sensor_force_mask |= TISP_TOP_BYPASS_DPC_BIT;
-
-	if (force_mask || sensor_force_mask) {
-		u32 total_force_mask = force_mask | sensor_force_mask;
-		u32 new_val = bypass_val | total_force_mask;
+	if (force_mask) {
+		u32 new_val = bypass_val | force_mask;
 
 		pr_info("%s: debug force-bypass mask=0x%08x -> top_bypass=0x%08x (ADR=%s Defog=%s GIB=%s MDNS=%s)\n",
 			reason ? reason : "tisp",
-			total_force_mask,
+			force_mask,
 			new_val,
 			tisp_force_bypass_adr ? "off" : "on",
 			tisp_force_bypass_defog ? "off" : "on",
