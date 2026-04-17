@@ -58,6 +58,7 @@
 extern void (*isp_event_func_cb[32])(void);
 extern struct tx_isp_dev *ourISPdev;
 extern const char *tx_isp_get_default_bin_path(void);
+static bool tisp_sensor_is_named(const char *name);
 
 /* Forward declaration for frame channel wakeup function */
 extern void tx_isp_wakeup_frame_channels(void);
