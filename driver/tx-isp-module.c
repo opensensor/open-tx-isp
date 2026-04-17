@@ -1856,52 +1856,23 @@ static int sensor_set_wdr_mode(int mode) {
 }
 
 int sensor_fps_control(int fps) {
-    /* Binary Ninja: Copies sensor parameters and returns FPS control value */
-    int result = 0;
-
     if (!ourISPdev || !ourISPdev->sensor) {
         pr_warn("sensor_fps_control: No ISP device or sensor available\n");
         return -ENODEV;
     }
 
-    pr_info("sensor_fps_control: Setting FPS to %d via registered sensor\n", fps);
-
-    /* CRITICAL: Store FPS in tuning data first */
+    /* OEM HLIL 0x0000cc50 does not issue TX_ISP_EVENT_SENSOR_FPS here.
+     * It only mirrors current sensor state into a caller-owned buffer.
+     * Keep this helper side-effect free so the tuning control path does not
+     * reprogram the sensor mid-transition before the OEM stream relink flow. */
     if (ourISPdev->tuning_data) {
         ourISPdev->tuning_data->fps_num = fps;
         ourISPdev->tuning_data->fps_den = 1;
-        pr_info("sensor_fps_control: Stored %d/1 FPS in tuning data\n", fps);
     }
 
-    /* CRITICAL: Call the registered sensor's FPS IOCTL through the established connection */
-    /* This is the proper way to communicate with the loaded gc2053.ko sensor module */
-    if (ourISPdev->sensor->sd.ops &&
-        ourISPdev->sensor->sd.ops->sensor &&
-        ourISPdev->sensor->sd.ops->sensor->ioctl) {
-
-        /* Pack FPS in the format the sensor expects: (fps_num << 16) | fps_den */
-        int fps_value = (fps << 16) | 1;  /* fps/1 format */
-
-        pr_info("sensor_fps_control: Calling registered sensor (%s) IOCTL with FPS=0x%x (%d/1)\n",
-                ourISPdev->sensor->info.name, fps_value, fps);
-
-        /* Call the registered sensor's FPS IOCTL - this communicates with gc2053.ko */
-        /* The delegation function will automatically use the correct original sensor subdev */
-        result = ourISPdev->sensor->sd.ops->sensor->ioctl(&ourISPdev->sensor->sd,
-                                                          TX_ISP_EVENT_SENSOR_FPS,
-                                                          &fps_value);
-
-        if (result == 0) {
-            pr_info("sensor_fps_control: Registered sensor FPS set successfully to %d FPS\n", fps);
-        } else {
-            pr_warn("sensor_fps_control: Registered sensor FPS setting failed: %d\n", result);
-        }
-    } else {
-        pr_warn("sensor_fps_control: No registered sensor IOCTL available\n");
-        result = -ENODEV;
-    }
-
-    return result;
+    pr_info("sensor_fps_control: OEM-aligned bookkeeping only, cached %d/1 FPS\n",
+            fps);
+    return 0;
 }
 EXPORT_SYMBOL(sensor_fps_control);
 
@@ -4513,7 +4484,7 @@ static int sensor_subdev_sensor_ioctl(struct tx_isp_subdev *sd, unsigned int cmd
 
         pr_info("*** sensor_subdev_sensor_ioctl: Calling original sensor IOCTL ***\n");
         /* CRITICAL FIX: Use the original sensor subdev, not the passed-in subdev */
-        /* The passed-in sd is the ISP device sensor subdev, but we need the original gc2053 subdev */
+        /* The passed-in sd is the ISP device sensor subdev, but we need the original sensor subdev. */
         pr_info("*** sensor_subdev_sensor_ioctl: Using original sensor subdev %p instead of passed subdev %p ***\n",
                 stored_sensor_ops.sensor_sd, sd);
         return stored_sensor_ops.original_ops->sensor->ioctl(stored_sensor_ops.sensor_sd, cmd, arg);

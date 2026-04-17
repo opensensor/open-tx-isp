@@ -797,22 +797,12 @@ static int isp_core_enable_prestream_irqs(struct tx_isp_dev *isp_dev)
 
     writel(pend_legacy, core + 0xb8);
     writel(pend_new, core + 0x98b8);
-
-    /* Historical interrupt-focused baseline: enable pipeline + frame-sync IRQs
-     * before VIC transitions into the streaming state.
-     */
-    writel(1, core + 0x800);
-    writel(0x1c, core + 0x804);
-    writel(8, core + 0x1c);
-    writel(0xffffffff, core + 0x30);
-    writel(0x133, core + 0x10);
-    writel(0xffffffff, core + 0xb0);  /* Enable ALL ISP interrupt bits including AE/AWB (26-30) */
-    writel(0x1000, core + 0xbc);
-    writel(0xffffffff, core + 0x98b0);  /* Same for secondary interrupt bank */
-    writel(0x1000, core + 0x98bc);
     wmb();
 
-    pr_info("[IRQ][CORE] pre-stream enable: pendL=%08x pendN=%08x ctl10=%08x irq1c=%08x pipe=%08x/%08x enL=%08x maskL=%08x enN=%08x maskN=%08x\n",
+    /* OEM pre-stream work is limited to clearing pending IRQ state.
+     * Core mode/start/enable sequencing is handled later by tisp_init,
+     * ispcore_video_s_stream, and tx_isp_vic_start. */
+    pr_info("[IRQ][CORE] pre-stream clear: pendL=%08x pendN=%08x ctl10=%08x irq1c=%08x pipe=%08x/%08x enL=%08x maskL=%08x enN=%08x maskN=%08x\n",
             pend_legacy, pend_new,
             readl(core + 0x10), readl(core + 0x1c),
             readl(core + 0x800), readl(core + 0x804),
@@ -1287,83 +1277,6 @@ int ispcore_video_s_stream(struct tx_isp_subdev *sd, int enable)
 
         if (v0_3 == 3) {
             isp_dev->state = 4;
-
-            /* Re-arm AE stats DMA on stream restart.
-             * The userspace startup sequence toggles link_stream 1->0->1 before
-             * channels begin consuming frames. AE IRQs continue to report bank
-             * rotation, but only the first bank or two carry valid data unless
-             * the bank base/commit registers are re-written on the second
-             * stream-on. */
-            {
-                u32 ae0_phys = system_reg_read(0xa02c);
-                if (ae0_phys) {
-                    system_reg_write(0xa02c, ae0_phys);
-                    system_reg_write(0xa030, ae0_phys + 0x1000);
-                    system_reg_write(0xa034, ae0_phys + 0x2000);
-                    system_reg_write(0xa038, ae0_phys + 0x3000);
-                    system_reg_write(0xa03c, ae0_phys + 0x4000);
-                    system_reg_write(0xa040, ae0_phys + 0x4800);
-                    system_reg_write(0xa044, ae0_phys + 0x5000);
-                    system_reg_write(0xa048, ae0_phys + 0x5800);
-                    system_reg_write(0xa04c, 0x33);
-                    pr_info("ispcore_s_stream: re-armed AE0 DMA (phys=0x%08x)\n", ae0_phys);
-                }
-            }
-
-            {
-                u32 ae1_phys = system_reg_read(0xa82c);
-                if (ae1_phys) {
-                    system_reg_write(0xa82c, ae1_phys);
-                    system_reg_write(0xa830, ae1_phys + 0x1000);
-                    system_reg_write(0xa834, ae1_phys + 0x2000);
-                    system_reg_write(0xa838, ae1_phys + 0x3000);
-                    system_reg_write(0xa83c, ae1_phys + 0x4000);
-                    system_reg_write(0xa840, ae1_phys + 0x4800);
-                    system_reg_write(0xa844, ae1_phys + 0x5000);
-                    system_reg_write(0xa848, ae1_phys + 0x5800);
-                    system_reg_write(0xa84c, 0x33);
-                    pr_info("ispcore_s_stream: re-armed AE1 DMA (phys=0x%08x)\n", ae1_phys);
-                }
-            }
-
-            /* Re-arm AWB stats DMA on stream restart.
-             * The AWB DMA engine may be single-shot: after cycling through
-             * all banks it stops. Re-writing 0xb04c re-triggers it.
-             * Without this, AWB stats go to zero after the first bank cycle. */
-            {
-                u32 awb_phys = system_reg_read(0xb03c);
-                if (awb_phys) {
-                    system_reg_write(0xb03c, awb_phys);
-                    system_reg_write(0xb040, awb_phys + 0x1000);
-                    system_reg_write(0xb044, awb_phys + 0x2000);
-                    system_reg_write(0xb048, awb_phys + 0x3000);
-                    system_reg_write(0xb04c, 3);
-                    pr_info("ispcore_s_stream: re-armed AWB DMA (phys=0x%08x)\n", awb_phys);
-                    {
-                        int awb_ret = tiziano_awb_stream_start_refresh();
-                        pr_info("ispcore_s_stream: re-applied AWB hardware params on stream enable (ret=%d)\n",
-                                awb_ret);
-                    }
-                }
-            }
-
-            /* Re-apply GIB after stream-on.
-             * At init time, the first GIB programming attempt can land before
-             * the ISP pipeline is fully live: the logs show 0x1038/0x106c
-             * mismatches there, while later per-frame updates only refresh the
-             * BLC subset (0x1060/0x1064/0x1068). Replaying the OEM GIB
-             * parameter/lut programming here targets the registers that were
-             * failing at init, once streaming is active. */
-            {
-                if (tisp_gib_bypass_active()) {
-                    pr_info("ispcore_s_stream: skipping GIB re-apply because bypass is active\n");
-                } else {
-                    extern int tiziano_gib_dn_params_refresh(void);
-                    int gib_ret = tiziano_gib_dn_params_refresh();
-                    pr_info("ispcore_s_stream: re-applied GIB config on stream enable (ret=%d)\n",
-                            gib_ret);
-                }
-            }
         }
     }
 
