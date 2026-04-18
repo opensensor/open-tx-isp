@@ -71,21 +71,26 @@ extern void tx_isp_wakeup_frame_channels(void);
 #define TISP_TOP_BYPASS_DEFOG_BIT	BIT(11)
 #define TISP_TOP_BYPASS_MDNS_BIT	BIT(16)
 
-static int tisp_force_bypass_adr = 1; /* Keep ADR bypassed until the port matches OEM exposure */
+static int tisp_force_bypass_adr = 0; /* Keep OEM ADR active by default; bypass only for targeted isolation */
 module_param_named(force_bypass_adr, tisp_force_bypass_adr, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(force_bypass_adr,
-			 "Force ADR bypass (default: 1 to preserve known-good image sequencing)");
+			 "Force ADR bypass (default: 0 — keep OEM ADR path active unless isolating it)");
 
 static int tisp_force_bypass_defog = 0; /* Keep Defog enabled by default; bypass only for targeted isolation */
 module_param_named(force_bypass_defog, tisp_force_bypass_defog, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(force_bypass_defog,
 			 "Force Defog bypass (default: 0 — keep OEM Defog path active unless isolating it)");
 
+static int tisp_force_identity_ccm = 0; /* Keep OEM CCM active by default; identity only for targeted isolation */
+module_param_named(force_identity_ccm, tisp_force_identity_ccm, int, S_IRUGO | S_IWUSR);
+MODULE_PARM_DESC(force_identity_ccm,
+			 "Force CCM output matrix to identity (default: 0 — keep OEM CCM path active unless isolating it)");
+
 static int tisp_force_bypass_dpc = 0;
 module_param_named(force_bypass_dpc, tisp_force_bypass_dpc, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(force_bypass_dpc, "Force DPC (bit 2) bypass for AWB bisection");
 
-static int tisp_force_bypass_lsc = 1; /* Bypass LSC by default while isolating suspected lens-shading issues */
+static int tisp_force_bypass_lsc = 1; /* Keep LSC bypassed by default while isolating suspected lens-shading issues */
 module_param_named(force_bypass_lsc, tisp_force_bypass_lsc, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(force_bypass_lsc, "Force LSC bypass (bits 4 and 6) (default: 1 — isolate suspected lens-shading issues)");
 
@@ -188,6 +193,7 @@ int tisp_af_get_metric(uint32_t *v);
 int tisp_g_mscaler_mask_attr(void *buf);
 int tisp_s_dpc_strength(uint32_t strength);
 static int tisp_set_defog_strength(uint8_t *strength_ptr);
+static int defog_3x3_5x5_params_init(uint32_t width, uint32_t height);
 int tisp_s_2dns_ratio(int ratio);
 int tisp_s_3dns_ratio(int ratio);
 static int tiziano_s_wb_algo(uint32_t mode);
@@ -634,24 +640,22 @@ int tiziano_bcsh_Toffset_RGBYUV(int32_t out[3], const int32_t *M, const int32_t 
 		/* Final scaling matches OEM pattern (>>6 after Q16 accumulation) */
 		out[c] = (int32_t)(acc >> 6);
 	}
-	return 0;
+	return out[2];
 }
 
 int tiziano_bcsh_Toffset_RGB2YUV(int32_t out[3], const int32_t in[3])
 {
 	int32_t tmp_in[3], tmp_out[3];
-	int i, ret;
+	int i;
 	if (!out || !in)
 		return -EINVAL;
 	for (i = 0; i < 3; ++i)
 		tmp_in[i] = in[i] - 0x400;
-	ret = tiziano_bcsh_Toffset_RGBYUV(tmp_out, tiziano_MMatrix, tmp_in);
-	if (ret)
-		return ret;
+	tiziano_bcsh_Toffset_RGBYUV(tmp_out, tiziano_MMatrix, tmp_in);
 	for (i = 0; i < 3; ++i)
 		out[i] = tmp_out[i] + 0x400;
-	return 0;
-	}
+	return out[2];
+}
 
 /* BCSH OEM-aligned state and banks — OEM data from tx-isp-t31.ko tuning blob.
  * Source: tiziano_bcsh_params_refresh() BN decompilation.
@@ -748,6 +752,63 @@ static uint32_t bcsh_Cxl_wdr[9], bcsh_Cxh_wdr[9], bcsh_Cyl_wdr[9], bcsh_Cyh_wdr[
 static uint32_t bcsh_B_wdr;
 static uint32_t bcsh_OffsetYUVy_wdr[2];
 static uint32_t bcsh_clip0_wdr[4], bcsh_clip1_wdr[4], bcsh_clip2_wdr[4];
+static uint32_t *bcsh_CCM_d_now = bcsh_CCM_d;
+static uint32_t *bcsh_CCM_t_now = bcsh_CCM_t;
+static uint32_t *bcsh_CCM_a_now = bcsh_CCM_a;
+static uint32_t *bcsh_HDP_now = bcsh_HDP;
+static uint32_t *bcsh_HBP_now = bcsh_HBP;
+static uint32_t *bcsh_HLSP_now = bcsh_HLSP;
+static uint32_t *bcsh_Sthres_now = bcsh_Sthres;
+static uint32_t *bcsh_EvList_now = bcsh_EvList;
+static uint32_t *bcsh_SminListS_now = bcsh_SminListS;
+static uint32_t *bcsh_SmaxListS_now = bcsh_SmaxListS;
+static uint32_t *bcsh_SminListM_now = bcsh_SminListM;
+static uint32_t *bcsh_SmaxListM_now = bcsh_SmaxListM;
+static uint32_t *bcsh_OffsetRGB_now = bcsh_OffsetRGB;
+static uint32_t bcsh_Svalue_base[4] = { 0x400, 0x400, 0x400, 0x400 };
+static int32_t bcsh_HMatrix[9];
+static uint32_t bcsh_Offset0[3] = { 0x03c0, 0x0400, 0x0400 };
+static uint32_t bcsh_Offset1[3] = { 0x0440, 0x0400, 0x0400 };
+static uint32_t bcsh_ev_current;
+static uint32_t bcsh_ct_current;
+/* OEM data_b53d4/data_b53d8/data_b53dc drive the optional 0x8050 HLSP ramp. */
+static uint8_t bcsh_hlsp_lo_idx;
+static uint8_t bcsh_hlsp_tail_enable;
+static uint8_t bcsh_hlsp_hi_idx;
+static uint8_t bcsh_hue_scaled = 0x3c;
+
+static void tiziano_bcsh_select_active_bank(void)
+{
+	if (bcsh_wdr_enabled) {
+		bcsh_CCM_d_now = bcsh_CCM_d_wdr;
+		bcsh_CCM_t_now = bcsh_CCM_t_wdr;
+		bcsh_CCM_a_now = bcsh_CCM_a_wdr;
+		bcsh_HDP_now = bcsh_HDP_wdr;
+		bcsh_HBP_now = bcsh_HBP_wdr;
+		bcsh_HLSP_now = bcsh_HLSP_wdr;
+		bcsh_Sthres_now = bcsh_Sthres_wdr;
+		bcsh_EvList_now = bcsh_EvList_wdr;
+		bcsh_SminListS_now = bcsh_SminListS_wdr;
+		bcsh_SmaxListS_now = bcsh_SmaxListS_wdr;
+		bcsh_SminListM_now = bcsh_SminListM_wdr;
+		bcsh_SmaxListM_now = bcsh_SmaxListM_wdr;
+		bcsh_OffsetRGB_now = bcsh_OffsetRGB_wdr;
+	} else {
+		bcsh_CCM_d_now = bcsh_CCM_d;
+		bcsh_CCM_t_now = bcsh_CCM_t;
+		bcsh_CCM_a_now = bcsh_CCM_a;
+		bcsh_HDP_now = bcsh_HDP;
+		bcsh_HBP_now = bcsh_HBP;
+		bcsh_HLSP_now = bcsh_HLSP;
+		bcsh_Sthres_now = bcsh_Sthres;
+		bcsh_EvList_now = bcsh_EvList;
+		bcsh_SminListS_now = bcsh_SminListS;
+		bcsh_SmaxListS_now = bcsh_SmaxListS;
+		bcsh_SminListM_now = bcsh_SminListM;
+		bcsh_SmaxListM_now = bcsh_SmaxListM;
+		bcsh_OffsetRGB_now = bcsh_OffsetRGB;
+	}
+}
 
 /* Matrices exposed via param IDs 0x3e3/0x3e4 - moved to top of file */
 
@@ -787,13 +848,9 @@ static void tiziano_bcsh_para2reg(int32_t *dst, const int32_t *src)
  * Decompiled from OEM at 0x2873c. */
 static void tiziano_bcsh_Tccm_Comp2Orig(void)
 {
-    const uint32_t *d_now = bcsh_wdr_enabled ? bcsh_CCM_d_wdr : bcsh_CCM_d;
-    const uint32_t *t_now = bcsh_wdr_enabled ? bcsh_CCM_t_wdr : bcsh_CCM_t;
-    const uint32_t *a_now = bcsh_wdr_enabled ? bcsh_CCM_a_wdr : bcsh_CCM_a;
-
-    tiziano_bcsh_reg2para_array(tisp_BCSH_as32CCMMatrix_d, d_now);
-    tiziano_bcsh_reg2para_array(tisp_BCSH_as32CCMMatrix_t, t_now);
-    tiziano_bcsh_reg2para_array(tisp_BCSH_as32CCMMatrix_a, a_now);
+    tiziano_bcsh_reg2para_array(tisp_BCSH_as32CCMMatrix_d, bcsh_CCM_d_now);
+    tiziano_bcsh_reg2para_array(tisp_BCSH_as32CCMMatrix_t, bcsh_CCM_t_now);
+    tiziano_bcsh_reg2para_array(tisp_BCSH_as32CCMMatrix_a, bcsh_CCM_a_now);
 }
 
 /* OEM EXACT: tiziano_ct_bcsh_interpolation — CT-based CCM interpolation.
@@ -1119,32 +1176,124 @@ static void tiziano_matmul3_q10(const int32_t A[9], const int32_t B[9], int32_t 
 
 /* OEM EXACT: tiziano_bcsh_Tccm_RGBYUV — full chain including inline hue rotation.
  *
- * Decompiled from OEM at 0x289f8. The function:
- * 1. Splits M, CCM, Minv into sign+magnitude pairs
- * 2. Computes T = M * CCM * Minv using fix_point_mult2_32(16, mag_a, mag_b << 6)
- * 3. Splits T into sign+magnitude pairs
- * 4. Applies inline hue rotation per row:
- *    - Y row (i<3):  out = sign * mag  (passthrough)
- *    - Cb row (3<=i<6): out = sign*fix_mult(s1,mag) + sgn*sign_next*fix_mult(s2,next_mag)
- *    - Cr row (i>=6): out = -sgn*sign_prev*fix_mult(s2,prev_mag) + sign*fix_mult(s1,mag)
- * 5. Right-shifts all values by 6
+ * Keep the OEM sign+magnitude dataflow rather than collapsing it into a
+ * generic matrix helper. The original code:
+ * 1. expands M / CCM / Minv into {sign, magnitude} pairs
+ * 2. computes T1 = M * CCM with the first-stage effective >>10 multiply
+ * 3. computes T2 = T1 * Minv with the second-stage effective >>16 multiply
+ * 4. expands T2 into sign+magnitude pairs
+ * 5. applies the inline Cb/Cr hue rotation
+ * 6. scales all outputs by >>6 for the hardware register format
  */
 static void tiziano_bcsh_Tccm_RGBYUV(int32_t out[9], const int32_t *M, const int32_t *CCM, const int32_t *Minv)
 {
-    int32_t T1[9], T2[9];
+    int32_t M_sm[18], CCM_sm[18], Minv_sm[18];
+    int32_t T1[9], T2[9], T2_sm[18];
     int32_t s1, s2, sgn;
-    int i;
+    int i, row;
     uint8_t hue = 0x3c;
 
-    /* OEM order: (M × CCM) × Minv
-     * OEM first mul uses fix_point_mult2_32(16, mag, mag<<6) = effective >>10
-     * OEM second mul uses fix_point_mult2_32(16, mag, mag) = effective >>16 */
-    tiziano_matmul3_q10(M, CCM, T1);
-    tiziano_matmul3_q16(T1, Minv, T2);
+    for (i = 0; i < 9; ++i) {
+        int32_t v = M[i];
+        if (v < 0) {
+            M_sm[i * 2] = -1;
+            M_sm[i * 2 + 1] = -v;
+        } else {
+            M_sm[i * 2] = 1;
+            M_sm[i * 2 + 1] = v;
+        }
+
+        v = CCM[i];
+        if (v < 0) {
+            CCM_sm[i * 2] = -1;
+            CCM_sm[i * 2 + 1] = -v;
+        } else {
+            CCM_sm[i * 2] = 1;
+            CCM_sm[i * 2 + 1] = v;
+        }
+
+        v = Minv[i];
+        if (v < 0) {
+            Minv_sm[i * 2] = -1;
+            Minv_sm[i * 2 + 1] = -v;
+        } else {
+            Minv_sm[i * 2] = 1;
+            Minv_sm[i * 2 + 1] = v;
+        }
+    }
+
+    /* OEM order: (M * CCM) * Minv. The first stage uses the effective >>10
+     * multiply (`fix_point_mult2_32(16, mag_a, mag_b << 6)`), the second
+     * stage uses the effective >>16 multiply (`fix_point_mult2_32(16, mag_a, mag_b)`). */
+    for (row = 0; row < 3; ++row) {
+        int base = row * 3;
+
+        T1[base + 0] =
+            M_sm[(base + 0) * 2] * CCM_sm[0 * 2] *
+            oem_fixmul(M_sm[(base + 0) * 2 + 1], CCM_sm[0 * 2 + 1], 10) +
+            M_sm[(base + 1) * 2] * CCM_sm[3 * 2] *
+            oem_fixmul(M_sm[(base + 1) * 2 + 1], CCM_sm[3 * 2 + 1], 10) +
+            M_sm[(base + 2) * 2] * CCM_sm[6 * 2] *
+            oem_fixmul(M_sm[(base + 2) * 2 + 1], CCM_sm[6 * 2 + 1], 10);
+
+        T1[base + 1] =
+            M_sm[(base + 0) * 2] * CCM_sm[1 * 2] *
+            oem_fixmul(M_sm[(base + 0) * 2 + 1], CCM_sm[1 * 2 + 1], 10) +
+            M_sm[(base + 1) * 2] * CCM_sm[4 * 2] *
+            oem_fixmul(M_sm[(base + 1) * 2 + 1], CCM_sm[4 * 2 + 1], 10) +
+            M_sm[(base + 2) * 2] * CCM_sm[7 * 2] *
+            oem_fixmul(M_sm[(base + 2) * 2 + 1], CCM_sm[7 * 2 + 1], 10);
+
+        T1[base + 2] =
+            M_sm[(base + 0) * 2] * CCM_sm[2 * 2] *
+            oem_fixmul(M_sm[(base + 0) * 2 + 1], CCM_sm[2 * 2 + 1], 10) +
+            M_sm[(base + 1) * 2] * CCM_sm[5 * 2] *
+            oem_fixmul(M_sm[(base + 1) * 2 + 1], CCM_sm[5 * 2 + 1], 10) +
+            M_sm[(base + 2) * 2] * CCM_sm[8 * 2] *
+            oem_fixmul(M_sm[(base + 2) * 2 + 1], CCM_sm[8 * 2 + 1], 10);
+    }
+
+    for (i = 0; i < 9; ++i) {
+        int32_t v = T1[i];
+        if (v < 0) {
+            T2_sm[i * 2] = -1;
+            T2_sm[i * 2 + 1] = -v;
+        } else {
+            T2_sm[i * 2] = 1;
+            T2_sm[i * 2 + 1] = v;
+        }
+    }
+
+    for (row = 0; row < 3; ++row) {
+        int base = row * 3;
+
+        T2[base + 0] =
+            T2_sm[(base + 0) * 2] * Minv_sm[0 * 2] *
+            oem_fixmul(T2_sm[(base + 0) * 2 + 1], Minv_sm[0 * 2 + 1], 16) +
+            T2_sm[(base + 1) * 2] * Minv_sm[3 * 2] *
+            oem_fixmul(T2_sm[(base + 1) * 2 + 1], Minv_sm[3 * 2 + 1], 16) +
+            T2_sm[(base + 2) * 2] * Minv_sm[6 * 2] *
+            oem_fixmul(T2_sm[(base + 2) * 2 + 1], Minv_sm[6 * 2 + 1], 16);
+
+        T2[base + 1] =
+            T2_sm[(base + 0) * 2] * Minv_sm[1 * 2] *
+            oem_fixmul(T2_sm[(base + 0) * 2 + 1], Minv_sm[1 * 2 + 1], 16) +
+            T2_sm[(base + 1) * 2] * Minv_sm[4 * 2] *
+            oem_fixmul(T2_sm[(base + 1) * 2 + 1], Minv_sm[4 * 2 + 1], 16) +
+            T2_sm[(base + 2) * 2] * Minv_sm[7 * 2] *
+            oem_fixmul(T2_sm[(base + 2) * 2 + 1], Minv_sm[7 * 2 + 1], 16);
+
+        T2[base + 2] =
+            T2_sm[(base + 0) * 2] * Minv_sm[2 * 2] *
+            oem_fixmul(T2_sm[(base + 0) * 2 + 1], Minv_sm[2 * 2 + 1], 16) +
+            T2_sm[(base + 1) * 2] * Minv_sm[5 * 2] *
+            oem_fixmul(T2_sm[(base + 1) * 2 + 1], Minv_sm[5 * 2 + 1], 16) +
+            T2_sm[(base + 2) * 2] * Minv_sm[8 * 2] *
+            oem_fixmul(T2_sm[(base + 2) * 2 + 1], Minv_sm[8 * 2 + 1], 16);
+    }
 
     /* Compute hue rotation parameters (s1=cos, s2=sin, sgn=direction) */
-    if (ourISPdev && ourISPdev->tuning_data)
-        hue = ourISPdev->tuning_data->bcsh_hue;
+    hue = bcsh_hue_scaled;
 
     {
         /* OEM constants from HLIL */
@@ -1178,37 +1327,30 @@ static void tiziano_bcsh_Tccm_RGBYUV(int32_t out[9], const int32_t *M, const int
      * Row 0 (Y):  passthrough
      * Row 1 (Cb): cos*val + sgn*sin*val_from_Cr_row
      * Row 2 (Cr): -sgn*sin*val_from_Cb_row + cos*val */
-    {
-        int32_t T2_s[9], T2_m[9]; /* sign and magnitude */
-        for (i = 0; i < 9; i++) {
-            if (T2[i] < 0) {
-                T2_s[i] = -1;
-                T2_m[i] = -T2[i];
-            } else {
-                T2_s[i] = 1;
-                T2_m[i] = T2[i];
-            }
+    for (i = 0; i < 9; ++i) {
+        int32_t v = T2[i];
+        if (v < 0) {
+            T2_sm[i * 2] = -1;
+            T2_sm[i * 2 + 1] = -v;
+        } else {
+            T2_sm[i * 2] = 1;
+            T2_sm[i * 2 + 1] = v;
         }
+    }
 
-        for (i = 0; i < 9; i++) {
-            int32_t v;
-            if (i < 3) {
-                /* Y row: passthrough (sign * magnitude) */
-                v = T2_s[i] * T2_m[i];
-            } else if (i < 6) {
-                /* Cb row: cos*current + sgn*sin*Cr_counterpart
-                 * OEM: sign*fix_mult(s1,mag) + sgn*sign_Cr*fix_mult(s2,mag_Cr) */
-                int32_t cos_term = T2_s[i] * (int32_t)(((int64_t)s1 * T2_m[i]) >> 16);
-                int32_t sin_term = sgn * T2_s[i + 3] * (int32_t)(((int64_t)s2 * T2_m[i + 3]) >> 16);
-                v = cos_term + sin_term;
-            } else {
-                /* Cr row: -sgn*sin*Cb_counterpart + cos*current
-                 * OEM: -sgn*sign_Cb*fix_mult(s2,mag_Cb) + sign*fix_mult(s1,mag) */
-                int32_t sin_term = -sgn * T2_s[i - 3] * (int32_t)(((int64_t)s2 * T2_m[i - 3]) >> 16);
-                int32_t cos_term = T2_s[i] * (int32_t)(((int64_t)s1 * T2_m[i]) >> 16);
-                v = sin_term + cos_term;
-            }
-            out[i] = v;
+    for (i = 0; i < 9; ++i) {
+        if (i < 3) {
+            out[i] = T2_sm[i * 2] * T2_sm[i * 2 + 1];
+        } else if (i < 6) {
+            out[i] =
+                T2_sm[i * 2] * oem_fixmul(s1, T2_sm[i * 2 + 1], 16) +
+                sgn * T2_sm[(i + 3) * 2] *
+                oem_fixmul(s2, T2_sm[(i + 3) * 2 + 1], 16);
+        } else {
+            out[i] =
+                T2_sm[i * 2] * oem_fixmul(s1, T2_sm[i * 2 + 1], 16) +
+                (-sgn) * T2_sm[(i - 3) * 2] *
+                oem_fixmul(s2, T2_sm[(i - 3) * 2 + 1], 16);
         }
     }
 
@@ -1410,6 +1552,17 @@ static void tiziano_bcsh_compute_S_vectors(const struct isp_tuning_data *tuning,
 static uint32_t s_bcsh_mjpeg_mode;
 static uint32_t s_bcsh_mjpeg_y_range_low;
 static uint32_t s_bcsh_fixed_contrast;
+/* OEM keeps raw user-facing slider values separate from the scaled/internal state. */
+static uint8_t bcsh_hue_user = 0x80;
+static uint8_t bcsh_brightness_user = 0x80;
+static uint8_t bcsh_contrast_user = 0x80;
+static uint8_t bcsh_saturation_user = 0x80;
+static int8_t bcsh_ctrl;
+static uint8_t bcsh_ctrl_aux;
+static uint32_t bcsh_last_ev;
+static uint32_t bcsh_ev_threshold = 0x28;
+static uint32_t bcsh_last_ct;
+static uint32_t bcsh_ct_threshold = 0x64;
 
 /* Raw BCSH attr blob (0x28 bytes) as passed by OEM tooling) */
 static uint8_t bcsh_attr_blob[0x28];
@@ -1946,226 +2099,14 @@ static uint32_t data_d7228 = 0;
 static void *TizianoWdrFpgaStructMe = NULL;
 static void *data_d94a8 = NULL;
 static void tiziano_bcsh_TransitParam(void);
+static void tiziano_bcsh_lut_parameter(void *tisp_bcsh, void *clip1, void *clip2, void *offset0);
 
-/* BCSH hardware apply: program registers if platform provides mapping */
+/* Legacy helper kept for local call sites; the OEM-aligned path writes via
+ * tiziano_bcsh_lut_parameter from tiziano_bcsh_update. */
 static void tiziano_bcsh_reg_apply(struct isp_tuning_data *tuning)
 {
-    /* BCSH hardware writes enabled unconditionally (OEM-style). */
-    const u32 BASE = 0x00008000; /* OEM BCSH block: 0x8000..0x8070 */
-
-    /* Helper to pack two 16-bit values into one 32-bit word, high:lo order */
-    #define PACK16(hi, lo) ((((u32)(hi) & 0xFFFF) << 16) | ((u32)(lo) & 0xFFFF))
-
-    /* Select banked arrays */
-    u32 *HDP  = bcsh_wdr_enabled ? bcsh_HDP_wdr  : bcsh_HDP;
-    u32 *HBP  = bcsh_wdr_enabled ? bcsh_HBP_wdr  : bcsh_HBP;
-    u32 *HLSP = bcsh_wdr_enabled ? bcsh_HLSP_wdr : bcsh_HLSP;
-    u32 *Sth  = bcsh_wdr_enabled ? bcsh_Sthres_wdr : bcsh_Sthres;
-    u32 *RGB  = bcsh_wdr_enabled ? bcsh_OffsetRGB_wdr : bcsh_OffsetRGB;
-    u32 *Carr = bcsh_C; /* OEM uses shared C[] across linear/WDR */
-
-    /* OEM BCSH chain: Comp2Orig → ct_bcsh_interpolation → Tccm_RGB2YUV.
-     * This replaces our custom tiziano_bcsh_build_HMatrix + inline para2reg. */
-    int32_t Hreg[9];
-    uint32_t cs0 = 0, cs1 = 0, cs2 = 0, hdp_s = 0, hbp_s = 0;
-    int i_h;
-    {
-        uint32_t ct = 0x1357; /* default to Daylight */
-        if (ourISPdev && ourISPdev->tuning_data)
-            ct = ourISPdev->tuning_data->wb_temp;
-        tiziano_bcsh_Tccm_Comp2Orig();
-        tiziano_ct_bcsh_interpolation(ct);
-        tiziano_bcsh_Tccm_RGB2YUV(Hreg, tisp_BCSH_as32CCMMatrix);
-    }
-
-    {
-        static int hlog;
-        if (!hlog) {
-            pr_info("BCSH_DIAG: CCM_signed=[%d,%d,%d, %d,%d,%d, %d,%d,%d]\n",
-                    tisp_BCSH_as32CCMMatrix[0], tisp_BCSH_as32CCMMatrix[1], tisp_BCSH_as32CCMMatrix[2],
-                    tisp_BCSH_as32CCMMatrix[3], tisp_BCSH_as32CCMMatrix[4], tisp_BCSH_as32CCMMatrix[5],
-                    tisp_BCSH_as32CCMMatrix[6], tisp_BCSH_as32CCMMatrix[7], tisp_BCSH_as32CCMMatrix[8]);
-            pr_info("BCSH_DIAG: Hreg=[0x%x,0x%x,0x%x, 0x%x,0x%x,0x%x, 0x%x,0x%x,0x%x]\n",
-                    Hreg[0], Hreg[1], Hreg[2], Hreg[3], Hreg[4], Hreg[5],
-                    Hreg[6], Hreg[7], Hreg[8]);
-            hlog = 1;
-        }
-    }
-
-    /* OEM: TransitParam computes all slopes/steps. Call it first,
-     * then use its outputs for register writes. */
-    tiziano_bcsh_TransitParam();
-    cs0 = bcsh_Cslope0;
-    cs1 = bcsh_Cslope1;
-    cs2 = bcsh_Cslope2;
-    hdp_s = bcsh_HDPslope;
-    hbp_s = bcsh_HBPslope;
-
-    /* Compose and write 0x8000..0x8070 block using TransitParam outputs. */
-    {
-        {
-            static int slog;
-            if (!slog) {
-                pr_info("BCSH_DIAG: Svalue=[%u,%u,%u,%u]\n",
-                        bcsh_ai32_Svalue[0], bcsh_ai32_Svalue[1],
-                        bcsh_ai32_Svalue[2], bcsh_ai32_Svalue[3]);
-                pr_info("BCSH_DIAG: B=%u C=[%u,%u,%u,%u,%u] Sthres=[%u,%u,%u]\n",
-                        bcsh_B, bcsh_ai32_C[0], bcsh_ai32_C[1], bcsh_ai32_C[2],
-                        bcsh_ai32_C[3], bcsh_ai32_C[4],
-                        bcsh_Sthres[0], bcsh_Sthres[1], bcsh_Sthres[2]);
-                pr_info("BCSH_DIAG: Sstep=[%u,%u] HDP=[%u,%u,%u] HBP=[%u,%u,%u] HLSP=[%u,%u,%u]\n",
-                        bcsh_Sstep0, bcsh_Sstep1,
-                        bcsh_HDP[0], bcsh_HDP[1], bcsh_HDP[2],
-                        bcsh_HBP[0], bcsh_HBP[1], bcsh_HBP[2],
-                        bcsh_HLSP[0], bcsh_HLSP[1], bcsh_HLSP[2]);
-                pr_info("BCSH_DIAG: clip0=[%u,%u,%u,%u] OffsetYUVy=[%u,%u]\n",
-                        bcsh_clip0[0], bcsh_clip0[1], bcsh_clip0[2], bcsh_clip0[3],
-                        bcsh_OffsetYUVy[0], bcsh_OffsetYUVy[1]);
-                slog = 1;
-            }
-        }
-
-        /* OEM EXACT register layout from tiziano_bcsh_lut_parameter decompilation:
-         * 0x8000-0x8014: clip0/clip1/clip2 (arg1/arg2/arg3 = clipping ranges)
-         * 0x8018-0x8020: Offset0/Offset1 (arg4/arg5 = UV offsets)
-         * 0x8024-0x8038: HMatrix (arg13 = color transform matrix)
-         * 0x803c-0x8050: HDP/HBP/HLSP slopes (args 14-19)
-         * 0x8054-0x8060: Cslope0/B/C (args 6-9)
-         * 0x8064-0x8068: Sstep/Sthres (args 10,12)
-         * 0x806c-0x8070: Svalue (arg11)
-         */
-
-        /* 0x8000..0x8014: clip0/clip1/clip2 (OEM arg1/arg2/arg3) */
-        system_reg_write(BASE + 0x0000, PACK16(bcsh_clip0[0], bcsh_clip0[1]));
-        system_reg_write(BASE + 0x0004, PACK16(bcsh_clip1[0], bcsh_clip1[1]));
-        system_reg_write(BASE + 0x0008, PACK16(bcsh_clip2[0], bcsh_clip2[1]));
-        system_reg_write(BASE + 0x000c, PACK16(bcsh_clip0[2], bcsh_clip0[3]));
-        system_reg_write(BASE + 0x0010, PACK16(bcsh_clip1[2], bcsh_clip1[3]));
-        system_reg_write(BASE + 0x0014, PACK16(bcsh_clip2[2], bcsh_clip2[3]));
-    }
-
-    /* NOTE: tiziano_bcsh_Toffset_RGB2YUV was called here to recompute
-     * bcsh_OffsetRGB2yuv from bcsh_OffsetRGB via MMatrix, but with default
-     * OffsetRGB={0,0,0} the MMatrix transform produced wrong UV offsets that
-     * corrupted color. Reverted to static {0x400,0x400,0x400} which produces
-     * correct color output. TODO: investigate proper OffsetRGB initialization. */
-
-    /* 0x8018..0x8020: Offset data (OEM arg4=Offset0, arg5=Offset1)
-     * Offset0 = [OffsetYUVy[0], 0x400, 0x400]
-     * Offset1 = [OffsetYUVy[1]+OffsetRGB2yuv[0]-0x800+brightness_scaled,
-     *            OffsetRGB2yuv[1], OffsetRGB2yuv[2]]
-     */
-    {
-        uint32_t brightness_scaled;
-        uint32_t off1_0;
-        brightness_scaled = ((uint32_t)tuning->bcsh_brightness * bcsh_B) >> 7;
-        if (brightness_scaled >= 0x76d)
-            brightness_scaled = 0x76c;
-        off1_0 = bcsh_OffsetYUVy[1] + bcsh_OffsetRGB2yuv[0] - 0x800 + brightness_scaled;
-        system_reg_write(BASE + 0x0018, PACK16(off1_0, bcsh_OffsetYUVy[0]));
-        system_reg_write(BASE + 0x001c, PACK16(bcsh_OffsetRGB2yuv[1], 0x400));
-        system_reg_write(BASE + 0x0020, PACK16(bcsh_OffsetRGB2yuv[2], 0x400));
-    }
-
-    /* 0x8024..0x8038: HMatrixReg (9 elements) — OEM arg13 */
-    system_reg_write(BASE + 0x0024, PACK16((u32)Hreg[1], (u32)Hreg[0]));
-    system_reg_write(BASE + 0x0028, (u32)Hreg[2]);
-    system_reg_write(BASE + 0x002c, PACK16((u32)Hreg[4], (u32)Hreg[3]));
-    system_reg_write(BASE + 0x0030, (u32)Hreg[5]);
-    system_reg_write(BASE + 0x0034, PACK16((u32)Hreg[7], (u32)Hreg[6]));
-    system_reg_write(BASE + 0x0038, (u32)Hreg[8]);
-
-    /* 0x803C..0x8040: HDPslope + HDP (OEM arg15/arg14) */
-    system_reg_write(BASE + 0x003c, PACK16(hdp_s, HDP[0]));
-    system_reg_write(BASE + 0x0040, PACK16(HDP[2], HDP[1]));
-
-    /* 0x8044..0x8048: HBPslope + HBP (OEM arg17/arg16) */
-    system_reg_write(BASE + 0x0044, PACK16(hbp_s, HBP[0]));
-    system_reg_write(BASE + 0x0048, PACK16(HBP[2], HBP[1]));
-
-    /* 0x804C: HLSPslope + HLSP[0] (OEM arg19/arg18) — use TransitParam output */
-    system_reg_write(BASE + 0x004c, PACK16(bcsh_HLSPslope, HLSP[0]));
-
-    /* 0x8050: EV/HLSP-gated mixed value (OEM-like). */
-    {
-        u32 ev10 = tuning->bcsh_ev >> 10; /* matches data_9a614 >> 10 */
-        u32 *EvList = bcsh_wdr_enabled ? bcsh_EvList_wdr : bcsh_EvList;
-        /* Clamp indices as per BN: [1..9] */
-        u32 idxA = 1; /* default for data_c53e4 */
-        u32 idxB = 9; /* default for data_c53ec */
-        if (idxA < 1) idxA = 1; if (idxA > 9) idxA = 9;
-        if (idxB < 1) idxB = 1; if (idxB > 9) idxB = 9;
-
-        u32 s1_3 = 0;
-        if (bcsh_clip0[0] == 1) {
-            u32 a0_48 = EvList[idxA - 1];
-            if (ev10 < a0_48) {
-                /* BN branch: uses HLSP[1] and HLSP[2] with special boundary handling */
-                u32 v1_7 = (ev10 < 2) ? 1 : 0;
-                u32 v0_8 = bcsh_clip0[0] - ev10;
-                u32 a2_11 = ev10 - 1;
-                if (v1_7) a2_11 = v0_8;
-                u32 clip0_2 = (a0_48 == 0) ? bcsh_clip0[0] : (a0_48 - 1);
-                if (!v1_7) v0_8 = ev10 - 1;
-                u32 v0_9 = (a0_48 == 0) ? 1 : (a0_48 - 1);
-                u32 lo = 0, hi = 0;
-                if (v0_9) lo = (v0_8 * HLSP[1]) / v0_9;
-                if (clip0_2) hi = (a2_11 * HLSP[2]) / clip0_2;
-                s1_3 = (hi << 16) | (lo & 0xFFFF);
-            }
-        } else {
-            /* BN alt branch when data_c53e8 == 1: approximate enable */
-            u32 v1_8 = EvList[8]; /* EvList[8] */
-            if (ev10 < v1_8) {
-                u32 a0_50 = EvList[idxB - 1];
-                if (a0_50 < ev10) {
-                    u32 t9_1 = HLSP[2];
-                    u32 s1_6 = HLSP[1];
-                    u32 hi_part;
-                    if (t9_1 == 0) {
-                        hi_part = 0;
-                    } else {
-                        u32 s0_1 = (v1_8 >= a0_50) ? (v1_8 - a0_50) : (a0_50 - v1_8);
-                        if (s0_1 == 0) s0_1 = 1;
-                        u32 dec = ((ev10 - a0_50) * t9_1) / s0_1;
-                        if (dec > t9_1) dec = t9_1;
-                        hi_part = (t9_1 - dec) & 0xFFFF;
-                    }
-                    u32 lo_part;
-                    if (s1_6 == 0) {
-                        lo_part = 0;
-                    } else {
-                        u32 v1_9 = (v1_8 >= a0_50) ? (v1_8 - a0_50) : (a0_50 - v1_8);
-                        if (v1_9 == 0) v1_9 = 1;
-                        u32 dec2 = ((ev10 - a0_50) * s1_6) / v1_9;
-                        if (dec2 > s1_6) dec2 = s1_6;
-                        lo_part = (s1_6 - dec2) & 0xFFFF;
-                    }
-                    s1_3 = (hi_part << 16) | lo_part;
-                } else {
-                    s1_3 = 0; /* as per BN when ev >= EvList[idxB-1] */
-                }
-            } else {
-                s1_3 = 0; /* ev >= EvList[8] */
-            }
-        }
-        system_reg_write(BASE + 0x0050, s1_3);
-    }
-
-    /* 0x8054..0x8060: Cslope0/C array — use TransitParam's StrenCal-adjusted C values */
-    system_reg_write(BASE + 0x0054, PACK16(cs0, bcsh_ai32_C[0]));
-    system_reg_write(BASE + 0x0058, PACK16(cs2, cs1));
-    system_reg_write(BASE + 0x005c, PACK16(bcsh_ai32_C[2], bcsh_ai32_C[1]));
-    system_reg_write(BASE + 0x0060, PACK16(bcsh_ai32_C[4], bcsh_ai32_C[3]));
-
-    /* 0x8064..0x8068: Sstep + Sthres — use TransitParam outputs */
-    system_reg_write(BASE + 0x0064,
-        PACK16(bcsh_Sstep1, ((bcsh_Sstep0 << 3) | (Sth[0] & 0x7))));
-    system_reg_write(BASE + 0x0068, PACK16(Sth[2], Sth[1]));
-
-    /* 0x806c..0x8070: Svalue (OEM arg11 = TransitParam saturation values) */
-    system_reg_write(BASE + 0x006c, PACK16(bcsh_ai32_Svalue[0], bcsh_ai32_Svalue[1]));
-    system_reg_write(BASE + 0x0070, PACK16(bcsh_ai32_Svalue[2], bcsh_ai32_Svalue[3]));
+	(void)tuning;
+	tiziano_bcsh_lut_parameter(bcsh_clip0, bcsh_clip1, bcsh_clip2, bcsh_Offset0);
 }
 
 /* ADR (Adaptive Dynamic Range) Variables */
@@ -2264,12 +2205,12 @@ static uint32_t *data_c03fc = NULL;  /* adr_map_mode_now */
 static uint32_t *data_c0400 = NULL;  /* adr_light_end_now */
 static uint32_t *data_c0404 = NULL;  /* adr_block_light_now */
 /* ADR param array def (used by algorithm for default init) */
-static uint32_t param_adr_min_kneepoint_array_def[0x5c/4] = {0};
+static uint32_t param_adr_min_kneepoint_array_def[0x5c/4] = {
+	0x20, 0x40, 0x80, 0xc0, 0x100, 0x180, 0x200, 0x300, 0x400, 0x600, 0x800,
+	0x5, 0x5, 0x6, 0x6, 0x6, 0x7, 0x7, 0x8, 0x8, 0x9, 0x9, 0xb,
+};
 static uint8_t param_adr_gam_y_array_def[0x102] = {0};
-static uint32_t adr_base_values[9] = {0x100, 0x120, 0x140, 0x160, 0x180, 0x1a0, 0x1c0, 0x1e0, 0x200};
-static uint32_t adr_min_thresholds[9] = {0x80, 0x90, 0xa0, 0xb0, 0xc0, 0xd0, 0xe0, 0xf0, 0x100};
-/* Debug gate: set to 1 to enable ADR/YDNS HW param writes */
-static int s_adr_hw_apply = 1;
+/* Debug gate: set to 1 to enable YDNS HW param writes */
 static int s_ydns_hw_apply = 1;
 
 /* Forward externs for ADR arrays used by LUT builder (defined later in this file) */
@@ -2278,6 +2219,12 @@ extern uint32_t param_adr_weight_02_lut_array[32];
 extern uint32_t param_adr_weight_12_lut_array[32];
 extern uint32_t param_adr_weight_22_lut_array[32];
 extern uint32_t param_adr_weight_21_lut_array[32];
+static uint32_t param_adr_centre_w_dis_array_tmp[31];
+static uint32_t param_adr_weight_20_lut_array_tmp[32];
+static uint32_t param_adr_weight_02_lut_array_tmp[32];
+static uint32_t param_adr_weight_12_lut_array_tmp[32];
+static uint32_t param_adr_weight_22_lut_array_tmp[32];
+static uint32_t param_adr_weight_21_lut_array_tmp[32];
 
 extern uint32_t adr_map_mode[0x2c/4];
 extern uint32_t adr_ctc_map2cut_y[0x24/4];
@@ -3289,8 +3236,13 @@ int tisp_ev_update(uint32_t ev, uint32_t aux_ev);
 int tisp_ct_update(uint32_t ct);
 int tisp_ae_ir_update(uint32_t ir_val);
 int tisp_lsc_write_lut_datas(void);
+static int tisp_lsc_hvflip(u32 width, u32 height, int hflip, int vflip);
 static int tisp_lsc_ct_update(uint32_t ct);
 static int tisp_lsc_gain_update(uint32_t gain);
+static int tisp_lsc_mirror_flip(u32 width, u32 height, int hflip, int vflip);
+static int tisp_lsc_upside_down_lut(uint32_t *lut, int rows, int cols_padded);
+static int tisp_lsc_lut_mirror_exchange(uint32_t *lut, int idx_a, int idx_b,
+					int lane_a, int lane_b);
 static uint32_t tisp_simple_intp(int gain_hi, int gain_lo, const uint32_t *array);
 static int tisp_gb_blc_again_interp(uint32_t gain, int channel);
 static int tisp_gb_params_refresh(void);
@@ -3934,10 +3886,10 @@ static uint32_t data_a0df0 = 0;    /* AE DN state flag (OEM: data_a0df0) */
 static uint32_t data_a0e08 = 0;    /* AE DN state flag (OEM: data_a0e08) */
 static uint32_t data_a0c08 = 0x80; /* AE compensation target (OEM: data_a0c08) */
 static uint8_t  ae_comp_x = 0x80;  /* AE compensation input (OEM: ae_comp_x) */
-static uint32_t data_9a2ec = 0;    /* GIB/DEIR state mirrored into reg 0x106c. */
-static uint32_t ae_hist_scale_enable = 1; /* Local debug gate for AE wmean-driven
-                                           * table scaling. Keep this independent
-                                           * of GIB/DEIR so normal Bayer sensors
+static uint32_t data_9a2ec = 1;    /* OEM AE histogram-scaling enable (1 = brightness feedback active). */
+static uint32_t ae_hist_scale_enable = 1; /* Debug gate for AE wmean-driven
+                                           * table scaling. Keep this separate
+                                           * from GIB state so normal Bayer sensors
                                            * still adapt AE to scene brightness. */
 static uint32_t ae_hist_tail_enable = 1;
 static uint32_t data_c46d0 = 0;    /* AE gain distribution mode */
@@ -3976,12 +3928,9 @@ static uint32_t ae_hist_bright_sum = 0; /* OEM: var_84 = sum of bins threshold+1
 static uint32_t ae_scene_wmean = 0;     /* OEM: var_70 = normalized wmean */
 static uint32_t ae_scene_total = 0;     /* OEM: var_74 = total normalized brightness */
 
-/* OEM data_c4654: sensor AE configuration array (arg13 in Tiziano_ae0_fpga).
- * [0]=processing_mode (1=normal with histogram tail weighting),
- * [1]=hist_bin_threshold, [2]=overexp_th,
- * [3]=dark_bin_threshold, [4]=underexp_th, [6]=curve_strength.
- * Default: mode=1, thresholds from OEM typical values. Overwritten by
- * libimp's set_par_cfg case 3 when tuning params are dispatched. */
+/* Local shadow for the OEM AE mix/threshold bundle consumed by the WM2/FPGA
+ * path. The full hidden OEM source for these slots is not surfaced yet in the
+ * port, so zero-valued mix slots must not collapse live channel weighting. */
 static uint32_t ae_sensor_config[14] = {1, 128, 0, 30, 0, 0, 16, 0, 0, 0, 0, 0, 0, 0};
 static uint32_t scene_luma_weight = 0x24;
 
@@ -4019,11 +3968,7 @@ static void tiziano_ae0_select_mix_weights(int32_t *mix_r, int32_t *mix_b)
     /* OEM Tiziano_ae0_fpga (0x51488):
      *   processing_mode == 0 -> mix = 1,1
      *   processing_mode == 1 -> mix = cfg[6],cfg[5]
-     *   else selector (_ae_stat[3]) chooses among cfg[5..10]
-     *
-     * Our port does not yet fully populate ae_sensor_config[5..10] for every
-     * sensor, so keep the OEM branch selection but fall back to unity when a
-     * selected slot is still zero. */
+     *   else selector (_ae_stat[3]) chooses among cfg[5..10] */
     if (processing_mode == 0) {
         sel_r = 1;
         sel_b = 1;
@@ -4058,22 +4003,18 @@ static void tiziano_ae0_select_wrapper_inputs(void **awb_cfg, void **corr_cfg,
 					      int32_t *corr_param_a,
 					      int32_t *corr_param_b)
 {
-    if (awb_cfg)
-        *awb_cfg = &_scene_para;
-    if (corr_cfg)
-        *corr_cfg = &_scene_para;
+    const int wdr = (data_b0e10 != 0);
 
-    /* OEM address setup keeps these AE scene-weight arrays adjacent to the
-     * AE stat/lut inputs. They are the safest local candidates for the
-     * per-zone correction arrays until the full wrapper descriptor is proven. */
+    if (awb_cfg)
+        *awb_cfg = wdr ? (void *)&_scene_para_wdr : (void *)&_scene_para;
+    if (corr_cfg)
+        *corr_cfg = wdr ? (void *)&ae_scene_mode_th_wdr
+                        : (void *)&ae_scene_mode_th;
     if (r_corr)
         *r_corr = (int32_t *)_scene_roui_weight.data;
     if (b_corr)
         *b_corr = (int32_t *)_scene_roi_weight.data;
 
-    /* Leave the scalar correction coefficients neutral for now.
-     * This enables OEM-style pointer plumbing without inventing coefficient
-     * semantics that are not yet confirmed from the binary. */
     if (corr_param_a)
         *corr_param_a = 0;
     if (corr_param_b)
@@ -4418,6 +4359,7 @@ static uint32_t tisp_gib_blc_ag = 0;      /* Last BLC analog gain */
 static uint32_t gib_ir_mode[2] = {0, 0};  /* BSS zero; runtime set by DEIR IR update */
 static uint32_t gib_ir_value[2] = {0, 0};      /* BSS zero; runtime set by DEIR IR update */
 static uint32_t trig_set_deir = 0;        /* DEIR trigger flag */
+static uint32_t gib_deir_gate_en = 0;     /* GIB reg 0x106c bit16 shadow */
 
 /* GIB config line accessor — VERIFIED from MIPS disassembly of OEM tiziano_gib_lut_parameter.
  * config_line[0] is used directly at bit 12 of reg 0x103c (unnamed first-byte field).
@@ -5205,7 +5147,7 @@ static int ae0_tune2(uint32_t wmean, uint32_t q, uint32_t target_ev,
         local_lum[i] = _lum_list.data[i];
     }
 
-    if (ae_hist_scale_enable == 1) {
+    if (data_9a2ec != 0 && ae_hist_scale_enable == 1) {
         /* Histogram-based wmean computation from 256 bins.
          * OEM uses IspAeStatic[256] histogram; our wmean is already
          * computed by ae0_weight_mean2 and passed as parameter.
@@ -5536,6 +5478,24 @@ phase_f_target:
     }
 
 phase_g:
+    /* OEM dark-scene bootstrap: when the scene is near-black and the
+     * interpolated EV is not rising, force a bounded upward step so the
+     * controller can escape a cold-start stall. */
+    if (wmean < 10 && s2_2 <= var_b8) {
+        uint32_t one_q = 1u << qm;
+        uint32_t safe_wmean = wmean ? wmean : 1;
+        uint32_t ramp_ratio = fix_point_div_32(s0, 128u << qm, safe_wmean << qm);
+
+        if (ramp_ratio > (2u << qm))
+            ramp_ratio = 2u << qm;
+        if (ramp_ratio > one_q) {
+            uint32_t boosted = fix_point_mult2_32(s0, var_b8, ramp_ratio);
+
+            if (boosted > s2_2)
+                s2_2 = boosted;
+        }
+    }
+
     /* ---- Phase G: Write _ae_ev ---- */
     _ae_ev = s2_2;
 
@@ -7403,84 +7363,106 @@ static int apical_isp_ev_g_attr(struct tx_isp_dev *dev, struct isp_core_ctrl *ct
     return 0;
 }
 
+static uint32_t tiziano_bcsh_interp_u32(uint32_t lo, uint32_t hi,
+					uint32_t ev_lo, uint32_t ev_hi,
+					uint32_t ev_now)
+{
+	uint32_t ev_delta;
+	uint32_t ev_range;
 
+	if (lo == hi || ev_lo == ev_hi)
+		return lo;
+
+	ev_delta = (ev_now >= ev_lo) ? (ev_now - ev_lo) : (ev_lo - ev_now);
+	ev_range = (ev_hi >= ev_lo) ? (ev_hi - ev_lo) : (ev_lo - ev_hi);
+
+	if (hi >= lo)
+		return lo + (ev_delta * (hi - lo)) / ev_range;
+	return lo - (ev_delta * (lo - hi)) / ev_range;
+}
 
 static int tiziano_bcsh_update(struct isp_tuning_data *tuning)
 {
-    uint32_t ev_shifted = tuning->bcsh_ev >> 10;
+    uint32_t ev_now = bcsh_ev_current;
+    uint32_t ev_shifted;
+    uint32_t ct_now = bcsh_ct_current;
     int i;
-    int idx = -1;
-    uint32_t weight = 0;
 
-    /* Find interpolation index and weight */
-    if (tuning->bcsh_au32EvList_now[0] > ev_shifted) {
-        idx = 0; weight = 0; /* below min → use index 0 */
-    } else if (ev_shifted >= tuning->bcsh_au32EvList_now[8]) {
-        idx = 8; weight = 0; /* above max → use index 8 */
+    if (tuning) {
+        if (ev_now == 0)
+            ev_now = tuning->bcsh_ev;
+        if (ct_now == 0)
+            ct_now = tuning->wb_temp;
+    }
+
+    bcsh_ev_current = ev_now;
+    bcsh_ct_current = ct_now;
+    ev_shifted = ev_now >> 10;
+
+    if (bcsh_EvList_now[0] > ev_shifted) {
+        bcsh_Svalue_base[0] = bcsh_SminListS_now[0];
+        bcsh_Svalue_base[1] = bcsh_SmaxListS_now[0];
+        bcsh_Svalue_base[2] = bcsh_SminListM_now[0];
+        bcsh_Svalue_base[3] = bcsh_SmaxListM_now[0];
+        bcsh_Cxl_now = bcsh_Cxl[0];
+        bcsh_Cxh_now = bcsh_Cxh[0];
+        bcsh_Cyl_now = bcsh_Cyl[0];
+        bcsh_Cyh_now = bcsh_Cyh[0];
+    } else if (ev_shifted >= bcsh_EvList_now[8]) {
+        bcsh_Svalue_base[0] = bcsh_SminListS_now[8];
+        bcsh_Svalue_base[1] = bcsh_SmaxListS_now[8];
+        bcsh_Svalue_base[2] = bcsh_SminListM_now[8];
+        bcsh_Svalue_base[3] = bcsh_SmaxListM_now[8];
+        bcsh_Cxl_now = bcsh_Cxl[8];
+        bcsh_Cxh_now = bcsh_Cxh[8];
+        bcsh_Cyl_now = bcsh_Cyl[8];
+        bcsh_Cyh_now = bcsh_Cyh[8];
     } else {
         for (i = 0; i < 8; i++) {
-            uint32_t ev_low = tuning->bcsh_au32EvList_now[i];
-            uint32_t ev_high = tuning->bcsh_au32EvList_now[i + 1];
-            if (ev_shifted >= ev_low && ev_shifted < ev_high) {
-                uint32_t range = ev_high - ev_low;
-                idx = i;
-                weight = range ? (((ev_shifted - ev_low) << 8) / range) : 0;
-                break;
-            }
+            uint32_t ev_lo = bcsh_EvList_now[i];
+            uint32_t ev_hi = bcsh_EvList_now[i + 1];
+
+            if (ev_shifted < ev_lo || ev_shifted > ev_hi)
+                continue;
+
+            bcsh_Svalue_base[0] = tiziano_bcsh_interp_u32(
+                bcsh_SminListS_now[i], bcsh_SminListS_now[i + 1],
+                ev_lo, ev_hi, ev_shifted);
+            bcsh_Svalue_base[1] = tiziano_bcsh_interp_u32(
+                bcsh_SmaxListS_now[i], bcsh_SmaxListS_now[i + 1],
+                ev_lo, ev_hi, ev_shifted);
+            bcsh_Svalue_base[2] = tiziano_bcsh_interp_u32(
+                bcsh_SminListM_now[i], bcsh_SminListM_now[i + 1],
+                ev_lo, ev_hi, ev_shifted);
+            bcsh_Svalue_base[3] = tiziano_bcsh_interp_u32(
+                bcsh_SmaxListM_now[i], bcsh_SmaxListM_now[i + 1],
+                ev_lo, ev_hi, ev_shifted);
+            bcsh_Cxl_now = tiziano_bcsh_interp_u32(
+                bcsh_Cxl[i], bcsh_Cxl[i + 1], ev_lo, ev_hi, ev_shifted);
+            bcsh_Cxh_now = tiziano_bcsh_interp_u32(
+                bcsh_Cxh[i], bcsh_Cxh[i + 1], ev_lo, ev_hi, ev_shifted);
+            bcsh_Cyl_now = tiziano_bcsh_interp_u32(
+                bcsh_Cyl[i], bcsh_Cyl[i + 1], ev_lo, ev_hi, ev_shifted);
+            bcsh_Cyh_now = tiziano_bcsh_interp_u32(
+                bcsh_Cyh[i], bcsh_Cyh[i + 1], ev_lo, ev_hi, ev_shifted);
+            break;
         }
     }
 
-    if (idx < 0) idx = 0; /* safety fallback */
-
-    /* Interpolate S-lists */
-    if (idx == 0 && weight == 0 && tuning->bcsh_au32EvList_now[0] > ev_shifted) {
-        /* Below min: use endpoint */
-        tuning->bcsh_saturation_value = tuning->bcsh_au32SminListS_now[0];
-        tuning->bcsh_saturation_max = tuning->bcsh_au32SmaxListS_now[0];
-        tuning->bcsh_saturation_min = tuning->bcsh_au32SminListM_now[0];
-        tuning->bcsh_saturation_mult = tuning->bcsh_au32SmaxListM_now[0];
-    } else if (idx == 8) {
-        /* Above max: use endpoint */
-        tuning->bcsh_saturation_value = tuning->bcsh_au32SminListS_now[8];
-        tuning->bcsh_saturation_max = tuning->bcsh_au32SmaxListS_now[8];
-        tuning->bcsh_saturation_min = tuning->bcsh_au32SminListM_now[8];
-        tuning->bcsh_saturation_mult = tuning->bcsh_au32SmaxListM_now[8];
-    } else {
-        /* Interpolate between idx and idx+1 */
-        #define INTERP8(arr, ix, w) ((arr)[ix] + ((((arr)[(ix)+1] - (arr)[ix]) * (w)) >> 8))
-        tuning->bcsh_saturation_value = INTERP8(tuning->bcsh_au32SminListS_now, idx, weight);
-        tuning->bcsh_saturation_max = INTERP8(tuning->bcsh_au32SmaxListS_now, idx, weight);
-        tuning->bcsh_saturation_min = INTERP8(tuning->bcsh_au32SminListM_now, idx, weight);
-        tuning->bcsh_saturation_mult = INTERP8(tuning->bcsh_au32SmaxListM_now, idx, weight);
-        #undef INTERP8
+    if (tuning) {
+        tuning->bcsh_saturation_value = bcsh_Svalue_base[0];
+        tuning->bcsh_saturation_max = bcsh_Svalue_base[1];
+        tuning->bcsh_saturation_min = bcsh_Svalue_base[2];
+        tuning->bcsh_saturation_mult = bcsh_Svalue_base[3];
     }
 
-    /* OEM EXACT: Interpolate Cxl/Cxh/Cyl/Cyh contrast clipping ranges.
-     * OEM does this in tiziano_bcsh_update alongside S-list interpolation. */
-    {
-        uint32_t *cxl = bcsh_wdr_enabled ? bcsh_Cxl_wdr : bcsh_Cxl;
-        uint32_t *cxh = bcsh_wdr_enabled ? bcsh_Cxh_wdr : bcsh_Cxh;
-        uint32_t *cyl = bcsh_wdr_enabled ? bcsh_Cyl_wdr : bcsh_Cyl;
-        uint32_t *cyh = bcsh_wdr_enabled ? bcsh_Cyh_wdr : bcsh_Cyh;
-
-        if (idx == 8 || (idx == 0 && weight == 0 && tuning->bcsh_au32EvList_now[0] > ev_shifted)) {
-            int ei = (idx == 8) ? 8 : 0;
-            bcsh_Cxl_now = cxl[ei];
-            bcsh_Cxh_now = cxh[ei];
-            bcsh_Cyl_now = cyl[ei];
-            bcsh_Cyh_now = cyh[ei];
-        } else {
-            bcsh_Cxl_now = cxl[idx] + (((cxl[idx+1] - cxl[idx]) * weight) >> 8);
-            bcsh_Cxh_now = cxh[idx] + (((cxh[idx+1] - cxh[idx]) * weight) >> 8);
-            bcsh_Cyl_now = cyl[idx] + (((cyl[idx+1] - cyl[idx]) * weight) >> 8);
-            bcsh_Cyh_now = cyh[idx] + (((cyh[idx+1] - cyh[idx]) * weight) >> 8);
-        }
-    }
-
-    /* Apply to hardware */
-    tiziano_bcsh_reg_apply(tuning);
-
-    /* OEM EXACT: clear BCSH_real after update (not before) */
+    tiziano_bcsh_Tccm_Comp2Orig();
+    tiziano_ct_bcsh_interpolation(ct_now);
+    tiziano_bcsh_Tccm_RGB2YUV(bcsh_HMatrix, tisp_BCSH_as32CCMMatrix);
+    tiziano_bcsh_Toffset_RGB2YUV((int32_t *)bcsh_OffsetRGB2yuv,
+                                 (const int32_t *)bcsh_OffsetRGB_now);
+    tiziano_bcsh_TransitParam();
+    tiziano_bcsh_lut_parameter(bcsh_clip0, bcsh_clip1, bcsh_clip2, bcsh_Offset0);
     BCSH_real = 0;
     return 0;
 }
@@ -7491,14 +7473,11 @@ int tisp_bcsh_s_rgb_coefft(const int32_t *coeff)
     uint32_t *dst;
     if (!coeff)
         return -EINVAL;
-    dst = bcsh_wdr_enabled ? bcsh_OffsetRGB_wdr : bcsh_OffsetRGB;
+    dst = bcsh_OffsetRGB_now;
     dst[0] = (uint32_t)coeff[0];
     dst[1] = (uint32_t)coeff[1];
     dst[2] = (uint32_t)coeff[2];
-
-    if (ourISPdev && ourISPdev->tuning_data)
-        return tiziano_bcsh_update(ourISPdev->tuning_data);
-    return 0;
+    return tiziano_bcsh_update(ourISPdev ? ourISPdev->tuning_data : NULL);
 }
 
 int tisp_bcsh_g_rgb_coefft(int32_t *out)
@@ -7506,7 +7485,7 @@ int tisp_bcsh_g_rgb_coefft(int32_t *out)
     uint32_t *src;
     if (!out)
         return -EINVAL;
-    src = bcsh_wdr_enabled ? bcsh_OffsetRGB_wdr : bcsh_OffsetRGB;
+    src = bcsh_OffsetRGB_now;
     out[0] = (int32_t)src[0];
     out[1] = (int32_t)src[1];
     out[2] = (int32_t)src[2];
@@ -7537,46 +7516,43 @@ static inline bool tuning_ready(void)
 int tisp_bcsh_s_hue(uint32_t val)
 {
     uint8_t scaled;
-    if (!tuning_ready())
-        return -ENODEV;
-    /* OEM scaling: bcsh_hue = ((val*0x78 - 1)/0x100) + 1, 8-bit */
     scaled = (uint8_t)((((uint32_t)val * 0x78u) - 1u) >> 8);
     scaled = (uint8_t)(scaled + 1u);
-    mutex_lock(&ourISPdev->tuning_data->mutex);
-    ourISPdev->tuning_data->bcsh_hue = scaled;
-    mutex_unlock(&ourISPdev->tuning_data->mutex);
-    return tiziano_bcsh_update(ourISPdev->tuning_data);
+    bcsh_hue_scaled = scaled;
+    bcsh_hue_user = (uint8_t)val;
+    if (ourISPdev && ourISPdev->tuning_data)
+        ourISPdev->tuning_data->bcsh_hue = scaled;
+    tiziano_bcsh_update(ourISPdev ? ourISPdev->tuning_data : NULL);
+    return 0;
 }
 
 int tisp_bcsh_g_hue(uint8_t *out)
 {
-    if (!out || !tuning_ready())
-        return -ENODEV;
-    *out = ourISPdev->tuning_data->bcsh_hue;
+    if (!out)
+        return -EINVAL;
+    *out = bcsh_hue_user;
     return *out;
 }
 
 int tisp_bcsh_brightness(uint32_t val)
 {
-    if (!tuning_ready())
-        return -ENODEV;
-    mutex_lock(&ourISPdev->tuning_data->mutex);
-    ourISPdev->tuning_data->bcsh_brightness = (uint8_t)val;
-    mutex_unlock(&ourISPdev->tuning_data->mutex);
-    return tiziano_bcsh_update(ourISPdev->tuning_data);
+    bcsh_brightness_user = (uint8_t)val;
+    if (ourISPdev && ourISPdev->tuning_data)
+        ourISPdev->tuning_data->bcsh_brightness = (uint8_t)val;
+    tiziano_bcsh_update(ourISPdev ? ourISPdev->tuning_data : NULL);
+    return 0;
 }
 
 int tisp_bcsh_contrast(uint32_t val)
 {
-    if (!tuning_ready())
-        return -ENODEV;
-    mutex_lock(&ourISPdev->tuning_data->mutex);
-    ourISPdev->tuning_data->bcsh_contrast = (uint8_t)val;
-    mutex_unlock(&ourISPdev->tuning_data->mutex);
-    return tiziano_bcsh_update(ourISPdev->tuning_data);
+    bcsh_contrast_user = (uint8_t)val;
+    if (ourISPdev && ourISPdev->tuning_data)
+        ourISPdev->tuning_data->bcsh_contrast = (uint8_t)val;
+    tiziano_bcsh_update(ourISPdev ? ourISPdev->tuning_data : NULL);
+    return 0;
 }
 
-int tisp_bcsh_saturation(struct isp_tuning_data *tuning, uint8_t value);
+int tisp_bcsh_saturation(uint32_t value);
 
 int tisp_set_brightness(int32_t val)
 {
@@ -7611,7 +7587,7 @@ int tisp_set_saturation(int32_t val)
     ourISPdev->tuning_data->saturation = (uint8_t)val;
     mutex_unlock(&ourISPdev->tuning_data->mutex);
 
-    return tisp_bcsh_saturation(ourISPdev->tuning_data, (uint8_t)val);
+    return tisp_bcsh_saturation((uint8_t)val);
 }
 
 /* OEM EXACT: tisp_s_ev_start → tiziano_ae_s_ev_start
@@ -7628,16 +7604,12 @@ EXPORT_SYMBOL(tisp_s_ev_start);
 
 int tisp_bcsh_g_brightness(void)
 {
-    if (!ourISPdev || !ourISPdev->tuning_data)
-        return -ENODEV;
-    return ourISPdev->tuning_data->bcsh_brightness;
+    return bcsh_brightness_user;
 }
 
 int tisp_bcsh_g_contrast(void)
 {
-    if (!ourISPdev || !ourISPdev->tuning_data)
-        return -ENODEV;
-    return ourISPdev->tuning_data->bcsh_contrast;
+    return bcsh_contrast_user;
 }
 
 int tisp_bcsh_set_mjpeg_contrast(uint32_t mode, uint32_t y_low, uint32_t fixed_contrast)
@@ -7645,61 +7617,101 @@ int tisp_bcsh_set_mjpeg_contrast(uint32_t mode, uint32_t y_low, uint32_t fixed_c
     s_bcsh_mjpeg_mode = mode;
     s_bcsh_mjpeg_y_range_low = y_low;
     s_bcsh_fixed_contrast = fixed_contrast;
-    if (ourISPdev && ourISPdev->tuning_data)
-        return tiziano_bcsh_update(ourISPdev->tuning_data);
-    return 0;
+    return tiziano_bcsh_update(ourISPdev ? ourISPdev->tuning_data : NULL);
 }
 
 int tisp_bcsh_set_attr(const void *in)
 {
-    if (!in) return -EINVAL;
+    static const uint32_t bcsh_identity_ccm[9] = {
+        0x400, 0x000, 0x000,
+        0x000, 0x400, 0x000,
+        0x000, 0x000, 0x400,
+    };
+
     memcpy(bcsh_attr_blob, in, sizeof(bcsh_attr_blob));
+    bcsh_ctrl = (int8_t)bcsh_attr_blob[0];
+    bcsh_ctrl_aux = bcsh_attr_blob[1];
+
+    if (bcsh_ctrl != 1) {
+        tiziano_bcsh_params_refresh();
+    } else {
+        memcpy(bcsh_CCM_d,     bcsh_identity_ccm, sizeof(bcsh_CCM_d));
+        memcpy(bcsh_CCM_t,     bcsh_identity_ccm, sizeof(bcsh_CCM_t));
+        memcpy(bcsh_CCM_a,     bcsh_identity_ccm, sizeof(bcsh_CCM_a));
+        memcpy(bcsh_CCM_d_wdr, bcsh_identity_ccm, sizeof(bcsh_CCM_d_wdr));
+        memcpy(bcsh_CCM_t_wdr, bcsh_identity_ccm, sizeof(bcsh_CCM_t_wdr));
+        memcpy(bcsh_CCM_a_wdr, bcsh_identity_ccm, sizeof(bcsh_CCM_a_wdr));
+
+        if (bcsh_ctrl_aux == 0) {
+            memset(bcsh_Sthres, 0, sizeof(bcsh_Sthres));
+            memset(bcsh_Sthres_wdr, 0, sizeof(bcsh_Sthres_wdr));
+        }
+    }
+
     BCSH_real = 1;
-    if (ourISPdev && ourISPdev->tuning_data)
-        return tiziano_bcsh_update(ourISPdev->tuning_data);
-    return 0;
+    return tiziano_bcsh_update(ourISPdev ? ourISPdev->tuning_data : NULL);
 }
 
 int tisp_bcsh_get_attr(void *out)
 {
-    if (!out) return -EINVAL;
     memcpy(out, bcsh_attr_blob, sizeof(bcsh_attr_blob));
     return 0;
 }
 
 int tisp_bcsh_g_saturation(void)
 {
-    if (!ourISPdev || !ourISPdev->tuning_data)
-        return -ENODEV;
-    return ourISPdev->tuning_data->bcsh_saturation;
+    return bcsh_saturation_user;
 }
 
 int tisp_bcsh_ev_update(uint32_t ev)
 {
-    if (!ourISPdev || !ourISPdev->tuning_data)
-        return -ENODEV;
-    ourISPdev->tuning_data->bcsh_ev = ev;
-    return tiziano_bcsh_update(ourISPdev->tuning_data);
+    uint32_t ev_shifted;
+    uint32_t prev_ev;
+    uint32_t delta;
+
+    if (ourISPdev && ourISPdev->tuning_data)
+        ourISPdev->tuning_data->bcsh_ev = ev;
+    bcsh_ev_current = ev;
+    ev_shifted = ev >> 10;
+    prev_ev = bcsh_last_ev;
+    delta = (prev_ev >= ev_shifted) ? (prev_ev - ev_shifted) : (ev_shifted - prev_ev);
+
+    if (BCSH_real == 1 || delta > bcsh_ev_threshold) {
+        tiziano_bcsh_update(NULL);
+        bcsh_last_ev = ev_shifted;
+    }
+    return 0;
 }
 
 int tisp_bcsh_ct_update(uint32_t ct)
 {
-    if (!tuning_ready())
-        return -ENODEV;
-    ourISPdev->tuning_data->wb_temp = ct;
-    return tiziano_bcsh_update(ourISPdev->tuning_data);
+    uint32_t prev_ct;
+    uint32_t delta;
+
+    if (ourISPdev && ourISPdev->tuning_data)
+        ourISPdev->tuning_data->wb_temp = ct;
+    bcsh_ct_current = ct;
+    prev_ct = bcsh_last_ct;
+    delta = (prev_ct >= ct) ? (prev_ct - ct) : (ct - prev_ct);
+
+    if (BCSH_real == 1 || delta > bcsh_ct_threshold) {
+        tiziano_bcsh_update(NULL);
+        bcsh_last_ct = ct;
+    }
+    return 0;
 }
 
 
 
-int tisp_bcsh_saturation(struct isp_tuning_data *tuning, uint8_t value)
+int tisp_bcsh_saturation(uint32_t value)
 {
-    if (!tuning)
-        return -EINVAL;
-
-    tuning->saturation = value;
-    tuning->bcsh_saturation = value;
-    return tiziano_bcsh_update(tuning);
+    bcsh_saturation_user = (uint8_t)value;
+    if (ourISPdev && ourISPdev->tuning_data) {
+        ourISPdev->tuning_data->saturation = (uint8_t)value;
+        ourISPdev->tuning_data->bcsh_saturation = (uint8_t)value;
+    }
+    tiziano_bcsh_update(ourISPdev ? ourISPdev->tuning_data : NULL);
+    return 0;
 }
 
 
@@ -10722,6 +10734,7 @@ int tisp_adr_param_array_set(int param_id, void *in_buf, int *size_buf)
 
     void *dst = NULL;
     int len = 0;
+    int reinit = 0;
     switch (param_id) {
         case 0x380: dst = &param_adr_para_array; len = 0x20; break;
         case 0x381: dst = &param_adr_weight_20_lut_array; len = 0x80; break;
@@ -10753,7 +10766,16 @@ int tisp_adr_param_array_set(int param_id, void *in_buf, int *size_buf)
             uint32_t *pdst = (uint32_t *)&param_adr_tool_control_array;
             uint32_t *psrc = (uint32_t *)in_buf;
             for (int i = 0; i < 0x38/4; ++i) {
-                if (i != 1) pdst[i] = psrc[i];
+                if (i != 1)
+                    pdst[i] = psrc[i];
+            }
+            if (param_adr_tool_control_array[0] == 0) {
+                memcpy(&param_adr_centre_w_dis_array, &param_adr_centre_w_dis_array_tmp, 0x7c);
+                memcpy(&param_adr_weight_20_lut_array, &param_adr_weight_20_lut_array_tmp, 0x80);
+                memcpy(&param_adr_weight_02_lut_array, &param_adr_weight_02_lut_array_tmp, 0x80);
+                memcpy(&param_adr_weight_12_lut_array, &param_adr_weight_12_lut_array_tmp, 0x80);
+                memcpy(&param_adr_weight_22_lut_array, &param_adr_weight_22_lut_array_tmp, 0x80);
+                memcpy(&param_adr_weight_21_lut_array, &param_adr_weight_21_lut_array_tmp, 0x80);
             }
             len = 0x38;
             break;
@@ -10776,13 +10798,14 @@ int tisp_adr_param_array_set(int param_id, void *in_buf, int *size_buf)
         case 0x3a9: dst = &adr_mapb4_list_wdr; len = 0x24; break;
         case 0x3aa: dst = &adr_blp2_list_wdr; len = 0x24; break;
         case 0x3ab:
-            dst = &adr_blp2_list; len = 0x24;
-            /* BN: tiziano_adr_params_init(); ev_changed = 1; */
-            ev_changed = 1;
+            dst = &adr_blp2_list;
+            len = 0x24;
+            reinit = 1;
             break;
     }
-    if (dst && len) {
+    if (dst && len)
         memcpy(dst, in_buf, len);
+    if (reinit) {
         tiziano_adr_params_init();
         ev_changed = 1;
     }
@@ -10976,8 +10999,10 @@ static uint8_t defog_trsy4_list_wdr[0x24];
 static uint8_t param_defog_main_para_wdr_array[0x2c];
 static uint8_t param_defog_block_t_x_wdr_array[0x14];
 static uint8_t param_defog_fpga_para_wdr_array[0x40];
-/* OEM default "_tmp" tables used when RGBRA[0]==0 */
-static const uint8_t param_defog_cent3_w_dis_array_tmp[0x60] = {
+/* OEM default "_tmp" tables used when RGBRA[0]==0.
+ * Keep these mutable so the OEM 3x3/5x5 generator can rebuild them for
+ * non-baked geometries. */
+static uint8_t param_defog_cent3_w_dis_array_tmp[0x60] = {
     0x10,0x00,0x00,0x00, 0x21,0x00,0x00,0x00, 0x32,0x00,0x00,0x00, 0x44,0x00,0x00,0x00,
     0x57,0x00,0x00,0x00, 0x6b,0x00,0x00,0x00, 0x81,0x00,0x00,0x00, 0x97,0x00,0x00,0x00,
     0xaf,0x00,0x00,0x00, 0xc8,0x00,0x00,0x00, 0xe4,0x00,0x00,0x00, 0x01,0x01,0x00,0x00,
@@ -10986,7 +11011,7 @@ static const uint8_t param_defog_cent3_w_dis_array_tmp[0x60] = {
     0xe8,0x02,0x00,0x00, 0x68,0x03,0x00,0x00, 0x2b,0x04,0x00,0x00, 0xcf,0x05,0x00,0x00
 };
 
-static const uint8_t param_defog_cent5_w_dis_array_tmp[0x7c] = {
+static uint8_t param_defog_cent5_w_dis_array_tmp[0x7c] = {
     0x22,0x00,0x00,0x00, 0x44,0x00,0x00,0x00, 0x68,0x00,0x00,0x00, 0x8e,0x00,0x00,0x00,
     0xb4,0x00,0x00,0x00, 0xdc,0x00,0x00,0x00, 0x06,0x01,0x00,0x00, 0x31,0x01,0x00,0x00,
     0x5f,0x01,0x00,0x00, 0x8e,0x01,0x00,0x00, 0xc0,0x01,0x00,0x00, 0xf4,0x01,0x00,0x00,
@@ -10997,7 +11022,7 @@ static const uint8_t param_defog_cent5_w_dis_array_tmp[0x7c] = {
     0x4f,0x0a,0x00,0x00, 0x63,0x0c,0x00,0x00, 0xdc,0x10,0x00,0x00
 };
 
-static const uint8_t param_defog_weightlut21_tmp[0x80] = {
+static uint8_t param_defog_weightlut21_tmp[0x80] = {
     0x00,0x00,0x00,0x00, 0x00,0x00,0x00,0x00, 0x00,0x00,0x00,0x00, 0x00,0x00,0x00,0x00,
     0x00,0x00,0x00,0x00, 0x00,0x00,0x00,0x00, 0x01,0x00,0x00,0x00, 0x01,0x00,0x00,0x00,
     0x01,0x00,0x00,0x00, 0x02,0x00,0x00,0x00, 0x02,0x00,0x00,0x00, 0x02,0x00,0x00,0x00,
@@ -11008,7 +11033,7 @@ static const uint8_t param_defog_weightlut21_tmp[0x80] = {
     0x0a,0x00,0x00,0x00, 0x0a,0x00,0x00,0x00, 0x0a,0x00,0x00,0x00
 };
 
-static const uint8_t param_defog_weightlut22_tmp[0x80] = {
+static uint8_t param_defog_weightlut22_tmp[0x80] = {
     0x00,0x00,0x00,0x00, 0x00,0x00,0x00,0x00, 0x00,0x00,0x00,0x00, 0x00,0x00,0x00,0x00,
     0x00,0x00,0x00,0x00, 0x00,0x00,0x00,0x00, 0x00,0x00,0x00,0x00, 0x01,0x00,0x00,0x00,
     0x01,0x00,0x00,0x00, 0x01,0x00,0x00,0x00, 0x02,0x00,0x00,0x00, 0x02,0x00,0x00,0x00,
@@ -11017,7 +11042,7 @@ static const uint8_t param_defog_weightlut22_tmp[0x80] = {
     0x03,0x00,0x00,0x00, 0x03,0x00,0x00,0x00, 0x03,0x00,0x00,0x00, 0x03,0x00,0x00,0x00
 };
 
-static const uint8_t param_defog_weightlut12_tmp[0x80] = {
+static uint8_t param_defog_weightlut12_tmp[0x80] = {
     0x00,0x00,0x00,0x00, 0x00,0x00,0x00,0x00, 0x00,0x00,0x00,0x00, 0x00,0x00,0x00,0x00,
     0x00,0x00,0x00,0x00, 0x01,0x00,0x00,0x00, 0x01,0x00,0x00,0x00, 0x01,0x00,0x00,0x00,
     0x02,0x00,0x00,0x00, 0x02,0x00,0x00,0x00, 0x02,0x00,0x00,0x00, 0x03,0x00,0x00,0x00,
@@ -11028,7 +11053,7 @@ static const uint8_t param_defog_weightlut12_tmp[0x80] = {
     0x0b,0x00,0x00,0x00
 };
 
-static const uint8_t param_defog_weightlut02_tmp[0x80] = {
+static uint8_t param_defog_weightlut02_tmp[0x80] = {
     0x00,0x00,0x00,0x00, 0x00,0x00,0x00,0x00, 0x00,0x00,0x00,0x00, 0x00,0x00,0x00,0x00,
     0x00,0x00,0x00,0x00, 0x01,0x00,0x00,0x00, 0x01,0x00,0x00,0x00, 0x02,0x00,0x00,0x00,
     0x02,0x00,0x00,0x00, 0x02,0x00,0x00,0x00, 0x03,0x00,0x00,0x00, 0x03,0x00,0x00,0x00,
@@ -11039,7 +11064,7 @@ static const uint8_t param_defog_weightlut02_tmp[0x80] = {
     0x0d,0x00,0x00,0x00, 0x0d,0x00,0x00,0x00, 0x0d,0x00,0x00,0x00
 };
 
-static const uint8_t param_defog_weightlut20_tmp[0x80] = {
+static uint8_t param_defog_weightlut20_tmp[0x80] = {
     0x00,0x00,0x00,0x00, 0x00,0x00,0x00,0x00, 0x00,0x00,0x00,0x00, 0x00,0x00,0x00,0x00,
     0x00,0x00,0x00,0x00, 0x01,0x00,0x00,0x00, 0x01,0x00,0x00,0x00, 0x02,0x00,0x00,0x00,
     0x02,0x00,0x00,0x00, 0x02,0x00,0x00,0x00, 0x03,0x00,0x00,0x00, 0x03,0x00,0x00,0x00,
@@ -11400,6 +11425,7 @@ static uint8_t *defog_trsy4_list_now = defog_trsy4_list;
 static uint8_t *param_defog_main_para_now = defog_main_para_array;
 static uint8_t *param_defog_fpga_para_now = param_defog_fpga_para_array;
 static uint8_t *param_defog_block_t_x_now = defog_block_t_x_array;
+static uint32_t defog_ev_now;
 
 static uint32_t defog_strength_attr = 128;
 
@@ -11453,6 +11479,12 @@ static int tisp_set_defog_strength(uint8_t *strength_ptr)
 {
     tisp_s_defog_str_internal(strength_ptr);
     return 0;
+}
+
+static int tisp_defog_ev_update(uint32_t ev, uint32_t aux_ev)
+{
+	defog_ev_now = (aux_ev << 22) | (ev >> 10);
+	return 0;
 }
 
 static int tisp_defog_all_reg_refresh(void)
@@ -11917,7 +11949,10 @@ static int tisp_defog_param_array_set(int param_id, void *in_buf, int *size_buf)
         case 0x37c: dst = param_defog_main_para_wdr_array; len = 0x2c; break;
         case 0x37d: dst = param_defog_block_t_x_wdr_array; len = 0x14; break;
         case 0x37e: dst = param_defog_fpga_para_wdr_array; len = 0x40; break;
-        case 0x37f: dst = param_defog_fpga_para_array;     len = 0x40; break;
+        case 0x37f:
+            dst = param_defog_fpga_para_array;
+            len = 0x40;
+            break;
 
         default:
             *size_buf = 0;
@@ -11926,6 +11961,10 @@ static int tisp_defog_param_array_set(int param_id, void *in_buf, int *size_buf)
 
     memcpy(dst, in_buf, len);
     *size_buf = len;
+
+    if (param_id == 0x37f)
+        tiziano_defog_params_init();
+
     return 0;
 }
 
@@ -12565,8 +12604,6 @@ int tisp_bcsh_param_array_get(int param_id, void *out_buf, int *size_buf)
 {
     const void *src = NULL;
     int size = 0;
-    if (!out_buf || !size_buf)
-        return -EINVAL;
 
     switch (param_id) {
     /* Normal bank */
@@ -12614,8 +12651,9 @@ int tisp_bcsh_param_array_get(int param_id, void *out_buf, int *size_buf)
     case 0x3e5: src = bcsh_clip2;            size = 0x10; break;
 
     default:
-        *size_buf = 0;
-        return 0;
+        pr_err("%s,%d: BCSH not support param id %d\n",
+               "tisp_bcsh_param_array_get", __LINE__, param_id);
+        return -1;
     }
 
     memcpy(out_buf, src, size);
@@ -12626,8 +12664,6 @@ int tisp_bcsh_param_array_get(int param_id, void *out_buf, int *size_buf)
 int tisp_bcsh_param_array_set(int param_id, void *in_buf, int *size_buf)
 {
     int size = 0;
-    if (!in_buf || !size_buf)
-        return -EINVAL;
 
     switch (param_id) {
     /* Normal bank */
@@ -12643,7 +12679,7 @@ int tisp_bcsh_param_array_set(int param_id, void *in_buf, int *size_buf)
     case 0x3c9: memcpy(bcsh_SmaxListS, in_buf, (size = 0x24)); break;
     case 0x3ca: memcpy(bcsh_SminListM, in_buf, (size = 0x24)); break;
     case 0x3cb: memcpy(bcsh_SmaxListM, in_buf, (size = 0x24)); break;
-    case 0x3cc: memcpy(bcsh_C,         in_buf, (size = 0x14)); break;
+    case 0x3cc: size = 0x14; memcpy(&bcsh_C[0], in_buf, size); break;
     case 0x3cd: memcpy(bcsh_Cxl,       in_buf, (size = 0x24)); break;
     case 0x3ce: memcpy(bcsh_Cxh,       in_buf, (size = 0x24)); break;
     case 0x3cf: memcpy(bcsh_Cyl,       in_buf, (size = 0x24)); break;
@@ -12670,39 +12706,20 @@ int tisp_bcsh_param_array_set(int param_id, void *in_buf, int *size_buf)
     case 0x3e2: memcpy(bcsh_OffsetRGB_wdr, in_buf, (size = 0x0c)); break;
 
     /* Global matrices and clip2 */
-    case 0x3e3: tiziano_set_bcsh_matrix((const int32_t *)in_buf); size = 0x24; break;
+    case 0x3e3: memcpy(tiziano_MMatrix,    in_buf, (size = 0x24)); break;
     case 0x3e4: memcpy(tiziano_MinvMatrix, in_buf, (size = 0x24)); break;
     case 0x3e5: memcpy(bcsh_clip2,         in_buf, (size = 0x10)); break;
 
     default:
-        *size_buf = 0;
-        return 0;
+        pr_err("%s,%d: BCSH not support param id %d\n",
+               "tisp_bcsh_param_array_set", __LINE__, param_id);
+        return -1;
     }
 
     *size_buf = size;
-
-    /* If changing the active bank, propagate into the runtime "now" arrays */
-    if (ourISPdev && ourISPdev->tuning_data) {
-        struct isp_tuning_data *tuning = ourISPdev->tuning_data;
-        int i;
-        mutex_lock(&tuning->mutex);
-        if (!bcsh_wdr_enabled) {
-            if (param_id == 0x3c7)       for (i = 0; i < 9; ++i) tuning->bcsh_au32EvList_now[i]    = bcsh_EvList[i];
-            else if (param_id == 0x3c8)  for (i = 0; i < 9; ++i) tuning->bcsh_au32SminListS_now[i] = bcsh_SminListS[i];
-            else if (param_id == 0x3c9)  for (i = 0; i < 9; ++i) tuning->bcsh_au32SmaxListS_now[i] = bcsh_SmaxListS[i];
-            else if (param_id == 0x3ca)  for (i = 0; i < 9; ++i) tuning->bcsh_au32SminListM_now[i] = bcsh_SminListM[i];
-            else if (param_id == 0x3cb)  for (i = 0; i < 9; ++i) tuning->bcsh_au32SmaxListM_now[i] = bcsh_SmaxListM[i];
-        } else {
-            if (param_id == 0x3dd)       for (i = 0; i < 9; ++i) tuning->bcsh_au32EvList_now[i]    = bcsh_EvList_wdr[i];
-            else if (param_id == 0x3de)  for (i = 0; i < 9; ++i) tuning->bcsh_au32SminListS_now[i] = bcsh_SminListS_wdr[i];
-            else if (param_id == 0x3df)  for (i = 0; i < 9; ++i) tuning->bcsh_au32SmaxListS_now[i] = bcsh_SmaxListS_wdr[i];
-            else if (param_id == 0x3e0)  for (i = 0; i < 9; ++i) tuning->bcsh_au32SminListM_now[i] = bcsh_SminListM_wdr[i];
-            else if (param_id == 0x3e1)  for (i = 0; i < 9; ++i) tuning->bcsh_au32SmaxListM_now[i] = bcsh_SmaxListM_wdr[i];
-        }
-        mutex_unlock(&tuning->mutex);
-        BCSH_real = 1;
-        (void)tiziano_bcsh_update(tuning);
-    }
+    BCSH_real = 1;
+    if (ourISPdev && ourISPdev->tuning_data)
+        (void)tiziano_bcsh_update(ourISPdev->tuning_data);
 
     return 0;
 }
@@ -13090,9 +13107,9 @@ int tisp_hldc_param_array_set(int param_id, void *in_buf, int *size_buf)
 #define AWB_STATS_ROWS   15
 #define AWB_STATS_ZONES  (AWB_STATS_COLS * AWB_STATS_ROWS)
 
-/* Live AWB stats arrays — read by JZ_Isp_Awb under local_irq_save.
- * ISR writes to the _shadow arrays below; the event dispatch copies
- * shadow→live atomically so the callback never sees partial updates. */
+/* Live AWB stats arrays — OEM writes AWB DMA samples directly into these
+ * before it queues event 10. Keep the consumer on the same storage so a later
+ * IRQ cannot replace a good bank in shadow staging before AWB runs. */
 static uint32_t awb_array_r[AWB_STATS_ZONES];
 static uint32_t awb_array_g[AWB_STATS_ZONES];
 static uint32_t awb_array_b[AWB_STATS_ZONES];
@@ -13425,11 +13442,16 @@ int tiziano_awb_dn_params_refresh(void)
 {
 	int ret;
 
+	/* OEM 0x1914c only marks the history reset path, refreshes params, and
+	 * reapplies the AWB hardware state. Clearing the live/runtime buffers here
+	 * is a local divergence that drops valid banks during day/night changes. */
 	awb_history_reset = 1;
 	awb_dn_refresh_flag = 1;
 	awb_irq_diag_armed = 1;
 	awb_transition_diag_frames = 4;
+	awb_shadow_ready = 0;
 	tiziano_awb_params_refresh();
+
 	tiziano_awb_dump_producer_state("dn-before-hw");
 	ret = tiziano_awb_set_hardware_param();
 	if (ret == 0)
@@ -13961,16 +13983,11 @@ int tisp_ydns_get_par_cfg(void *out_buf, void *size_buf)
 /* tisp_bcsh_get_par_cfg - Binary Ninja EXACT implementation */
 int tisp_bcsh_get_par_cfg(void *out_buf, void *size_buf)
 {
-    if (!out_buf || !size_buf) {
-        pr_err("tisp_bcsh_get_par_cfg: NULL buffer pointers\n");
-        return -EINVAL;
-    }
-
     char *output_ptr = (char *)out_buf;
     int total_size = 0;
     int temp_size = 0;
 
-    /* Binary Ninja: for (int32_t i = 0x3c0; i != 0x3e6; i++) */
+    *(int *)size_buf = 0;
     for (int i = 0x3c0; i < 0x3e6; i++) {
         tisp_bcsh_param_array_get(i, output_ptr, &temp_size);
         output_ptr += temp_size;
@@ -13978,7 +13995,6 @@ int tisp_bcsh_get_par_cfg(void *out_buf, void *size_buf)
     }
 
     *(int *)size_buf = total_size;
-    pr_debug("tisp_bcsh_get_par_cfg: Total size=%d\n", total_size);
     return 0;
 }
 
@@ -14229,10 +14245,7 @@ int tisp_lsc_param_array_set(int param_id, void *in_buf, int *size_buf)
     lsc_last_str = 0;
     lsc_force_update = 1;
     *size_buf = data_size;
-    if (!tisp_lsc_bypass_active())
-        tisp_lsc_write_lut_datas();
-    else
-        lsc_force_update = 0;
+    tisp_lsc_write_lut_datas();
     pr_debug("tisp_lsc_param_array_set: ID=0x%x, size=%d\n", param_id, data_size);
     return 0;
 }
@@ -14445,8 +14458,6 @@ int tisp_defog_set_par_cfg(void *in_buf)
         tisp_defog_param_array_set(i, p, &sz);
         p += sz; total += sz;
     }
-    /* Apply to hardware via params init, per OEM */
-    tiziano_defog_params_init();
     pr_debug("tisp_defog_set_par_cfg: total=%d\n", total);
     return 0;
 }
@@ -14490,12 +14501,8 @@ int tisp_bcsh_set_par_cfg(void *in_buf)
     int size = 0;
     int id;
 
-    if (!p)
-        return -EINVAL;
-
     for (id = 0x3c0; id < 0x3e6; ++id) {
-        size = 0;
-        (void)tisp_bcsh_param_array_set(id, p, &size);
+        tisp_bcsh_param_array_set(id, p, &size);
         p += size;
     }
     return 0;
@@ -14765,12 +14772,16 @@ int tisp_awb_ev_update(uint32_t ev)
 int tiziano_s_awb_start(uint32_t gain0, uint32_t gain1)
 {
 	uint32_t *mf = (uint32_t *)_awb_mf_para;
+	void *blocks[3] = { tparams_day, tparams_night, tparams_active };
+	int i;
 
-	if (tparams_day) {
-		memcpy((u8 *)tparams_day + 0x10e8, &gain0, sizeof(gain0));
-		memcpy((u8 *)tparams_day + 0x10ec, &gain1, sizeof(gain1));
-		memcpy((u8 *)tparams_day + 0x10f0, &gain0, sizeof(gain0));
-		memcpy((u8 *)tparams_day + 0x10f4, &gain1, sizeof(gain1));
+	for (i = 0; i < ARRAY_SIZE(blocks); ++i) {
+		if (!blocks[i])
+			continue;
+		memcpy((u8 *)blocks[i] + 0x10e8, &gain0, sizeof(gain0));
+		memcpy((u8 *)blocks[i] + 0x10ec, &gain1, sizeof(gain1));
+		memcpy((u8 *)blocks[i] + 0x10f0, &gain0, sizeof(gain0));
+		memcpy((u8 *)blocks[i] + 0x10f4, &gain1, sizeof(gain1));
 	}
 
 	/* OEM EXACT: write gains directly to _awb_mf_para[2..5].
@@ -15080,8 +15091,9 @@ static int subsection_light(const uint32_t *mesh_a, const uint32_t *mesh_b,
     for (i = 0; i < 9; i++) {
         uint32_t a = mesh_a[i], b = mesh_b[i];
         uint32_t dist = (b >= a) ? (b - a) : (a - b);
-        int64_t val = (int64_t)b * 1000 - (int64_t)dist * weight;
-        out[i] = (int32_t)(val / 1000);
+        int32_t val = (int32_t)(b * 1000) - (int32_t)(dist * weight);
+
+        out[i] = val / 1000;
     }
     return 1000;
 }
@@ -15725,7 +15737,33 @@ int tisp_get_brightness(uint32_t *v) { if (v && ourISPdev && ourISPdev->tuning_d
 int tisp_get_contrast(uint32_t *v) { if (v && ourISPdev && ourISPdev->tuning_data) { *v = ourISPdev->tuning_data->bcsh_contrast; return 0; } return -EINVAL; }
 int tisp_get_saturation(uint32_t *v) { if (v && ourISPdev && ourISPdev->tuning_data) { *v = ourISPdev->tuning_data->bcsh_saturation; return 0; } return -EINVAL; }
 int tisp_get_sharpness(uint32_t *v) { if (v) { *v = tisp_dmsc_sharpness_get(); return 0; } return -EINVAL; }
-int tisp_get_bcsh_hue(uint32_t *v) { if (v && ourISPdev && ourISPdev->tuning_data) { *v = ourISPdev->tuning_data->bcsh_hue; return 0; } return -EINVAL; }
+int tisp_set_bcsh_hue(uint32_t value)
+{
+    tisp_bcsh_s_hue((uint8_t)value);
+    return 0;
+}
+
+int tisp_set_bcsh_fixed_contrast(const uint8_t *cfg)
+{
+    if (!cfg)
+        return -EINVAL;
+    tisp_bcsh_set_mjpeg_contrast(cfg[0], cfg[1], cfg[2]);
+    return 0;
+}
+
+int tisp_get_bcsh_hue(uint32_t *v)
+{
+    uint8_t hue = 0;
+
+    if (!v)
+        return -EINVAL;
+
+    *v = 0;
+    if (tisp_bcsh_g_hue(&hue) < 0)
+        return -EINVAL;
+    *v = hue;
+    return hue;
+}
 /* OEM EXACT: tisp_get_antiflicker_step (0x65e44) — tailcall to tisp_ae_get_antiflicker_step */
 int tisp_get_antiflicker_step(uint32_t *lut, uint32_t *count) { return tisp_ae_get_antiflicker_step(lut, count); }
 /* OEM EXACT: tisp_g_adr_str_internal (0x4ce1c) — return adr_ratio */
@@ -16916,6 +16954,10 @@ int tiziano_ae_init(uint32_t height, uint32_t width, uint32_t fps)
 
     /* Binary Ninja EXACT: tiziano_ae_init_exp_th() */
     tiziano_ae_init_exp_th();
+
+    /* Keep OEM histogram-based brightness feedback enabled on the
+     * standard Bayer path. */
+    data_9a2ec = 1;
 
     /* OEM starts _ae_reg.data[0] at 0 (BSS-zeroed). ae0_tune2 computes
      * a new value from scratch on the first frame. No seed needed. */
@@ -19126,16 +19168,16 @@ static int JZ_Isp_Get_Awb_Statistics(void *buffer, uint32_t flags)
 			u32 w2 = src[2];
 			u32 w3 = src[3];
 
-			awb_shadow_r[idx] = w0 & 0x1fffff;
-			awb_shadow_g[idx] = ((w1 & 0x3ff) << 11) | (w0 >> 21);
-			awb_shadow_b[idx] = (w1 & 0x7ffffc00) >> 10;
-			awb_shadow_ir[idx] = ((w2 & 0xfffff) << 1) | (w1 >> 31);
-			awb_shadow_p[idx] = ((w3 & 1) << 12) | (w2 >> 20);
+			awb_array_r[idx] = w0 & 0x1fffff;
+			awb_array_g[idx] = ((w1 & 0x3ff) << 11) | (w0 >> 21);
+			awb_array_b[idx] = (w1 & 0x7ffffc00) >> 10;
+			awb_array_ir[idx] = ((w2 & 0xfffff) << 1) | (w1 >> 31);
+			awb_array_p[idx] = ((w3 & 1) << 12) | (w2 >> 20);
 			src += 4;
 		}
 	}
 
-	awb_shadow_ready = 1;
+	awb_shadow_ready = 0;
 	return 0;
 }
 
@@ -19226,14 +19268,6 @@ static int JZ_Isp_Awb(void)
 		pr_info("JZ_Isp_Awb[%u]: ct=%u ev_data=%u algo_mode=%u\n",
 			awb_algo_count, _awb_ct, awb_ev_data, awb_algo_mode);
 
-	if (awb_shadow_ready) {
-		memcpy(awb_array_r, awb_shadow_r, sizeof(awb_array_r));
-		memcpy(awb_array_g, awb_shadow_g, sizeof(awb_array_g));
-		memcpy(awb_array_b, awb_shadow_b, sizeof(awb_array_b));
-		memcpy(awb_array_ir, awb_shadow_ir, sizeof(awb_array_ir));
-		memcpy(awb_array_p, awb_shadow_p, sizeof(awb_array_p));
-		awb_shadow_ready = 0;
-	}
 	if (awb_transition_diag_frames != 0) {
 		pr_info("AWB_CONSUME[%u]: bank_off=0x%x raw0=[%08x %08x %08x %08x] "
 			"zone0=R%u G%u B%u P%u\n",
@@ -19350,8 +19384,8 @@ int awb_interrupt_static(void)
 			pr_info("AWB_IRQ1: zone0 raw=[%08x %08x %08x %08x] "
 				"R=%u G=%u B=%u P=%u\n",
 				buf[0], buf[1], buf[2], buf[3],
-				awb_shadow_r[0], awb_shadow_g[0],
-				awb_shadow_b[0], awb_shadow_p[0]);
+				awb_array_r[0], awb_array_g[0],
+				awb_array_b[0], awb_array_p[0]);
 		}
 	} else {
 		u32 *buf = (u32 *)buffer_addr;
@@ -19825,10 +19859,11 @@ static int tiziano_gib_lut_parameter(void)
         (GIB_CFG_BLC_THR << 4) |
         (GIB_CFG_BLC_GAIN << 2));
 
-    /* OEM EXACT: 0x106c via system_reg_write_gib gate.
-     * OEM uses data_9a2ec (AE comp mode flag) for bit 16, NOT GIB_CFG_DEIR_EN. */
+    /* Program 0x106c through the GIB write gate. Keep the DEIR enable shadow
+     * separate from AE histogram-scaling state so color-path bring-up does not
+     * silently disable AE brightness feedback. */
     system_reg_write_gib(1, 0x106c,
-        (data_9a2ec << 16) |
+        (gib_deir_gate_en << 16) |
         (GIB_CFG_DEIR_MODE << 3) |
         GIB_CFG_DEIR_STR);
 
@@ -20011,13 +20046,13 @@ int tiziano_gib_dn_params_refresh(void)
 
     tiziano_gib_params_refresh();
 
-    /* OEM EXACT: unconditionally set data_9a2ec based on deir_en */
+    /* Track the DEIR gate bit independently from AE state. */
     if (deir_en != 1)
-        data_9a2ec = 0;
+        gib_deir_gate_en = 0;
     else if (ourISPdev->day_night != 0)
-        data_9a2ec = 0;
+        gib_deir_gate_en = 0;
     else
-        data_9a2ec = deir_en;
+        gib_deir_gate_en = deir_en;
 
     tiziano_gib_lut_parameter();
     return 0;
@@ -20037,14 +20072,14 @@ int tiziano_gib_init(void)
 
     tiziano_gib_params_refresh();
 
-    /* OEM EXACT: unconditionally set data_9a2ec based on deir_en.
-     * For standard Bayer sensors (deir_en=0), data_9a2ec=0. */
+    /* Track the DEIR gate bit independently from AE state.
+     * For standard Bayer sensors (deir_en=0), the gate remains clear. */
     if (deir_en != 1)
-        data_9a2ec = 0;
+        gib_deir_gate_en = 0;
     else if (ourISPdev->day_night != 0)
-        data_9a2ec = 0;
+        gib_deir_gate_en = 0;
     else
-        data_9a2ec = deir_en;
+        gib_deir_gate_en = deir_en;
 
     tiziano_gib_lut_parameter();
     tiziano_gib_deir_reg(tiziano_gib_deir_r_m,
@@ -20060,12 +20095,12 @@ int tiziano_gib_init(void)
         u32 r1068 = system_reg_read(0x1068);
         u32 r106c = system_reg_read(0x106c);
         u32 exp_1038 = (GIB_CFG_WGT_HI << 16) | GIB_CFG_WGT_LO;
-        u32 exp_106c = (data_9a2ec << 16) | (GIB_CFG_DEIR_MODE << 3) | GIB_CFG_DEIR_STR;
+        u32 exp_106c = (gib_deir_gate_en << 16) | (GIB_CFG_DEIR_MODE << 3) | GIB_CFG_DEIR_STR;
 
         pr_info("GIB_INIT: 0x1038=%08x(exp=%08x) 0x103c=%08x\n", r1038, exp_1038, r103c);
         pr_info("GIB_INIT: 0x1060=%08x 0x1064=%08x 0x1068=%08x\n", r1060, r1064, r1068);
-        pr_info("GIB_INIT: 0x106c=%08x(exp=%08x) data_9a2ec=%u deir_en=%u\n",
-                r106c, exp_106c, data_9a2ec, deir_en);
+        pr_info("GIB_INIT: 0x106c=%08x(exp=%08x) deir_gate=%u deir_en=%u\n",
+                r106c, exp_106c, gib_deir_gate_en, deir_en);
         pr_info("GIB_INIT: bypass=0x%08x reg8=0x%08x GIB_bit5=%s\n",
                 system_reg_read(0xc), system_reg_read(0x8),
                 (system_reg_read(0xc) & 0x20) ? "BYPASSED" : "ACTIVE");
@@ -20224,9 +20259,6 @@ static int tisp_lsc_judge_gain_update_flag(void)
     if (lsc_gain_update_flag == 1)
         return 0;
 
-    if (!data_9a420)
-        data_9a420 = lsc_wdr_en ? lsc_mesh_str_wdr : lsc_mesh_str;
-
     str = tisp_simple_intp(lsc_gain_curr >> 16, lsc_gain_curr & 0xffff, data_9a420);
     lsc_curr_str = str;
 
@@ -20244,14 +20276,6 @@ int tisp_lsc_write_lut_datas(void)
     static uint32_t lsc_count = 0;
 
     pr_debug("tisp_lsc_write_lut_datas: Writing LSC LUT data\n");
-
-    if (tisp_lsc_bypass_active()) {
-        lsc_ct_update_flag = 0;
-        lsc_gain_update_flag = 0;
-        lsc_force_update = 0;
-        pr_info("tisp_lsc_write_lut_datas: skipping LUT write because LSC bypass is active\n");
-        return 0;
-    }
 
     lsc_count += 1;
 
@@ -20417,14 +20441,6 @@ int tisp_lsc_write_lut_datas(void)
 /* tiziano_lsc_init - Binary Ninja EXACT implementation */
 int tiziano_lsc_init(void)
 {
-    if (tisp_lsc_bypass_active()) {
-        lsc_last_mode = 5;
-        lsc_last_str = 0;
-        lsc_force_update = 0;
-        pr_info("tiziano_lsc_init: skipping LSC init because bypass is active\n");
-        return 0;
-    }
-
     pr_info("tiziano_lsc_init: Initializing Lens Shading Correction\n");
 
     /* Binary Ninja: Select mesh strength based on WDR mode */
@@ -20834,6 +20850,17 @@ static void jz_isp_ccm_para2reg(int32_t *reg_data, const int32_t *param_data)
     }
 }
 
+static void tisp_ccm_fill_identity_reg_data(int32_t *reg_data)
+{
+    static const int32_t identity_reg_data[9] = {
+        0x0400, 0x0000, 0x0000,
+        0x0000, 0x0400, 0x0000,
+        0x0000, 0x0000, 0x0400,
+    };
+
+    memcpy(reg_data, identity_reg_data, sizeof(identity_reg_data));
+}
+
 /* tiziano_ccm_params_refresh - OEM static CCM payload from tx-isp-t31.ko.
  * BN decomp shows fixed memcpy() sources at 0x8e6e4..0x8e860, not tuning-bin
  * offsets. Matrix/saturation tables are only refreshed while ccm_ctrl[0] == 0;
@@ -20989,6 +21016,12 @@ int jz_isp_ccm(void)
     /* Step 5: convert signed → unsigned 14-bit register format */
     int32_t reg_data[9];
     jz_isp_ccm_para2reg(reg_data, final_matrix);
+
+    if (tisp_force_identity_ccm) {
+        tisp_ccm_fill_identity_reg_data(reg_data);
+        pr_info("jz_isp_ccm: forcing identity CCM for isolation (EV=%u CT=%d sat=%u)\n",
+            ev_value, ct_value, data_c52fc);
+    }
 
     /* Step 6: write to hardware */
     int ret = tiziano_ccm_lut_parameter(reg_data);
@@ -25325,12 +25358,6 @@ int tisp_defog_process(void)
  */
 int tiziano_defog_init(uint32_t width, uint32_t height)
 {
-    if (tisp_force_bypass_defog) {
-        pr_warn("tiziano_defog_init: skipping Defog init because bypass isolation is active (%ux%u)\n",
-                width, height);
-        return 0;
-    }
-
     /* OEM: defog_frm_num = 0 at start of tiziano_defog_init */
     defog_frm_num = 0;
 
@@ -25399,6 +25426,9 @@ int tiziano_defog_init(uint32_t width, uint32_t height)
             defog_block_area_div_edge_w = (uint32_t)div_u64((uint64_t)1 << 36, area_ew);
             defog_block_area_div_edge_h = (uint32_t)div_u64((uint64_t)1 << 36, area_eh);
             defog_block_area_div_corner = (uint32_t)div_u64((uint64_t)1 << 36, area_cr);
+
+            /* OEM falls back to regenerated cent/weight tables for unknown geometry. */
+            defog_3x3_5x5_params_init(width, height);
         }
     }
 
@@ -25447,18 +25477,31 @@ uint32_t param_adr_weight_12_lut_array[32]; /* Final Weight LUT 12 */
 uint32_t param_adr_weight_22_lut_array[32]; /* Final Weight LUT 22 */
 uint32_t param_adr_weight_21_lut_array[32]; /* Final Weight LUT 21 */
 
-/* ADR working (tmp) arrays — populated from resolution-specific sources, then
- * copied to final arrays above when param_adr_tool_control_array == 0 */
-static uint32_t param_adr_centre_w_dis_array_tmp[31];
-static uint32_t param_adr_weight_20_lut_array_tmp[32];
-static uint32_t param_adr_weight_02_lut_array_tmp[32];
-static uint32_t param_adr_weight_12_lut_array_tmp[32];
-static uint32_t param_adr_weight_22_lut_array_tmp[32];
-static uint32_t param_adr_weight_21_lut_array_tmp[32];
-
 /* OEM resolution-specific ADR LUT data (extracted from OEM tx-isp-t31.ko)
  * Each resolution has 6 arrays: centre_w_dis[31] + 5 weight LUTs[32] */
 #include "tx_isp_tuning_adr_luts.inc"
+#include "tx_isp_tuning_adr_defaults.inc"
+/*
+ * The extracted ADR blob's linear control subsection is shifted relative to the
+ * current `ADR_BLOB_OFF_*` control-list macros. These starts were recovered by
+ * matching the linear control words against the OEM layout consumed by
+ * `Tiziano_adr_fpga()`:
+ *   light_end  -> slope/threshold block for arg15
+ *   block_light -> mode/strength block for arg16
+ *   map_mode   -> mode/threshold block for arg14
+ * The EV/list tables that follow the linear control block are also taken from
+ * these verified starts instead of the misindexed region.
+ */
+#define ADR_BLOB_OFF_LINEAR_LIGHT_END   0x7b0
+#define ADR_BLOB_OFF_LINEAR_BLOCK_LIGHT 0x824
+#define ADR_BLOB_OFF_LINEAR_MAP_MODE    0x860
+#define ADR_BLOB_OFF_LINEAR_EV_LIST     0x8e0
+#define ADR_BLOB_OFF_LINEAR_LIGB_LIST   0x908
+#define ADR_BLOB_OFF_LINEAR_MAPB1_LIST  0x92c
+#define ADR_BLOB_OFF_LINEAR_MAPB2_LIST  0x950
+#define ADR_BLOB_OFF_LINEAR_MAPB3_LIST  0x974
+#define ADR_BLOB_OFF_LINEAR_MAPB4_LIST  0x998
+#define ADR_BLOB_OFF_LINEAR_BLP2_LIST   0xb84
 /* Additional ADR arrays required by BN mappings */
 uint32_t param_adr_para_array[0x20/4] = {0};
 uint32_t param_adr_ctc_kneepoint_array[0x44/4] = {0};
@@ -25512,15 +25555,16 @@ uint32_t param_adr_tool_control_array[0x38/4] = {0}; /* ADR control */
  * stores in adr_tm_base_lut, and computes diff array. */
 static int tiziano_adr_gamma_refresh(void)
 {
+    int param_id = adr_wdr_en ? 0x3d : 0x3c;
     int size = 0;
     int i, j;
     uint16_t *gam_y = (uint16_t *)param_adr_gam_y_array_def;
     uint16_t *gam_x = (uint16_t *)param_adr_gam_x_array;
-    uint32_t gam_x_last = (uint32_t)(uint16_t)gam_x[0x80]; /* data_9f504 */
+    uint32_t gam_x_last = (uint32_t)(uint16_t)gam_x[0x80];
     uint32_t gam_x_first = (uint32_t)(uint16_t)gam_x[0];
 
     /* Get gamma LUT into param_adr_gam_y_array_def */
-    tisp_gamma_param_array_get(0x3c, param_adr_gam_y_array_def, &size);
+    tisp_gamma_param_array_get(param_id, param_adr_gam_y_array_def, &size);
     if (size != 0x102) {
         pr_err("get gamma error!!!\n");
         return -1;
@@ -25572,150 +25616,96 @@ static int tiziano_adr_gamma_refresh(void)
     return 0;
 }
 
-/* tiziano_adr_params_refresh - OEM-exact bulk memcpy from tuning binary
+/* tiziano_adr_params_refresh - OEM-exact ADR payload refresh
  * OEM address: 0x4d074
- * Loads ~35 ADR parameter arrays from tparams, conditionally loads weight
- * LUT arrays based on tool_control[0], then calls tisp_s_adr_str_internal
- * and tiziano_adr_gamma_refresh. */
+ * Copies built-in ADR defaults from the OEM data payload, then conditionally
+ * selects weight/centre LUTs based on tool_control[0]. */
 int tiziano_adr_params_refresh(void)
 {
-    const u8 *p = (const u8 *)(tparams_active ? tparams_active : tparams_day);
+    const uint8_t *blob = oem_adr_refresh_blob;
     uint32_t tool_ctl_local[0x38 / 4];
     int i;
 
-    if (!p || !tuning_bin_loaded) {
-        pr_debug("tiziano_adr_params_refresh: no tuning bin loaded\n");
-        return 0;
-    }
+    memcpy(param_adr_para_array, oem_param_adr_para_array, sizeof(oem_param_adr_para_array));
+    memcpy(param_adr_ctc_kneepoint_array, blob + ADR_BLOB_OFF_CTC_KP, 0x44);
+    memcpy(param_adr_min_kneepoint_array, blob + ADR_BLOB_OFF_MIN_KP, 0x5c);
+    memcpy(param_adr_map_kneepoint_array, blob + ADR_BLOB_OFF_MAP_KP, 0x5c);
+    memcpy(param_adr_coc_kneepoint_y1_array, blob + ADR_BLOB_OFF_COC_Y1, 0x30);
+    memcpy(param_adr_coc_kneepoint_y2_array, blob + ADR_BLOB_OFF_COC_Y2, 0x30);
+    memcpy(param_adr_coc_kneepoint_y3_array, blob + ADR_BLOB_OFF_COC_Y3, 0x30);
+    memcpy(param_adr_coc_kneepoint_y4_array, blob + ADR_BLOB_OFF_COC_Y4, 0x30);
+    memcpy(param_adr_coc_kneepoint_y5_array, blob + ADR_BLOB_OFF_COC_Y5, 0x30);
+    memcpy(param_adr_coc_adjust_array, blob + ADR_BLOB_OFF_COC_ADJ, 0x38);
+    memcpy(param_adr_stat_block_hist_diff_array, blob + ADR_BLOB_OFF_HIST_DIFF, 0x10);
+    memcpy(adr_tm_base_lut, blob + ADR_BLOB_OFF_TM_BASE, 0x24);
+    memcpy(param_adr_gam_x_array, blob + ADR_BLOB_OFF_GAM_X, 0x102);
+    memcpy(param_adr_gam_y_array, blob + ADR_BLOB_OFF_GAM_Y, 0x102);
+    memcpy(adr_ctc_map2cut_y, blob + ADR_BLOB_OFF_CTC_MAP2CUT, 0x24);
+    memcpy(adr_light_end, blob + ADR_BLOB_OFF_LIGHT_END, 0x74);
+    memcpy(adr_block_light, blob + ADR_BLOB_OFF_BLOCK_LIGHT, 0x3c);
+    memcpy(adr_map_mode, blob + ADR_BLOB_OFF_MAP_MODE, 0x2c);
+    memcpy(histSub_4096_diff, blob + ADR_BLOB_OFF_HISTSUB_DIFF, 0x20);
 
-    /*
-     * Bulk memcpy from tuning binary into ADR parameter arrays.
-     * Offsets are relative to tparams base (OEM base = 0x84B10).
-     *
-     * NOTE: The first offset (param_adr_para_array) is a best guess --
-     * the OEM decompiler garbled the source address.  0x112ac is derived
-     * from the next known offset (0x112cc) minus the copy size (0x20).
-     */
-#define ADR_OFF_PARA            0x112ac  /* param_adr_para_array -- NEEDS VERIFICATION */
-#define ADR_OFF_CTC_KP          0x112cc
-#define ADR_OFF_MIN_KP          0x11310
-#define ADR_OFF_MAP_KP          0x1136c
-#define ADR_OFF_COC_Y1          0x113c8
-#define ADR_OFF_COC_Y2          0x113f8
-#define ADR_OFF_COC_Y3          0x11428
-#define ADR_OFF_COC_Y4          0x11458
-#define ADR_OFF_COC_Y5          0x11488
-#define ADR_OFF_COC_ADJ         0x114b8
-#define ADR_OFF_HIST_DIFF       0x1156c
-#define ADR_OFF_TM_BASE         0x1157c
-#define ADR_OFF_GAM_X           0x115a0
-#define ADR_OFF_GAM_Y           0x116a2
-#define ADR_OFF_CTC_MAP2CUT     0x117a4
-#define ADR_OFF_LIGHT_END       0x117c8
-#define ADR_OFF_BLOCK_LIGHT     0x1183c
-#define ADR_OFF_MAP_MODE        0x11878
-#define ADR_OFF_HISTSUB_DIFF    0x118a4
-#define ADR_OFF_TOOL_CTL        0x118c4
-#define ADR_OFF_EV_LIST         0x118fc
-#define ADR_OFF_LIGB_LIST       0x11920
-#define ADR_OFF_MAPB1_LIST      0x11944
-#define ADR_OFF_MAPB2_LIST      0x11968
-#define ADR_OFF_MAPB3_LIST      0x1198c
-#define ADR_OFF_MAPB4_LIST      0x119b0
-#define ADR_OFF_CTC_MAP2CUT_WDR 0x119d4
-#define ADR_OFF_LIGHT_END_WDR   0x119f8
-#define ADR_OFF_BLOCK_LIGHT_WDR 0x11a6c
-#define ADR_OFF_MAP_MODE_WDR    0x11aa8
-#define ADR_OFF_EV_LIST_WDR     0x11ad4
-#define ADR_OFF_LIGB_LIST_WDR   0x11af8
-#define ADR_OFF_MAPB1_LIST_WDR  0x11b1c
-#define ADR_OFF_MAPB2_LIST_WDR  0x11b40
-#define ADR_OFF_MAPB3_LIST_WDR  0x11b64
-#define ADR_OFF_MAPB4_LIST_WDR  0x11b88
-#define ADR_OFF_BLP2_LIST_WDR   0x11bac
-#define ADR_OFF_BLP2_LIST       0x11bd0
-/* Weight LUT offsets (used when tool_control[0] == 1) */
-#define ADR_OFF_W20_LUT         0x1104c
-#define ADR_OFF_W02_LUT         0x110cc
-#define ADR_OFF_W12_LUT         0x1114c
-#define ADR_OFF_W22_LUT         0x111cc
-#define ADR_OFF_W21_LUT         0x1124c
-#define ADR_OFF_CENTRE_WDIS     0x114f0
-
-    /* --- Main parameter arrays --- */
-    memcpy(&param_adr_para_array, p + ADR_OFF_PARA, 0x20);
-    memcpy(&param_adr_ctc_kneepoint_array, p + ADR_OFF_CTC_KP, 0x44);
-    memcpy(&param_adr_min_kneepoint_array, p + ADR_OFF_MIN_KP, 0x5c);
-    memcpy(&param_adr_map_kneepoint_array, p + ADR_OFF_MAP_KP, 0x5c);
-    memcpy(&param_adr_coc_kneepoint_y1_array, p + ADR_OFF_COC_Y1, 0x30);
-    memcpy(&param_adr_coc_kneepoint_y2_array, p + ADR_OFF_COC_Y2, 0x30);
-    memcpy(&param_adr_coc_kneepoint_y3_array, p + ADR_OFF_COC_Y3, 0x30);
-    memcpy(&param_adr_coc_kneepoint_y4_array, p + ADR_OFF_COC_Y4, 0x30);
-    memcpy(&param_adr_coc_kneepoint_y5_array, p + ADR_OFF_COC_Y5, 0x30);
-    memcpy(&param_adr_coc_adjust_array, p + ADR_OFF_COC_ADJ, 0x38);
-    memcpy(&param_adr_stat_block_hist_diff_array, p + ADR_OFF_HIST_DIFF, 0x10);
-    memcpy(&adr_tm_base_lut, p + ADR_OFF_TM_BASE, 0x24);
-    memcpy(&param_adr_gam_x_array, p + ADR_OFF_GAM_X, 0x102);
-    memcpy(&param_adr_gam_y_array, p + ADR_OFF_GAM_Y, 0x102);
-    memcpy(&adr_ctc_map2cut_y, p + ADR_OFF_CTC_MAP2CUT, 0x24);
-    memcpy(&adr_light_end, p + ADR_OFF_LIGHT_END, 0x74);
-    memcpy(&adr_block_light, p + ADR_OFF_BLOCK_LIGHT, 0x3c);
-    memcpy(&adr_map_mode, p + ADR_OFF_MAP_MODE, 0x2c);
-    memcpy(&histSub_4096_diff, p + ADR_OFF_HISTSUB_DIFF, 0x20);
-
-    /* --- tool_control: copy from tparams into local, then selective copy
-     *     into param_adr_tool_control_array, skipping index 1 (preserves
-     *     the runtime value at [1]).  OEM loop: i = 0..0xd, skip i==1. --- */
-    memcpy(tool_ctl_local, p + ADR_OFF_TOOL_CTL, 0x38);
+    memcpy(tool_ctl_local, blob + ADR_BLOB_OFF_TOOL_CTL, 0x38);
     for (i = 0; i < 0xe; i++) {
         if (i != 1)
             param_adr_tool_control_array[i] = tool_ctl_local[i];
     }
 
-    /* --- List arrays (normal + WDR) --- */
-    memcpy(&adr_ev_list, p + ADR_OFF_EV_LIST, 0x24);
-    memcpy(&adr_ligb_list, p + ADR_OFF_LIGB_LIST, 0x24);
-    memcpy(&adr_mapb1_list, p + ADR_OFF_MAPB1_LIST, 0x24);
-    memcpy(&adr_mapb2_list, p + ADR_OFF_MAPB2_LIST, 0x24);
-    memcpy(&adr_mapb3_list, p + ADR_OFF_MAPB3_LIST, 0x24);
-    memcpy(&adr_mapb4_list, p + ADR_OFF_MAPB4_LIST, 0x24);
-    memcpy(&adr_blp2_list, p + ADR_OFF_BLP2_LIST, 0x24);
-    memcpy(&adr_ev_list_wdr, p + ADR_OFF_EV_LIST_WDR, 0x24);
-    memcpy(&adr_ligb_list_wdr, p + ADR_OFF_LIGB_LIST_WDR, 0x24);
-    memcpy(&adr_mapb1_list_wdr, p + ADR_OFF_MAPB1_LIST_WDR, 0x24);
-    memcpy(&adr_mapb2_list_wdr, p + ADR_OFF_MAPB2_LIST_WDR, 0x24);
-    memcpy(&adr_mapb3_list_wdr, p + ADR_OFF_MAPB3_LIST_WDR, 0x24);
-    memcpy(&adr_mapb4_list_wdr, p + ADR_OFF_MAPB4_LIST_WDR, 0x24);
-    memcpy(&adr_blp2_list_wdr, p + ADR_OFF_BLP2_LIST_WDR, 0x24);
-    memcpy(&adr_ctc_map2cut_y_wdr, p + ADR_OFF_CTC_MAP2CUT_WDR, 0x24);
-    memcpy(&adr_light_end_wdr, p + ADR_OFF_LIGHT_END_WDR, 0x74);
-    memcpy(&adr_block_light_wdr, p + ADR_OFF_BLOCK_LIGHT_WDR, 0x3c);
-    memcpy(&adr_map_mode_wdr, p + ADR_OFF_MAP_MODE_WDR, 0x2c);
+    memcpy(adr_ev_list, blob + ADR_BLOB_OFF_EV_LIST, 0x24);
+    memcpy(adr_ligb_list, blob + ADR_BLOB_OFF_LIGB_LIST, 0x24);
+    memcpy(adr_mapb1_list, blob + ADR_BLOB_OFF_MAPB1_LIST, 0x24);
+    memcpy(adr_mapb2_list, blob + ADR_BLOB_OFF_MAPB2_LIST, 0x24);
+    memcpy(adr_mapb3_list, blob + ADR_BLOB_OFF_MAPB3_LIST, 0x24);
+    memcpy(adr_mapb4_list, blob + ADR_BLOB_OFF_MAPB4_LIST, 0x24);
+    memcpy(adr_blp2_list, blob + ADR_BLOB_OFF_BLP2_LIST, 0x24);
+    memcpy(adr_ev_list_wdr, blob + ADR_BLOB_OFF_EV_LIST_WDR, 0x24);
+    memcpy(adr_ligb_list_wdr, blob + ADR_BLOB_OFF_LIGB_LIST_WDR, 0x24);
+    memcpy(adr_mapb1_list_wdr, blob + ADR_BLOB_OFF_MAPB1_LIST_WDR, 0x24);
+    memcpy(adr_mapb2_list_wdr, blob + ADR_BLOB_OFF_MAPB2_LIST_WDR, 0x24);
+    memcpy(adr_mapb3_list_wdr, blob + ADR_BLOB_OFF_MAPB3_LIST_WDR, 0x24);
+    memcpy(adr_mapb4_list_wdr, blob + ADR_BLOB_OFF_MAPB4_LIST_WDR, 0x24);
+    memcpy(adr_blp2_list_wdr, blob + ADR_BLOB_OFF_BLP2_LIST_WDR, 0x24);
+    memcpy(adr_ctc_map2cut_y_wdr, blob + ADR_BLOB_OFF_CTC_MAP2CUT_WDR, 0x24);
+    memcpy(adr_light_end_wdr, blob + ADR_BLOB_OFF_LIGHT_END_WDR, 0x74);
+    memcpy(adr_block_light_wdr, blob + ADR_BLOB_OFF_BLOCK_LIGHT_WDR, 0x3c);
+    memcpy(adr_map_mode_wdr, blob + ADR_BLOB_OFF_MAP_MODE_WDR, 0x2c);
 
-    /* --- Weight LUT arrays: conditional on tool_control[0] --- */
+    /*
+     * The extracted blob's linear ADR control block is shifted; reload the
+     * linear path from the verified starts so arg14/arg15/arg16 match the
+     * OEM FPGA argument layout again.
+     */
+    memcpy(adr_light_end, blob + ADR_BLOB_OFF_LINEAR_LIGHT_END, sizeof(adr_light_end));
+    memcpy(adr_block_light, blob + ADR_BLOB_OFF_LINEAR_BLOCK_LIGHT, sizeof(adr_block_light));
+    memcpy(adr_map_mode, blob + ADR_BLOB_OFF_LINEAR_MAP_MODE, sizeof(adr_map_mode));
+    memcpy(adr_ev_list, blob + ADR_BLOB_OFF_LINEAR_EV_LIST, sizeof(adr_ev_list));
+    memcpy(adr_ligb_list, blob + ADR_BLOB_OFF_LINEAR_LIGB_LIST, sizeof(adr_ligb_list));
+    memcpy(adr_mapb1_list, blob + ADR_BLOB_OFF_LINEAR_MAPB1_LIST, sizeof(adr_mapb1_list));
+    memcpy(adr_mapb2_list, blob + ADR_BLOB_OFF_LINEAR_MAPB2_LIST, sizeof(adr_mapb2_list));
+    memcpy(adr_mapb3_list, blob + ADR_BLOB_OFF_LINEAR_MAPB3_LIST, sizeof(adr_mapb3_list));
+    memcpy(adr_mapb4_list, blob + ADR_BLOB_OFF_LINEAR_MAPB4_LIST, sizeof(adr_mapb4_list));
+    memcpy(adr_blp2_list, blob + ADR_BLOB_OFF_LINEAR_BLP2_LIST, sizeof(adr_blp2_list));
+
     if (param_adr_tool_control_array[0] == 1) {
-        /* Tool-override mode: load weight LUTs from tuning binary */
-        memcpy(&param_adr_weight_20_lut_array, p + ADR_OFF_W20_LUT, 0x80);
-        memcpy(&param_adr_weight_02_lut_array, p + ADR_OFF_W02_LUT, 0x80);
-        memcpy(&param_adr_weight_12_lut_array, p + ADR_OFF_W12_LUT, 0x80);
-        memcpy(&param_adr_weight_22_lut_array, p + ADR_OFF_W22_LUT, 0x80);
-        memcpy(&param_adr_weight_21_lut_array, p + ADR_OFF_W21_LUT, 0x80);
-        memcpy(&param_adr_centre_w_dis_array, p + ADR_OFF_CENTRE_WDIS, 0x7c);
+        memcpy(param_adr_weight_20_lut_array, blob + ADR_BLOB_OFF_W20_LUT, 0x80);
+        memcpy(param_adr_weight_02_lut_array, blob + ADR_BLOB_OFF_W02_LUT, 0x80);
+        memcpy(param_adr_weight_12_lut_array, blob + ADR_BLOB_OFF_W12_LUT, 0x80);
+        memcpy(param_adr_weight_22_lut_array, blob + ADR_BLOB_OFF_W22_LUT, 0x80);
+        memcpy(param_adr_weight_21_lut_array, blob + ADR_BLOB_OFF_W21_LUT, 0x80);
+        memcpy(param_adr_centre_w_dis_array, blob + ADR_BLOB_OFF_CENTRE_WDIS, 0x7c);
     } else if (param_adr_tool_control_array[0] == 0) {
-        /* Default mode: use resolution-specific _tmp arrays */
-        memcpy(&param_adr_weight_20_lut_array, &param_adr_weight_20_lut_array_tmp, 0x80);
-        memcpy(&param_adr_weight_02_lut_array, &param_adr_weight_02_lut_array_tmp, 0x80);
-        memcpy(&param_adr_weight_12_lut_array, &param_adr_weight_12_lut_array_tmp, 0x80);
-        memcpy(&param_adr_weight_22_lut_array, &param_adr_weight_22_lut_array_tmp, 0x80);
-        memcpy(&param_adr_weight_21_lut_array, &param_adr_weight_21_lut_array_tmp, 0x80);
-        memcpy(&param_adr_centre_w_dis_array, &param_adr_centre_w_dis_array_tmp, 0x7c);
+        memcpy(param_adr_weight_20_lut_array, param_adr_weight_20_lut_array_tmp, 0x80);
+        memcpy(param_adr_weight_02_lut_array, param_adr_weight_02_lut_array_tmp, 0x80);
+        memcpy(param_adr_weight_12_lut_array, param_adr_weight_12_lut_array_tmp, 0x80);
+        memcpy(param_adr_weight_22_lut_array, param_adr_weight_22_lut_array_tmp, 0x80);
+        memcpy(param_adr_weight_21_lut_array, param_adr_weight_21_lut_array_tmp, 0x80);
+        memcpy(param_adr_centre_w_dis_array, param_adr_centre_w_dis_array_tmp, 0x7c);
     } else {
-        /* OEM: printk(2, "ADR TOOL CTL[0] overflow!!!\n", 0xe) */
         pr_err("ADR TOOL CTL[0] overflow!!!\n");
         return -1;
     }
 
-    /* --- ADR strength + gamma refresh + signal EV changed --- */
     if (adr_ratio != 0x80)
         tisp_s_adr_str_internal(adr_ratio);
 
@@ -25739,9 +25729,6 @@ static int tisp_adr_set_params(void)
     uint32_t *s0;
     uint32_t i;
 
-    if (!s_adr_hw_apply)
-        return 0;
-
     /* 1) min_kneepoint_y → regs 0x4390..0x43a0 (5 regs, 10 entries as pairs) */
     s0 = min_kneepoint_y;
     for (i = 0x4390; i != 0x43a4; i += 4) {
@@ -25762,95 +25749,50 @@ static int tisp_adr_set_params(void)
      * The OEM writes the per-block tone curves computed by Tiziano_adr_fpga
      * directly as packed 16-bit pairs. Previous code used tisp_adr_build_lut_payload
      * which incorrectly wrote weight LUTs and parameter arrays instead. */
-    {
-        static int adr_diag;
-        uint32_t *s0_mkp = map_kneepoint_y;
-        if (adr_diag < 3) {
-            /* Dump first 3 blocks (11 kneepoints each) to verify tone curve values */
-            pr_info("ADR_MKY blk0: %u %u %u %u %u %u %u %u %u %u %u\n",
-                map_kneepoint_y[0], map_kneepoint_y[1], map_kneepoint_y[2],
-                map_kneepoint_y[3], map_kneepoint_y[4], map_kneepoint_y[5],
-                map_kneepoint_y[6], map_kneepoint_y[7], map_kneepoint_y[8],
-                map_kneepoint_y[9], map_kneepoint_y[10]);
-            pr_info("ADR_MKY blk1: %u %u %u %u %u %u %u %u %u %u %u\n",
-                map_kneepoint_y[11], map_kneepoint_y[12], map_kneepoint_y[13],
-                map_kneepoint_y[14], map_kneepoint_y[15], map_kneepoint_y[16],
-                map_kneepoint_y[17], map_kneepoint_y[18], map_kneepoint_y[19],
-                map_kneepoint_y[20], map_kneepoint_y[21]);
-            pr_info("ADR_MKY blk12: %u %u %u %u %u %u %u %u %u %u %u\n",
-                map_kneepoint_y[132], map_kneepoint_y[133], map_kneepoint_y[134],
-                map_kneepoint_y[135], map_kneepoint_y[136], map_kneepoint_y[137],
-                map_kneepoint_y[138], map_kneepoint_y[139], map_kneepoint_y[140],
-                map_kneepoint_y[141], map_kneepoint_y[142]);
-            adr_diag++;
-        }
-        for (i = 0x4084; i != 0x4294; i += 4) {
-            system_reg_write(i, (s0_mkp[1] << 16) | (s0_mkp[0] & 0xFFFF));
-            s0_mkp += 2;
-        }
+    s0 = map_kneepoint_y;
+    for (i = 0x4084; i != 0x4294; i += 4) {
+        system_reg_write(i, (s0[1] << 16) | (s0[0] & 0xFFFF));
+        s0 += 2;
     }
 
     return 0;
 }
 
-
-/* Program ADR static header/control registers per HLIL (non-LUT regions) */
-static void tisp_adr_write_headers(void)
+static void adr_write_pairs16(uint32_t reg, const uint32_t *vals, int count)
 {
-    /* 0x4004: param_adr_para_array << 4 | data_afae4 << 16 | data_afacc */
-    uint32_t para0 = param_adr_para_array[0] & 0xFFFF; /* HLIL uses 0xA */
-    system_reg_write(0x00004004, ((0x140 & 0xFFFF) << 16) | ((para0 & 0xFFFF) << 4) | 0x0);
+    int i;
 
-    /* 0x4448..0x4450: constants */
-    system_reg_write(0x00004448, (0x333 << 16) | 0x266);
-    system_reg_write(0x0000444c, (0x4cd << 16) | 0x400);
-    system_reg_write(0x00004450, 0x59a);
+    for (i = 0; i < count; i += 2, reg += 4) {
+        uint32_t word = vals[i] & 0xffff;
 
-    /* CTC knee header block 0x4340..0x4350 */
-    system_reg_write(0x00004340, (0x80 << 16) | (param_adr_ctc_kneepoint_array[0] & 0xFFFF));
-    system_reg_write(0x00004344, (0x200 << 16) | 0x100);
-    system_reg_write(0x00004348, (0x600 << 16) | 0x400);
-    system_reg_write(0x00004350, 0xF00);
+        if ((i + 1) < count)
+            word |= (vals[i + 1] & 0xffff) << 16;
 
-    /* Extra CTC/map constants 0x4368..0x4374 */
-    system_reg_write(0x00004368, (0x7 << 16) | 0x7);
-    system_reg_write(0x0000436c, (0x9 << 16) | 0x8);
-    system_reg_write(0x00004374, (0x8 << 16) | 0x9);
-
-    /* Map knee header block 0x406c..0x4080 */
-    system_reg_write(0x0000406c, (0x40 << 16) | (param_adr_map_kneepoint_array[0] & 0xFFFF));
-    system_reg_write(0x00004070, (0xC0 << 16) | 0x80);
-    system_reg_write(0x00004074, (0x180 << 16) | 0x100);
-    system_reg_write(0x00004078, (0x300 << 16) | 0x200);
-    system_reg_write(0x0000407c, (0x600 << 16) | 0x400);
-    system_reg_write(0x00004080, 0x800);
-
-    /* Misc header words 0x4334..0x433c */
-    system_reg_write(0x00004334, (0x6 << 24) | (0x6 << 16) | 0x5 | (0x5 << 8));
-    system_reg_write(0x00004338, (0x8 << 24) | (0x7 << 16) | 0x6 | (0x6 << 8));
-    system_reg_write(0x0000433c, (0xB << 24) | (0x9 << 16) | 0x7 | (0x9 << 8));
-
-    /* LUT header entries for weight arrays (HLIL constants are 0; program zeros) */
-    system_reg_write(0x00004294, 0x0);
-    system_reg_write(0x000042b4, 0x0);
-    system_reg_write(0x000042d4, 0x0);
-    system_reg_write(0x00004314, 0x0);
+        system_reg_write(reg, word);
+    }
 }
 
-/* Default kneepoint X positions for identity-like tone mapping */
-static const uint32_t default_kneepoint_x_11[11] = {
-    0, 0x199, 0x333, 0x4CC, 0x666, 0x800, 0x999, 0xB33, 0xCCC, 0xE66, 0xFFF
-};
-static const uint32_t default_ctc_kneepoint_x_9[9] = {
-    0, 0x200, 0x400, 0x600, 0x800, 0xA00, 0xC00, 0xE00, 0xFFF
-};
+static void adr_write_bytes4(uint32_t reg, const uint32_t *vals, int count)
+{
+    int i;
+
+    for (i = 0; i < count; i += 4, reg += 4) {
+        uint32_t word = vals[i] & 0xff;
+
+        if ((i + 1) < count)
+            word |= (vals[i + 1] & 0xff) << 8;
+        if ((i + 2) < count)
+            word |= (vals[i + 2] & 0xff) << 16;
+        if ((i + 3) < count)
+            word |= (vals[i + 3] & 0xff) << 24;
+
+        system_reg_write(reg, word);
+    }
+}
 
 /* tiziano_adr_params_init - Binary Ninja EXACT: set _now pointers + init kneepoint arrays */
 static void tiziano_adr_params_init(void)
 {
-    int i, blk;
-
-    /* OEM: set _now pointers based on adr_wdr_en */
     if (adr_wdr_en != 0) {
         adr_ctc_map2cut_y_now = adr_ctc_map2cut_y_wdr;
         adr_light_end_now = adr_light_end_wdr;
@@ -25877,28 +25819,46 @@ static void tiziano_adr_params_init(void)
         adr_blp2_list_now = adr_blp2_list;
     }
 
-    /* Initialize kneepoint X arrays with default breakpoints */
-    memcpy(min_kneepoint_x, default_kneepoint_x_11, sizeof(min_kneepoint_x));
-    memcpy(map_kneepoint_x, default_kneepoint_x_11, sizeof(map_kneepoint_x));
-    memcpy(ctc_kneepoint_x, default_ctc_kneepoint_x_9, sizeof(ctc_kneepoint_x));
+    system_reg_write(0x4004,
+        ((param_adr_para_array[7] & 0xffff) << 16) |
+        ((param_adr_para_array[0] & 0xffff) << 4) |
+        (param_adr_para_array[1] & 0xf));
+    system_reg_write(0x4448,
+        ((param_adr_para_array[3] & 0xffff) << 16) |
+        (param_adr_para_array[2] & 0xffff));
+    system_reg_write(0x444c,
+        ((param_adr_para_array[5] & 0xffff) << 16) |
+        (param_adr_para_array[4] & 0xffff));
+    system_reg_write(0x4450, param_adr_para_array[6] & 0xffff);
 
-    /* Initialize kneepoint Y arrays to identity (y = x) for passthrough */
-    for (i = 0; i < 10; i++)
-        min_kneepoint_y[i] = default_kneepoint_x_11[i];
-    for (i = 0; i < 8; i++)
-        ctc_kneepoint_y[i] = default_ctc_kneepoint_x_9[i];
-    /* map_kneepoint_y: 24 blocks × 11 entries, each identity */
-    for (blk = 0; blk < 24; blk++)
-        for (i = 0; i < 11; i++)
-            map_kneepoint_y[blk * 11 + i] = default_kneepoint_x_11[i];
-    /* Copy to _pre for temporal smoothing */
-    memcpy(map_kneepoint_y_pre, map_kneepoint_y, sizeof(map_kneepoint_y_pre));
+    adr_write_pairs16(0x402c, param_adr_centre_w_dis_array, 31);
+    adr_write_pairs16(0x4340, param_adr_ctc_kneepoint_array, 9);
+    adr_write_pairs16(0x4368, param_adr_ctc_kneepoint_array + 9, 8);
+    adr_write_pairs16(0x406c, param_adr_map_kneepoint_array, 11);
+    adr_write_bytes4(0x4334, param_adr_map_kneepoint_array + 11, 12);
 
-    /* Signal algorithm to run on first interrupt */
-    ev_changed = 1;
+    adr_write_pairs16(0x4294, param_adr_weight_20_lut_array, 32);
+    adr_write_pairs16(0x42b4, param_adr_weight_02_lut_array, 32);
+    adr_write_pairs16(0x42d4, param_adr_weight_12_lut_array, 32);
+    adr_write_pairs16(0x4314, param_adr_weight_22_lut_array, 32);
+    adr_write_pairs16(0x42f4, param_adr_weight_21_lut_array, 32);
 
-    pr_info("tiziano_adr_params_init: _now pointers set (wdr=%u), kneepoint identity init done\n",
-            adr_wdr_en);
+    adr_write_pairs16(0x4378, param_adr_min_kneepoint_array_def, 11);
+    adr_write_bytes4(0x43a8, param_adr_min_kneepoint_array_def + 11, 12);
+
+    adr_write_pairs16(0x43b4, param_adr_coc_kneepoint_y1_array, 12);
+    adr_write_pairs16(0x43cc, param_adr_coc_kneepoint_y2_array, 12);
+    adr_write_pairs16(0x43e4, param_adr_coc_kneepoint_y3_array, 12);
+    adr_write_pairs16(0x43fc, param_adr_coc_kneepoint_y4_array, 12);
+    adr_write_pairs16(0x4414, param_adr_coc_kneepoint_y5_array, 12);
+    adr_write_pairs16(0x442c, param_adr_coc_adjust_array, 10);
+    system_reg_write(0x4440, param_adr_coc_adjust_array[10] & 0xffff);
+    system_reg_write(0x4444,
+        (param_adr_coc_adjust_array[10] & 0xff) |
+        ((param_adr_coc_adjust_array[11] & 0xff) << 8) |
+        ((param_adr_coc_adjust_array[12] & 0xff) << 16) |
+        ((param_adr_coc_adjust_array[13] & 0xff) << 24));
+    adr_write_pairs16(0x4484, param_adr_stat_block_hist_diff_array, 4);
 }
 
 /* tiziano_adr_get_data - Binary Ninja EXACT: Parse ADR DMA statistics buffer
@@ -26553,17 +26513,13 @@ static void adr_interp_9pt(int32_t *arg1, int32_t *arg2, int32_t *arg13,
 	}
 }
 
-/* OEM constant tables (at 0x6b1e0 and 0x6b204, each 9 uint32_t)
- * These are the subsection_up/subsection_light tables used in WDR mode.
- * Values extracted from OEM binary: the HLIL shows memcpy of 0x24 (36) bytes
- * from each address, so 9 uint32_t entries.
- * Placeholder identity values — WDR path not active on GC2053.
- * Kept as __maybe_unused until WDR path is fully ported. */
-static const uint32_t __maybe_unused adr_const_table_6b1e0[9] = {
-	0x000, 0x080, 0x100, 0x180, 0x200, 0x300, 0x400, 0x600, 0xfff
+/* OEM ADR subsection tables copied by Tiziano_adr_fpga from .rodata+0xf70/+0xf94
+ * in the module (file offsets 0x6b200 and 0x6b224). */
+static const uint32_t adr_const_table_6b200[9] = {
+	0, 1250, 2500, 3750, 5000, 6250, 7500, 8750, 10000
 };
-static const uint32_t __maybe_unused adr_const_table_6b204[9] = {
-	0x000, 0x080, 0x100, 0x180, 0x200, 0x300, 0x400, 0x600, 0xfff
+static const uint32_t adr_const_table_6b224[9] = {
+	0, 157, 350, 608, 1017, 1621, 2309, 3133, 4095
 };
 
 /* Tiziano_adr_fpga - ADR tone-mapping curve generator
@@ -26631,7 +26587,7 @@ static int Tiziano_adr_fpga(void *arg1, uint32_t *arg2, uint32_t *arg3,
 	int32_t v1_10, v1_11; /* arg15[0x17], arg15[0x18] — sigma_light clamp limits */
 	int32_t v1_12;    /* arg15[0x19] — slope limiting enable */
 	int32_t v1_13;    /* arg15[0x1c] — spatial weight scale */
-	int32_t s6_1;     /* arg15[0xe] — path select (1=direct, else WDR) */
+	int32_t s6_1;     /* arg15[0xe] — path select (!=1=direct, 1=subsection path) */
 	int32_t t0;       /* arg15[0x1a] — blend mode for subsection */
 
 	/* arg14 fields */
@@ -26845,8 +26801,8 @@ static int Tiziano_adr_fpga(void *arg1, uint32_t *arg2, uint32_t *arg3,
 	}
 
 	/* === Main curve computation — two paths based on s6_1 === */
-	if (s6_1 == 1) {
-		/* ====== Path B (s6_1 == 1): Direct interpolation ======
+	if (s6_1 != 1) {
+		/* ====== Path B (s6_1 != 1): Direct interpolation ======
 		 * Search var_148[0..7] for the bracket containing s1,
 		 * then interpolate or copy the 9-entry curve. */
 		int found = 0;
@@ -26999,78 +26955,38 @@ static int Tiziano_adr_fpga(void *arg1, uint32_t *arg2, uint32_t *arg3,
 		/* === Per-block 9-point interpolation === */
 		adr_interp_9pt(arg1_s, arg2_s, arg13_s, var_1b4, 8);
 	} else {
-		/* ====== Path A (s6_1 != 1): WDR path using subsection_up/subsection_light ======
-		 * These helpers are complex and WDR is not the default path.
-		 * For now, fall back to the same direct interpolation logic as Path B
-		 * to ensure the function produces valid output. */
-		int found = 0;
-		int idx;
+		/* ====== Path A (s6_1 == 1): OEM subsection path ====== */
+		uint32_t subsection_up_curve[9];
+		uint32_t blended_curve[9];
 
-		for (idx = 0; idx < 8; idx++) {
-			int32_t thresh = var_148[idx];
-			int32_t base = idx * 9;
+		subsection_up(subsection_up_curve, adr_const_table_6b200,
+			      data_980b0, 8);
+		subsection_light(subsection_up_curve, adr_const_table_6b224,
+				 v0_9 * 10, blended_curve);
 
-			if (s1 == thresh) {
-				for (k = 0; k < 9; k++)
-					var_16c[k] = var_420[base + k];
-				found = 1;
-				break;
-			}
-			if (s1 < thresh) {
-				if (idx != 0) {
-					for (k = 0; k < 9; k++)
-						var_16c[k] = var_420[(idx - 1) * 9 + k];
-					var_16c[1] = interpolate_adr_x8_y12(var_148[idx - 1],
-						thresh, var_420[(idx - 1) * 9 + 1],
-						var_420[base + 1], s1);
-					var_16c[2] = interpolate_adr_x8_y12(var_148[idx - 1],
-						thresh, var_420[(idx - 1) * 9 + 2],
-						var_420[base + 2], s1);
-					var_16c[3] = interpolate_adr_x8_y12(var_148[idx - 1],
-						thresh, var_420[(idx - 1) * 9 + 3],
-						var_420[base + 3], s1);
-					var_16c[4] = interpolate_adr_x8_y12(var_148[idx - 1],
-						thresh, var_420[(idx - 1) * 9 + 4],
-						var_420[base + 4], s1);
-				} else {
-					for (k = 0; k < 9; k++)
-						var_16c[k] = var_420[k];
-				}
-				found = 1;
-				break;
-			}
-		}
-		if (!found) {
-			for (k = 0; k < 9; k++)
-				var_16c[k] = var_420[7 * 9 + k];
-		}
+		for (k = 0; k < 9; k++)
+			var_16c[k] = blended_curve[k];
 
-		/* Monotonicity */
 		if (var_16c[0] <= 0)
 			var_16c[0] = 0;
-		{
-			int32_t prev = var_16c[0];
-			for (k = 1; k < 9; k++) {
-				if (prev < var_16c[k]) {
-					prev = var_16c[k];
-				} else {
-					var_16c[k] = prev + 1;
-					prev = var_16c[k];
-				}
-			}
+		for (k = 1; k < 9; k++) {
+			if (var_16c[k - 1] >= var_16c[k])
+				var_16c[k] = var_16c[k - 1] + 1;
 		}
 
-		/* Global output curve */
 		adr_compute_output_curve(var_16c, arg10_s, arg3_s, arg4_s);
 
-		/* Per-block: use same var_190 logic */
-		for (k = 0; k < 9; k++)
-			var_190[k] = var_16c[k];
+		subsection_light(subsection_up_curve, adr_const_table_6b224,
+				 0, (uint32_t *)var_190);
 		for (k = 0; k < 9; k++)
 			var_1b4[k] = var_190[k];
 
-		/* Per-block 9-point interpolation */
+		/* OEM special-case: x < curve[0] holds arg13[0] instead of scaling down. */
 		adr_interp_9pt(arg1_s, arg2_s, arg13_s, var_1b4, 9);
+		for (k = 0; k < 9; k++) {
+			if (arg1_s[k] < var_1b4[0])
+				arg2_s[k] = arg13_s[0];
+		}
 	}
 
 	/* === Mean Y / contrast parameter computation (OEM: $v0_171 switch) ===
@@ -27087,8 +27003,8 @@ static int Tiziano_adr_fpga(void *arg1, uint32_t *arg2, uint32_t *arg3,
 		var_128 = a0_13;
 		break;
 	case 3: {
-		int64_t blend = (int64_t)a0_13 * a0_14 +
-				(int64_t)(0x100 - a0_14) * lo_2;
+		uint32_t blend = (uint32_t)a0_13 * (uint32_t)a0_14 +
+				 (uint32_t)(0x100 - a0_14) * (uint32_t)lo_2;
 		var_128 = (int32_t)(blend / 0x100);
 		break;
 	}
@@ -27116,8 +27032,9 @@ static int Tiziano_adr_fpga(void *arg1, uint32_t *arg2, uint32_t *arg3,
 		} else if (v0_5 == 2) {
 			var_11c = a0_15;
 		} else if (v0_5 == 3) {
-			int64_t blend = (int64_t)a0_15 * a0_16 +
-				(int64_t)((var_128_1 - var_114_1) / 2) * (0x100 - a0_16);
+			uint32_t blend = (uint32_t)a0_15 * (uint32_t)a0_16 +
+					 (uint32_t)((var_128_1 - var_114_1) / 2) *
+					 (uint32_t)(0x100 - a0_16);
 			var_11c = (int32_t)(blend / 0x100);
 		}
 
@@ -27135,8 +27052,9 @@ static int Tiziano_adr_fpga(void *arg1, uint32_t *arg2, uint32_t *arg3,
 		} else if (a0_17 == 2) {
 			var_124_1 = v0_8;
 		} else if (a0_17 == 3) {
-			int64_t blend = (int64_t)var_124_1 * a0_19 +
-				(int64_t)((v0_8 + 0xc8) / 2) * (0x100 - a0_19);
+			uint32_t blend = (uint32_t)var_124_1 * (uint32_t)a0_19 +
+					 (uint32_t)((v0_8 + 0xc8) / 2) *
+					 (uint32_t)(0x100 - a0_19);
 			var_124_1 = (int32_t)(blend / 0x100);
 		}
 
@@ -27165,8 +27083,9 @@ static int Tiziano_adr_fpga(void *arg1, uint32_t *arg2, uint32_t *arg3,
 			} else if (v0_5 == 2) {
 				var_11c = a0_15;
 			} else if (v0_5 == 3) {
-				int64_t blend = (int64_t)a0_15 * a0_16 +
-					(int64_t)((var_128_1 - var_114_1) / 2) * (0x100 - a0_16);
+				uint32_t blend = (uint32_t)a0_15 * (uint32_t)a0_16 +
+						 (uint32_t)((var_128_1 - var_114_1) / 2) *
+						 (uint32_t)(0x100 - a0_16);
 				var_11c = (int32_t)(blend / 0x100);
 			}
 		}
@@ -27184,8 +27103,9 @@ static int Tiziano_adr_fpga(void *arg1, uint32_t *arg2, uint32_t *arg3,
 			else if (a0_17 == 2)
 				var_124_1 = v0_8;
 			else if (a0_17 == 3) {
-				int64_t blend = (int64_t)var_124_1 * a0_19 +
-					(int64_t)((v0_8 + 0xc8) / 2) * (0x100 - a0_19);
+				uint32_t blend = (uint32_t)var_124_1 * (uint32_t)a0_19 +
+						 (uint32_t)((v0_8 + 0xc8) / 2) *
+						 (uint32_t)(0x100 - a0_19);
 				var_124_1 = (int32_t)(blend / 0x100);
 			}
 		}
@@ -27785,35 +27705,18 @@ int tiziano_adr_interrupt_static(void)
 
     /* Step 3-4: Find matching buffer, sync cache, parse data
      * OEM: private_dma_cache_sync(0, virt+offset, 0x1000, 0) then tiziano_adr_get_data() */
-    {
-        static int adr_irq_log;
-        int matched = 0;
-
-        if (reg_val == phys_base) {
-            private_dma_cache_sync(NULL, adr_dma_virt, 0x1000, 0);
-            tiziano_adr_get_data((uint32_t *)adr_dma_virt);
-            matched = 1;
-        } else if (reg_val == phys_base + 0x1000) {
-            private_dma_cache_sync(NULL, (char *)adr_dma_virt + 0x1000, 0x1000, 0);
-            tiziano_adr_get_data((uint32_t *)((char *)adr_dma_virt + 0x1000));
-            matched = 2;
-        } else if (reg_val == phys_base + 0x2000) {
-            private_dma_cache_sync(NULL, (char *)adr_dma_virt + 0x2000, 0x1000, 0);
-            tiziano_adr_get_data((uint32_t *)((char *)adr_dma_virt + 0x2000));
-            matched = 3;
-        } else if (reg_val == phys_base + 0x3000) {
-            private_dma_cache_sync(NULL, (char *)adr_dma_virt + 0x3000, 0x1000, 0);
-            tiziano_adr_get_data((uint32_t *)((char *)adr_dma_virt + 0x3000));
-            matched = 4;
-        }
-
-        if (adr_irq_log < 10 || (adr_irq_log % 300) == 0) {
-            pr_info("ADR_IRQ[%d]: reg=0x%x base=0x%x match=%d bmy=[%d,%d,%d,%d,%d,%d]\n",
-                    adr_irq_log, reg_val, phys_base, matched,
-                    block_mean_y[0], block_mean_y[4], block_mean_y[8],
-                    block_mean_y[12], block_mean_y[16], block_mean_y[20]);
-        }
-        adr_irq_log++;
+    if (reg_val == phys_base) {
+        private_dma_cache_sync(NULL, adr_dma_virt, 0x1000, 0);
+        tiziano_adr_get_data((uint32_t *)adr_dma_virt);
+    } else if (reg_val == phys_base + 0x1000) {
+        private_dma_cache_sync(NULL, (char *)adr_dma_virt + 0x1000, 0x1000, 0);
+        tiziano_adr_get_data((uint32_t *)((char *)adr_dma_virt + 0x1000));
+    } else if (reg_val == phys_base + 0x2000) {
+        private_dma_cache_sync(NULL, (char *)adr_dma_virt + 0x2000, 0x1000, 0);
+        tiziano_adr_get_data((uint32_t *)((char *)adr_dma_virt + 0x2000));
+    } else if (reg_val == phys_base + 0x3000) {
+        private_dma_cache_sync(NULL, (char *)adr_dma_virt + 0x3000, 0x1000, 0);
+        tiziano_adr_get_data((uint32_t *)((char *)adr_dma_virt + 0x3000));
     }
 
 push_event:
@@ -27827,14 +27730,6 @@ push_event:
 /* tiziano_adr_init - Binary Ninja SIMPLIFIED implementation */
 int tiziano_adr_init(uint32_t width, uint32_t height)
 {
-    if (tisp_force_bypass_adr) {
-        pr_warn("tiziano_adr_init: skipping ADR init because bypass isolation is active (%ux%u)\n",
-                width, height);
-        return 0;
-    }
-
-    pr_info("tiziano_adr_init: Initializing ADR processing (%dx%d)\n", width, height);
-
     /* Binary Ninja: Store resolution parameters */
     data_af158 = width;
     data_af15c = height;
@@ -27872,9 +27767,6 @@ int tiziano_adr_init(uint32_t width, uint32_t height)
     /* OEM EXACT ordering: refresh params, then set params (writes HW regs).
      * tiziano_adr_params_init is called AFTER LUT copy, not here. */
     tiziano_adr_params_refresh();
-
-    /* Program ADR static header/control registers per HLIL */
-    tisp_adr_write_headers();
 
     int ret = tisp_adr_set_params();
     if (ret) {
@@ -27968,8 +27860,6 @@ int tiziano_adr_init(uint32_t width, uint32_t height)
     /* Binary Ninja EXACT: OEM uses system_irq_func_set for IRQ, tisp_event_set_cb for event */
     system_irq_func_set(0x12, adr_interrupt_static_wrapper);
     tisp_event_set_cb(2, tisp_adr_process);
-
-    pr_info("tiziano_adr_init: ADR processing initialized successfully (%ux%u)\n", width, height);
     return 0;
 }
 
@@ -28134,8 +28024,8 @@ static void tiziano_bcsh_seed_fallback_defaults(void)
         bcsh_SmaxListM_wdr[i] = bcsh_SmaxListM[i];
     }
 
-    bcsh_OffsetRGB[0] = bcsh_OffsetRGB[1] = bcsh_OffsetRGB[2] = 0;
-    bcsh_OffsetRGB_wdr[0] = bcsh_OffsetRGB_wdr[1] = bcsh_OffsetRGB_wdr[2] = 0;
+    bcsh_OffsetRGB[0] = bcsh_OffsetRGB[1] = bcsh_OffsetRGB[2] = 0x400;
+    bcsh_OffsetRGB_wdr[0] = bcsh_OffsetRGB_wdr[1] = bcsh_OffsetRGB_wdr[2] = 0x400;
 }
 
 static void tiziano_bcsh_sync_active_bank(struct isp_tuning_data *tuning)
@@ -28176,13 +28066,20 @@ static void tiziano_bcsh_params_refresh(void)
         return;
     }
 
-    memcpy(bcsh_CCM_d,         p + BCSH_TPARAMS_CCM_D_OFF,         0x24);
-    memcpy(bcsh_CCM_t,         p + BCSH_TPARAMS_CCM_T_OFF,         0x24);
-    memcpy(bcsh_CCM_a,         p + BCSH_TPARAMS_CCM_A_OFF,         0x24);
+    if (bcsh_ctrl == 0) {
+        memcpy(bcsh_CCM_d,         p + BCSH_TPARAMS_CCM_D_OFF,         0x24);
+        memcpy(bcsh_CCM_t,         p + BCSH_TPARAMS_CCM_T_OFF,         0x24);
+        memcpy(bcsh_CCM_a,         p + BCSH_TPARAMS_CCM_A_OFF,         0x24);
+        memcpy(bcsh_Sthres,        p + BCSH_TPARAMS_STHRES_OFF,        0x0c);
+        memcpy(bcsh_CCM_d_wdr,     p + BCSH_TPARAMS_CCM_D_WDR_OFF,     0x24);
+        memcpy(bcsh_CCM_t_wdr,     p + BCSH_TPARAMS_CCM_T_WDR_OFF,     0x24);
+        memcpy(bcsh_CCM_a_wdr,     p + BCSH_TPARAMS_CCM_A_WDR_OFF,     0x24);
+        memcpy(bcsh_Sthres_wdr,    p + BCSH_TPARAMS_STHRES_WDR_OFF,    0x0c);
+    }
+
     memcpy(bcsh_HDP,           p + BCSH_TPARAMS_HDP_OFF,           0x0c);
     memcpy(bcsh_HBP,           p + BCSH_TPARAMS_HBP_OFF,           0x0c);
     memcpy(bcsh_HLSP,          p + BCSH_TPARAMS_HLSP_OFF,          0x0c);
-    memcpy(bcsh_Sthres,        p + BCSH_TPARAMS_STHRES_OFF,        0x0c);
     memcpy(bcsh_EvList,        p + BCSH_TPARAMS_EVLIST_OFF,        0x24);
     memcpy(bcsh_SminListS,     p + BCSH_TPARAMS_SMINS_OFF,         0x24);
     memcpy(bcsh_SmaxListS,     p + BCSH_TPARAMS_SMAXS_OFF,         0x24);
@@ -28195,24 +28092,15 @@ static void tiziano_bcsh_params_refresh(void)
     memcpy(bcsh_Cyh,           p + BCSH_TPARAMS_CYH_OFF,           0x24);
     memcpy(&bcsh_B,            p + BCSH_TPARAMS_B_OFF,             4);
     memcpy(bcsh_OffsetRGB,     p + BCSH_TPARAMS_OFFSETRGB_OFF,     0x0c);
-    memcpy(bcsh_OffsetYUVy,    p + BCSH_TPARAMS_OFFSETYUVY_OFF,    8);
-    memcpy(bcsh_clip0,         p + BCSH_TPARAMS_CLIP0_OFF,         0x10);
-    memcpy(bcsh_clip1,         p + BCSH_TPARAMS_CLIP1_OFF,         0x10);
-
-    memcpy(bcsh_CCM_d_wdr,     p + BCSH_TPARAMS_CCM_D_WDR_OFF,     0x24);
-    memcpy(bcsh_CCM_t_wdr,     p + BCSH_TPARAMS_CCM_T_WDR_OFF,     0x24);
-    memcpy(bcsh_CCM_a_wdr,     p + BCSH_TPARAMS_CCM_A_WDR_OFF,     0x24);
     memcpy(bcsh_HDP_wdr,       p + BCSH_TPARAMS_HDP_WDR_OFF,       0x0c);
     memcpy(bcsh_HBP_wdr,       p + BCSH_TPARAMS_HBP_WDR_OFF,       0x0c);
     memcpy(bcsh_HLSP_wdr,      p + BCSH_TPARAMS_HLSP_WDR_OFF,      0x0c);
-    memcpy(bcsh_Sthres_wdr,    p + BCSH_TPARAMS_STHRES_WDR_OFF,    0x0c);
     memcpy(bcsh_EvList_wdr,    p + BCSH_TPARAMS_EVLIST_WDR_OFF,    0x24);
     memcpy(bcsh_SminListS_wdr, p + BCSH_TPARAMS_SMINS_WDR_OFF,     0x24);
     memcpy(bcsh_SmaxListS_wdr, p + BCSH_TPARAMS_SMAXS_WDR_OFF,     0x24);
     memcpy(bcsh_SminListM_wdr, p + BCSH_TPARAMS_SMINM_WDR_OFF,     0x24);
     memcpy(bcsh_SmaxListM_wdr, p + BCSH_TPARAMS_SMAXM_WDR_OFF,     0x24);
     memcpy(bcsh_OffsetRGB_wdr, p + BCSH_TPARAMS_OFFSETRGB_WDR_OFF, 0x0c);
-
     memcpy(tiziano_MMatrix,    p + BCSH_TPARAMS_MMATRIX_OFF,       0x24);
     memcpy(tiziano_MinvMatrix, p + BCSH_TPARAMS_MINVMATRIX_OFF,    0x24);
     memcpy(bcsh_clip2,         p + BCSH_TPARAMS_CLIP2_OFF,         0x10);
@@ -28244,24 +28132,46 @@ int tiziano_bcsh_init(void)
 {
     struct isp_tuning_data *tuning = ourISPdev ? ourISPdev->tuning_data : NULL;
 
-    pr_info("tiziano_bcsh_init: Initializing BCSH processing\n");
-
-    /* Preserve a safe fallback when no tuning blob is present, then overlay OEM data. */
-    tiziano_bcsh_seed_fallback_defaults();
+    tiziano_bcsh_select_active_bank();
+    memset(bcsh_attr_blob, 0, sizeof(bcsh_attr_blob));
+    bcsh_ctrl = 0;
+    bcsh_ctrl_aux = 0;
+    s_bcsh_mjpeg_mode = 0;
+    s_bcsh_mjpeg_y_range_low = 0;
+    s_bcsh_fixed_contrast = 0;
+    bcsh_hue_user = 0x80;
+    bcsh_hue_scaled = tuning ? tuning->bcsh_hue : 0x3c;
+    bcsh_brightness_user = 0x80;
+    bcsh_contrast_user = 0x80;
+    bcsh_saturation_user = 0x80;
+    bcsh_hlsp_lo_idx = 0;
+    bcsh_hlsp_tail_enable = 0;
+    bcsh_hlsp_hi_idx = 0;
+    bcsh_ev_current = tuning ? tuning->bcsh_ev : 0;
+    bcsh_ct_current = tuning ? tuning->wb_temp : 0;
     tiziano_bcsh_params_refresh();
+    tiziano_bcsh_Tccm_Comp2Orig();
+    memcpy(tisp_BCSH_as32CCMMatrix, tisp_BCSH_as32CCMMatrix_d,
+           sizeof(tisp_BCSH_as32CCMMatrix));
     BCSH_real = 1;
+    bcsh_last_ev = bcsh_ev_current >> 10;
+    bcsh_ev_threshold = 0x28;
+    bcsh_last_ct = bcsh_ct_current;
+    bcsh_ct_threshold = 0x64;
 
     if (tuning) {
+        uint32_t raw_hue = (((uint32_t)tuning->bcsh_hue * 0x100u) + 0x3cu) / 0x78u;
+
         tiziano_bcsh_sync_active_bank(tuning);
-        /* OEM: tiziano_bcsh_init calls tiziano_bcsh_update() to program
-         * the RGB→YUV conversion matrix into registers 0x8000-0x8070.
-         * Without this call, the BCSH block has uninitialized registers
-         * which produces wrong colors even though bit 12 (BCSH) is
-         * already enabled in the bypass register. */
-        tiziano_bcsh_update(tuning);
-        pr_info("tiziano_bcsh_init: BCSH registers programmed via update\n");
+        if (raw_hue > 0xff)
+            raw_hue = 0xff;
+        bcsh_hue_user = (uint8_t)raw_hue;
+        bcsh_brightness_user = tuning->bcsh_brightness;
+        bcsh_contrast_user = tuning->bcsh_contrast;
+        bcsh_saturation_user = tuning->bcsh_saturation;
     }
 
+    tiziano_bcsh_update(tuning);
     return 0;
 }
 
@@ -28609,13 +28519,125 @@ static void check_vic_error(void)
 	/* OEM calls dump_vic_reg on VIC error IRQ */
 }
 
-/* OEM helpers for hvflip — stubs until full LSC/scaler flip support */
-static void tisp_lsc_hvflip(u32 width, u32 height, int hflip, int vflip)
+static int tisp_lsc_lut_mirror_exchange(uint32_t *lut, int idx_a, int idx_b,
+					int lane_a, int lane_b)
 {
-	/* OEM calls tisp_lsc_mirror_flip / tisp_lsc_upside_down_lut based on
-	 * hflip/vflip. Requires full LSC LUT manipulation. */
-	pr_debug("tisp_lsc_hvflip: w=%u h=%u hflip=%d vflip=%d\n",
-		 width, height, hflip, vflip);
+	uint32_t *word_a = &lut[idx_a];
+	uint32_t *word_b = &lut[idx_b];
+	uint32_t shift_a = (uint32_t)lane_a * 12;
+	uint32_t shift_b = (uint32_t)lane_b * 12;
+	uint32_t mask_a = 0xfffU << shift_a;
+	uint32_t mask_b = 0xfffU << shift_b;
+	uint32_t val_a = (*word_a >> shift_a) & 0xfffU;
+	uint32_t val_b = (*word_b >> shift_b) & 0xfffU;
+
+	*word_a = ((*word_a & ~mask_a) | (val_b << shift_a)) & 0x00ffffffU;
+	*word_b = ((*word_b & ~mask_b) | (val_a << shift_b)) & 0x00ffffffU;
+	return (int)*word_b;
+}
+
+static int tisp_lsc_upside_down_lut(uint32_t *lut, int rows, int cols_padded)
+{
+	int row_bytes = cols_padded * 6;
+	int row_stride = ((cols_padded * 3) / 2) << 2;
+	uint8_t *tmp;
+	uint8_t *top;
+	uint8_t *bottom;
+	int i;
+
+	tmp = vmalloc(row_bytes);
+	if (!tmp)
+		return -ENOMEM;
+
+	memset(tmp, 0, row_bytes);
+	top = (uint8_t *)lut;
+	bottom = top + (rows - 1) * row_stride;
+
+	for (i = 0; i != (rows >> 1); i++) {
+		memcpy(tmp, top, row_bytes);
+		memmove(top, bottom, row_bytes);
+		memcpy(bottom, tmp, row_bytes);
+		top += row_stride;
+		bottom -= row_stride;
+	}
+
+	vfree(tmp);
+	return 0;
+}
+
+static int tisp_lsc_mirror_flip(u32 width, u32 height, int hflip, int vflip)
+{
+	int mesh_w = (int)lsc_mesh_size[0];
+	int mesh_h = (int)lsc_mesh_size[1];
+	int rows;
+	int cols;
+	int cols_padded;
+	int row_base = 0;
+	int row;
+
+	if (!mesh_w || !mesh_h)
+		return -EINVAL;
+
+	rows = (int)(height / (u32)mesh_h) + 1 + ((height % (u32)mesh_h) > 0 ? 1 : 0);
+	cols = (int)(width / (u32)mesh_w) + 1 + ((width % (u32)mesh_w) > 0 ? 1 : 0);
+	cols_padded = cols + (cols & 1);
+
+	if (hflip == 1) {
+		tisp_lsc_upside_down_lut(lsc_a_lut, rows, cols_padded);
+		tisp_lsc_upside_down_lut(lsc_t_lut, rows, cols_padded);
+		tisp_lsc_upside_down_lut(lsc_d_lut, rows, cols_padded);
+	}
+
+	if (vflip == 1) {
+		for (row = 0; row < rows; row++) {
+			int left = 0;
+			int right = cols - 1;
+
+			while (left < (cols >> 1)) {
+				int idx_left = ((left + row_base) / 2) * 3;
+				int idx_right = ((right + row_base) / 2) * 3;
+				int lane_left = left & 1;
+				int lane_right = right & 1;
+
+				tisp_lsc_lut_mirror_exchange(lsc_a_lut, idx_left, idx_right,
+							     lane_left, lane_right);
+				tisp_lsc_lut_mirror_exchange(lsc_a_lut, idx_left + 2, idx_right + 2,
+							     lane_left, lane_right);
+				tisp_lsc_lut_mirror_exchange(lsc_a_lut, idx_left + 1, idx_right + 1,
+							     lane_left, lane_right);
+
+				tisp_lsc_lut_mirror_exchange(lsc_t_lut, idx_left, idx_right,
+							     lane_left, lane_right);
+				tisp_lsc_lut_mirror_exchange(lsc_t_lut, idx_left + 2, idx_right + 2,
+							     lane_left, lane_right);
+				tisp_lsc_lut_mirror_exchange(lsc_t_lut, idx_left + 1, idx_right + 1,
+							     lane_left, lane_right);
+
+				tisp_lsc_lut_mirror_exchange(lsc_d_lut, idx_left, idx_right,
+							     lane_left, lane_right);
+				tisp_lsc_lut_mirror_exchange(lsc_d_lut, idx_left + 2, idx_right + 2,
+							     lane_left, lane_right);
+				tisp_lsc_lut_mirror_exchange(lsc_d_lut, idx_left + 1, idx_right + 1,
+							     lane_left, lane_right);
+
+				left++;
+				right--;
+			}
+
+			row_base += cols_padded;
+		}
+	}
+
+	lsc_api_flag = 1;
+	lsc_force_update = 1;
+	tisp_lsc_write_lut_datas();
+	lsc_api_flag = 0;
+	return 0;
+}
+
+static int tisp_lsc_hvflip(u32 width, u32 height, int hflip, int vflip)
+{
+	return tisp_lsc_mirror_flip(width, height, hflip, vflip);
 }
 
 static void tisp_s_mscaler_hvflip_mask(u8 mask)
@@ -28666,10 +28688,222 @@ int apical_isp_hvflip_update(void *arg1, int arg2)
 EXPORT_SYMBOL(apical_isp_hvflip_update);
 
 /* Remaining OEM symbol stubs — proc, debug, defog helpers, mask, WDR, buffer */
-static void defog_3x3_5x5_params_init(void) { }
-static void defog_wei_interpcot(void) { }
+static int defog_wei_interpcot(int rows, int cols, const uint32_t *avg_map,
+			       const uint32_t *raw_map, uint8_t *out_lut)
+{
+	uint32_t sums[32];
+	uint32_t counts[32];
+	int r, c;
+
+	memset(sums, 0, sizeof(sums));
+	memset(counts, 0, sizeof(counts));
+
+	/* OEM helper refreshes the current block-grid shadow before building LUTs. */
+	tiziano_defog_set_reg_params();
+
+	for (r = 0; r < rows; r++) {
+		for (c = 0; c < cols; c++) {
+			uint32_t bin = avg_map[r * cols + c];
+
+			if (bin >= ARRAY_SIZE(sums))
+				bin = ARRAY_SIZE(sums) - 1;
+
+			sums[bin] += raw_map[r * cols + c];
+			counts[bin] += 1;
+		}
+	}
+
+	for (r = 0; r < ARRAY_SIZE(sums); r++) {
+		uint32_t value;
+
+		if (counts[r] == 0) {
+			value = 0;
+		} else {
+			value = (sums[r] + (counts[r] >> 1)) / counts[r];
+			if (value >= 0x20)
+				value = 0x1f;
+		}
+
+		if (r != 0) {
+			uint32_t prev = le32_at(out_lut + (r - 1) * 4);
+
+			if (value < prev)
+				value = prev;
+		}
+
+		le32_put(out_lut, r, value);
+	}
+
+	return 0;
+}
+
+static int defog_3x3_5x5_params_init(uint32_t width, uint32_t height)
+{
+	static const uint32_t cent3_base[24] = {
+		0x10, 0x21, 0x32, 0x44, 0x57, 0x6b, 0x81, 0x97,
+		0xaf, 0xc8, 0xe4, 0x101, 0x121, 0x144, 0x16a, 0x194,
+		0x1c4, 0x1fb, 0x23b, 0x287, 0x2e8, 0x368, 0x42b, 0x5cf,
+	};
+	static const uint32_t cent5_dense_base[63] = {
+		0x11, 0x22, 0x32, 0x44, 0x56, 0x68, 0x7b, 0x8e,
+		0xa1, 0xb4, 0xc8, 0xdc, 0xf1, 0x106, 0x11b, 0x131,
+		0x48, 0x15e, 0x175, 0x18e, 0x1a7, 0x1c0, 0x1db, 0x1f7,
+		0x213, 0x22a, 0x249, 0x268, 0x289, 0x2aa, 0x2cd, 0x2f1,
+		0x316, 0x33d, 0x366, 0x390, 0x3bc, 0x3eb, 0x41d, 0x452,
+		0x48a, 0x4c6, 0x506, 0x54b, 0x596, 0x5e8, 0x642, 0x6a5,
+		0x714, 0x791, 0x821, 0x8c8, 0x991, 0xa83, 0xbb2, 0xd2b,
+		0xf14, 0x11a4, 0x14c6, 0x18d2, 0x1e36, 0x2577, 0x31b8,
+	};
+	uint32_t rows = (height + 5) / 10;
+	uint32_t cols = (width + 9) / 18;
+	uint32_t row_bytes = cols << 2;
+	uint32_t block_scale;
+	uint32_t *raw22 = NULL, *raw21 = NULL, *raw20 = NULL, *raw12 = NULL;
+	uint32_t *raw11 = NULL, *raw10 = NULL, *raw02 = NULL, *raw01 = NULL;
+	uint32_t *avg22 = NULL, *avg21 = NULL, *avg12 = NULL, *avg20 = NULL, *avg02 = NULL;
+	uint32_t total_blocks;
+	uint32_t i;
+	int r, c;
+
+	if (!width || !height)
+		return -EINVAL;
+
+	/* OEM HLIL:
+	 * ((width * height + 0x3f4) / 0x7e9 * data_9cd44 + 0x32) / 0x64
+	 * The OEM scale constant resolves to 100, so this is a rounded block-area
+	 * factor based on the nominal 18x10 defog grid. */
+	block_scale = ((((width * height) + 0x3f4) / 0x7e9) * 100 + 0x32) / 0x64;
+
+	for (i = 0; i < ARRAY_SIZE(cent3_base); i++)
+		le32_put(param_defog_cent3_w_dis_array_tmp, i,
+			 (block_scale * cent3_base[i] + 0x2000) >> 14);
+
+	for (i = 0; i < ARRAY_SIZE(cent5_dense_base); i++) {
+		uint32_t scaled = (block_scale * cent5_dense_base[i] + 0x1000) >> 13;
+
+		if ((i & 1) != 0)
+			le32_put(param_defog_cent5_w_dis_array_tmp, i >> 1, scaled);
+	}
+
+	total_blocks = rows * cols;
+	raw22 = vmalloc(total_blocks * sizeof(*raw22));
+	raw21 = vmalloc(total_blocks * sizeof(*raw21));
+	raw20 = vmalloc(total_blocks * sizeof(*raw20));
+	raw12 = vmalloc(total_blocks * sizeof(*raw12));
+	raw11 = vmalloc(total_blocks * sizeof(*raw11));
+	raw10 = vmalloc(total_blocks * sizeof(*raw10));
+	raw02 = vmalloc(total_blocks * sizeof(*raw02));
+	raw01 = vmalloc(total_blocks * sizeof(*raw01));
+	avg22 = vmalloc(total_blocks * sizeof(*avg22));
+	avg21 = vmalloc(total_blocks * sizeof(*avg21));
+	avg12 = vmalloc(total_blocks * sizeof(*avg12));
+	avg20 = vmalloc(total_blocks * sizeof(*avg20));
+	avg02 = vmalloc(total_blocks * sizeof(*avg02));
+	if (!raw22 || !raw21 || !raw20 || !raw12 || !raw11 || !raw10 ||
+	    !raw02 || !raw01 || !avg22 || !avg21 || !avg12 || !avg20 || !avg02) {
+		vfree(raw22);
+		vfree(raw21);
+		vfree(raw20);
+		vfree(raw12);
+		vfree(raw11);
+		vfree(raw10);
+		vfree(raw02);
+		vfree(raw01);
+		vfree(avg22);
+		vfree(avg21);
+		vfree(avg12);
+		vfree(avg20);
+		vfree(avg02);
+		return -ENOMEM;
+	}
+
+	memset(raw22, 0, total_blocks * sizeof(*raw22));
+	memset(raw21, 0, total_blocks * sizeof(*raw21));
+	memset(raw20, 0, total_blocks * sizeof(*raw20));
+	memset(raw12, 0, total_blocks * sizeof(*raw12));
+	memset(raw11, 0, total_blocks * sizeof(*raw11));
+	memset(raw10, 0, total_blocks * sizeof(*raw10));
+	memset(raw02, 0, total_blocks * sizeof(*raw02));
+	memset(raw01, 0, total_blocks * sizeof(*raw01));
+
+	for (r = 0; r < rows; r++) {
+		int a1_3 = (int)(rows * 5 - 1) - r * 2;
+		int s7_1 = a1_3 * a1_3;
+		int v1_14 = a1_3 - ((int)rows << 1);
+		int fp_1 = v1_14 * v1_14;
+		int v1_15 = v1_14 - ((int)rows << 1);
+		int t4_1 = v1_15 * v1_15;
+
+		for (c = 0; c < cols; c++) {
+			int t3_1 = (int)(row_bytes + cols - 1) - c * 2;
+			int t0_4 = t3_1 * t3_1;
+			int v1_17 = t3_1 - ((int)cols << 1);
+			int t1_1 = v1_17 * v1_17;
+			int v1_18 = v1_17 - ((int)cols << 1);
+			int v1_19 = v1_18 * v1_18;
+			int idx = r * cols + c;
+			int k;
+
+			for (k = 0; k < 0x3f; k++) {
+				uint32_t limit = (block_scale * cent5_dense_base[k] + 0x1000) >> 13;
+
+				if (raw22[idx] == 0 &&
+				    (((uint32_t)(s7_1 + t0_4) + 0x20) >> 6) < limit)
+					raw22[idx] = 0x3f - k;
+				if (raw21[idx] == 0 &&
+				    (((uint32_t)(s7_1 + t1_1) + 0x20) >> 6) < limit)
+					raw21[idx] = 0x3f - k;
+				if (raw20[idx] == 0 &&
+				    (((uint32_t)(s7_1 + v1_19) + 0x20) >> 6) < limit)
+					raw20[idx] = 0x3f - k;
+				if (raw12[idx] == 0 &&
+				    (((uint32_t)(t0_4 + fp_1) + 0x20) >> 6) < limit)
+					raw12[idx] = 0x3f - k;
+				if (raw11[idx] == 0 &&
+				    (((uint32_t)(t1_1 + fp_1) + 0x20) >> 6) < limit)
+					raw11[idx] = 0x3f - k;
+				if (raw10[idx] == 0 &&
+				    (((uint32_t)(v1_19 + fp_1) + 0x20) >> 6) < limit)
+					raw10[idx] = 0x3f - k;
+				if (raw02[idx] == 0 &&
+				    (((uint32_t)(t0_4 + t4_1) + 0x20) >> 6) < limit)
+					raw02[idx] = 0x3f - k;
+				if (raw01[idx] == 0 &&
+				    (((uint32_t)(t1_1 + t4_1) + 0x20) >> 6) < limit)
+					raw01[idx] = 0x3f - k;
+			}
+
+			avg22[idx] = raw11[idx] >> 1;
+			avg21[idx] = (raw11[idx] + raw10[idx]) >> 2;
+			avg12[idx] = (raw11[idx] + raw01[idx]) >> 2;
+			avg20[idx] = raw10[idx] >> 1;
+			avg02[idx] = raw01[idx] >> 1;
+		}
+	}
+
+	defog_wei_interpcot(rows, cols, avg22, raw22, param_defog_weightlut22_tmp);
+	defog_wei_interpcot(rows, cols, avg21, raw21, param_defog_weightlut21_tmp);
+	defog_wei_interpcot(rows, cols, avg12, raw12, param_defog_weightlut12_tmp);
+	defog_wei_interpcot(rows, cols, avg20, raw20, param_defog_weightlut20_tmp);
+	defog_wei_interpcot(rows, cols, avg02, raw02, param_defog_weightlut02_tmp);
+
+	vfree(raw22);
+	vfree(raw21);
+	vfree(raw20);
+	vfree(raw12);
+	vfree(raw11);
+	vfree(raw10);
+	vfree(raw02);
+	vfree(raw01);
+	vfree(avg22);
+	vfree(avg21);
+	vfree(avg12);
+	vfree(avg20);
+	vfree(avg02);
+
+	return 0;
+}
 void tisp_s_wdr_init_en(int en) { (void)en; }
-void tisp_lsc_lut_mirror_exchange(void) { }
 void tisp_mscaler_mask_change(void) { }
 void tisp_mscaler_mask_setreg(void) { }
 /* OEM: printf_func0 — AE0 statistics debug print (rate-limited).
@@ -29233,7 +29467,7 @@ int tisp_lsc_wdr_en(int enable)
     data_9a420 = lsc_wdr_en ? lsc_mesh_str_wdr : lsc_mesh_str;
     lsc_force_update = 1;
     pr_info("tisp_lsc_wdr_en: %s LSC WDR mode\n", enable ? "Enable" : "Disable");
-    return 0;
+    return 0x90000;
 }
 
 int tisp_gamma_wdr_en(int enable)
@@ -29302,16 +29536,14 @@ int tisp_bcsh_wdr_en(int enable)
     struct isp_tuning_data *tuning;
 
     bcsh_wdr_enabled = !!enable;
-
-    pr_info("tisp_bcsh_wdr_en: %s BCSH WDR mode\n", bcsh_wdr_enabled ? "Enable" : "Disable");
+    tiziano_bcsh_select_active_bank();
 
     tuning = ourISPdev ? ourISPdev->tuning_data : NULL;
-    if (!tuning)
-        return 0;  /* Defer until tuning_data exists */
-
-    tiziano_bcsh_sync_active_bank(tuning);
     BCSH_real = 1;
-    return tiziano_bcsh_update(tuning);
+    if (tuning)
+        tiziano_bcsh_sync_active_bank(tuning);
+    tiziano_bcsh_update(tuning);
+    return 0;
 }
 
 /* OEM EXACT: tisp_rdns_wdr_en sets WDR state and selects text_base_thres array */
@@ -29324,52 +29556,68 @@ int tisp_rdns_wdr_en(int enable)
 
 int tisp_adr_wdr_en(int enable)
 {
-    if (enable && tisp_force_bypass_adr) {
-        pr_warn("tisp_adr_wdr_en: ADR WDR request ignored because ADR bypass isolation is active\n");
-        return 0;
+    adr_wdr_en = enable;
+    if (adr_wdr_en != 0) {
+        adr_ctc_map2cut_y_now = adr_ctc_map2cut_y_wdr;
+        adr_light_end_now = adr_light_end_wdr;
+        adr_block_light_now = adr_block_light_wdr;
+        adr_map_mode_now = adr_map_mode_wdr;
+        adr_ev_list_now = adr_ev_list_wdr;
+        adr_ligb_list_now = adr_ligb_list_wdr;
+        adr_mapb1_list_now = adr_mapb1_list_wdr;
+        adr_mapb2_list_now = adr_mapb2_list_wdr;
+        adr_mapb3_list_now = adr_mapb3_list_wdr;
+        adr_mapb4_list_now = adr_mapb4_list_wdr;
+        adr_blp2_list_now = adr_blp2_list_wdr;
+    } else {
+        adr_ctc_map2cut_y_now = adr_ctc_map2cut_y;
+        adr_light_end_now = adr_light_end;
+        adr_block_light_now = adr_block_light;
+        adr_map_mode_now = adr_map_mode;
+        adr_ev_list_now = adr_ev_list;
+        adr_ligb_list_now = adr_ligb_list;
+        adr_mapb1_list_now = adr_mapb1_list;
+        adr_mapb2_list_now = adr_mapb2_list;
+        adr_mapb3_list_now = adr_mapb3_list;
+        adr_mapb4_list_now = adr_mapb4_list;
+        adr_blp2_list_now = adr_blp2_list;
     }
 
-    pr_info("tisp_adr_wdr_en: %s ADR WDR mode\n", enable ? "Enable" : "Disable");
+    tiziano_adr_params_refresh();
+    tiziano_adr_params_init();
     return 0;
 }
 
 static int defog_wdr_en = 0;
 int tisp_defog_wdr_en(int enable)
 {
-    if (enable && tisp_force_bypass_defog) {
-        pr_warn("tisp_defog_wdr_en: Defog WDR request ignored because Defog bypass isolation is active\n");
-        defog_wdr_en = 0;
-        return 0;
-    }
+	defog_wdr_en = enable ? 1 : 0;
 
-    pr_info("tisp_defog_wdr_en: %s Defog WDR mode\n", enable ? "Enable" : "Disable");
-    defog_wdr_en = enable ? 1 : 0;
+	if (defog_wdr_en) {
+		defog_ev_list_now = defog_ev_list_wdr;
+		defog_trsy0_list_now = defog_trsy0_list_wdr;
+		defog_trsy1_list_now = defog_trsy1_list_wdr;
+		defog_trsy2_list_now = defog_trsy2_list_wdr;
+		defog_trsy3_list_now = defog_trsy3_list_wdr;
+		defog_trsy4_list_now = defog_trsy4_list_wdr;
+		param_defog_block_t_x_now = param_defog_block_t_x_wdr_array;
+		param_defog_fpga_para_now = param_defog_fpga_para_wdr_array;
+		param_defog_main_para_now = param_defog_main_para_wdr_array;
+	} else {
+		defog_ev_list_now = defog_ev_list;
+		defog_trsy0_list_now = defog_trsy0_list;
+		defog_trsy1_list_now = defog_trsy1_list;
+		defog_trsy2_list_now = defog_trsy2_list;
+		defog_trsy3_list_now = defog_trsy3_list;
+		defog_trsy4_list_now = defog_trsy4_list;
+		param_defog_block_t_x_now = defog_block_t_x_array;
+		param_defog_fpga_para_now = param_defog_fpga_para_array;
+		param_defog_main_para_now = defog_main_para_array;
+	}
 
-    if (defog_wdr_en) {
-        defog_ev_list_now = defog_ev_list_wdr;
-        defog_trsy0_list_now = defog_trsy0_list_wdr;
-        defog_trsy1_list_now = defog_trsy1_list_wdr;
-        defog_trsy2_list_now = defog_trsy2_list_wdr;
-        defog_trsy3_list_now = defog_trsy3_list_wdr;
-        defog_trsy4_list_now = defog_trsy4_list_wdr;
-        param_defog_main_para_now = param_defog_main_para_wdr_array;
-        param_defog_fpga_para_now = param_defog_fpga_para_wdr_array;
-        param_defog_block_t_x_now = param_defog_block_t_x_wdr_array;
-    } else {
-        defog_ev_list_now = defog_ev_list;
-        defog_trsy0_list_now = defog_trsy0_list;
-        defog_trsy1_list_now = defog_trsy1_list;
-        defog_trsy2_list_now = defog_trsy2_list;
-        defog_trsy3_list_now = defog_trsy3_list;
-        defog_trsy4_list_now = defog_trsy4_list;
-        param_defog_main_para_now = defog_main_para_array;
-        param_defog_fpga_para_now = param_defog_fpga_para_array;
-        param_defog_block_t_x_now = defog_block_t_x_array;
-    }
-
-    tisp_defog_all_reg_refresh();
-    tiziano_defog_params_init();
-    return 0;
+	tiziano_defog_params_refresh();
+	tiziano_defog_params_init();
+	return tiziano_defog_set_reg_params();
 }
 
 int tisp_mdns_wdr_en(int enable)
@@ -30194,9 +30442,8 @@ int tisp_ev_update(uint32_t ev, uint32_t aux_ev)
     reg_0c = system_reg_read(0xc);
     if ((reg_0c & 0x80) == 0)
         tisp_adr_ev_update(ev, aux_ev);
-
-    /* OEM also gates defog and WDR EV updates here. Those paths are still
-     * handled separately until their parity work is complete. */
+    if ((reg_0c & 0x800) == 0)
+        tisp_defog_ev_update(ev, aux_ev);
 
     return 0;
 }
@@ -30344,12 +30591,6 @@ static int tiziano_dmsc_dn_params_refresh(void)
  * Decompiled at 0x230b8: params_refresh + force LUT rewrite flag. */
 static int tiziano_lsc_dn_params_refresh(void)
 {
-	if (tisp_lsc_bypass_active()) {
-		lsc_force_update = 0;
-		pr_info("tiziano_lsc_dn_params_refresh: skipping LSC refresh because bypass is active\n");
-		return 0;
-	}
-
 	tiziano_lsc_params_refresh();
 	lsc_force_update = 1;
 	return 0;
@@ -30401,6 +30642,7 @@ static int tiziano_dpc_dn_params_refresh(void)
 void tiziano_adr_dn_params_refresh(void)
 {
     tiziano_adr_params_refresh();
+    tiziano_adr_params_init();
 }
 
 /* OEM: tiziano_af_dn_params_refresh — AF DN switch refresh.
@@ -30415,25 +30657,10 @@ void tiziano_af_dn_params_refresh(void)
 static int tiziano_bcsh_dn_params_refresh(void)
 {
 	tiziano_bcsh_params_refresh();
-	/* OEM EXACT: sync the _now arrays so tiziano_bcsh_update sees the
-	 * newly-loaded day/night EvList and S-list values. Without this,
-	 * the tuning_data->bcsh_au32*_now[] arrays stay stale from the
-	 * previous mode. */
-	if (ourISPdev && ourISPdev->tuning_data)
-		tiziano_bcsh_sync_active_bank(ourISPdev->tuning_data);
-
-	pr_info("BCSH_DN: CCM_d=[%u,%u,%u,%u,%u,%u,%u,%u,%u]\n",
-		bcsh_CCM_d[0], bcsh_CCM_d[1], bcsh_CCM_d[2],
-		bcsh_CCM_d[3], bcsh_CCM_d[4], bcsh_CCM_d[5],
-		bcsh_CCM_d[6], bcsh_CCM_d[7], bcsh_CCM_d[8]);
-	pr_info("BCSH_DN: CCM_t=[%u,%u,%u,%u,%u,%u,%u,%u,%u]\n",
-		bcsh_CCM_t[0], bcsh_CCM_t[1], bcsh_CCM_t[2],
-		bcsh_CCM_t[3], bcsh_CCM_t[4], bcsh_CCM_t[5],
-		bcsh_CCM_t[6], bcsh_CCM_t[7], bcsh_CCM_t[8]);
-
 	BCSH_real = 1;
 	if (ourISPdev && ourISPdev->tuning_data)
-		tiziano_bcsh_update(ourISPdev->tuning_data);
+		tiziano_bcsh_sync_active_bank(ourISPdev->tuning_data);
+	tiziano_bcsh_update(NULL);
 	return 0;
 }
 
@@ -30561,12 +30788,106 @@ static void tiziano_bcsh_reg2para(int32_t *dst, const uint32_t *src)
 
 /* OEM: tiziano_bcsh_lut_parameter — write BCSH params to HW registers.
  * OEM at 0x28464. This is called from tiziano_bcsh_update after
- * TransitParam computes all the parameter arrays. Our reg_apply
- * function handles this directly, so this is a pass-through. */
+ * TransitParam computes all the parameter arrays. */
 static void tiziano_bcsh_lut_parameter(void *tisp_bcsh, void *clip1, void *clip2, void *offset0)
 {
-    /* Register writes are handled by tiziano_bcsh_reg_apply.
-     * This function exists for OEM call-chain compatibility. */
+    uint32_t *clip0 = tisp_bcsh;
+    uint32_t *clip1_now = clip1;
+    uint32_t *clip2_now = clip2;
+    uint32_t *offset0_now = offset0;
+    uint32_t hlsp_mix = ((bcsh_HLSP_now[2] & 0xffff) << 16) |
+                        (bcsh_HLSP_now[1] & 0xffff);
+    uint32_t lo_idx = bcsh_hlsp_lo_idx;
+    uint32_t hi_idx = bcsh_hlsp_hi_idx;
+    uint32_t ev_now = bcsh_ev_current >> 10;
+
+#define PACK16(hi, lo) ((((uint32_t)(hi) & 0xffff) << 16) | ((uint32_t)(lo) & 0xffff))
+
+    if (lo_idx >= 0xa)
+        lo_idx = 9;
+    else if (lo_idx == 0)
+        lo_idx = 1;
+
+    if (hi_idx >= 0xa)
+        hi_idx = 9;
+    else if (hi_idx == 0)
+        hi_idx = 1;
+
+    if (clip0[0] == 1) {
+        uint32_t ev_limit = bcsh_EvList_now[lo_idx - 1];
+
+        if (ev_now < ev_limit) {
+            uint32_t low_num = clip0[0] - ev_now;
+            uint32_t high_num = ev_now - 1;
+            uint32_t high_den = (ev_limit == 0) ? clip0[0] : (ev_limit - 1);
+            uint32_t low_den = (ev_limit == 0) ? 1 : (ev_limit - 1);
+
+            if (ev_now >= 2)
+                low_num = ev_now - 1;
+            else
+                high_num = clip0[0] - ev_now;
+
+            hlsp_mix = ((high_num * bcsh_HLSP_now[2] / high_den) << 16) |
+                       (low_num * bcsh_HLSP_now[1] / low_den);
+        }
+    } else if (bcsh_hlsp_tail_enable == 1) {
+        uint32_t ev_limit = bcsh_EvList_now[8];
+
+        if (ev_now < ev_limit) {
+            uint32_t ev_start = bcsh_EvList_now[hi_idx - 1];
+
+            if (ev_start < ev_now) {
+                uint32_t hlsp_hi = bcsh_HLSP_now[2];
+                uint32_t hlsp_lo = bcsh_HLSP_now[1];
+                uint32_t range = (ev_limit >= ev_start) ?
+                                 (ev_limit - ev_start) : (ev_start - ev_limit);
+                uint32_t hi_part = 0;
+
+                if (hlsp_hi != 0)
+                    hi_part = (hlsp_hi - ((ev_now - ev_start) * hlsp_hi / range)) << 16;
+
+                if (hlsp_lo == 0) {
+                    hlsp_mix = hi_part;
+                } else {
+                    uint32_t lo_part = hlsp_lo - ((ev_now - ev_start) * hlsp_lo / range);
+
+                    hlsp_mix = hi_part | (lo_part & 0xffff);
+                }
+            }
+        }
+    }
+
+    system_reg_write(0x8000, PACK16(clip0[0], clip0[1]));
+    system_reg_write(0x8004, PACK16(clip1_now[0], clip1_now[1]));
+    system_reg_write(0x8008, PACK16(clip2_now[0], clip2_now[1]));
+    system_reg_write(0x800c, PACK16(clip0[2], clip0[3]));
+    system_reg_write(0x8010, PACK16(clip1_now[2], clip1_now[3]));
+    system_reg_write(0x8014, PACK16(clip2_now[2], clip2_now[3]));
+    system_reg_write(0x8018, PACK16(bcsh_Offset1[0], offset0_now[0]));
+    system_reg_write(0x801c, PACK16(bcsh_Offset1[1], offset0_now[1]));
+    system_reg_write(0x8020, PACK16(bcsh_Offset1[2], offset0_now[2]));
+    system_reg_write(0x8024, PACK16(bcsh_HMatrix[1], bcsh_HMatrix[0]));
+    system_reg_write(0x8028, bcsh_HMatrix[2]);
+    system_reg_write(0x802c, PACK16(bcsh_HMatrix[4], bcsh_HMatrix[3]));
+    system_reg_write(0x8030, bcsh_HMatrix[5]);
+    system_reg_write(0x8034, PACK16(bcsh_HMatrix[7], bcsh_HMatrix[6]));
+    system_reg_write(0x8038, bcsh_HMatrix[8]);
+    system_reg_write(0x803c, PACK16(bcsh_HDPslope, bcsh_HDP_now[0]));
+    system_reg_write(0x8040, PACK16(bcsh_HDP_now[2], bcsh_HDP_now[1]));
+    system_reg_write(0x8044, PACK16(bcsh_HBPslope, bcsh_HBP_now[0]));
+    system_reg_write(0x8048, PACK16(bcsh_HBP_now[2], bcsh_HBP_now[1]));
+    system_reg_write(0x804c, PACK16(bcsh_HLSPslope, bcsh_HLSP_now[0]));
+    system_reg_write(0x8050, hlsp_mix);
+    system_reg_write(0x8054, PACK16(bcsh_Cslope0, bcsh_ai32_C[0]));
+    system_reg_write(0x8058, PACK16(bcsh_Cslope2, bcsh_Cslope1));
+    system_reg_write(0x805c, PACK16(bcsh_ai32_C[2], bcsh_ai32_C[1]));
+    system_reg_write(0x8060, PACK16(bcsh_ai32_C[4], bcsh_ai32_C[3]));
+    system_reg_write(0x8064, PACK16(bcsh_Sstep1, (bcsh_Sstep0 << 3) | bcsh_Sthres_now[0]));
+    system_reg_write(0x8068, PACK16(bcsh_Sthres_now[2], bcsh_Sthres_now[1]));
+    system_reg_write(0x806c, PACK16(bcsh_ai32_Svalue[0], bcsh_ai32_Svalue[1]));
+    system_reg_write(0x8070, PACK16(bcsh_ai32_Svalue[2], bcsh_ai32_Svalue[3]));
+
+#undef PACK16
 }
 
 /* OEM: tiziano_bcsh_dump — one-shot BCSH register dump. OEM at 0x2a8d0. */
@@ -30581,85 +30902,78 @@ static void tiziano_bcsh_dump(void)
 /* OEM: tiziano_bcsh_dump2 — extended BCSH param dump. OEM at 0x27d9c. */
 static void tiziano_bcsh_dump2(void)
 {
-    pr_info("-----BCSH param dump2-----\n");
-    /* Extended param dump — used for debug only */
+    pr_info("-----BCSH regs dump-----\n");
+    pr_info("clip0=[%u,%u,%u,%u] clip1=[%u,%u,%u,%u] clip2=[%u,%u,%u,%u]\n",
+            bcsh_clip0[0], bcsh_clip0[1], bcsh_clip0[2], bcsh_clip0[3],
+            bcsh_clip1[0], bcsh_clip1[1], bcsh_clip1[2], bcsh_clip1[3],
+            bcsh_clip2[0], bcsh_clip2[1], bcsh_clip2[2], bcsh_clip2[3]);
+    pr_info("offset0=[%u,%u,%u] offset1=[%u,%u,%u]\n",
+            bcsh_Offset0[0], bcsh_Offset0[1], bcsh_Offset0[2],
+            bcsh_Offset1[0], bcsh_Offset1[1], bcsh_Offset1[2]);
+    pr_info("hmatrix=[%d,%d,%d,%d,%d,%d,%d,%d,%d]\n",
+            bcsh_HMatrix[0], bcsh_HMatrix[1], bcsh_HMatrix[2],
+            bcsh_HMatrix[3], bcsh_HMatrix[4], bcsh_HMatrix[5],
+            bcsh_HMatrix[6], bcsh_HMatrix[7], bcsh_HMatrix[8]);
+    pr_info("hdp=[%u,%u,%u] hbp=[%u,%u,%u] hlsp=[%u,%u,%u]\n",
+            bcsh_HDP_now[0], bcsh_HDP_now[1], bcsh_HDP_now[2],
+            bcsh_HBP_now[0], bcsh_HBP_now[1], bcsh_HBP_now[2],
+            bcsh_HLSP_now[0], bcsh_HLSP_now[1], bcsh_HLSP_now[2]);
+    pr_info("c=[%u,%u,%u,%u,%u] slopes=[%u,%u,%u] sstep=[%u,%u] sth=[%u,%u,%u]\n",
+            bcsh_ai32_C[0], bcsh_ai32_C[1], bcsh_ai32_C[2],
+            bcsh_ai32_C[3], bcsh_ai32_C[4],
+            bcsh_Cslope0, bcsh_Cslope1, bcsh_Cslope2,
+            bcsh_Sstep0, bcsh_Sstep1,
+            bcsh_Sthres_now[0], bcsh_Sthres_now[1], bcsh_Sthres_now[2]);
+    pr_info("svalue=[%u,%u,%u,%u]\n",
+            bcsh_ai32_Svalue[0], bcsh_ai32_Svalue[1],
+            bcsh_ai32_Svalue[2], bcsh_ai32_Svalue[3]);
 }
 
 /* OEM: tiziano_bcsh_TransitParam — compute BCSH transition parameters.
  * OEM at 0x29698. This is the large function that computes saturation
- * strength, contrast slopes, HDP/HBP/HLSP slopes, and offsets.
- * Our tiziano_bcsh_reg_apply handles the equivalent computation via
- * tiziano_bcsh_compute_slopes, so this exists for compatibility. */
+ * strength, contrast slopes, HDP/HBP/HLSP slopes, and offsets. */
 /* Working copies of S-values and C params after StrenCal (OEM: tisp_BCSH_ai32*) */
 /* (bcsh_ai32_Svalue etc. declared near line 593) */
 
 static void tiziano_bcsh_TransitParam(void)
 {
-    /* OEM EXACT: tiziano_bcsh_TransitParam at 0x29698.
-     * Applies user saturation/contrast/brightness controls via StrenCal,
-     * computes Cslope0/1/2, Sstep0/1, HDP/HBP/HLSP slopes. */
-    struct isp_tuning_data *tuning = ourISPdev ? ourISPdev->tuning_data : NULL;
-    uint32_t *rgb_off;
-    uint8_t user_sat, user_contrast, user_brightness;
-    uint32_t brightness_scaled;
-    uint32_t *Sth, *HDP, *HBP, *HLSP;
+    uint8_t user_sat = bcsh_saturation_user;
+    uint8_t user_contrast = bcsh_contrast_user;
+    uint8_t user_brightness = bcsh_brightness_user;
+    uint32_t brightness_scaled = ((uint32_t)user_brightness * bcsh_B) >> 7;
 
-    if (!tuning)
-        return;
+    bcsh_Offset0[0] = bcsh_OffsetYUVy[0];
+    bcsh_Offset0[1] = 0x400;
+    bcsh_Offset0[2] = 0x400;
 
-    user_sat = tuning->bcsh_saturation;
-    user_contrast = tuning->bcsh_contrast;
-    user_brightness = tuning->bcsh_brightness;
-
-    Sth = bcsh_wdr_enabled ? bcsh_Sthres_wdr : bcsh_Sthres;
-    HDP = bcsh_wdr_enabled ? bcsh_HDP_wdr : bcsh_HDP;
-    HBP = bcsh_wdr_enabled ? bcsh_HBP_wdr : bcsh_HBP;
-    HLSP = bcsh_wdr_enabled ? bcsh_HLSP_wdr : bcsh_HLSP;
-    rgb_off = bcsh_wdr_enabled ? bcsh_OffsetRGB_wdr : bcsh_OffsetRGB;
-
-    /* OEM offset path: derive the converted luma offset from the active
-     * RGB coefficients, then reset the chroma offsets back to neutral. */
-    tiziano_bcsh_Toffset_RGB2YUV((int32_t *)bcsh_OffsetRGB2yuv,
-                                 (const int32_t *)rgb_off);
-    bcsh_OffsetRGB2yuv[1] = 0x400;
-    bcsh_OffsetRGB2yuv[2] = 0x400;
-
-    /* Section 1: Saturation StrenCal */
     if (user_sat != 0x80) {
         if ((int8_t)user_sat < 0) {
             bcsh_ai32_Svalue[0] = tiziano_bcsh_StrenCal_part0(
-                user_sat, 0x80, 0x100, tuning->bcsh_saturation_value, 0x1800);
+                user_sat, 0x80, 0x100, bcsh_Svalue_base[0], 0x1800);
             bcsh_ai32_Svalue[1] = tiziano_bcsh_StrenCal_part0(
-                user_sat, 0x80, 0x100, tuning->bcsh_saturation_max, 0x1800);
+                user_sat, 0x80, 0x100, bcsh_Svalue_base[1], 0x1800);
             bcsh_ai32_Svalue[2] = tiziano_bcsh_StrenCal_part0(
-                user_sat, 0x80, 0x100, tuning->bcsh_saturation_min, 0x1800);
+                user_sat, 0x80, 0x100, bcsh_Svalue_base[2], 0x1800);
             bcsh_ai32_Svalue[3] = tiziano_bcsh_StrenCal_part0(
-                user_sat, 0x80, 0x100, tuning->bcsh_saturation_mult, 0x1800);
+                user_sat, 0x80, 0x100, bcsh_Svalue_base[3], 0x1800);
         } else {
             bcsh_ai32_Svalue[0] = tiziano_bcsh_StrenCal_part0(
-                user_sat, 0, 0x80, 0, tuning->bcsh_saturation_value);
+                user_sat, 0, 0x80, 0, bcsh_Svalue_base[0]);
             bcsh_ai32_Svalue[1] = tiziano_bcsh_StrenCal_part0(
-                user_sat, 0, 0x80, 0, tuning->bcsh_saturation_max);
+                user_sat, 0, 0x80, 0, bcsh_Svalue_base[1]);
             bcsh_ai32_Svalue[2] = tiziano_bcsh_StrenCal_part0(
-                user_sat, 0, 0x80, 0, tuning->bcsh_saturation_min);
+                user_sat, 0, 0x80, 0, bcsh_Svalue_base[2]);
             bcsh_ai32_Svalue[3] = tiziano_bcsh_StrenCal_part0(
-                user_sat, 0, 0x80, 0, tuning->bcsh_saturation_mult);
+                user_sat, 0, 0x80, 0, bcsh_Svalue_base[3]);
         }
     } else {
-        /* Default: passthrough */
-        bcsh_ai32_Svalue[0] = tuning->bcsh_saturation_value;
-        bcsh_ai32_Svalue[1] = tuning->bcsh_saturation_max;
-        bcsh_ai32_Svalue[2] = tuning->bcsh_saturation_min;
-        bcsh_ai32_Svalue[3] = tuning->bcsh_saturation_mult;
+        memcpy(bcsh_ai32_Svalue, bcsh_Svalue_base, sizeof(bcsh_ai32_Svalue));
     }
 
-    /* Section 2: Brightness scaling (also done in reg_apply for register write) */
-    brightness_scaled = ((uint32_t)user_brightness * bcsh_B) >> 7;
     if (brightness_scaled >= 0x76d)
         brightness_scaled = 0x76c;
 
-    /* Section 2b: Apply brightness StrenCal to S-values if brightness != 0x80 */
-    if ((int8_t)user_brightness >= 0 && user_brightness != 0x80) {
+    if ((int8_t)user_brightness >= 0) {
         bcsh_ai32_Svalue[0] = tiziano_bcsh_StrenCal_part0(
             user_brightness, 0, 0x80, 0, bcsh_ai32_Svalue[0]);
         bcsh_ai32_Svalue[1] = tiziano_bcsh_StrenCal_part0(
@@ -30670,32 +30984,36 @@ static void tiziano_bcsh_TransitParam(void)
             user_brightness, 0, 0x80, 0, bcsh_ai32_Svalue[3]);
     }
 
-    /* Section 3: Contrast StrenCal */
+    bcsh_Offset1[0] = bcsh_OffsetYUVy[1] + bcsh_OffsetRGB2yuv[0] - 0x800 + brightness_scaled;
+    bcsh_Offset1[1] = bcsh_OffsetRGB2yuv[1];
+    bcsh_Offset1[2] = bcsh_OffsetRGB2yuv[2];
+
     if (bcsh_C[0] != 0 && user_contrast != 0x80) {
-        bcsh_ai32_C[0] = bcsh_C[0]; /* enable flag preserved */
+        bcsh_ai32_C[0] = bcsh_C[0];
         if ((int8_t)user_contrast < 0) {
-            uint32_t mid = ((bcsh_C[4] >= bcsh_C[3]) ?
-                (bcsh_C[4] - bcsh_C[3]) : (bcsh_C[3] - bcsh_C[4])) / 2 + bcsh_C[3];
+            uint32_t mid = ((bcsh_Cxh_now >= bcsh_Cxl_now) ?
+                (bcsh_Cxh_now - bcsh_Cxl_now) : (bcsh_Cxl_now - bcsh_Cxh_now)) / 2 + bcsh_Cxl_now;
+
             bcsh_ai32_C[1] = tiziano_bcsh_StrenCal_part0(
-                user_contrast, 0x80, 0xff, bcsh_C[3], mid);
+                user_contrast, 0x80, 0xff, bcsh_Cxl_now, mid);
             bcsh_ai32_C[2] = tiziano_bcsh_StrenCal(
-                user_contrast, 0x80, 0xff, bcsh_C[4], mid, 1);
+                user_contrast, 0x80, 0xff, bcsh_Cxh_now, mid, 1);
             bcsh_ai32_C[3] = tiziano_bcsh_StrenCal(
-                user_contrast, 0x80, 0xff, bcsh_C[3], 0, 1);  /* OEM: data_9a7b4 */
+                user_contrast, 0x80, 0xff, bcsh_Cyl_now, 0, 1);
             bcsh_ai32_C[4] = tiziano_bcsh_StrenCal_part0(
-                user_contrast, 0x80, 0xff, bcsh_C[4], 0x3ff);
+                user_contrast, 0x80, 0xff, bcsh_Cyh_now, 0x3ff);
         } else {
-            uint32_t mid = ((bcsh_C[4] >= bcsh_C[3]) ?
-                (bcsh_C[4] - bcsh_C[3]) : (bcsh_C[3] - bcsh_C[4])) / 2 + bcsh_C[3];
+            uint32_t mid = ((bcsh_Cyh_now >= bcsh_Cyl_now) ?
+                (bcsh_Cyh_now - bcsh_Cyl_now) : (bcsh_Cyl_now - bcsh_Cyh_now)) / 2 + bcsh_Cyl_now;
+
             bcsh_ai32_C[1] = tiziano_bcsh_StrenCal_part0(
-                user_contrast, 0, 0x80, 0, bcsh_C[3]);
+                user_contrast, 0, 0x80, 0, bcsh_Cxl_now);
             bcsh_ai32_C[2] = tiziano_bcsh_StrenCal(
-                user_contrast, 0, 0x80, 0x3ff, bcsh_C[4], 1);
+                user_contrast, 0, 0x80, 0x3ff, bcsh_Cxh_now, 1);
             bcsh_ai32_C[3] = tiziano_bcsh_StrenCal(
-                user_contrast, 0, 0x80, mid, bcsh_C[3], 1);
+                user_contrast, 0, 0x80, mid, bcsh_Cyl_now, 1);
             bcsh_ai32_C[4] = tiziano_bcsh_StrenCal_part0(
-                user_contrast, 0, 0x80, mid, bcsh_C[4]);
-            /* OEM also scales S-values in contrast-decrease path */
+                user_contrast, 0, 0x80, mid, bcsh_Cyh_now);
             bcsh_ai32_Svalue[0] = tiziano_bcsh_StrenCal_part0(
                 user_contrast, 0, 0x80, 0, bcsh_ai32_Svalue[0]);
             bcsh_ai32_Svalue[1] = tiziano_bcsh_StrenCal_part0(
@@ -30706,86 +31024,76 @@ static void tiziano_bcsh_TransitParam(void)
                 user_contrast, 0, 0x80, 0, bcsh_ai32_Svalue[3]);
         }
     } else {
-        /* Default: passthrough */
         memcpy(bcsh_ai32_C, bcsh_C, sizeof(bcsh_ai32_C));
     }
 
-    /* Section 4: Cslope computation — OEM EXACT formulas */
-    {
-        uint32_t c1 = bcsh_ai32_C[1];  /* threshold low */
-        uint32_t c2 = bcsh_ai32_C[2];  /* threshold high */
-        uint32_t c3 = bcsh_ai32_C[3];  /* value at low */
-        uint32_t c4 = bcsh_ai32_C[4];  /* value at high */
-
-        /* Cslope0 = (c3 << 10) / c1 */
-        bcsh_Cslope0 = (c1 != 0) ? ((c3 << 10) / c1) : 0;
-
-        /* Cslope1 = (|c3 - c4| << 10) / (c2 - c1) */
-        if (c1 < c2) {
-            uint32_t diff = (c3 >= c4) ? (c3 - c4) : (c4 - c3);
-            bcsh_Cslope1 = (diff << 10) / (c2 - c1);
-        } else {
-            bcsh_ai32_C[1] = c2;  /* OEM clamps c1 to c2 */
-            bcsh_Cslope1 = 0;
-        }
-
-        /* Cslope2 = (|c4 - clip| << 10) / (clip - c2), where clip = bcsh_clip0[1] (0x3ff) */
-        {
-            uint32_t clip = bcsh_clip0[1];  /* OEM: data_9a6bc */
-            if (c2 < clip) {
-                uint32_t diff = (c4 >= clip) ? (c4 - clip) : (clip - c4);
-                bcsh_Cslope2 = (diff << 10) / (clip - c2);
-            } else {
-                bcsh_ai32_C[2] = clip;
-                bcsh_Cslope2 = 0;
-            }
-        }
+    if (s_bcsh_mjpeg_mode == 1) {
+        bcsh_ai32_C[0] = 1;
+        bcsh_ai32_C[1] = s_bcsh_mjpeg_y_range_low << 2;
+        bcsh_ai32_C[2] = ((uint32_t)s_bcsh_fixed_contrast << 2) + 3;
+        bcsh_ai32_C[3] = 0;
+        bcsh_ai32_C[4] = 0x3ff;
     }
 
-    /* Section 5: Sstep computation — OEM EXACT */
-    {
-        uint32_t sth1 = Sth[1];
-        uint32_t sth2 = Sth[2];
+    if (bcsh_ai32_C[1] != 0)
+        bcsh_Cslope0 = (bcsh_ai32_C[3] << 10) / bcsh_ai32_C[1];
+    else
+        bcsh_Cslope0 = 0;
 
-        if (sth1 < sth2) {
-            uint32_t range = sth2 - sth1;
-            uint32_t d0 = (bcsh_ai32_Svalue[0] >= bcsh_ai32_Svalue[1]) ?
-                (bcsh_ai32_Svalue[0] - bcsh_ai32_Svalue[1]) :
-                (bcsh_ai32_Svalue[1] - bcsh_ai32_Svalue[0]);
-            uint32_t d1 = (bcsh_ai32_Svalue[2] >= bcsh_ai32_Svalue[3]) ?
-                (bcsh_ai32_Svalue[2] - bcsh_ai32_Svalue[3]) :
-                (bcsh_ai32_Svalue[3] - bcsh_ai32_Svalue[2]);
-            bcsh_Sstep0 = d0 / range;
-            bcsh_Sstep1 = d1 / range;
-        } else {
-            Sth[1] = sth2;  /* OEM clamps */
-            bcsh_Sstep0 = 0;
-            bcsh_Sstep1 = 0;
-        }
+    if (bcsh_ai32_C[1] < bcsh_ai32_C[2]) {
+        uint32_t diff = (bcsh_ai32_C[3] >= bcsh_ai32_C[4]) ?
+            (bcsh_ai32_C[3] - bcsh_ai32_C[4]) : (bcsh_ai32_C[4] - bcsh_ai32_C[3]);
+        bcsh_Cslope1 = (diff << 10) / (bcsh_ai32_C[2] - bcsh_ai32_C[1]);
+    } else {
+        bcsh_ai32_C[1] = bcsh_ai32_C[2];
+        bcsh_Cslope1 = 0;
     }
 
-    /* Section 6: HDP/HBP/HLSP slopes — OEM EXACT */
-    {
-        if (HDP[1] < HDP[2])
-            bcsh_HDPslope = 0x400 / (HDP[2] - HDP[1]);
-        else {
-            HDP[1] = HDP[2];
-            bcsh_HDPslope = 0;
-        }
+    if (bcsh_ai32_C[2] < bcsh_clip0[1]) {
+        uint32_t diff = (bcsh_ai32_C[4] >= bcsh_clip0[1]) ?
+            (bcsh_ai32_C[4] - bcsh_clip0[1]) : (bcsh_clip0[1] - bcsh_ai32_C[4]);
+        bcsh_Cslope2 = (diff << 10) / (bcsh_clip0[1] - bcsh_ai32_C[2]);
+    } else {
+        bcsh_ai32_C[2] = bcsh_clip0[1];
+        bcsh_Cslope2 = 0;
+    }
 
-        if (HBP[1] < HBP[2])
-            bcsh_HBPslope = 0x400 / (HBP[2] - HBP[1]);
-        else {
-            HBP[1] = HBP[2];
-            bcsh_HBPslope = 0;
-        }
+    if (bcsh_Sthres_now[1] < bcsh_Sthres_now[2]) {
+        uint32_t range = bcsh_Sthres_now[2] - bcsh_Sthres_now[1];
+        uint32_t d0 = (bcsh_ai32_Svalue[1] >= bcsh_ai32_Svalue[0]) ?
+            (bcsh_ai32_Svalue[1] - bcsh_ai32_Svalue[0]) :
+            (bcsh_ai32_Svalue[0] - bcsh_ai32_Svalue[1]);
+        uint32_t d1 = (bcsh_ai32_Svalue[3] >= bcsh_ai32_Svalue[2]) ?
+            (bcsh_ai32_Svalue[3] - bcsh_ai32_Svalue[2]) :
+            (bcsh_ai32_Svalue[2] - bcsh_ai32_Svalue[3]);
 
-        if (HLSP[1] < HLSP[2])
-            bcsh_HLSPslope = 0x400 / (HLSP[2] - HLSP[1]);
-        else {
-            HLSP[1] = HLSP[2];
-            bcsh_HLSPslope = 0;
-        }
+        bcsh_Sstep0 = d0 / range;
+        bcsh_Sstep1 = d1 / range;
+    } else {
+        bcsh_Sthres_now[1] = bcsh_Sthres_now[2];
+        bcsh_Sstep0 = 0;
+        bcsh_Sstep1 = 0;
+    }
+
+    if (bcsh_HDP_now[1] < bcsh_HDP_now[2])
+        bcsh_HDPslope = 0x400 / (bcsh_HDP_now[2] - bcsh_HDP_now[1]);
+    else {
+        bcsh_HDP_now[1] = bcsh_HDP_now[2];
+        bcsh_HDPslope = 0;
+    }
+
+    if (bcsh_HBP_now[1] < bcsh_HBP_now[2])
+        bcsh_HBPslope = 0x400 / (bcsh_HBP_now[2] - bcsh_HBP_now[1]);
+    else {
+        bcsh_HBP_now[1] = bcsh_HBP_now[2];
+        bcsh_HBPslope = 0;
+    }
+
+    if (bcsh_HLSP_now[1] < bcsh_HLSP_now[2])
+        bcsh_HLSPslope = 0x400 / (bcsh_HLSP_now[2] - bcsh_HLSP_now[1]);
+    else {
+        bcsh_HLSP_now[1] = bcsh_HLSP_now[2];
+        bcsh_HLSPslope = 0;
     }
 }
 
@@ -33034,41 +33342,18 @@ int tisp_s_adr_enable(int enable)
 {
     uint32_t reg_val;
 
-    if (enable == 1 && tisp_force_bypass_adr) {
-        pr_warn("tisp_s_adr_enable: forcing ADR to remain bypassed during FOV isolation\n");
-        enable = 0;
-    }
-
-    pr_info("tisp_s_adr_enable: %s ADR\n", enable ? "Enabling" : "Disabling");
-
-    /* Binary Ninja implementation:
-     * int32_t $v0 = system_reg_read(0xc);
-     * if (arg1 != 1) {
-     *     $a1_1 = $v0 | 0x80;
-     *     if (arg1 != 0) return 0xffffffff;
-     * } else {
-     *     tiziano_adr_init(sensor_info, data_b2e1c);
-     *     $a1_1 = $v0 & 0xffffff7f;
-     * }
-     * system_reg_write(0xc, $a1_1);
-     */
-
     reg_val = system_reg_read(0xc);
 
     if (enable == 1) {
-        /* Enable ADR */
         tiziano_adr_init(tisp_si_width(&sensor_info), tisp_si_height(&sensor_info));
-        reg_val &= 0xffffff7f;  /* Clear bit 7 */
+        reg_val &= 0xffffff7f;
     } else if (enable == 0) {
-        /* Disable ADR */
-        reg_val |= 0x80;  /* Set bit 7 */
+        reg_val |= 0x80;
     } else {
-        pr_err("tisp_s_adr_enable: Invalid enable value %d\n", enable);
-        return -EINVAL;
+        pr_err("adr enable error!!! mode is %d\n", enable);
+        return -1;
     }
 
-	/* OEM: no whitelist */
-	reg_val = tisp_apply_debug_top_bypass_overrides(reg_val, __func__);
     system_reg_write(0xc, reg_val);
     return 0;
 }
@@ -33079,22 +33364,24 @@ EXPORT_SYMBOL(tisp_s_adr_enable);
  * enable=0: set bit 11 (bypass defog). */
 int tisp_s_defog_enable(int enable)
 {
-    u32 reg = system_reg_read(0xc);
-    int current_en = ((reg >> 11) ^ 1) & 1;
+	u32 reg = system_reg_read(0xc);
+	int current_en = ((reg >> 11) ^ 1) & 1;
 
-    if (current_en == enable)
-        return 0;
+	if (current_en == enable)
+		return 0;
 
-    if (enable == 1) {
-        system_reg_write(0xc, reg & ~0x800);  /* clear bit 11 */
-        /* OEM reinits defog after enable */
-    } else if (enable == 0) {
-        system_reg_write(0xc, reg | 0x800);   /* set bit 11 */
-    } else {
-        pr_err("defog enable error!!! mode is %d\n", enable);
-        return -1;
-    }
-    return 0;
+	if (enable == 1) {
+		system_reg_write(0xc, reg & ~0x800);
+		tiziano_defog_init(tisp_si_width(&sensor_info),
+				 tisp_si_height(&sensor_info));
+	} else if (enable == 0) {
+		system_reg_write(0xc, reg | 0x800);
+	} else {
+		pr_err("defog enable error!!! mode is %d\n", enable);
+		return -1;
+	}
+
+	return 0;
 }
 EXPORT_SYMBOL(tisp_s_defog_enable);
 
@@ -33117,57 +33404,59 @@ int tisp_g_BacklightComp(uint32_t *out)
 /* tisp_s_adr_str_internal - ADR strength internal control */
 int tisp_s_adr_str_internal(int strength)
 {
+    const uint32_t *src1;
+    const uint32_t *src2;
+    const uint32_t *src3;
+    const uint32_t *src4;
+    uint32_t value1;
+    uint32_t value2;
+    uint32_t value3;
+    uint32_t value4;
     int i;
-    uint32_t temp_val;
 
-    if (tisp_adr_bypass_active()) {
-        adr_ratio = strength;
-        pr_info("tisp_s_adr_str_internal: ADR bypass active, ignoring strength update %d\n",
-                strength);
-        return 0;
-    }
-
-    if (!adr_mapb1_list_now || !adr_mapb2_list_now ||
-        !adr_mapb3_list_now || !adr_mapb4_list_now) {
-        pr_warn("tisp_s_adr_str_internal: ADR tables not initialized, skipping strength update %d\n",
-                strength);
-        return -EINVAL;
-    }
-
-    pr_info("tisp_s_adr_str_internal: Setting ADR strength to %d\n", strength);
-
-    /* Binary Ninja shows complex ADR strength calculation with multiple arrays */
-    /* This is a simplified implementation focusing on the key operations */
-
-    /* Set global ADR ratio */
     adr_ratio = strength;
 
-    /* Update ADR mapping lists based on strength */
-    for (i = 0; i < 9; i++) {  /* 9 elements as shown in Binary Ninja loop */
-        if (strength < 0x81) {
-            /* Linear scaling for strength < 129 */
-            temp_val = (strength * adr_base_values[i]) >> 7;
-        } else {
-            /* Non-linear scaling for higher strength values */
-            temp_val = adr_base_values[i] + (((0x190 - adr_base_values[i]) * (strength - 0x80)) >> 7);
-        }
-
-        /* Apply minimum thresholds */
-        if (temp_val < adr_min_thresholds[i]) {
-            temp_val = adr_min_thresholds[i];
-        }
-
-        /* Update ADR mapping arrays */
-        adr_mapb1_list_now[i] = temp_val;
-        adr_mapb2_list_now[i] = temp_val;
-        adr_mapb3_list_now[i] = temp_val;
-        adr_mapb4_list_now[i] = temp_val;
+    if (adr_wdr_en != 0) {
+        src1 = adr_mapb1_list_wdr;
+        src2 = adr_mapb2_list_wdr;
+        src3 = adr_mapb3_list_wdr;
+        src4 = adr_mapb4_list_wdr;
+        adr_mapb1_list_now = adr_mapb1_list_wdr;
+        adr_mapb2_list_now = adr_mapb2_list_wdr;
+        adr_mapb3_list_now = adr_mapb3_list_wdr;
+        adr_mapb4_list_now = adr_mapb4_list_wdr;
+    } else {
+        src1 = adr_mapb1_list;
+        src2 = adr_mapb2_list;
+        src3 = adr_mapb3_list;
+        src4 = adr_mapb4_list;
+        adr_mapb1_list_now = adr_mapb1_list;
+        adr_mapb2_list_now = adr_mapb2_list;
+        adr_mapb3_list_now = adr_mapb3_list;
+        adr_mapb4_list_now = adr_mapb4_list;
     }
 
-    /* Reinitialize ADR parameters */
+    for (i = 0; i < 9; i++) {
+        if (strength < 0x81) {
+            value1 = (strength * src1[i]) >> 7;
+            value2 = (strength * src2[i]) >> 7;
+            value3 = (strength * src3[i]) >> 7;
+            value4 = (strength * src4[i]) >> 7;
+        } else {
+            value1 = src1[i] + ((((src1[i] >= 0x190) ? 0 : (0x190 - src1[i])) * (strength - 0x80)) >> 7);
+            value2 = src2[i] + ((((src2[i] >= 0x1f4) ? 0 : (0x1f4 - src2[i])) * (strength - 0x80)) >> 7);
+            value3 = src3[i] + ((((src3[i] >= 0x258) ? 0 : (0x258 - src3[i])) * (strength - 0x80)) >> 7);
+            value4 = src4[i] + ((((src4[i] >= 0x258) ? 0 : (0x258 - src4[i])) * (strength - 0x80)) >> 7);
+        }
+
+        adr_mapb1_list_now[i] = value1;
+        adr_mapb2_list_now[i] = value2;
+        adr_mapb3_list_now[i] = value3;
+        adr_mapb4_list_now[i] = value4;
+    }
+
     tiziano_adr_params_init();
     ev_changed = 1;
-
     return 0;
 }
 EXPORT_SYMBOL(tisp_s_adr_str_internal);
@@ -33982,6 +34271,9 @@ EXPORT_SYMBOL(tisp_ae_s_comp);
  */
 int tiziano_ae_dn_params_refresh(void)
 {
+    /* Keep histogram-based brightness feedback active across mode switches. */
+    data_9a2ec = 1;
+
     /* OEM: Set all AE state flags to 1 to force full re-convergence */
     IspAeFlag = 1;
     data_a0de4 = 1;

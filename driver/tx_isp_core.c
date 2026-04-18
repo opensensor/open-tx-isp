@@ -527,6 +527,8 @@ static void tisp_fill_sensor_info_blob(struct tx_isp_dev *isp_dev,
     tisp_si_set_word(info, TISP_SI_WORD_HEIGHT, active_height);
     tisp_si_set_word(info, TISP_SI_WORD_FPS,
                      tisp_raw_fps_from_sensor(isp_dev, sensor_attr));
+    /* Keep sensor-info Bayer as the flipped base CFA index (0..3).
+     * The extended programming values live only inside tisp_init(). */
     tisp_si_set_word(info, TISP_SI_WORD_BAYER, tisp_bayer_from_sensor(isp_dev));
 
     if (isp_dev && isp_dev->sensor) {
@@ -917,21 +919,19 @@ static uint32_t bayer_write_pending = 1;
 /*
  * mbus_to_bayer_write - OEM-exact mbus->CFA register programming
  *
- * Maps V4L2 mbus format codes to Bayer pattern indices and programs
- * ISP register 8 with the result.
+ * Maps the raw V4L2 mbus code to the base Bayer index expected by the ISP
+ * and writes the result into register 8.
  */
-void mbus_to_bayer_write(u32 mbus_code)
+int mbus_to_bayer_write(u32 mbus_code)
 {
-	u32 bayer;
-
 	if ((mbus_code - 0x3001) >= 0x14) {
 		pr_err("%s[%d] the format(0x%08x) of input couldn't be handled!\n",
 		       __func__, __LINE__, mbus_code);
-		return;
+		return -EINVAL;
 	}
 
-	bayer = tisp_cfa_base_from_mbus(mbus_code);
-	system_reg_write(8, bayer);
+	system_reg_write(8, tisp_cfa_base_from_mbus(mbus_code));
+	return 0;
 }
 
 /*
@@ -940,11 +940,6 @@ void mbus_to_bayer_write(u32 mbus_code)
  * Sets bit 31 of ISP register 0xc.  Called exactly once on the first
  * interrupt after stream-on.
  *
- * CRITICAL FIX: Also re-enforce the block enable whitelist here.
- * Between tisp_init() and the first frame, something (likely an ioctl
- * from libimp.so or a day/night path) overwrites reg 0xc with the OEM
- * value 0xb5742249 which has ALL blocks enabled — including GIB(bit 5)
- * whose BLC component zeros AE/AWB stats data at high sensor gain.
  */
 /* OEM EXACT: check_state — validate subdev state (0xb68c).
  * Returns 0 if subdev is NULL or not ready, 1 if valid. */
@@ -957,15 +952,7 @@ int check_state(void *sd)
 
 void tisp_top_sel(void)
 {
-	extern u32 tisp_enforce_block_whitelist(u32 bypass_val);
-	u32 reg_val = system_reg_read(0xc);
-	u32 enforced = tisp_enforce_block_whitelist(reg_val);
-
-	enforced |= 0x80000000;
-	system_reg_write(0xc, enforced);
-	pr_info("tisp_top_sel: reg[0xc] 0x%08x -> 0x%08x%s\n",
-		reg_val, enforced,
-		(enforced != (reg_val | 0x80000000)) ? " (whitelist enforced)" : "");
+	system_reg_write(0xc, system_reg_read(0xc) | 0x80000000);
 }
 
 /* Core subdev operations implementations */
@@ -1276,6 +1263,9 @@ int ispcore_video_s_stream(struct tx_isp_subdev *sd, int enable)
         s3_1 = &isp_dev->subdevs[0];
 
         if (v0_3 == 3) {
+            /* Re-arm the OEM first-frame one-shots on each fresh STREAMON. */
+            first_into = 1;
+            bayer_write_pending = 1;
             isp_dev->state = 4;
         }
     }
@@ -1681,8 +1671,8 @@ irqreturn_t ispcore_interrupt_service_routine(int irq, void *dev_id)
     /*
      * Stock BN HLIL 0x69b30-0x69b80: Bayer pattern + ISP top-select on first frames.
      *
-     * mbus_to_bayer_write programs ISP reg 8 with the sensor's CFA (colour
-     * filter array) layout so the demosaic engine produces correct colours.
+     * mbus_to_bayer_write programs ISP reg 8 with the mbus-derived base CFA
+     * layout expected by the OEM core ISR.
      * tisp_top_sel sets bit-31 of ISP reg 0xc to enable top-level processing.
      * Both are one-shot: they fire on the first interrupt and are then
      * inhibited by their respective guard variables.
