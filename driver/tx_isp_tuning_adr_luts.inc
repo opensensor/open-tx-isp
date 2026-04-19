@@ -376,7 +376,7 @@ static const uint32_t param_adr_weight_12_1080P[32] = {
 static const uint32_t param_adr_weight_22_1080P[32] = {
 	0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 	0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1,
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 };
 static const uint32_t param_adr_weight_21_1080P[32] = {
 	0, 0, 0, 0, 0, 0, 0, 1, 1, 1,

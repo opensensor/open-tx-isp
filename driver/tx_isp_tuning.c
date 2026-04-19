@@ -71,15 +71,15 @@ extern void tx_isp_wakeup_frame_channels(void);
 #define TISP_TOP_BYPASS_DEFOG_BIT	BIT(11)
 #define TISP_TOP_BYPASS_MDNS_BIT	BIT(16)
 
-static int tisp_force_bypass_adr = 0; /* Keep OEM ADR active by default; bypass only for targeted isolation */
+static int tisp_force_bypass_adr = 1; /* Keep ADR bypassed by default until the OEM tone-mapping path is fully validated */
 module_param_named(force_bypass_adr, tisp_force_bypass_adr, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(force_bypass_adr,
-			 "Force ADR bypass (default: 0 — keep OEM ADR path active unless isolating it)");
+			 "Force ADR bypass (default: 1 — keep ADR disabled on this platform unless explicitly testing tone mapping)");
 
-static int tisp_force_bypass_defog = 1; /* Temporarily bypass Defog by default while isolating the ADR path */
+static int tisp_force_bypass_defog = 1; /* Keep Defog disabled on this platform unless explicitly testing it */
 module_param_named(force_bypass_defog, tisp_force_bypass_defog, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(force_bypass_defog,
-			 "Force Defog bypass (default: 1 while ruling Defog out of the current ADR artifact)");
+			 "Force Defog bypass (default: 1 — keep Defog disabled on this platform unless explicitly testing it)");
 
 static int tisp_force_identity_ccm = 0; /* Keep OEM CCM active by default; identity only for targeted isolation */
 module_param_named(force_identity_ccm, tisp_force_identity_ccm, int, S_IRUGO | S_IWUSR);
@@ -94,19 +94,14 @@ static int tisp_force_bypass_lsc = 0; /* Keep OEM LSC active by default; bypass 
 module_param_named(force_bypass_lsc, tisp_force_bypass_lsc, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(force_bypass_lsc, "Force LSC bypass (bits 4 and 6) (default: 0 — keep lens shading correction enabled unless isolating it)");
 
-static int tisp_force_bypass_gib = 1; /* Keep GIB bypassed by default while re-isolating the known suspect path */
+static int tisp_force_bypass_gib = 1; /* Keep GIB disabled per known-bad hardware behavior */
 module_param_named(force_bypass_gib, tisp_force_bypass_gib, int, S_IRUGO | S_IWUSR);
-MODULE_PARM_DESC(force_bypass_gib, "Force GIB (bit 5) bypass (default: 1 while ruling GIB back out)");
+MODULE_PARM_DESC(force_bypass_gib, "Force GIB (bit 5) bypass (default: 1 — keep GIB disabled on this platform unless explicitly testing it)");
 
 static int tisp_force_bypass_mdns = 0; /* MDNS: enabled (OEM default) */
 module_param_named(force_bypass_mdns, tisp_force_bypass_mdns, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(force_bypass_mdns,
 			 "Force MDNS bypass (default: 0 — MDNS provides temporal denoise)");
-
-static int tisp_ae_use_dark_bright_stats = 0; /* GC2053 stats appear to mis-map dark/bright counts; keep them disabled until verified */
-module_param_named(ae_use_dark_bright_stats, tisp_ae_use_dark_bright_stats, int, S_IRUGO | S_IWUSR);
-MODULE_PARM_DESC(ae_use_dark_bright_stats,
-			 "Use per-zone AE dark/bright pixel counters (default: 0 — ignore suspect counters and weight AE from RGB sums only)");
 
 extern uint32_t system_reg_read(u32 reg);
 
@@ -3940,9 +3935,11 @@ static uint32_t IspAeFlag = 1;     /* AE initial convergence flag — OEM sets t
 /* OEM analog/digital gain state for tisp_set_ae0_ag */
 static uint32_t ag_new = 0x400;    /* Current analog gain (Q10) */
 static uint32_t dg_new = 0x400;    /* Current digital gain (Q10) */
-static uint32_t data_c46a0 = 0x400; /* Cached analog gain */
-static uint32_t data_c46a4 = 0x400; /* Cached digital gain */
-static uint32_t data_c46ac = 0x400; /* Cached compensated digital gain */
+static uint32_t data_c46a0 = 0x400; /* Cached applied sensor analog gain */
+static uint32_t data_c46a4 = 0x400; /* Cached applied sensor digital gain */
+static uint32_t data_c46ac = 0x400; /* Cached ISP compensation digital gain */
+static uint32_t ae0_req_ag = 0x400;  /* Carried AE-requested analog gain */
+static uint32_t ae0_req_dg = 0x400;  /* Carried AE-requested digital gain */
 
 /* OEM gain register/limit references */
 static uint32_t ae_requested_ag = 0x400; /* Last REQUESTED AG (before sensor quantization) */
@@ -3978,16 +3975,15 @@ static uint32_t ftune_wmeans_state = 0; /* OEM: ftune_wmeans.32574 */
 /* OEM ae0_tune2 persistent state — arg7 in OEM (5-element convergence state):
  *   [0] = s5: current target brightness (from tisp_ae_target)
  *   [1] = convergence mode flag (0=stable, 1=converging)
- *   [2] = stored target-domain FIFO sample
+ *   [2] = stored measured-luma FIFO sample
  *   [3] = scene mode (day/night)
  *   [4] = convergence counter */
 static uint32_t ae0_conv_state[5];
 
 /* OEM ae0_tune2 EV FIFO — arg8 in OEM (15-entry history):
  * Shifted left each frame, newest value pushed at index 14.
- * The FIFO lives in the target-luma domain, not raw measured scene luma.
- * Phase C shifts in the previous frame's tisp_ae_target output so the
- * s5/s6 ratio stays in the same OEM domain. */
+ * The FIFO tracks post-histogram scene luma samples so Phase C compares
+ * the current target against a smoothed measurement of the scene. */
 static uint32_t ae0_ev_fifo[16];
 
 /* OEM ae0_tune2 scaled ev/lum arrays — arg18/arg19:
@@ -4588,7 +4584,6 @@ static int tisp_ae0_get_statistics(void *buffer, uint32_t flags)
     uint32_t *plane_bright = &IspAeStatic[AE_STATS_PLANE_BRIGHT * AE_ZONE_COUNT_MAX];
     uint32_t *plane_extra = &IspAeStatic[AE_STATS_PLANE_EXTRA * AE_ZONE_COUNT_MAX];
     uint32_t idx;
-    static int dark_bright_log_once;
 
     if (!buffer)
         return -EINVAL;
@@ -4620,13 +4615,8 @@ static int tisp_ae0_get_statistics(void *buffer, uint32_t flags)
         plane_r[idx] = w0 & 0x1fffff;
         plane_g[idx] = ((w1 & 0x3ff) << 11) | (w0 >> 21);
         plane_b[idx] = (w1 & 0x7ffffc00) >> 10;
-        if (tisp_ae_use_dark_bright_stats) {
-            plane_dark[idx] = dark_raw;
-            plane_bright[idx] = bright_raw;
-        } else {
-            plane_dark[idx] = 0;
-            plane_bright[idx] = 0;
-        }
+        plane_dark[idx] = dark_raw;
+        plane_bright[idx] = bright_raw;
         plane_extra[idx] = ((w3 & 0x3fff) << 7) | (w2 >> 25);
 
         ae0_zone_r[idx] = plane_r[idx];
@@ -4635,12 +4625,6 @@ static int tisp_ae0_get_statistics(void *buffer, uint32_t flags)
         ae0_zone_dark[idx] = plane_dark[idx];
         ae0_zone_bright[idx] = plane_bright[idx];
 
-        if (!tisp_ae_use_dark_bright_stats && !dark_bright_log_once && idx == 0 &&
-            (dark_raw != 0 || bright_raw != 0)) {
-            pr_info("AE0 statistics: ignoring raw dark/bright counters (raw dark=%u bright=%u) until sensor mapping is verified\n",
-                    dark_raw, bright_raw);
-            dark_bright_log_once = 1;
-        }
     }
 
     pr_debug("AE0 statistics unpacked: rows=%u cols=%u zones=%u flags=0x%x\n",
@@ -5137,7 +5121,8 @@ static uint32_t tisp_ae_target_ex(uint32_t cur_ev_q, uint32_t *ev_list,
  *
  * wmean:      current weighted mean scene luminance (from ae0_weight_mean2)
  * q:          Q-format fixed-point position
- * fifo_target: previous-frame target-domain value pushed into the FIFO (OEM arg27)
+ * fifo_target: current measured scene-luma sample pushed into the FIFO
+ *              (OEM arg27)
  * exp_out:    output integration time
  * ag_out:     output analog gain (Q10)
  * dg_out:     output digital gain (Q10)
@@ -5156,21 +5141,13 @@ static int ae0_tune2(uint32_t wmean, uint32_t q, uint32_t fifo_target,
     uint32_t var_c8 = ae0_conv_state[3]; /* scene mode */
     uint32_t v0_38 = ae0_conv_state[4];  /* convergence counter */
 
-    /* OEM arg5 is the live sensor-side exposure tuple.
-     *
-     * In this driver, _ae_reg.data[2] is reused for ISP digital-gain
-     * compensation after sensor AG/DG have already been allocated. Phase H,
-     * however, compares the current DG against ae_exp_th.data[2], which is the
-     * SENSOR DG limit. Feeding back the ISP compensation value here makes the
-     * solver believe DG is already above its own max and it stops requesting
-     * meaningful sensor AG, leaving logs stuck near req_ag=0x400.
-     *
-     * Keep using the live sensor-side AG/DG caches for the AE solver, while
-     * the post-AE pipeline continues to consume _ae_reg.data[2] as the total
-     * ISP compensation gain. */
+    /* Carry the requested AG/DG tuple through the AE convergence loop.
+     * The applied hardware tuple is tracked separately, because GC2053
+     * quantizes small AG changes away and otherwise traps AE at unity AG
+     * while all compensation leaks into ISP DG. */
     uint32_t cur_it = _ae_reg.data[0];
-    uint32_t cur_ag = data_c46a0;
-    uint32_t cur_dg = data_c46a4;
+    uint32_t cur_ag = ae0_req_ag;
+    uint32_t cur_dg = ae0_req_dg;
 
     /* OEM arg11: EV interpolation parameters */
     uint32_t var_dc = ae_ev_step.data[0];
@@ -5205,19 +5182,19 @@ static int ae0_tune2(uint32_t wmean, uint32_t q, uint32_t fifo_target,
 
     /* OEM arg21-26: gain limit and current state pointers */
     uint32_t v0_19 = ae_exp_th.data[0];  /* max IT */
-    uint32_t v0_21 = ae_exp_th.data[1];  /* max AG (Q10) */
-    uint32_t v0_23 = ae_exp_th.data[2];  /* max DG (Q10) */
+    uint32_t v0_21 = data_c46b0 ? data_c46b0 : ae_exp_th.data[1];
+    uint32_t v0_23 = data_c46bc ? data_c46bc : ae_exp_th.data[2];
     uint32_t var_c4;                      /* output IT (mutable) */
     uint32_t var_d4;                      /* output AG (mutable) */
     uint32_t var_d0;                      /* output DG (mutable) */
 
     /* Computed values */
     uint32_t var_b8;     /* base EV in Q-format */
-    uint32_t s6_2;       /* historical target-domain average (from FIFO) */
+    uint32_t s6_2;       /* historical measured-luma average (from FIFO) */
     uint32_t s2_2;       /* new computed EV → written to _ae_ev */
     uint32_t var_cc_2;   /* convergence in progress flag */
     uint32_t var_c0_1 = 0; /* convergence counter for output */
-    uint32_t v0_68;      /* ratio = target_luma / smoothed FIFO target */
+    uint32_t v0_68;      /* ratio = target_luma / smoothed FIFO luma */
     uint32_t v0_69;      /* new_ev = var_b8 * ratio */
 
     /* Local copies of ev_list/lum_list (may be scaled) */
@@ -5231,8 +5208,8 @@ static int ae0_tune2(uint32_t wmean, uint32_t q, uint32_t fifo_target,
      * Our _ae_reg.data[0] starts at 0 since we don't have the IspAeExp alias.
      * Seed with ae_exp_th[0] to match the OEM's initial bright-start behavior. */
     if (cur_it == 0) cur_it = ae_exp_th.data[0] ? ae_exp_th.data[0] : 1;
-    if (cur_ag == 0) cur_ag = _ae_reg.data[1] ? _ae_reg.data[1] : 0x400;
-    if (cur_dg == 0) cur_dg = data_c46a4 ? data_c46a4 : 0x400;
+    if (cur_ag == 0) cur_ag = data_c46a0 ? data_c46a0 : 0x400;
+    if (cur_dg == 0) cur_dg = data_c46ac ? data_c46ac : 0x400;
     var_c4 = cur_it;
     var_d4 = cur_ag;
     var_d0 = cur_dg;
@@ -5315,15 +5292,15 @@ static int ae0_tune2(uint32_t wmean, uint32_t q, uint32_t fifo_target,
     active_ev = ae0_scaled_ev;
     active_lum = ae0_scaled_lum;
 
-    /* ---- Phase C: target-domain FIFO management ---- */
+    /* ---- Phase C: measured-luma FIFO management ---- */
     /* Shift FIFO left by 1 position (OEM: entries 1..14 → 0..13) */
     for (i = 1; i < 15; i++)
         ae0_ev_fifo[i - 1] = ae0_ev_fifo[i];
-    ae0_ev_fifo[14] = fifo_target;  /* Push newest target-domain value at end */
+    ae0_ev_fifo[14] = fifo_target;  /* Push newest measured-luma value at end */
 
     /* Compute s6 = recency-weighted average from FIFO */
     if (IspAeFlag == 1) {
-        /* First frame: seed FIFO with the provided target-domain value. */
+        /* First frame: seed FIFO with the provided measured-luma value. */
         ftune_wmeans_state = 1;
         if (v0_34 == 1)
             ftune_wmeans_state = 0;
@@ -5369,7 +5346,7 @@ static int ae0_tune2(uint32_t wmean, uint32_t q, uint32_t fifo_target,
         s5 = tisp_ae_target_ex(var_b8, active_ev, active_lum, s0);
     }
 
-    /* Compute ratio = target_luma / smoothed target-domain FIFO value */
+    /* Compute ratio = target_luma / smoothed measured-luma FIFO value */
     {
         uint32_t s2_1 = s6_2 << qm;
         if (s2_1 == 0) s2_1 = 1;
@@ -5477,9 +5454,9 @@ phase_f_target:
 
                 if (s3_tune == 0) s3_tune = 1;
                 var_dc = var_dc + fix_point_div_32(s0,
-                        fix_point_mult2_32(s0, s7_tune, tune_a), s3_tune);
+                        fix_point_mult3_32(s0, s7_tune, tune_a, tune_a), s3_tune);
                 var_e0 = var_e0 + fix_point_div_32(s0,
-                        fix_point_mult2_32(s0, s7_tune, tune_b), s3_tune);
+                        fix_point_mult3_32(s0, s7_tune, tune_b, tune_b), s3_tune);
 
                 /* Write back to persistent state */
                 ae_ev_step.data[0] = var_dc;
@@ -5487,86 +5464,73 @@ phase_f_target:
             }
         }
 
-        /* 64-bit EV interpolation (Phase F of OEM).
-         * Uses adapted var_dc/var_e0 from tisp_ae_tune above. */
-        if (s6_2 >= s5) {
-            /* Over-exposed: need to DECREASE EV */
-            if ((uint32_t)(-(int32_t)v0_1) >= (uint32_t)(-(int32_t)v0_75)) {
-                /* Large error (v0_75 >= v0_1): linear response */
-                uint64_t a = (uint64_t)one_q << qm;
-                uint64_t b = fix_point_mult2_64_native(qm * 2,
-                        (uint64_t)var_dc << qm, (uint64_t)v0_75 << qm);
-                if (a >= b)
-                    s2_2 = (uint32_t)(a - b);
-                else
-                    s2_2 = 0;
-            } else {
-                /* Small error: quadratic response */
-                uint64_t base = (uint64_t)one_q << qm;
-                uint64_t interp = fix_point_mult3_64_native(qm * 2,
-                        (uint64_t)var_dc << qm,
-                        (uint64_t)v0_75 << qm,
-                        (uint64_t)v0_75 << qm);
-                uint64_t diff64 = fix_point_mult2_64_native(qm * 2,
-                        (uint64_t)(one_q - v0_75) << qm,
-                        (uint64_t)interp);
-                uint64_t result = fix_point_div_64_native(qm * 2, base, diff64 ? diff64 : 1);
-                if (base >= result)
-                    s2_2 = (uint32_t)(base - result);
-                else
-                    s2_2 = 0;
-            }
-        } else {
-            /* Under-exposed: need to INCREASE EV */
-            if (a3_4 >= v0_75) {
-                /* Small error: quadratic response */
-                uint64_t base = (uint64_t)one_q << qm;
-                uint64_t interp = fix_point_mult3_64_native(qm * 2,
-                        (uint64_t)var_e0 << qm,
-                        (uint64_t)v0_75 << qm,
-                        (uint64_t)v0_75 << qm);
-                s2_2 = (uint32_t)(interp + base);
-            } else {
-                /* Large error: linear response */
-                uint64_t base = (uint64_t)one_q << qm;
-                uint64_t interp = fix_point_mult2_64_native(qm * 2,
-                        (uint64_t)var_e0 << qm, (uint64_t)v0_75 << qm);
-                s2_2 = (uint32_t)(interp + base);
-            }
-        }
-
-        /* OEM EXACT: Clamp interpolated ratio by a3_3 step bounds.
-         * a3_3 = ae_ev_step.data[2] limits max per-frame EV change to
-         * ±a3_3/1024 around unity (1.0).  Without this clamp, the AE
-         * overshoots and oscillates, causing visible brightness flicker.
-         * OEM computes bounds in Q20 (qm*2) then clamps the 64-bit
-         * interpolation result; we use equivalent 32-bit since Q10
-         * values fit easily in uint32_t. */
+        /* OEM EXACT: keep the interpolated ratio in Q(q*2) until the
+         * 64-bit hi/lo clamp and the final var_b8 scaling are complete. */
         {
-            uint32_t one_q_q20 = one_q << qm;
-            uint32_t a3_3_q20 = a3_3 << qm;
-            uint32_t upper_bound = one_q_q20 + a3_3_q20;
-            uint32_t lower_bound = (one_q_q20 > a3_3_q20) ?
-                                    (one_q_q20 - a3_3_q20) : 0;
+            uint64_t base_q2 = (uint64_t)one_q << qm;
+            uint64_t interp_q2;
 
-            if (s2_2 > upper_bound) s2_2 = upper_bound;
-            if (s2_2 < lower_bound) s2_2 = lower_bound;
+            if (s6_2 >= s5) {
+                /* Over-exposed: decrease EV. */
+                if ((uint32_t)(-(int32_t)v0_1) >= (uint32_t)(-(int32_t)v0_75)) {
+                    /* Linear response when v0_75 >= v0_1. */
+                    interp_q2 = base_q2 - fix_point_mult2_64_native(qm * 2,
+                            (uint64_t)var_dc << qm,
+                            (uint64_t)v0_75 << qm);
+                } else {
+                    /* Quadratic response uses div64(interp, (1.0 - v0_75)). */
+                    uint64_t interp = fix_point_mult3_64_native(qm * 2,
+                            (uint64_t)var_dc << qm,
+                            (uint64_t)v0_75 << qm,
+                            (uint64_t)v0_75 << qm);
+                    uint64_t denom = (uint64_t)(one_q - v0_75) << qm;
+                    uint64_t delta = fix_point_div_64_native(qm * 2, interp, denom);
+
+                    interp_q2 = base_q2 - delta;
+                }
+            } else {
+                /* Under-exposed: increase EV. */
+                if (a3_4 >= v0_75) {
+                    interp_q2 = base_q2 + fix_point_mult3_64_native(qm * 2,
+                            (uint64_t)var_e0 << qm,
+                            (uint64_t)v0_75 << qm,
+                            (uint64_t)v0_75 << qm);
+                } else {
+                    interp_q2 = base_q2 + fix_point_mult2_64_native(qm * 2,
+                            (uint64_t)var_e0 << qm,
+                            (uint64_t)v0_75 << qm);
+                }
+            }
+
+            /* OEM EXACT: clamp the full 64-bit interpolated ratio to
+             * [1.0 - a3_3, 1.0 + a3_3] in Q(q*2). */
+            {
+                uint64_t step_q2 = (uint64_t)a3_3 << qm;
+                uint64_t upper_bound = base_q2 + step_q2;
+                uint64_t lower_bound = base_q2 - step_q2;
+
+                if (interp_q2 > upper_bound)
+                    interp_q2 = upper_bound;
+                if (interp_q2 < lower_bound)
+                    interp_q2 = lower_bound;
+            }
+
+            /* OEM EXACT: scale the clamped ratio by var_b8, shift back to Qq,
+             * then keep at least unity if the 64-bit result fits in 32 bits. */
+            {
+                uint64_t scaled = fix_point_mult2_64_native(qm * 2,
+                        (uint64_t)var_b8 << qm, interp_q2);
+                scaled >>= qm;
+
+                if ((scaled >> 32) != 0) {
+                    s2_2 = 0xFFFFFFFF;
+                } else {
+                    s2_2 = (uint32_t)scaled;
+                    if (s2_2 < one_q)
+                        s2_2 = one_q;
+                }
+            }
         }
-
-        /* Scale s2_2 by var_b8 and clamp */
-        {
-            uint64_t a = (uint64_t)var_b8 << qm;
-            uint64_t b = (uint64_t)s2_2;
-            uint64_t result = fix_point_mult2_64_native(qm * 2, a, b);
-            result >>= qm;
-            if ((result >> 32) != 0)
-                s2_2 = 0xFFFFFFFF;
-            else
-                s2_2 = (uint32_t)result;
-        }
-
-        if (s2_2 < one_q)
-            s2_2 = one_q;
     }
 
     /* DEBUG: trace convergence on first frames */
@@ -5580,24 +5544,6 @@ phase_f_target:
     }
 
 phase_g:
-    /* OEM dark-scene bootstrap: when the scene is near-black and the
-     * interpolated EV is not rising, force a bounded upward step so the
-     * controller can escape a cold-start stall. */
-    if (wmean < 10 && s2_2 <= var_b8) {
-        uint32_t one_q = 1u << qm;
-        uint32_t safe_wmean = wmean ? wmean : 1;
-        uint32_t ramp_ratio = fix_point_div_32(s0, 128u << qm, safe_wmean << qm);
-
-        if (ramp_ratio > (2u << qm))
-            ramp_ratio = 2u << qm;
-        if (ramp_ratio > one_q) {
-            uint32_t boosted = fix_point_mult2_32(s0, var_b8, ramp_ratio);
-
-            if (boosted > s2_2)
-                s2_2 = boosted;
-        }
-    }
-
     /* ---- Phase G: Write _ae_ev ---- */
     _ae_ev = s2_2;
 
@@ -5978,25 +5924,24 @@ static void tisp_set_ae0_ag(uint32_t ag, uint32_t dg)
         dg_comp = one_q;
 
     /* Step 4: Clamp ISP digital gain compensation.
-     * ae_exp_th.data[2] = max SENSOR digital gain (0x400 = 1x for GC2053).
-     * dg_comp here is ISP digital gain written to 0x1030/0x1034, NOT sensor DG.
-     * OEM uses a separate higher limit for ISP DG compensation (from AE state,
-     * not ae_exp_th). Allow up to 4x (0x1000 Q10) to compensate for sensor
-     * gain quantization (e.g., sensor steps 0x590→0x800 = 1.44x gap). */
-    max_dg = 0x1000;  /* 4x ISP digital gain max for quantization compensation */
+     * OEM clamps against the runtime max ISP DG control, not the sensor-DG
+     * limit from ae_exp_th[2]. */
+    max_dg = data_c46bc ? data_c46bc : one_q;
     if (max_dg > 0 && dg_comp > max_dg)
         dg_comp = max_dg;
 
     /* Store the compensated digital gain */
     dg_new = dg_comp;
     data_c46ac = dg_comp;
+    ae0_req_ag = ag;
+    ae0_req_dg = dg;
 
     IspAeFlag = 0;  /* Clear initial convergence flag */
 
-    /* OEM EXACT: *(arg2+4) = ag_new; *(arg2+8) = dg_new;
-     * The OEM writes actual AG/DG back into _ae_reg.data[1]/data[2]
-     * (arg2 is a pointer to _ae_reg).  The cache insertion in
-     * tisp_ae0_process_impl reads from _ae_reg.data[1]/data[2]. */
+    /* Keep the hardware-facing tuple separate from the requested AE tuple.
+     * _ae_reg drives the delayed DG register path with the applied sensor AG
+     * plus ISP compensation DG, while ae0_req_* keeps the convergence state
+     * from stalling on sensor AG quantization. */
     _ae_reg.data[1] = ag_new;
     _ae_reg.data[2] = dg_new;
 
@@ -6165,8 +6110,8 @@ static int tiziano_ae0_fpga_run(void)
 
     /* ---- Step 2: Run exposure convergence algorithm ---- */
     new_it = _ae_reg.data[0];
-    new_ag = _ae_reg.data[1];
-    new_dg = _ae_reg.data[2];
+    new_ag = ae0_req_ag;
+    new_dg = ae0_req_dg;
 
     /* OEM EXACT: Initial exposure seeding from IspAeExp / ae_exp_th.
      *
@@ -6175,11 +6120,6 @@ static int tiziano_ae0_fpga_run(void)
      * Tiziano_ae0_fpga → ae0_tune2.  So on the FIRST frame, cur_it = max_IT
      * (ae_exp_th[0]), NOT zero.  This gives the AE algorithm a bright starting
      * point from which it converges downward to the correct exposure.
-     *
-     * With IT=1 (the previous default), var_b8 = 1.0 Q10, the FIFO seeds at
-     * a tiny value, tisp_ae_target maps it through ae0_ev_list/_lum_list to
-     * lum_list[0]=5039, and the FIFO
-     * immediately equals the target → false convergence → stuck dark forever.
      *
      * With IT=max_IT, var_b8 is large, the AE correctly sees "overexposed"
      * (or near-target), and converges from bright toward the correct exposure
@@ -6280,15 +6220,7 @@ static int tiziano_ae0_fpga_run(void)
         ae_scene_wmean = ae_wmean;
         ae_scene_total = total_wt;
 
-        {
-            uint32_t cur_ev_q = fix_point_mult3_32(q, new_it << q, new_ag, new_dg);
-            uint32_t fifo_val = ae0_conv_state[0];
-
-            if (fifo_val == 0)
-                fifo_val = tisp_ae_target(cur_ev_q, q);
-
-            ae0_tune2(ae_wmean, q, fifo_val, &new_it, &new_ag, &new_dg);
-        }
+        ae0_tune2(ae_wmean, q, ae_wmean, &new_it, &new_ag, &new_dg);
     }
     /* OEM ae0_tune2 sets _ae_ev directly; also compute here for logging */
     if (_ae_ev == 0)
