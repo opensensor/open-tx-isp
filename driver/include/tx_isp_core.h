@@ -82,6 +82,7 @@ static inline u32 tisp_si_max_again_limit(const struct tisp_sensor_info_blob *in
 
 int tiziano_isp_init(struct tx_isp_sensor_attribute *sensor_attr, char *param_name);
 int tiziano_sync_sensor_attr(const struct tisp_sensor_info_blob *attr);
+void tiziano_ae_sync_sensor_gain_limits(const struct tisp_sensor_info_blob *info);
 int tiziano_channel_start(int channel_id, struct tx_isp_channel_attr *attr);
 int tisp_channel_start(int channel_id, struct tx_isp_channel_attr *attr);
 int tisp_channel_attr_set(uint32_t channel_id, void *attr);
