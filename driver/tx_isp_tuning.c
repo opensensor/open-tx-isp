@@ -76,10 +76,10 @@ module_param_named(force_bypass_adr, tisp_force_bypass_adr, int, S_IRUGO | S_IWU
 MODULE_PARM_DESC(force_bypass_adr,
 			 "Force ADR bypass (default: 0 — keep OEM ADR path active unless isolating it)");
 
-static int tisp_force_bypass_defog = 0; /* Keep Defog enabled by default; bypass only for targeted isolation */
+static int tisp_force_bypass_defog = 1; /* Temporarily bypass Defog by default while isolating the ADR path */
 module_param_named(force_bypass_defog, tisp_force_bypass_defog, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(force_bypass_defog,
-			 "Force Defog bypass (default: 0 — keep OEM Defog path active unless isolating it)");
+			 "Force Defog bypass (default: 1 while ruling Defog out of the current ADR artifact)");
 
 static int tisp_force_identity_ccm = 0; /* Keep OEM CCM active by default; identity only for targeted isolation */
 module_param_named(force_identity_ccm, tisp_force_identity_ccm, int, S_IRUGO | S_IWUSR);
@@ -90,13 +90,13 @@ static int tisp_force_bypass_dpc = 0;
 module_param_named(force_bypass_dpc, tisp_force_bypass_dpc, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(force_bypass_dpc, "Force DPC (bit 2) bypass for AWB bisection");
 
-static int tisp_force_bypass_lsc = 1; /* Keep LSC bypassed by default while isolating suspected lens-shading issues */
+static int tisp_force_bypass_lsc = 0; /* Keep OEM LSC active by default; bypass only for targeted isolation */
 module_param_named(force_bypass_lsc, tisp_force_bypass_lsc, int, S_IRUGO | S_IWUSR);
-MODULE_PARM_DESC(force_bypass_lsc, "Force LSC bypass (bits 4 and 6) (default: 1 — isolate suspected lens-shading issues)");
+MODULE_PARM_DESC(force_bypass_lsc, "Force LSC bypass (bits 4 and 6) (default: 0 — keep lens shading correction enabled unless isolating it)");
 
-static int tisp_force_bypass_gib = 1; /* Keep GIB bypassed until the gate/state mismatch is resolved */
+static int tisp_force_bypass_gib = 1; /* Keep GIB bypassed by default while re-isolating the known suspect path */
 module_param_named(force_bypass_gib, tisp_force_bypass_gib, int, S_IRUGO | S_IWUSR);
-MODULE_PARM_DESC(force_bypass_gib, "Force GIB (bit 5) bypass (default: 1 during bring-up)");
+MODULE_PARM_DESC(force_bypass_gib, "Force GIB (bit 5) bypass (default: 1 while ruling GIB back out)");
 
 static int tisp_force_bypass_mdns = 0; /* MDNS: enabled (OEM default) */
 module_param_named(force_bypass_mdns, tisp_force_bypass_mdns, int, S_IRUGO | S_IWUSR);
@@ -2114,7 +2114,9 @@ static uint32_t adr_ratio = 0x80;  /* OEM default: 0x80 = neutral (no strength a
 static uint32_t adr_wdr_en = 0;
 static uint32_t ev_changed = 0;
 static uint32_t ev_now = 0;
-static uint32_t histSub_4096[0x24/4] = {0};      /* 9 gamma Y subdivision points */
+static uint32_t histSub_4096[0x24/4] = {
+	0x000, 0x200, 0x400, 0x600, 0x800, 0xa00, 0xc00, 0xe00, 0xfff
+};      /* OEM histSub_4096 symbol at 0x9e7f0 */
 static uint32_t histSub_4096_out[0x24/4] = {0};  /* 9 inverse-gamma X results */
 static uint32_t histSub_4096_diff[0x20/4] = {0};
 static uint32_t *adr_mapb1_list_now = NULL;
@@ -2159,9 +2161,10 @@ static uint32_t min_kneepoint_y[10] = {0};
 static uint32_t min_kneepoint_x[11] = {0};
 static uint32_t ctc_kneepoint_y[8] = {0};
 static uint32_t ctc_kneepoint_x[9] = {0};
-static uint32_t map_kneepoint_y[264] = {0};  /* 24 blocks × 11 entries */
+/* OEM .bss layout keeps the previous-frame map buffer immediately before the live map. */
+static uint32_t map_kneepoint_y_pre[264] = {0};  /* 24 blocks × 11 entries */
+static uint32_t map_kneepoint_y[264] = {0};      /* 24 blocks × 11 entries */
 static uint32_t map_kneepoint_x[11] = {0};
-static uint32_t map_kneepoint_y_pre[264] = {0};
 /* ADR statistics arrays from DMA */
 static uint32_t adr_hist[512] = {0};
 static uint32_t adr_block_y[192] = {0};  /* OEM: max index = (20+168)/4 = 47, need 48+ */
@@ -2176,16 +2179,23 @@ static uint32_t data_980b0[512] = {0};  /* Normalized histogram */
 /* ADR algorithm control (OEM: data_9ce4c, data_9ce70, etc.) */
 static uint32_t data_9ce4c = 1;  /* CTC enable flag */
 static uint32_t data_9ce6c = 0;  /* Smoothing iteration count */
-static uint32_t data_9ce70 = 1;  /* Temporal smoothing enable */
-static uint32_t data_9ce74 = 0x100;  /* Smoothing step size */
+static uint32_t data_9ce70 = 0;  /* OEM default: temporal smoothing disabled */
+static uint32_t data_9ce74 = 0x32;  /* OEM default smoothing step size */
+static int adr_grid_debug_budget;
+static const uint32_t adr_init_curve11[11] = {
+	0x20, 0x40, 0x80, 0xc0, 0x100, 0x180, 0x200, 0x300, 0x400, 0x600, 0x800
+};
+static const uint32_t adr_init_ctc_y[8] = {
+	0x400, 0x400, 0x400, 0x400, 0x400, 0x400, 0x400, 0x400
+};
 /* ADR constants for tisp_adr_set_params (OEM: data_9f0a8, data_9f0cc) */
 static uint32_t data_9f0a8 = 0x800;
 static uint32_t data_9f0cc = 0x400;
 /* OEM parameter data refs for tiziano_adr_algorithm */
-static uint32_t data_9f79c = 0;
-static uint32_t data_9f7bc = 0;
-static uint32_t data_9f7d0 = 0;
-static uint32_t data_9f7f0 = 0;
+static uint32_t data_9f79c = 0x40;
+static uint32_t data_9f7bc = 0x600;
+static uint32_t data_9f7d0 = 0x6;
+static uint32_t data_9f7f0 = 0xb;
 /* ADR FPGA struct pointer (OEM: TizianoAdrFpgaStructMe) */
 static void *TizianoAdrFpgaStructMe = NULL;
 /* FPGA call argument pointers (OEM: data_c03cc..data_c0404) */
@@ -2428,6 +2438,9 @@ static int tisp_alloc_param_block(void **dst, const char *name)
 	return 0;
 }
 
+static void tisp_capture_loaded_ae_at_lists(void);
+static void tisp_sync_active_ae_at_lists(const void *src);
+
 static int tisp_set_active_param_block(const void *src, const char *name)
 {
 	int ret;
@@ -2440,6 +2453,7 @@ static int tisp_set_active_param_block(const void *src, const char *name)
 		return ret;
 
 	memcpy(tparams_active, src, TISP_PARAM_BLOCK_SIZE);
+	tisp_sync_active_ae_at_lists(src);
 	pr_debug("tisp_set_active_param_block: loaded %s params into active block\n",
 		name ? name : "unknown");
 	return 0;
@@ -2519,6 +2533,10 @@ static int tisp_load_single_bin_file(const char *path, int is_custom)
 			memcpy(tparams_night,
 			       (u8 *)file_buf + TISP_PARAM_NIGHT_OFFSET,
 			       TISP_PARAM_BLOCK_SIZE);
+			/* Any sensor-specific AE target tables must come from the
+			 * just-loaded runtime day/night tuning blocks, not from
+			 * offline blob inspection or hardcoded defaults. */
+			tisp_capture_loaded_ae_at_lists();
 			ret = 0;
 		}
 	}
@@ -3515,6 +3533,10 @@ struct lum_list {
     uint32_t data[10];  /* 0x28 bytes / 4 */
 };
 
+struct ae_at_list {
+    uint32_t data[10];  /* 0x28 bytes / 4 */
+};
+
 struct deflicker_para {
     uint32_t data[3];   /* 0xc bytes / 4 */
 };
@@ -3584,7 +3606,8 @@ struct nodes_num {
  * These replace the previous all-zero defaults that caused AE to malfunction.
  */
 static struct ae_parameter _ae_parameter = { .data = {
-	/* OEM BSS dump at 0xa0d38 — matches tuning binary for GC2053 (1920x1080)
+	/* OEM BSS dump at 0xa0d38 — representative stock-bin defaults
+	 * used only until the runtime tuning blob refreshes these fields.
 	 * [0]=1  [1]=0xf(cols) [2]=1  [3]=0xf(rows)
 	 * [4..18] = 0x40 (col spacing = 960/15 = 64)
 	 * [19..33] = 0x24 (row spacing = 540/15 = 36)
@@ -3602,7 +3625,7 @@ static struct ae_exp_th ae_exp_th = { .data = {
 	/* Fallback defaults — overridden by tuning binary in tiziano_ae_params_refresh.
 	 * OEM AE0 group (indices 0..6):
 	 *   [0] max IT: clamped to sensor's real max by tiziano_ae_init_exp_th
-	 *   [1] max AG in Q10: sensor-specific (GC2053 binary: 0x157fe ~= 87x)
+	 *   [1] max AG in Q10: sensor-specific and overridden by the loaded blob
 	 *   [2] max DG in Q10: typically 0x400 (1x)
 	 *   [3] short IT threshold: overwritten by sensor init param
 	 *   [4] min AG: raw value, OEM clamps to >= 0x400
@@ -3630,6 +3653,12 @@ static struct ae_ev_list ae0_ev_list = { .data = {
 	0x047e, 0x03b6, 0x0001, 0x0001, 0x003c, 0x0222, 0x0708, 0x0bb8,
 	0x1770, 0x348a
 }};
+static struct ae_at_list ae_at_list = { .data = {
+	0x01e, 0x01e, 0x01e, 0x01e, 0x01e, 0x01e, 0x01e, 0x01e,
+	0x01e, 0x01e
+}};
+static struct ae_at_list ae_at_list_day;
+static struct ae_at_list ae_at_list_night;
 static struct lum_list _lum_list = { .data = {
 	0x4fe2, 0x924a, 0x13272, 0x224a2, 0x2710, 0x7d0, 0x5dc, 0x320,
 	0x1f4, 0x064
@@ -3642,9 +3671,9 @@ static struct flicker_t _flicker_t = { .data = {
 }};
 static struct scene_para _scene_para = { .data = {
 	/* OEM: _scene_para is NOT the AE target. The AE target is computed by
-	 * tisp_ae_target() interpolating ae0_ev_list + _lum_list based on EV.
+	 * tisp_ae_target() interpolating ae_at_list + _lum_list based on EV.
 	 * _scene_para fields are scene detection thresholds/modes.
-	 * Tuning binary for GC2053: [0]=1 [1]=0xe6 [2]=0x65400 [3]=0x1e ... */
+	 * Stock tuning blobs commonly encode [0]=1 [1]=0xe6 [2]=0x65400 [3]=0x1e ... */
 	0x0546, 0x0a00, 0x034c, 0x03f4, 0x0001, 0x00e6, 0x65400, 0x001e,
 	0x65400, 0x0001, 0x0004
 }};
@@ -3708,6 +3737,12 @@ static struct ae_ev_list ae0_ev_list_wdr = { .data = {
 	0x190, 0x1c2, 0x1f4, 0x1f4, 0x000, 0x000, 0x000, 0x000,
 	0x000, 0x000
 }};
+static struct ae_at_list ae_at_list_wdr = { .data = {
+	0x01e, 0x01e, 0x01e, 0x01e, 0x01e, 0x01e, 0x01e, 0x01e,
+	0x01e, 0x01e
+}};
+static struct ae_at_list ae_at_list_wdr_day;
+static struct ae_at_list ae_at_list_wdr_night;
 static struct lum_list _lum_list_wdr = { .data = {
 	0x000, 0x000, 0x000, 0x000, 0x000, 0x000, 0x000, 0x000,
 	0x1f4, 0x064
@@ -3724,6 +3759,50 @@ static struct ae_ev_list ae_extra_at_list_wdr = { .data = {
 	0x080, 0x080, 0x000, 0x000, 0x000, 0x000, 0x000, 0x000,
 	0x000, 0x000
 }};
+
+#define TISP_AE_AT_LIST_OFFSET      0x0220
+#define TISP_AE_AT_LIST_WDR_OFFSET  0x0f44
+
+static void tisp_extract_ae_at_lists(const void *block,
+				     struct ae_at_list *linear,
+				     struct ae_at_list *wdr)
+{
+	const u8 *params = block;
+
+	if (!params || !linear || !wdr)
+		return;
+
+	memcpy(linear, params + TISP_AE_AT_LIST_OFFSET, sizeof(*linear));
+	memcpy(wdr, params + TISP_AE_AT_LIST_WDR_OFFSET, sizeof(*wdr));
+}
+
+static void tisp_capture_loaded_ae_at_lists(void)
+{
+	if (tparams_day)
+		tisp_extract_ae_at_lists(tparams_day, &ae_at_list_day, &ae_at_list_wdr_day);
+	if (tparams_night)
+		tisp_extract_ae_at_lists(tparams_night, &ae_at_list_night, &ae_at_list_wdr_night);
+}
+
+static void tisp_sync_active_ae_at_lists(const void *src)
+{
+	if (!src)
+		return;
+
+	if (src == tparams_day) {
+		ae_at_list = ae_at_list_day;
+		ae_at_list_wdr = ae_at_list_wdr_day;
+		return;
+	}
+
+	if (src == tparams_night) {
+		ae_at_list = ae_at_list_night;
+		ae_at_list_wdr = ae_at_list_wdr_night;
+		return;
+	}
+
+	tisp_extract_ae_at_lists(src, &ae_at_list, &ae_at_list_wdr);
+}
 
 /* AE1 versions — OEM data */
 static struct ae_ev_list ae1_ev_list = { .data = {
@@ -3896,17 +3975,17 @@ static uint32_t data_c46d0 = 0;    /* AE gain distribution mode */
 static uint32_t ftune_wmeans_state = 0; /* OEM: ftune_wmeans.32574 */
 
 /* OEM ae0_tune2 persistent state — arg7 in OEM (5-element convergence state):
- *   [0] = s5: current target exposure (from tisp_ae_target)
+ *   [0] = s5: current target brightness (from tisp_ae_target)
  *   [1] = convergence mode flag (0=stable, 1=converging)
- *   [2] = stored target_ev
+ *   [2] = stored measured luma sample
  *   [3] = scene mode (day/night)
  *   [4] = convergence counter */
 static uint32_t ae0_conv_state[5];
 
 /* OEM ae0_tune2 EV FIFO — arg8 in OEM (15-entry history):
  * Shifted left each frame, newest value pushed at index 14.
- * The recency-weighted average drives the denominator of the
- * target/current ratio, keeping both in the same EV domain. */
+ * The recency-weighted average is computed over measured scene luma and
+ * forms the denominator of the target/current brightness ratio. */
 static uint32_t ae0_ev_fifo[16];
 
 /* OEM ae0_tune2 scaled ev/lum arrays — arg18/arg19:
@@ -3948,9 +4027,11 @@ static void ae0_weight_mean2(
     int32_t *q_ptr, int32_t mix_r, int32_t mix_b,
     uint32_t *out_wmean, int32_t *out_ratios, int32_t *out_total,
     uint32_t *out_b_ratio, uint32_t *out_r_ratio);
-static int ae0_tune2(uint32_t wmean, uint32_t q, uint32_t target_ev,
+static int ae0_tune2(uint32_t wmean, uint32_t q, uint32_t measured_luma,
                      uint32_t *exp_out, uint32_t *ag_out, uint32_t *dg_out);
 static void tisp_set_ae0_ag(uint32_t ag, uint32_t dg);
+int tisp_ae_g_at_list(uint32_t *out);
+int tisp_ae_s_at_list(uint32_t *in);
 static int tiziano_gib_lut_parameter(void);
 static void tiziano_ae0_select_mix_weights(int32_t *mix_r, int32_t *mix_b);
 static void tiziano_ae0_select_wrapper_inputs(void **awb_cfg, void **corr_cfg,
@@ -4244,10 +4325,10 @@ static void tisp_rdns_intp_reg_refresh(uint32_t gain);
  * OEM tparams_day base: 0x84B10; offset = OEM_addr - 0x84B10.
  * tiziano_gib_params_refresh reads ALL GIB data from the tuning blob.
  *
- * NOTE: A previous "fix" shifted these by +0x18 based on inspecting
- * ingenic-sdk-march/sensor-iq/t31/gc2053.bin (which has a 32-byte LUT preamble
- * that the OEM driver does NOT consume). The DEPLOYED tuning binary on the
- * device follows the OEM layout WITHOUT that preamble, so 0x2A48 is correct.
+ * NOTE: A previous "fix" shifted these by +0x18 based on an out-of-band blob
+ * that carried a 32-byte LUT preamble the OEM driver does NOT consume. The
+ * deployed runtime tuning blob follows the OEM layout WITHOUT that preamble,
+ * so 0x2A48 is correct.
  * Verification (loaded with 0x2A60, off by +0x18):
  *   cfg = {0,0,0,3,4095,4095,1024,1024,1024,1024,257,257} ← cfg[6..11]+rg+bir+blc_r[0..1]
  * Verification (loaded with 0x2A48, OEM layout):
@@ -4922,10 +5003,10 @@ static void ae0_weight_mean2(
     }
 }
 
-/* tisp_ae_target — OEM EXACT: Interpolate AE brightness target from EV tables.
+/* tisp_ae_target — OEM EXACT: Interpolate AE brightness target from AT tables.
  *
  * OEM (0x4ff98): Given current EV value, interpolate the target brightness
- * from ae0_ev_list (threshold X values) and _lum_list (target Y values).
+ * from ae_at_list (threshold X values) and _lum_list (target Y values).
  * Both arrays have 10 entries.
  *
  * cur_ev:  current total exposure value (unshifted, i.e. >> q already)
@@ -4937,31 +5018,33 @@ static uint32_t tisp_ae_target(uint32_t cur_ev_q, uint32_t q)
 {
     uint32_t qm = q & 31;
     uint32_t cur_ev = cur_ev_q >> qm;
+    const uint32_t *at_list = ae_wdr_mode ? ae_at_list_wdr.data : ae_at_list.data;
+    const uint32_t *lum_list = ae_wdr_mode ? _lum_list_wdr.data : _lum_list.data;
     int i, idx;
     uint32_t x0, x1, y0, y1, dx, num;
 
     /* Edge cases: below first threshold or above last */
-    if (cur_ev <= ae0_ev_list.data[0])
-        return _lum_list.data[0];
-    if (cur_ev >= ae0_ev_list.data[9])
-        return _lum_list.data[9];
+    if (cur_ev <= at_list[0])
+        return lum_list[0];
+    if (cur_ev >= at_list[9])
+        return lum_list[9];
 
     /* Find bracketing interval */
     idx = 0;
     for (i = 0; i < 9; i++) {
-        if (cur_ev >= ae0_ev_list.data[i] && cur_ev <= ae0_ev_list.data[i + 1]) {
+        if (cur_ev >= at_list[i] && cur_ev <= at_list[i + 1]) {
             idx = i;
             break;
         }
         /* OEM: if cur_ev < threshold, still increment (skip) */
-        if (cur_ev < ae0_ev_list.data[i])
+        if (cur_ev < at_list[i])
             idx = i;
     }
 
-    x0 = ae0_ev_list.data[idx];
-    x1 = ae0_ev_list.data[idx + 1];
-    y0 = _lum_list.data[idx];
-    y1 = _lum_list.data[idx + 1];
+    x0 = at_list[idx];
+    x1 = at_list[idx + 1];
+    y0 = lum_list[idx];
+    y1 = lum_list[idx + 1];
 
     /* Linear interpolation between y0 and y1 */
     if (x1 == x0)
@@ -5052,14 +5135,14 @@ static uint32_t tisp_ae_target_ex(uint32_t cur_ev_q, uint32_t *ev_list,
  *
  * wmean:      current weighted mean scene luminance (from ae0_weight_mean2)
  * q:          Q-format fixed-point position
- * target_ev:  current total EV to push into FIFO (IT*AG*DG, OEM arg27)
+ * measured_luma: current measured scene luma pushed into the FIFO (OEM arg27)
  * exp_out:    output integration time
  * ag_out:     output analog gain (Q10)
  * dg_out:     output digital gain (Q10)
  *
  * Returns: 0 = converged (stable), 1 = still adjusting
  */
-static int ae0_tune2(uint32_t wmean, uint32_t q, uint32_t target_ev,
+static int ae0_tune2(uint32_t wmean, uint32_t q, uint32_t measured_luma,
                      uint32_t *exp_out, uint32_t *ag_out, uint32_t *dg_out)
 {
     uint32_t s0 = _AePointPos.data[0];  /* OEM: *arg14 = precision */
@@ -5071,7 +5154,18 @@ static int ae0_tune2(uint32_t wmean, uint32_t q, uint32_t target_ev,
     uint32_t var_c8 = ae0_conv_state[3]; /* scene mode */
     uint32_t v0_38 = ae0_conv_state[4];  /* convergence counter */
 
-    /* OEM arg5: current exposure triplet for base EV computation */
+    /* OEM arg5 is the live sensor-side exposure tuple.
+     *
+     * In this driver, _ae_reg.data[2] is reused for ISP digital-gain
+     * compensation after sensor AG/DG have already been allocated. Phase H,
+     * however, compares the current DG against ae_exp_th.data[2], which is the
+     * SENSOR DG limit. Feeding back the ISP compensation value here makes the
+     * solver believe DG is already above its own max and it stops requesting
+     * meaningful sensor AG, leaving logs stuck near req_ag=0x400.
+     *
+     * Keep using the live sensor-side AG/DG caches for the AE solver, while
+     * the post-AE pipeline continues to consume _ae_reg.data[2] as the total
+     * ISP compensation gain. */
     uint32_t cur_it = _ae_reg.data[0];
     uint32_t cur_ag = data_c46a0;
     uint32_t cur_dg = data_c46a4;
@@ -5111,17 +5205,17 @@ static int ae0_tune2(uint32_t wmean, uint32_t q, uint32_t target_ev,
     uint32_t v0_19 = ae_exp_th.data[0];  /* max IT */
     uint32_t v0_21 = ae_exp_th.data[1];  /* max AG (Q10) */
     uint32_t v0_23 = ae_exp_th.data[2];  /* max DG (Q10) */
-    uint32_t var_c4 = cur_it;             /* output IT (mutable) */
-    uint32_t var_d4 = cur_ag;             /* output AG (mutable) */
-    uint32_t var_d0 = cur_dg;             /* output DG (mutable) */
+    uint32_t var_c4;                      /* output IT (mutable) */
+    uint32_t var_d4;                      /* output AG (mutable) */
+    uint32_t var_d0;                      /* output DG (mutable) */
 
     /* Computed values */
     uint32_t var_b8;     /* base EV in Q-format */
-    uint32_t s6_2;       /* historical EV average (from FIFO) */
+    uint32_t s6_2;       /* historical measured-luma average (from FIFO) */
     uint32_t s2_2;       /* new computed EV → written to _ae_ev */
     uint32_t var_cc_2;   /* convergence in progress flag */
     uint32_t var_c0_1 = 0; /* convergence counter for output */
-    uint32_t v0_68;      /* ratio = s5/s6 */
+    uint32_t v0_68;      /* ratio = target_luma / measured_luma */
     uint32_t v0_69;      /* new_ev = var_b8 * ratio */
 
     /* Local copies of ev_list/lum_list (may be scaled) */
@@ -5135,16 +5229,24 @@ static int ae0_tune2(uint32_t wmean, uint32_t q, uint32_t target_ev,
      * Our _ae_reg.data[0] starts at 0 since we don't have the IspAeExp alias.
      * Seed with ae_exp_th[0] to match the OEM's initial bright-start behavior. */
     if (cur_it == 0) cur_it = ae_exp_th.data[0] ? ae_exp_th.data[0] : 1;
-    if (cur_ag == 0) cur_ag = 0x400;
-    if (cur_dg == 0) cur_dg = 0x400;
+    if (cur_ag == 0) cur_ag = _ae_reg.data[1] ? _ae_reg.data[1] : 0x400;
+    if (cur_dg == 0) cur_dg = data_c46a4 ? data_c46a4 : 0x400;
+    var_c4 = cur_it;
+    var_d4 = cur_ag;
+    var_d0 = cur_dg;
 
     /* ---- Compute base EV (OEM: var_b8) ---- */
     var_b8 = fix_point_mult3_32(s0, cur_ag, cur_dg, cur_it << (qm));
 
     /* ---- Phase A: Copy ev/lum tables and optional histogram scaling ---- */
-    for (i = 0; i < 10; i++) {
-        local_ev[i] = ae0_ev_list.data[i];
-        local_lum[i] = _lum_list.data[i];
+    {
+        const uint32_t *base_ev = ae_wdr_mode ? ae_at_list_wdr.data : ae_at_list.data;
+        const uint32_t *base_lum = ae_wdr_mode ? _lum_list_wdr.data : _lum_list.data;
+
+        for (i = 0; i < 10; i++) {
+            local_ev[i] = base_ev[i];
+            local_lum[i] = base_lum[i];
+        }
     }
 
     if (data_9a2ec != 0 && ae_hist_scale_enable == 1) {
@@ -5211,29 +5313,29 @@ static int ae0_tune2(uint32_t wmean, uint32_t q, uint32_t target_ev,
     active_ev = ae0_scaled_ev;
     active_lum = ae0_scaled_lum;
 
-    /* ---- Phase C: EV FIFO management ---- */
+    /* ---- Phase C: measured-luma FIFO management ---- */
     /* Shift FIFO left by 1 position (OEM: entries 1..14 → 0..13) */
     for (i = 1; i < 15; i++)
         ae0_ev_fifo[i - 1] = ae0_ev_fifo[i];
-    ae0_ev_fifo[14] = target_ev;  /* Push newest at end */
+    ae0_ev_fifo[14] = measured_luma;  /* Push newest measured luma at end */
 
     /* Compute s6 = recency-weighted average from FIFO */
     if (IspAeFlag == 1) {
-        /* First frame: seed FIFO with initial value to avoid cold-start.
-         * OEM: s6_2 = target_ev, bypasses FIFO averaging entirely. */
+        /* OEM: first frame bypasses FIFO averaging and uses the current
+         * measured luma directly. */
         ftune_wmeans_state = 1;
         if (v0_34 == 1)
             ftune_wmeans_state = 0;
         /* Pre-fill FIFO so subsequent frames don't average with zeros */
         for (i = 0; i < 15; i++)
-            ae0_ev_fifo[i] = target_ev;
-        s6_2 = target_ev;
+            ae0_ev_fifo[i] = measured_luma;
+        s6_2 = measured_luma;
     } else {
         if (v0_34 == 1)
             ftune_wmeans_state = 0;
 
         if (ftune_wmeans_state == 1) {
-            s6_2 = target_ev;
+            s6_2 = measured_luma;
         } else {
             /* Compute partial weighted mean of FIFO entries */
             uint32_t depth = s2;
@@ -5249,7 +5351,7 @@ static int ae0_tune2(uint32_t wmean, uint32_t q, uint32_t target_ev,
                 sum_w += w;
             }
 
-            s6_2 = (sum_w > 0) ? (sum_wv / sum_w) : target_ev;
+            s6_2 = (sum_w > 0) ? (sum_wv / sum_w) : measured_luma;
         }
     }
 
@@ -5264,10 +5366,9 @@ static int ae0_tune2(uint32_t wmean, uint32_t q, uint32_t target_ev,
             ae_ev_init_en = 0;
         }
         s5 = tisp_ae_target_ex(var_b8, active_ev, active_lum, s0);
-        IspAeFlag = 0;  /* OEM: clear after first-frame seeding */
     }
 
-    /* Compute ratio = s5 / s6 (both in EV domain → ratio ≈ 1.0) */
+    /* Compute ratio = target_luma / measured_luma */
     {
         uint32_t s2_1 = s6_2 << qm;
         if (s2_1 == 0) s2_1 = 1;
@@ -5294,7 +5395,7 @@ static int ae0_tune2(uint32_t wmean, uint32_t q, uint32_t target_ev,
          * lies between the two stable_tol bounds. */
         if (v0_68 < v0_6 && v0_7 < v0_68) {
             s2_2 = var_b8;
-            ae0_conv_state[2] = target_ev;
+            ae0_conv_state[2] = measured_luma;
             var_cc_2 = 1;
         }
         ae0_conv_state[1] = 0;
@@ -5311,7 +5412,7 @@ phase_e_check_margins:
         }
         /* Within deadband — set stable */
         ae0_conv_state[1] = 1;
-        ae0_conv_state[2] = target_ev;
+        ae0_conv_state[2] = measured_luma;
         ae0_conv_state[0] = s5;
 
         if (data_a0df4 == 1) {
@@ -5798,6 +5899,14 @@ phase_g:
         ae0_conv_state[4] = var_c0_1;
     }
 
+    /* AE gain is a multiplicative tuple.  Zero AG/DG collapses the pipeline
+     * to black, so keep unity as the minimum even if an upstream mode/path
+     * transiently produced 0. */
+    if (var_d4 == 0)
+        var_d4 = 1u << qm;
+    if (var_d0 == 0)
+        var_d0 = 1u << qm;
+
     *exp_out = var_c4;
     *ag_out = var_d4;
     *dg_out = var_d0;
@@ -5823,8 +5932,10 @@ static void tisp_set_ae0_ag(uint32_t ag, uint32_t dg)
     uint32_t actual_ag, actual_dg;
     uint32_t req_product, actual_product;
     uint32_t dg_comp, max_dg;
+    uint32_t one_q;
 
     if (q == 0) q = 10;  /* Default Q10 if not initialized */
+    one_q = 1u << q;
 
     /* OEM: Skip if IspAeFlag is 0 and gains haven't changed and no ctrls pending.
      * For simplicity, always process (OEM has early-out optimization). */
@@ -5834,6 +5945,11 @@ static void tisp_set_ae0_ag(uint32_t ag, uint32_t dg)
         ag = data_c46a0;
         dg = fix_point_mult2_32(q, data_c46a4, data_c46ac);
     }
+
+    if (ag == 0)
+        ag = one_q;
+    if (dg == 0)
+        dg = one_q;
 
     /* Step 1: Set analog gain — sensor clips to real max, returns actual */
     actual_ag = tisp_set_sensor_analog_gain(ag);
@@ -5856,6 +5972,9 @@ static void tisp_set_ae0_ag(uint32_t ag, uint32_t dg)
     } else {
         dg_comp = dg;
     }
+
+    if (dg_comp == 0)
+        dg_comp = one_q;
 
     /* Step 4: Clamp ISP digital gain compensation.
      * ae_exp_th.data[2] = max SENSOR digital gain (0x400 = 1x for GC2053).
@@ -5901,7 +6020,7 @@ static void tisp_set_ae0_ag(uint32_t ag, uint32_t dg)
  *   5. Writes digital gain to ISP registers via system_reg_write_ae
  *   6. Pushes event 7 (EV update), event 4 (total gain), event 5 (analog gain)
  *
- * This implementation follows the OEM flow with simplified internals. */
+ * This implementation follows the OEM control flow used by the stock firmware. */
 /* OEM: dark/bright pixel count arrays per zone.
  * Populated by ae0_interrupt_static from HW stats.  Default zero
  * (GC2053 doesn't report per-zone over/under-exposed pixel counts). */
@@ -6027,6 +6146,11 @@ static int tiziano_ae0_fpga_run(void)
                 ae0_ev_list.data[3], ae0_ev_list.data[4], ae0_ev_list.data[5],
                 ae0_ev_list.data[6], ae0_ev_list.data[7], ae0_ev_list.data[8],
                 ae0_ev_list.data[9]);
+            pr_info("AE_TABLES: at_list=[%u,%u,%u,%u,%u,%u,%u,%u,%u,%u]\n",
+                ae_at_list.data[0], ae_at_list.data[1], ae_at_list.data[2],
+                ae_at_list.data[3], ae_at_list.data[4], ae_at_list.data[5],
+                ae_at_list.data[6], ae_at_list.data[7], ae_at_list.data[8],
+                ae_at_list.data[9]);
             pr_info("AE_TABLES: lum_list=[%u,%u,%u,%u,%u,%u,%u,%u,%u,%u]\n",
                 _lum_list.data[0], _lum_list.data[1], _lum_list.data[2],
                 _lum_list.data[3], _lum_list.data[4], _lum_list.data[5],
@@ -6040,8 +6164,8 @@ static int tiziano_ae0_fpga_run(void)
 
     /* ---- Step 2: Run exposure convergence algorithm ---- */
     new_it = _ae_reg.data[0];
-    new_ag = data_c46a0;
-    new_dg = data_c46a4;
+    new_ag = _ae_reg.data[1];
+    new_dg = _ae_reg.data[2];
 
     /* OEM EXACT: Initial exposure seeding from IspAeExp / ae_exp_th.
      *
@@ -6059,18 +6183,14 @@ static int tiziano_ae0_fpga_run(void)
      * (or near-target), and converges from bright toward the correct exposure
      * within a few frames — exactly matching OEM behavior. */
     if (new_it == 0) new_it = ae_exp_th.data[0] ? ae_exp_th.data[0] : 1;
-    if (new_ag == 0) new_ag = 0x400;  /* Unity analog gain (Q10) */
-    if (new_dg == 0) new_dg = 0x400;  /* Unity digital gain (Q10) */
+    if (new_ag == 0) new_ag = data_c46a0 ? data_c46a0 : 0x400;
+    if (new_dg == 0) new_dg = data_c46ac ? data_c46ac : 0x400;
 
-    /* OEM arg27 = value pushed into the EV FIFO each frame.
-     * The FIFO lives in the lum_list target domain, not the raw EV domain.
-     * OEM Phase C shifts in the previous frame's tisp_ae_target output
-     * (ae0_conv_state[0]).  Feeding AG here was a placeholder and keeps the
-     * ratio s5/s6 biased toward "increase exposure" even in bright scenes.
-     *
-     * On the first frame ae0_conv_state[0] is still zero, so seed from the
-     * current unscaled tisp_ae_target(cur_ev) result to avoid a zero-filled
-     * FIFO cold start. */
+    /* OEM arg27 is the measured post-histogram scene luma (var_54 in HLIL).
+     * ae0_tune2 keeps a FIFO of measured luma, compares its weighted average
+     * against the interpolated target brightness, and derives the EV ratio
+     * from that comparison. Feeding target-domain values here collapses the
+     * ratio toward 1 and pins gain at unity. */
     /* OEM Tiziano_ae0_fpga: Unpack sensor config (arg13 = ae_sensor_config).
      * $s4 = processing_mode, $s1 = hist_bin_threshold, $s7 = dark_threshold,
      * $s5 = curve_strength, $v1_1 = overexp_th, $v1 = underexp_th */
@@ -6158,15 +6278,7 @@ static int tiziano_ae0_fpga_run(void)
         ae_scene_wmean = ae_wmean;
         ae_scene_total = total_wt;
 
-        {
-            uint32_t cur_ev_q = fix_point_mult3_32(q, new_it << q, new_ag, new_dg);
-            uint32_t fifo_val = ae0_conv_state[0];
-
-            if (fifo_val == 0)
-                fifo_val = tisp_ae_target(cur_ev_q, q);
-
-            ae0_tune2(ae_wmean, q, fifo_val, &new_it, &new_ag, &new_dg);
-        }
+        ae0_tune2(ae_wmean, q, ae_wmean, &new_it, &new_ag, &new_dg);
     }
     /* OEM ae0_tune2 sets _ae_ev directly; also compute here for logging */
     if (_ae_ev == 0)
@@ -8186,6 +8298,7 @@ static int apical_isp_core_ops_g_ctrl(struct tx_isp_dev *dev, struct isp_core_ct
 
         case 0x8000038: { /* OEM: tisp_g_ae_at_list — get AE AT list (0x28 bytes) */
             uint32_t at_buf[0x28 / 4] = {0};
+            tisp_ae_g_at_list(at_buf);
             if (copy_to_user((void __user *)(unsigned long)ctrl->value, at_buf, 0x28))
                 ret = -EFAULT;
             break;
@@ -8440,12 +8553,12 @@ static int apical_isp_core_ops_s_ctrl(struct tx_isp_dev *dev, struct isp_core_ct
 
         case 0x8000028:  /* OEM: tisp_s_max_again — set max analog gain */
             tisp_s_max_again(ctrl->value);
-            tuning->max_again = ctrl->value;
+            tuning->max_again = data_c46b0;
             break;
 
         case 0x8000029:  /* OEM: tisp_s_max_isp_dgain — set max ISP digital gain */
             tisp_s_max_isp_dgain(ctrl->value);
-            tuning->max_dgain = ctrl->value;
+            tuning->max_dgain = data_c46bc;
             break;
 
         case 0x8000035: { /* OEM: tisp_set_ae_attr — 0x98 bytes of AE attributes */
@@ -8758,8 +8871,7 @@ static int apical_isp_core_ops_s_ctrl(struct tx_isp_dev *dev, struct isp_core_ct
                 ret = -EFAULT;
                 goto out;
             }
-            /* OEM: tisp_s_ae_at_list(at_buf[0]) */
-            ret = 0;
+            ret = tisp_ae_s_at_list(at_buf);
             break;
         }
 
@@ -15089,11 +15201,22 @@ static int subsection_light(const uint32_t *mesh_a, const uint32_t *mesh_b,
 {
     int i;
     for (i = 0; i < 9; i++) {
-        uint32_t a = mesh_a[i], b = mesh_b[i];
-        uint32_t dist = (b >= a) ? (b - a) : (a - b);
-        int32_t val = (int32_t)(b * 1000) - (int32_t)(dist * weight);
+        uint32_t a = mesh_a[i];
+        uint32_t b = mesh_b[i];
+        uint32_t base;
+        uint32_t dist;
+        uint32_t val;
 
-        out[i] = val / 1000;
+        if (b >= a) {
+            base = b;
+            dist = b - a;
+        } else {
+            base = a;
+            dist = a - b;
+        }
+
+        val = base * 1000U - dist * weight;
+        out[i] = val / 1000U;
     }
     return 1000;
 }
@@ -15582,6 +15705,8 @@ static int tisp_ae_param_array_info(int param_type, void **param_ptr, int *param
             *param_size = sizeof(ae_comp_ev_list);
             break;
         case 0x18:
+            *param_ptr = &ae_at_list;
+            *param_size = sizeof(ae_at_list);
             break;
         case 0x19:
             *param_ptr = &ae_extra_at_list;
@@ -15600,6 +15725,8 @@ static int tisp_ae_param_array_info(int param_type, void **param_ptr, int *param
             *param_size = sizeof(_lum_list_wdr);
             break;
         case 0x1d:
+            *param_ptr = &ae_at_list_wdr;
+            *param_size = sizeof(ae_at_list_wdr);
             break;
         case 0x1e:
             *param_ptr = &_scene_para_wdr;
@@ -19752,6 +19879,18 @@ static int tiziano_gib_params_refresh(void)
  */
 static int tisp_gib_gain_interpolation(uint32_t gain)
 {
+    if (tisp_gib_bypass_active()) {
+        static int gib_bypass_skip_log;
+
+        if (gib_bypass_skip_log < 5 || (gib_bypass_skip_log % 300) == 0) {
+            pr_info("tisp_gib_gain_interpolation[%d]: bypass active, leaving GIB BLC registers untouched (gain=0x%x)\n",
+                gib_bypass_skip_log, gain);
+        }
+        gib_bypass_skip_log++;
+        tisp_gib_blc_ag = gain;
+        return 0;
+    }
+
     uint32_t hi = gain >> 16;
     uint32_t lo = gain & 0xffff;
     uint32_t blc_r  = tisp_simple_intp(hi, lo, tiziano_gib_deirm_blc_r_linear);
@@ -24085,14 +24224,33 @@ static int tiziano_set_parameter_clm(void)
 	return 0;
 }
 
-/* tiziano_clm_params_refresh — current CLM payload model.
- * OEM copies CLM tables from embedded static data and then always applies
- * them through tiziano_set_parameter_clm() during init/refresh. */
+/* tiziano_clm_params_refresh — OEM-exact CLM payload refresh.
+ *
+ * The stock module copies the CLM H/S LUTs and LUT-shift value directly from
+ * the loaded tuning blob (`tparams + 0xd44`, `+0x115e`, `+0x1994`).  Our
+ * previous zero-fill placeholder left CLM enabled while programming an empty
+ * table set, which can crush the image in both day and night modes.
+ */
 static int tiziano_clm_params_refresh(void)
 {
-	memset(tiziano_clm_h_lut, 0, CLM_H_LUT_SIZE);
-	memset(tiziano_clm_s_lut, 0, CLM_S_LUT_SIZE);
-	tiziano_clm_lut_shift = 0;
+	const u8 *params = (const u8 *)(tparams_active ? tparams_active : tparams_day);
+
+	if (!params || !tuning_bin_loaded) {
+		memset(tiziano_clm_h_lut, 0, CLM_H_LUT_SIZE);
+		memset(tiziano_clm_s_lut, 0, CLM_S_LUT_SIZE);
+		tiziano_clm_lut_shift = 0;
+		pr_info("tiziano_clm_params_refresh: no tuning blob, using zeroed CLM tables\n");
+		return 0;
+	}
+
+	memcpy(tiziano_clm_h_lut, params + 0x0d44, CLM_H_LUT_SIZE);
+	memcpy(tiziano_clm_s_lut, params + 0x115e, CLM_S_LUT_SIZE);
+	memcpy(&tiziano_clm_lut_shift, params + 0x1994, CLM_LUT_SHIFT_SIZE);
+
+	pr_info("tiziano_clm_params_refresh: loaded CLM LUTs from tuning blob (shift=%u h0=0x%02x h1=0x%02x s0=%d s1=%d)\n",
+		tiziano_clm_lut_shift,
+		tiziano_clm_h_lut[0], tiziano_clm_h_lut[1],
+		tiziano_clm_s_lut[0], tiziano_clm_s_lut[1]);
 	return 0;
 }
 
@@ -25481,27 +25639,6 @@ uint32_t param_adr_weight_21_lut_array[32]; /* Final Weight LUT 21 */
  * Each resolution has 6 arrays: centre_w_dis[31] + 5 weight LUTs[32] */
 #include "tx_isp_tuning_adr_luts.inc"
 #include "tx_isp_tuning_adr_defaults.inc"
-/*
- * The extracted ADR blob's linear control subsection is shifted relative to the
- * current `ADR_BLOB_OFF_*` control-list macros. These starts were recovered by
- * matching the linear control words against the OEM layout consumed by
- * `Tiziano_adr_fpga()`:
- *   light_end  -> slope/threshold block for arg15
- *   block_light -> mode/strength block for arg16
- *   map_mode   -> mode/threshold block for arg14
- * The EV/list tables that follow the linear control block are also taken from
- * these verified starts instead of the misindexed region.
- */
-#define ADR_BLOB_OFF_LINEAR_LIGHT_END   0x7b0
-#define ADR_BLOB_OFF_LINEAR_BLOCK_LIGHT 0x824
-#define ADR_BLOB_OFF_LINEAR_MAP_MODE    0x860
-#define ADR_BLOB_OFF_LINEAR_EV_LIST     0x8e0
-#define ADR_BLOB_OFF_LINEAR_LIGB_LIST   0x908
-#define ADR_BLOB_OFF_LINEAR_MAPB1_LIST  0x92c
-#define ADR_BLOB_OFF_LINEAR_MAPB2_LIST  0x950
-#define ADR_BLOB_OFF_LINEAR_MAPB3_LIST  0x974
-#define ADR_BLOB_OFF_LINEAR_MAPB4_LIST  0x998
-#define ADR_BLOB_OFF_LINEAR_BLP2_LIST   0xb84
 /* Additional ADR arrays required by BN mappings */
 uint32_t param_adr_para_array[0x20/4] = {0};
 uint32_t param_adr_ctc_kneepoint_array[0x44/4] = {0};
@@ -25613,6 +25750,25 @@ static int tiziano_adr_gamma_refresh(void)
     for (i = 0; i < 8; i++)
         histSub_4096_diff[i] = histSub_4096_out[i + 1] - histSub_4096_out[i];
 
+    {
+        static int adr_base_log;
+
+        if (adr_base_log < 3 || (adr_base_log % 300) == 0) {
+            pr_info("ADR_BASE[%d]: lut=%u,%u,%u,%u,%u,%u,%u,%u,%u\n",
+                adr_base_log,
+                adr_tm_base_lut[0], adr_tm_base_lut[1], adr_tm_base_lut[2],
+                adr_tm_base_lut[3], adr_tm_base_lut[4], adr_tm_base_lut[5],
+                adr_tm_base_lut[6], adr_tm_base_lut[7], adr_tm_base_lut[8]);
+            pr_info("ADR_BASE_D[%d]: diff=%u,%u,%u,%u,%u,%u,%u,%u\n",
+                adr_base_log,
+                histSub_4096_diff[0], histSub_4096_diff[1],
+                histSub_4096_diff[2], histSub_4096_diff[3],
+                histSub_4096_diff[4], histSub_4096_diff[5],
+                histSub_4096_diff[6], histSub_4096_diff[7]);
+        }
+        adr_base_log++;
+    }
+
     return 0;
 }
 
@@ -25627,9 +25783,19 @@ int tiziano_adr_params_refresh(void)
     int i;
 
     memcpy(param_adr_para_array, oem_param_adr_para_array, sizeof(oem_param_adr_para_array));
-    memcpy(param_adr_ctc_kneepoint_array, blob + ADR_BLOB_OFF_CTC_KP, 0x44);
-    memcpy(param_adr_min_kneepoint_array, blob + ADR_BLOB_OFF_MIN_KP, 0x5c);
-    memcpy(param_adr_map_kneepoint_array, blob + ADR_BLOB_OFF_MAP_KP, 0x5c);
+
+    /* The refresh blob slices for the ADR basis tables are shifted relative to
+     * the dedicated OEM symbols. Pull these directly from the recovered symbol
+     * tables so map/min/ctc X data and the ADR gamma basis stay consistent. */
+    memcpy(param_adr_ctc_kneepoint_array,
+           oem_param_adr_ctc_kneepoint_array,
+           sizeof(oem_param_adr_ctc_kneepoint_array));
+    memcpy(param_adr_min_kneepoint_array,
+           oem_param_adr_min_kneepoint_array,
+           sizeof(oem_param_adr_min_kneepoint_array));
+    memcpy(param_adr_map_kneepoint_array,
+           oem_param_adr_map_kneepoint_array,
+           sizeof(oem_param_adr_map_kneepoint_array));
     memcpy(param_adr_coc_kneepoint_y1_array, blob + ADR_BLOB_OFF_COC_Y1, 0x30);
     memcpy(param_adr_coc_kneepoint_y2_array, blob + ADR_BLOB_OFF_COC_Y2, 0x30);
     memcpy(param_adr_coc_kneepoint_y3_array, blob + ADR_BLOB_OFF_COC_Y3, 0x30);
@@ -25638,12 +25804,16 @@ int tiziano_adr_params_refresh(void)
     memcpy(param_adr_coc_adjust_array, blob + ADR_BLOB_OFF_COC_ADJ, 0x38);
     memcpy(param_adr_stat_block_hist_diff_array, blob + ADR_BLOB_OFF_HIST_DIFF, 0x10);
     memcpy(adr_tm_base_lut, blob + ADR_BLOB_OFF_TM_BASE, 0x24);
-    memcpy(param_adr_gam_x_array, blob + ADR_BLOB_OFF_GAM_X, 0x102);
-    memcpy(param_adr_gam_y_array, blob + ADR_BLOB_OFF_GAM_Y, 0x102);
+    memcpy(param_adr_gam_x_array,
+           oem_param_adr_gam_x_array,
+           sizeof(oem_param_adr_gam_x_array));
+    memcpy(param_adr_gam_y_array,
+           oem_param_adr_gam_y_array,
+           sizeof(oem_param_adr_gam_y_array));
     memcpy(adr_ctc_map2cut_y, blob + ADR_BLOB_OFF_CTC_MAP2CUT, 0x24);
-    memcpy(adr_light_end, blob + ADR_BLOB_OFF_LIGHT_END, 0x74);
-    memcpy(adr_block_light, blob + ADR_BLOB_OFF_BLOCK_LIGHT, 0x3c);
-    memcpy(adr_map_mode, blob + ADR_BLOB_OFF_MAP_MODE, 0x2c);
+    memcpy(adr_light_end, oem_adr_light_end, sizeof(oem_adr_light_end));
+    memcpy(adr_block_light, oem_adr_block_light, sizeof(oem_adr_block_light));
+    memcpy(adr_map_mode, oem_adr_map_mode, sizeof(oem_adr_map_mode));
     memcpy(histSub_4096_diff, blob + ADR_BLOB_OFF_HISTSUB_DIFF, 0x20);
 
     memcpy(tool_ctl_local, blob + ADR_BLOB_OFF_TOOL_CTL, 0x38);
@@ -25652,13 +25822,13 @@ int tiziano_adr_params_refresh(void)
             param_adr_tool_control_array[i] = tool_ctl_local[i];
     }
 
-    memcpy(adr_ev_list, blob + ADR_BLOB_OFF_EV_LIST, 0x24);
-    memcpy(adr_ligb_list, blob + ADR_BLOB_OFF_LIGB_LIST, 0x24);
-    memcpy(adr_mapb1_list, blob + ADR_BLOB_OFF_MAPB1_LIST, 0x24);
-    memcpy(adr_mapb2_list, blob + ADR_BLOB_OFF_MAPB2_LIST, 0x24);
-    memcpy(adr_mapb3_list, blob + ADR_BLOB_OFF_MAPB3_LIST, 0x24);
-    memcpy(adr_mapb4_list, blob + ADR_BLOB_OFF_MAPB4_LIST, 0x24);
-    memcpy(adr_blp2_list, blob + ADR_BLOB_OFF_BLP2_LIST, 0x24);
+    memcpy(adr_ev_list, oem_adr_ev_list, sizeof(oem_adr_ev_list));
+    memcpy(adr_ligb_list, oem_adr_ligb_list, sizeof(oem_adr_ligb_list));
+    memcpy(adr_mapb1_list, oem_adr_mapb1_list, sizeof(oem_adr_mapb1_list));
+    memcpy(adr_mapb2_list, oem_adr_mapb2_list, sizeof(oem_adr_mapb2_list));
+    memcpy(adr_mapb3_list, oem_adr_mapb3_list, sizeof(oem_adr_mapb3_list));
+    memcpy(adr_mapb4_list, oem_adr_mapb4_list, sizeof(oem_adr_mapb4_list));
+    memcpy(adr_blp2_list, oem_adr_blp2_list, sizeof(oem_adr_blp2_list));
     memcpy(adr_ev_list_wdr, blob + ADR_BLOB_OFF_EV_LIST_WDR, 0x24);
     memcpy(adr_ligb_list_wdr, blob + ADR_BLOB_OFF_LIGB_LIST_WDR, 0x24);
     memcpy(adr_mapb1_list_wdr, blob + ADR_BLOB_OFF_MAPB1_LIST_WDR, 0x24);
@@ -25670,22 +25840,6 @@ int tiziano_adr_params_refresh(void)
     memcpy(adr_light_end_wdr, blob + ADR_BLOB_OFF_LIGHT_END_WDR, 0x74);
     memcpy(adr_block_light_wdr, blob + ADR_BLOB_OFF_BLOCK_LIGHT_WDR, 0x3c);
     memcpy(adr_map_mode_wdr, blob + ADR_BLOB_OFF_MAP_MODE_WDR, 0x2c);
-
-    /*
-     * The extracted blob's linear ADR control block is shifted; reload the
-     * linear path from the verified starts so arg14/arg15/arg16 match the
-     * OEM FPGA argument layout again.
-     */
-    memcpy(adr_light_end, blob + ADR_BLOB_OFF_LINEAR_LIGHT_END, sizeof(adr_light_end));
-    memcpy(adr_block_light, blob + ADR_BLOB_OFF_LINEAR_BLOCK_LIGHT, sizeof(adr_block_light));
-    memcpy(adr_map_mode, blob + ADR_BLOB_OFF_LINEAR_MAP_MODE, sizeof(adr_map_mode));
-    memcpy(adr_ev_list, blob + ADR_BLOB_OFF_LINEAR_EV_LIST, sizeof(adr_ev_list));
-    memcpy(adr_ligb_list, blob + ADR_BLOB_OFF_LINEAR_LIGB_LIST, sizeof(adr_ligb_list));
-    memcpy(adr_mapb1_list, blob + ADR_BLOB_OFF_LINEAR_MAPB1_LIST, sizeof(adr_mapb1_list));
-    memcpy(adr_mapb2_list, blob + ADR_BLOB_OFF_LINEAR_MAPB2_LIST, sizeof(adr_mapb2_list));
-    memcpy(adr_mapb3_list, blob + ADR_BLOB_OFF_LINEAR_MAPB3_LIST, sizeof(adr_mapb3_list));
-    memcpy(adr_mapb4_list, blob + ADR_BLOB_OFF_LINEAR_MAPB4_LIST, sizeof(adr_mapb4_list));
-    memcpy(adr_blp2_list, blob + ADR_BLOB_OFF_LINEAR_BLP2_LIST, sizeof(adr_blp2_list));
 
     if (param_adr_tool_control_array[0] == 1) {
         memcpy(param_adr_weight_20_lut_array, blob + ADR_BLOB_OFF_W20_LUT, 0x80);
@@ -25755,6 +25909,40 @@ static int tisp_adr_set_params(void)
         s0 += 2;
     }
 
+    {
+        static int adr_set_log;
+
+        if (adr_set_log < 5 || (adr_set_log % 300) == 0) {
+            pr_info("ADR_SET_MIN[%d]: y=%u,%u,%u,%u,%u,%u,%u,%u,%u,%u last=%u rb=%08x,%08x,%08x,%08x,%08x,%08x\n",
+                adr_set_log,
+                min_kneepoint_y[0], min_kneepoint_y[1], min_kneepoint_y[2],
+                min_kneepoint_y[3], min_kneepoint_y[4], min_kneepoint_y[5],
+                min_kneepoint_y[6], min_kneepoint_y[7], min_kneepoint_y[8],
+                min_kneepoint_y[9], data_9f0a8,
+                system_reg_read(0x4390), system_reg_read(0x4394),
+                system_reg_read(0x4398), system_reg_read(0x439c),
+                system_reg_read(0x43a0), system_reg_read(0x43a4));
+            pr_info("ADR_SET_CTC[%d]: y=%u,%u,%u,%u,%u,%u,%u,%u last=%u rb=%08x,%08x,%08x,%08x,%08x\n",
+                adr_set_log,
+                ctc_kneepoint_y[0], ctc_kneepoint_y[1], ctc_kneepoint_y[2],
+                ctc_kneepoint_y[3], ctc_kneepoint_y[4], ctc_kneepoint_y[5],
+                ctc_kneepoint_y[6], ctc_kneepoint_y[7], data_9f0cc,
+                system_reg_read(0x4354), system_reg_read(0x4358),
+                system_reg_read(0x435c), system_reg_read(0x4360),
+                system_reg_read(0x4364));
+            pr_info("ADR_SET_MAP0[%d]: y=%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u rb=%08x,%08x,%08x,%08x,%08x,%08x\n",
+                adr_set_log,
+                map_kneepoint_y[0], map_kneepoint_y[1], map_kneepoint_y[2],
+                map_kneepoint_y[3], map_kneepoint_y[4], map_kneepoint_y[5],
+                map_kneepoint_y[6], map_kneepoint_y[7], map_kneepoint_y[8],
+                map_kneepoint_y[9], map_kneepoint_y[10],
+                system_reg_read(0x4084), system_reg_read(0x4088),
+                system_reg_read(0x408c), system_reg_read(0x4090),
+                system_reg_read(0x4094), system_reg_read(0x4098));
+        }
+        adr_set_log++;
+    }
+
     return 0;
 }
 
@@ -25788,6 +25976,47 @@ static void adr_write_bytes4(uint32_t reg, const uint32_t *vals, int count)
 
         system_reg_write(reg, word);
     }
+}
+
+static void adr_log_curve11(const char *tag, int log_idx, int blk, const uint32_t *vals)
+{
+    pr_info("%s[%d]: blk%d=%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\n",
+        tag, log_idx, blk,
+        vals[0], vals[1], vals[2], vals[3], vals[4], vals[5],
+        vals[6], vals[7], vals[8], vals[9], vals[10]);
+}
+
+static void adr_log_grid24(const char *tag, int log_idx, const int32_t *vals)
+{
+	int row;
+
+	/* ADR stores 24 blocks as 6 columns x 4 rows in column-major order.
+	 * Print them in physical image order so left/right artifacts are obvious. */
+	for (row = 0; row < 4; row++) {
+		pr_info("%s[%d]: r%d=%d,%d,%d,%d,%d,%d\n",
+			tag, log_idx, row,
+			vals[0 * 4 + row], vals[1 * 4 + row], vals[2 * 4 + row],
+			vals[3 * 4 + row], vals[4 * 4 + row], vals[5 * 4 + row]);
+	}
+}
+
+static void adr_log_reg_window(const char *tag, int log_idx, uint32_t base, int words)
+{
+	int i;
+
+	for (i = 0; i < words; i += 4) {
+		uint32_t r0 = system_reg_read(base + (i + 0) * 4);
+		uint32_t r1 = (i + 1 < words) ? system_reg_read(base + (i + 1) * 4) : 0;
+		uint32_t r2 = (i + 2 < words) ? system_reg_read(base + (i + 2) * 4) : 0;
+		uint32_t r3 = (i + 3 < words) ? system_reg_read(base + (i + 3) * 4) : 0;
+
+		pr_info("%s[%d]: %04x=%08x %04x=%08x %04x=%08x %04x=%08x\n",
+			tag, log_idx,
+			base + (i + 0) * 4, r0,
+			base + (i + 1) * 4, r1,
+			base + (i + 2) * 4, r2,
+			base + (i + 3) * 4, r3);
+	}
 }
 
 /* tiziano_adr_params_init - Binary Ninja EXACT: set _now pointers + init kneepoint arrays */
@@ -25837,11 +26066,17 @@ static void tiziano_adr_params_init(void)
     adr_write_pairs16(0x406c, param_adr_map_kneepoint_array, 11);
     adr_write_bytes4(0x4334, param_adr_map_kneepoint_array + 11, 12);
 
-    adr_write_pairs16(0x4294, param_adr_weight_20_lut_array, 32);
-    adr_write_pairs16(0x42b4, param_adr_weight_02_lut_array, 32);
-    adr_write_pairs16(0x42d4, param_adr_weight_12_lut_array, 32);
-    adr_write_pairs16(0x4314, param_adr_weight_22_lut_array, 32);
-    adr_write_pairs16(0x42f4, param_adr_weight_21_lut_array, 32);
+    /*
+     * OEM packs the ADR weight LUTs as four 8-bit lanes per register in the
+     * 0x4294..0x4330 "EXTRA" window. Writing them as 16-bit pairs doubles the
+     * span and causes the weight_22 upload to overwrite 0x4334..0x433c, which
+     * is the separate map-kneepoint tail block.
+     */
+    adr_write_bytes4(0x4294, param_adr_weight_20_lut_array, 32);
+    adr_write_bytes4(0x42b4, param_adr_weight_02_lut_array, 32);
+    adr_write_bytes4(0x42d4, param_adr_weight_12_lut_array, 32);
+    adr_write_bytes4(0x4314, param_adr_weight_22_lut_array, 32);
+    adr_write_bytes4(0x42f4, param_adr_weight_21_lut_array, 32);
 
     adr_write_pairs16(0x4378, param_adr_min_kneepoint_array_def, 11);
     adr_write_bytes4(0x43a8, param_adr_min_kneepoint_array_def + 11, 12);
@@ -25859,6 +26094,71 @@ static void tiziano_adr_params_init(void)
         ((param_adr_coc_adjust_array[12] & 0xff) << 16) |
         ((param_adr_coc_adjust_array[13] & 0xff) << 24));
     adr_write_pairs16(0x4484, param_adr_stat_block_hist_diff_array, 4);
+
+    {
+        static int adr_hwx_log;
+
+        if (adr_hwx_log < 3 || (adr_hwx_log % 100) == 0) {
+            pr_info("ADR_LUT_SEL[%d]: tool_ctl0=%u cwd0=%u cwd30=%u w20_0=%u w20_31=%u w02_0=%u w02_31=%u w12_0=%u w12_31=%u w22_0=%u w22_31=%u w21_0=%u w21_31=%u\n",
+                adr_hwx_log,
+                param_adr_tool_control_array[0],
+                param_adr_centre_w_dis_array[0], param_adr_centre_w_dis_array[30],
+                param_adr_weight_20_lut_array[0], param_adr_weight_20_lut_array[31],
+                param_adr_weight_02_lut_array[0], param_adr_weight_02_lut_array[31],
+                param_adr_weight_12_lut_array[0], param_adr_weight_12_lut_array[31],
+                param_adr_weight_22_lut_array[0], param_adr_weight_22_lut_array[31],
+                param_adr_weight_21_lut_array[0], param_adr_weight_21_lut_array[31]);
+            pr_info("ADR_HW_MAPX[%d]: x=%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u rb=%08x,%08x,%08x,%08x,%08x,%08x\n",
+                adr_hwx_log,
+                param_adr_map_kneepoint_array[0], param_adr_map_kneepoint_array[1],
+                param_adr_map_kneepoint_array[2], param_adr_map_kneepoint_array[3],
+                param_adr_map_kneepoint_array[4], param_adr_map_kneepoint_array[5],
+                param_adr_map_kneepoint_array[6], param_adr_map_kneepoint_array[7],
+                param_adr_map_kneepoint_array[8], param_adr_map_kneepoint_array[9],
+                param_adr_map_kneepoint_array[10],
+                system_reg_read(0x406c), system_reg_read(0x4070),
+                system_reg_read(0x4074), system_reg_read(0x4078),
+                system_reg_read(0x407c), system_reg_read(0x4080));
+            pr_info("ADR_HW_MAPT[%d]: tail=%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u rb=%08x,%08x,%08x\n",
+                adr_hwx_log,
+                param_adr_map_kneepoint_array[11], param_adr_map_kneepoint_array[12],
+                param_adr_map_kneepoint_array[13], param_adr_map_kneepoint_array[14],
+                param_adr_map_kneepoint_array[15], param_adr_map_kneepoint_array[16],
+                param_adr_map_kneepoint_array[17], param_adr_map_kneepoint_array[18],
+                param_adr_map_kneepoint_array[19], param_adr_map_kneepoint_array[20],
+                param_adr_map_kneepoint_array[21], param_adr_map_kneepoint_array[22],
+                system_reg_read(0x4334), system_reg_read(0x4338),
+                system_reg_read(0x433c));
+            pr_info("ADR_HW_MINX[%d]: x=%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u rb=%08x,%08x,%08x,%08x,%08x,%08x\n",
+                adr_hwx_log,
+                param_adr_min_kneepoint_array_def[0], param_adr_min_kneepoint_array_def[1],
+                param_adr_min_kneepoint_array_def[2], param_adr_min_kneepoint_array_def[3],
+                param_adr_min_kneepoint_array_def[4], param_adr_min_kneepoint_array_def[5],
+                param_adr_min_kneepoint_array_def[6], param_adr_min_kneepoint_array_def[7],
+                param_adr_min_kneepoint_array_def[8], param_adr_min_kneepoint_array_def[9],
+                param_adr_min_kneepoint_array_def[10],
+                system_reg_read(0x4378), system_reg_read(0x437c),
+                system_reg_read(0x4380), system_reg_read(0x4384),
+                system_reg_read(0x4388), system_reg_read(0x438c));
+            pr_info("ADR_HW_MINT[%d]: tail=%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u rb=%08x,%08x,%08x\n",
+                adr_hwx_log,
+                param_adr_min_kneepoint_array_def[11], param_adr_min_kneepoint_array_def[12],
+                param_adr_min_kneepoint_array_def[13], param_adr_min_kneepoint_array_def[14],
+                param_adr_min_kneepoint_array_def[15], param_adr_min_kneepoint_array_def[16],
+                param_adr_min_kneepoint_array_def[17], param_adr_min_kneepoint_array_def[18],
+                param_adr_min_kneepoint_array_def[19], param_adr_min_kneepoint_array_def[20],
+                param_adr_min_kneepoint_array_def[21], param_adr_min_kneepoint_array_def[22],
+                system_reg_read(0x43a8), system_reg_read(0x43ac),
+                system_reg_read(0x43b0));
+            adr_log_reg_window("ADR_HW_CWD", adr_hwx_log, 0x402c, 16);
+            adr_log_reg_window("ADR_HW_W20", adr_hwx_log, 0x4294, 8);
+            adr_log_reg_window("ADR_HW_W02", adr_hwx_log, 0x42b4, 8);
+            adr_log_reg_window("ADR_HW_W12", adr_hwx_log, 0x42d4, 8);
+            adr_log_reg_window("ADR_HW_W21", adr_hwx_log, 0x42f4, 8);
+            adr_log_reg_window("ADR_HW_W22", adr_hwx_log, 0x4314, 8);
+        }
+        adr_hwx_log++;
+    }
 }
 
 /* tiziano_adr_get_data - Binary Ninja EXACT: Parse ADR DMA statistics buffer
@@ -26063,18 +26363,13 @@ static void subsection(int32_t *result, int32_t blend_pct,
 		       int32_t blend_mode)
 {
 	/* OEM EXACT parameter mapping (verified from decompilation at 0x1bd74):
-	 * - subsection's OWN gamma lookups: iterate arg4 (gam_lut_b), interp arg3 (gam_lut_a)
-	 * - subsection_map calls: pass (arg3, arg4) → subsection_map iterates its param4=arg3
-	 * These are intentionally opposite! subsection does inverse gamma, subsection_map does forward.
+	 * - subsection_map(): forward lookup, iterate arg3 and interpolate arg4
+	 * - subsection(): inverse lookup, iterate arg4 and interpolate arg3
 	 *
-	 * gam_x/gam_y below are used ONLY by the inline gamma lookups in this function.
-	 * subsection_map calls pass gam_lut_a, gam_lut_b directly (unchanged). */
-	/* Subsection kneepoints are OUTPUT Y values. The inline gamma lookup
-	 * finds: given mapped input X → output Y.  So iterate gam_lut_a (X table)
-	 * and interpolate gam_lut_b (Y table).  This matches subsection_map's
-	 * convention and produces output-domain values for the tone curve. */
-	int16_t *gam_x = gam_lut_a;
-	int16_t *gam_y = gam_lut_b;
+	 * The inline lookups here therefore walk gamma Y and recover gamma X.
+	 * This is not the same direction used by subsection_map(). */
+	int16_t *lookup_x = gam_lut_a;
+	int16_t *lookup_y = gam_lut_b;
 	int32_t v0_val = 2 << (prec_a & 0x1f);
 	int32_t fp;
 	int32_t half_a = (1 << (prec_a & 0x1f)) / 2;
@@ -26089,28 +26384,27 @@ static void subsection(int32_t *result, int32_t blend_pct,
 				0xfff << (prec_a & 0x1f), v0_val) + half_a)
 				>> (prec_a & 0x1f);
 		int32_t mapped = subsection_map(0x1388, map_in, blend_pct,
-				gam_x, gam_y, lut, num_bins, prec_a, prec_b,
+				gam_lut_a, gam_lut_b, lut, num_bins, prec_a, prec_b,
 				blend_mode);
 
-		/* Lookup in gam_x to find the Y value */
+		/* OEM exact: iterate gamma Y and interpolate gamma X. */
 		for (j = 0; j < 0x81; j++) {
-			int32_t gx = (int32_t)(int16_t)gam_x[j];
-			if (mapped < gx) {
-				int16_t *gy_ptr = &gam_y[j];
-				int32_t gy_cur = (int32_t)(int16_t)*gy_ptr;
-				int32_t gy_prev = (int32_t)(int16_t)*(gam_y + j - 1);
-				int32_t gx_prev = (int32_t)(int16_t)*(gam_x + j - 1);
+			int32_t gy_cur = (int32_t)(int16_t)lookup_y[j];
+			if (mapped < gy_cur) {
+				int32_t gx_cur = (int32_t)(int16_t)lookup_x[j];
+				int32_t gy_prev = (int32_t)(int16_t)lookup_y[j - 1];
+				int32_t gx_prev = (int32_t)(int16_t)lookup_x[j - 1];
 				int32_t slope = fix_point_div_32(prec_a,
-					(gy_cur - gy_prev) << (prec_a & 0x1f),
-					(gx - gx_prev) << (prec_a & 0x1f));
+					(gx_cur - gx_prev) << (prec_a & 0x1f),
+					(gy_cur - gy_prev) << (prec_a & 0x1f));
 				int32_t interp = fix_point_mult2_32(prec_a,
-					slope, (gx - mapped) << (prec_a & 0x1f));
-				result[4] = gy_cur - ((interp + half_a) >> (prec_a & 0x1f));
+					slope, (gy_cur - mapped) << (prec_a & 0x1f));
+				result[4] = gx_cur - ((interp + half_a) >> (prec_a & 0x1f));
 				break;
 			}
 		}
 		if (j == 0x81)
-			result[4] = (int32_t)(int16_t)gam_y[0x80];
+			result[4] = (int32_t)(int16_t)lookup_x[0x80];
 
 		fp = num_bins << (prec_a & 0x1f);
 
@@ -26124,27 +26418,26 @@ static void subsection(int32_t *result, int32_t blend_pct,
 					mapped << (prec_a & 0x1f), v0_val) + half_a)
 					>> (prec_a & 0x1f);
 			int32_t mapped2 = subsection_map(sub_arg1, map_in2, blend_pct,
-					gam_x, gam_y, lut, num_bins, prec_a, prec_b,
+					gam_lut_a, gam_lut_b, lut, num_bins, prec_a, prec_b,
 					blend_mode);
 
 			for (j = 0; j < 0x81; j++) {
-				int32_t gx = (int32_t)(int16_t)gam_x[j];
-				if (mapped2 < gx) {
-					int16_t *gy_ptr = &gam_y[j];
-					int32_t gy_cur = (int32_t)(int16_t)*gy_ptr;
-					int32_t gy_prev = (int32_t)(int16_t)*(gam_y + j - 1);
-					int32_t gx_prev = (int32_t)(int16_t)*(gam_x + j - 1);
+				int32_t gy_cur = (int32_t)(int16_t)lookup_y[j];
+				if (mapped2 < gy_cur) {
+					int32_t gx_cur = (int32_t)(int16_t)lookup_x[j];
+					int32_t gy_prev = (int32_t)(int16_t)lookup_y[j - 1];
+					int32_t gx_prev = (int32_t)(int16_t)lookup_x[j - 1];
 					int32_t slope = fix_point_div_32(prec_a,
-						(gy_cur - gy_prev) << (prec_a & 0x1f),
-						(gx - gx_prev) << (prec_a & 0x1f));
+						(gx_cur - gx_prev) << (prec_a & 0x1f),
+						(gy_cur - gy_prev) << (prec_a & 0x1f));
 					int32_t interp = fix_point_mult2_32(prec_a,
-						slope, (gx - mapped2) << (prec_a & 0x1f));
-					result[2] = gy_cur - ((interp + half_a) >> (prec_a & 0x1f));
+						slope, (gy_cur - mapped2) << (prec_a & 0x1f));
+					result[2] = gx_cur - ((interp + half_a) >> (prec_a & 0x1f));
 					break;
 				}
 			}
 			if (j == 0x81)
-				result[2] = (int32_t)(int16_t)gam_y[0x80];
+				result[2] = (int32_t)(int16_t)lookup_x[0x80];
 
 			/* OEM EXACT: Kneepoints 1 and 3 via two separate subsection_map calls.
 			 * Kneepoint 1 uses result[2] index and mapped2 alone.
@@ -26165,26 +26458,26 @@ static void subsection(int32_t *result, int32_t blend_pct,
 							v0_val) + half_a)
 							>> (prec_a & 0x1f);
 					int32_t mapped_kp1 = subsection_map(sub_arg_kp1, map_in_kp1,
-							blend_pct, gam_x, gam_y, lut, num_bins,
+							blend_pct, gam_lut_a, gam_lut_b, lut, num_bins,
 							prec_a, prec_b, blend_mode);
 
 					for (j = 0; j < 0x81; j++) {
-						int32_t gx = (int32_t)(int16_t)gam_x[j];
-						if (mapped_kp1 < gx) {
-							int32_t gy_cur = (int32_t)(int16_t)gam_y[j];
-							int32_t gy_prev = (int32_t)(int16_t)gam_y[j - 1];
-							int32_t gx_prev = (int32_t)(int16_t)gam_x[j - 1];
+						int32_t gy_cur = (int32_t)(int16_t)lookup_y[j];
+						if (mapped_kp1 < gy_cur) {
+							int32_t gx_cur = (int32_t)(int16_t)lookup_x[j];
+							int32_t gy_prev = (int32_t)(int16_t)lookup_y[j - 1];
+							int32_t gx_prev = (int32_t)(int16_t)lookup_x[j - 1];
 							int32_t slope = fix_point_div_32(prec_a,
-								(gy_cur - gy_prev) << (prec_a & 0x1f),
-								(gx - gx_prev) << (prec_a & 0x1f));
+								(gx_cur - gx_prev) << (prec_a & 0x1f),
+								(gy_cur - gy_prev) << (prec_a & 0x1f));
 							int32_t interp = fix_point_mult2_32(prec_a,
-								slope, (gx - mapped_kp1) << (prec_a & 0x1f));
-							result[1] = gy_cur - ((interp + half_a) >> (prec_a & 0x1f));
+								slope, (gy_cur - mapped_kp1) << (prec_a & 0x1f));
+							result[1] = gx_cur - ((interp + half_a) >> (prec_a & 0x1f));
 							break;
 						}
 					}
 					if (j == 0x81)
-						result[1] = (int32_t)(int16_t)gam_y[0x80];
+						result[1] = (int32_t)(int16_t)lookup_x[0x80];
 				}
 
 				/* Kneepoint 3: OEM fourth subsection_map call */
@@ -26195,26 +26488,26 @@ static void subsection(int32_t *result, int32_t blend_pct,
 							v0_val) + half_a)
 							>> (prec_a & 0x1f);
 					int32_t mapped3 = subsection_map(sub_arg2, map_in3,
-							blend_pct, gam_x, gam_y, lut, num_bins,
+							blend_pct, gam_lut_a, gam_lut_b, lut, num_bins,
 							prec_a, prec_b, blend_mode);
 
 					for (j = 0; j < 0x81; j++) {
-						int32_t gx = (int32_t)(int16_t)gam_x[j];
-						if (mapped3 < gx) {
-							int32_t gy_cur = (int32_t)(int16_t)gam_y[j];
-							int32_t gy_prev = (int32_t)(int16_t)gam_y[j - 1];
-							int32_t gx_prev = (int32_t)(int16_t)gam_x[j - 1];
+						int32_t gy_cur = (int32_t)(int16_t)lookup_y[j];
+						if (mapped3 < gy_cur) {
+							int32_t gx_cur = (int32_t)(int16_t)lookup_x[j];
+							int32_t gy_prev = (int32_t)(int16_t)lookup_y[j - 1];
+							int32_t gx_prev = (int32_t)(int16_t)lookup_x[j - 1];
 							int32_t slope = fix_point_div_32(prec_a,
-								(gy_cur - gy_prev) << (prec_a & 0x1f),
-								(gx - gx_prev) << (prec_a & 0x1f));
+								(gx_cur - gx_prev) << (prec_a & 0x1f),
+								(gy_cur - gy_prev) << (prec_a & 0x1f));
 							int32_t interp = fix_point_mult2_32(prec_a,
-								slope, (gx - mapped3) << (prec_a & 0x1f));
-							result[3] = gy_cur - ((interp + half_a) >> (prec_a & 0x1f));
+								slope, (gy_cur - mapped3) << (prec_a & 0x1f));
+							result[3] = gx_cur - ((interp + half_a) >> (prec_a & 0x1f));
 							break;
 						}
 					}
 					if (j == 0x81)
-						result[3] = (int32_t)(int16_t)gam_y[0x80];
+						result[3] = (int32_t)(int16_t)lookup_x[0x80];
 				}
 			}
 		}
@@ -26277,7 +26570,8 @@ static int32_t interpolate_adr_x8_y12(int32_t ev_lo, int32_t ev_hi,
  * knees[0..8] = the 9 kneepoint Y values (var_16c array)
  * arg10_base = arg10 array (base output Y values for 5 kneepoints + last entry)
  * arg3 = input X values (min_kneepoint_x, 11 entries)
- * arg4 = output Y values (min_kneepoint_y, 11 entries)
+ * arg4 = output Y values (11 entries, later committed into min_kneepoint_y[10]
+ *        plus the tail register slot data_9f0a8)
  */
 static void adr_compute_output_curve(int32_t *knees, int32_t *arg10,
 				     int32_t *arg3_x, int32_t *arg4_out)
@@ -26353,6 +26647,29 @@ static void adr_compute_output_curve(int32_t *knees, int32_t *arg10,
 		}
 		arg4_out[i] = out;
 	}
+}
+
+/* OEM stores the ADR tail entries immediately after the array bodies:
+ *   min_kneepoint_y[10] -> data_9f0a8
+ *   ctc_kneepoint_y[8]  -> data_9f0cc
+ * Our C globals are not laid out that way, so commit the tail entries
+ * explicitly instead of relying on out-of-bounds adjacency. */
+static void adr_store_min_curve11(const int32_t *curve11, int32_t *min10)
+{
+	int i;
+
+	for (i = 0; i < 10; i++)
+		min10[i] = curve11[i];
+	data_9f0a8 = curve11[10];
+}
+
+static void adr_store_ctc_curve9(const int32_t *curve9, int32_t *ctc8)
+{
+	int i;
+
+	for (i = 0; i < 8; i++)
+		ctc8[i] = curve9[i];
+	data_9f0cc = curve9[8];
 }
 
 /* 9-point piecewise interpolation for per-block curves (Path A).
@@ -26528,9 +26845,9 @@ static const uint32_t adr_const_table_6b224[9] = {
  *
  * Args (mapped from the caller tiziano_adr_algorithm):
  *   arg1  = ctc_kneepoint_x[9]        (TizianoAdrFpgaStructMe)
- *   arg2  = ctc_kneepoint_y[9]        (data_c03cc)
+ *   arg2  = ctc_kneepoint_y[8] + data_9f0cc tail (data_c03cc)
  *   arg3  = min_kneepoint_x[11]       (data_c03d0)
- *   arg4  = min_kneepoint_y[11]       (data_c03d4)
+ *   arg4  = min_kneepoint_y[10] + data_9f0a8 tail (data_c03d4)
  *   arg5  = map_kneepoint_x[11]       (data_c03d8)
  *   arg6  = map_kneepoint_y[264]      (data_c03dc) — output: 24 blocks x 11
  *   arg7  = adr_hist[512]             (data_c03e0)
@@ -26604,6 +26921,8 @@ static int Tiziano_adr_fpga(void *arg1, uint32_t *arg2, uint32_t *arg3,
 
 	/* var_16c: working curve, var_190: per-block curve, var_1d8: spatial curve */
 	int32_t var_16c[9], var_190[9], var_1d8[9];
+	int32_t min_curve11[11];
+	int32_t ctc_curve9[9];
 
 	/* 8 light levels x 9 kneepoints = 72 entries */
 	int32_t var_420[72];
@@ -26719,16 +27038,25 @@ static int Tiziano_adr_fpga(void *arg1, uint32_t *arg2, uint32_t *arg3,
 	{
 		uint8_t *s7 = (uint8_t *)arg9 + 0x78;
 		for (i = 0; i < 6; i++) {
-			int32_t *bh = (int32_t *)&adr_block_hist_120[i * 20];
 			uint32_t *src = (uint32_t *)s7;
-			for (j = 1; j < 5; j++) {
-				bh[0] = src[5];
-				bh[5] = src[6];
-				bh[10] = src[7];
-				bh[15] = src[3 + j * 5 - 12];
-				bh[20 - 5] = src[4 + j * 5 - 12];
+			int32_t *dst = (int32_t *)&adr_block_hist_120[i * 20];
+
+			/* OEM HLIL:
+			 *   dst[0] = *(src + 0x14)
+			 *   dst[1] = *(src + 0x18)
+			 *   dst[2] = *(src + 0x1c)
+			 *   src += 0x14
+			 *   dst[3] = *(src + 0x0c)
+			 *   dst[4] = *(src + 0x10)
+			 * repeated 4 times per row. */
+			for (j = 0; j < 4; j++) {
+				dst[0] = src[5];
+				dst[1] = src[6];
+				dst[2] = src[7];
 				src += 5;
-				bh += 1;
+				dst[3] = src[3];
+				dst[4] = src[4];
+				dst += 5;
 			}
 			s7 += 0x78;
 		}
@@ -26826,10 +27154,9 @@ static int Tiziano_adr_fpga(void *arg1, uint32_t *arg2, uint32_t *arg3,
 					/* Interpolate between idx-1 and idx */
 					int32_t ev_lo = var_148[idx - 1];
 					int32_t ev_hi = thresh;
-					/* Copy base from previous level */
-					for (k = 0; k < 9; k++)
-						var_16c[k] = var_420[(idx - 1) * 9 + k];
-					/* Interpolate kneepoints 1..4 using interpolate_adr_x8_y12 */
+					/* OEM EXACT: only entries 1..4 come from the light-level table
+					 * in the interpolated case. Entry 0 and entries 5..8 stay on the
+					 * arg10-derived base curve initialized at function entry. */
 					var_16c[1] = interpolate_adr_x8_y12(ev_lo, ev_hi,
 						var_420[(idx - 1) * 9 + 1],
 						var_420[base + 1], s1);
@@ -26875,7 +27202,8 @@ static int Tiziano_adr_fpga(void *arg1, uint32_t *arg2, uint32_t *arg3,
 		}
 
 		/* === Compute global output curve (arg4) === */
-		adr_compute_output_curve(var_16c, arg10_s, arg3_s, arg4_s);
+		adr_compute_output_curve(var_16c, arg10_s, arg3_s, min_curve11);
+		adr_store_min_curve11(min_curve11, arg4_s);
 
 		/* === Per-block curve: find bracket for v0_9 in var_148 ===
 		 * Then compute var_190 (9-entry curve for per-block weighting) */
@@ -26974,7 +27302,8 @@ static int Tiziano_adr_fpga(void *arg1, uint32_t *arg2, uint32_t *arg3,
 				var_16c[k] = var_16c[k - 1] + 1;
 		}
 
-		adr_compute_output_curve(var_16c, arg10_s, arg3_s, arg4_s);
+		adr_compute_output_curve(var_16c, arg10_s, arg3_s, min_curve11);
+		adr_store_min_curve11(min_curve11, arg4_s);
 
 		subsection_light(subsection_up_curve, adr_const_table_6b224,
 				 0, (uint32_t *)var_190);
@@ -26982,11 +27311,49 @@ static int Tiziano_adr_fpga(void *arg1, uint32_t *arg2, uint32_t *arg3,
 			var_1b4[k] = var_190[k];
 
 		/* OEM special-case: x < curve[0] holds arg13[0] instead of scaling down. */
-		adr_interp_9pt(arg1_s, arg2_s, arg13_s, var_1b4, 9);
+		adr_interp_9pt(arg1_s, ctc_curve9, arg13_s, var_1b4, 9);
 		for (k = 0; k < 9; k++) {
 			if (arg1_s[k] < var_1b4[0])
-				arg2_s[k] = arg13_s[0];
+				ctc_curve9[k] = arg13_s[0];
 		}
+		adr_store_ctc_curve9(ctc_curve9, arg2_s);
+	}
+
+	{
+		static int adr_curve_log;
+
+		if (adr_curve_log < 3 || (adr_curve_log % 300) == 0) {
+			pr_info("ADR_X_CTC[%d]: %d,%d,%d,%d,%d,%d,%d,%d,%d\n",
+				adr_curve_log,
+				arg1_s[0], arg1_s[1], arg1_s[2], arg1_s[3], arg1_s[4],
+				arg1_s[5], arg1_s[6], arg1_s[7], arg1_s[8]);
+			pr_info("ADR_CTCSRC[%d]: %d,%d,%d,%d,%d,%d,%d,%d,%d\n",
+				adr_curve_log,
+				arg13_s[0], arg13_s[1], arg13_s[2], arg13_s[3], arg13_s[4],
+				arg13_s[5], arg13_s[6], arg13_s[7], arg13_s[8]);
+			pr_info("ADR_CTCY[%d]: %d,%d,%d,%d,%d,%d,%d,%d last=%u\n",
+				adr_curve_log,
+				arg2_s[0], arg2_s[1], arg2_s[2], arg2_s[3],
+				arg2_s[4], arg2_s[5], arg2_s[6], arg2_s[7], data_9f0cc);
+			pr_info("ADR_CURVE_BASE[%d]: %d,%d,%d,%d,%d,%d,%d,%d,%d\n",
+				adr_curve_log,
+				arg10_s[0], arg10_s[1], arg10_s[2], arg10_s[3], arg10_s[4],
+				arg10_s[5], arg10_s[6], arg10_s[7], arg10_s[8]);
+			pr_info("ADR_CURVE_G9[%d]: %d,%d,%d,%d,%d,%d,%d,%d,%d\n",
+				adr_curve_log,
+				var_16c[0], var_16c[1], var_16c[2], var_16c[3], var_16c[4],
+				var_16c[5], var_16c[6], var_16c[7], var_16c[8]);
+			pr_info("ADR_CURVE_OUT11[%d]: %d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n",
+				adr_curve_log,
+				arg4_s[0], arg4_s[1], arg4_s[2], arg4_s[3], arg4_s[4],
+				arg4_s[5], arg4_s[6], arg4_s[7], arg4_s[8], arg4_s[9],
+				data_9f0a8);
+			pr_info("ADR_CURVE_BLK9[%d]: %d,%d,%d,%d,%d,%d,%d,%d,%d\n",
+				adr_curve_log,
+				var_1b4[0], var_1b4[1], var_1b4[2], var_1b4[3], var_1b4[4],
+				var_1b4[5], var_1b4[6], var_1b4[7], var_1b4[8]);
+		}
+		adr_curve_log++;
 	}
 
 	/* === Mean Y / contrast parameter computation (OEM: $v0_171 switch) ===
@@ -27131,6 +27498,7 @@ static int Tiziano_adr_fpga(void *arg1, uint32_t *arg2, uint32_t *arg3,
 		int32_t *out_ptr = fp;
 		int32_t v0_248 = v1_13 << 0x10;
 		int32_t *bmy_ptr = (int32_t *)block_mean_y;
+		int32_t mapped_weight_grid[24] = {0};
 		int32_t max_sq = 0x3ffffc;
 
 		{
@@ -27204,6 +27572,8 @@ static int Tiziano_adr_fpga(void *arg1, uint32_t *arg2, uint32_t *arg3,
 				int32_t mapped_weight = (fix_point_div_32(0xa,
 					weight << 0xa, 0x19000) + 0x200) >> 0xa;
 
+				mapped_weight_grid[i] = mapped_weight;
+
 				{
 					static int adr_blk_log;
 					if (adr_blk_log < 48) {
@@ -27230,7 +27600,9 @@ static int Tiziano_adr_fpga(void *arg1, uint32_t *arg2, uint32_t *arg3,
 							int32_t ev_lo = var_148[j - 1];
 							int32_t seg = (thresh - ev_lo) << 0xa;
 							int32_t pos = (mapped_weight - ev_lo) << 0xa;
-							var_1d8[0] = var_420[(j - 1) * 9];
+							/* OEM HLIL only rewrites kneepoints 1..4 in the
+							 * interpolated spatial path. Entries 0 and 5..8
+							 * retain the current working state. */
 							for (k = 1; k <= 4; k++) {
 								int32_t vhi = var_420[base + k];
 								int32_t vlo = var_420[base - 9 + k];
@@ -27249,8 +27621,6 @@ static int Tiziano_adr_fpga(void *arg1, uint32_t *arg2, uint32_t *arg3,
 									pos) + 0x200) >> 0xa;
 								var_1d8[k] = sign ? vlo + interp : vlo - interp;
 							}
-							for (k = 5; k < 9; k++)
-								var_1d8[k] = var_420[(j - 1) * 9 + k];
 						} else {
 							for (k = 0; k < 9; k++)
 								var_1d8[k] = var_420[k];
@@ -27388,17 +27758,58 @@ static int Tiziano_adr_fpga(void *arg1, uint32_t *arg2, uint32_t *arg3,
 						}
 					}
 				}
+
+				if (i == 0) {
+					static int adr_blk_curve_log;
+
+					if (adr_blk_curve_log < 5 || (adr_blk_curve_log % 300) == 0) {
+						pr_info("ADR_BLK9[%d]: %d,%d,%d,%d,%d,%d,%d,%d,%d\n",
+							adr_blk_curve_log,
+							var_1d8[0], var_1d8[1], var_1d8[2], var_1d8[3], var_1d8[4],
+							var_1d8[5], var_1d8[6], var_1d8[7], var_1d8[8]);
+						pr_info("ADR_BLKOUT11[%d]: %d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n",
+							adr_blk_curve_log,
+							out_ptr[0], out_ptr[1], out_ptr[2], out_ptr[3], out_ptr[4],
+							out_ptr[5], out_ptr[6], out_ptr[7], out_ptr[8], out_ptr[9],
+							out_ptr[10]);
+					}
+					adr_blk_curve_log++;
+				}
 			}
 
 			bmy_ptr++;
 			out_ptr += 11;
 		}
 
-		/* === Final blending (when a0_20 == 1) ===
-		 * Blend per-block curves toward global curve based on histogram stat */
-		if (a0_20 == 1) {
-			int32_t hist_val = (int32_t)data_980b0[v1_15];
-			int result_val = hist_val;
+		{
+			static int adr_preblend_log;
+
+			if (adr_preblend_log < 5 || (adr_preblend_log % 300) == 0) {
+				int32_t hist_idx = v1_15;
+				int32_t hist_val = 0;
+
+				if (hist_idx >= 0 && hist_idx < 512)
+					hist_val = data_980b0[hist_idx];
+
+				pr_info("ADR_BLEND[%d]: en=%d idx=%d hist=%d lo=%d hi=%d path=%d t0=%d mean0=%d mean5=%d mean12=%d mean23=%d\n",
+					adr_preblend_log, a0_20, hist_idx, hist_val, a0_21, a0_22,
+					s6_1, t0, block_mean_y[0], block_mean_y[5],
+					block_mean_y[12], block_mean_y[23]);
+				adr_log_curve11("ADR_PRE11", adr_preblend_log, 0, (uint32_t *)&arg6_s[0 * 11]);
+				adr_log_curve11("ADR_PRE11", adr_preblend_log, 5, (uint32_t *)&arg6_s[5 * 11]);
+				adr_log_curve11("ADR_PRE11", adr_preblend_log, 12, (uint32_t *)&arg6_s[12 * 11]);
+				adr_log_curve11("ADR_PRE11", adr_preblend_log, 23, (uint32_t *)&arg6_s[23 * 11]);
+			}
+			adr_preblend_log++;
+		}
+
+			/* === Final blending (when a0_20 == 1) ===
+			 * OEM exact: blend per-block Y curves toward arg5_s, which is the
+			 * shared map_kneepoint_x axis. This looks counterintuitive, but the
+			 * decompiled OEM routine does in fact use arg5 here, not arg4_s. */
+			if (a0_20 == 1) {
+				int32_t hist_val = (int32_t)data_980b0[v1_15];
+				int result_val = hist_val;
 
 			if (result_val >= a0_21) {
 				if (a0_22 >= result_val) {
@@ -27407,27 +27818,46 @@ static int Tiziano_adr_fpga(void *arg1, uint32_t *arg2, uint32_t *arg3,
 					int32_t blend_range = a0_22 - a0_21;
 					int32_t *blk_ptr = arg6_s;
 
-					if (blend_range == 0)
-						blend_range = 1;
-					for (i = 0; i < 24; i++) {
-						for (j = 0; j < 11; j++) {
-							int32_t blk_y = blk_ptr[j];
-							int32_t glob_y = arg5_s[j];
-							int32_t diff_val = (blk_y - glob_y) * blend_amt;
-							blk_ptr[j] = ((blk_y << 0xa) - ((diff_val << 0xa) / blend_range)) / 0x400;
+						if (blend_range == 0)
+							blend_range = 1;
+						for (i = 0; i < 24; i++) {
+							for (j = 0; j < 11; j++) {
+								int32_t blk_y = blk_ptr[j];
+								int32_t glob_y = arg5_s[j];
+								int32_t diff_val = (blk_y - glob_y) * blend_amt;
+								blk_ptr[j] = ((blk_y << 0xa) - ((diff_val << 0xa) / blend_range)) / 0x400;
+							}
+							blk_ptr += 11;
 						}
-						blk_ptr += 11;
-					}
-				} else {
-					/* Above threshold: copy global curve to all blocks */
-					int32_t *blk_ptr = arg6_s;
-					for (i = 0; i < 24; i++) {
-						for (j = 0; j < 11; j++)
-							blk_ptr[j] = arg5_s[j];
-						blk_ptr += 11;
-					}
+					} else {
+						/* Above threshold: OEM copies arg5_s to all blocks. */
+						int32_t *blk_ptr = arg6_s;
+						for (i = 0; i < 24; i++) {
+							for (j = 0; j < 11; j++)
+								blk_ptr[j] = arg5_s[j];
+							blk_ptr += 11;
+						}
 				}
 			}
+		}
+
+		if (adr_grid_debug_budget > 0) {
+			int32_t mean_grid[24];
+			int32_t curve_p4[24];
+			int32_t curve_p10[24];
+			int log_idx = adr_grid_debug_budget;
+
+			for (i = 0; i < 24; i++) {
+				mean_grid[i] = (int32_t)block_mean_y[i];
+				curve_p4[i] = arg6_s[i * 11 + 4];
+				curve_p10[i] = arg6_s[i * 11 + 10];
+			}
+
+			adr_log_grid24("ADR_GRID_MEAN", log_idx, mean_grid);
+			adr_log_grid24("ADR_GRID_MW", log_idx, mapped_weight_grid);
+			adr_log_grid24("ADR_GRID_P4", log_idx, curve_p4);
+			adr_log_grid24("ADR_GRID_P10", log_idx, curve_p10);
+			adr_grid_debug_budget--;
 		}
 	}
 
@@ -27587,6 +28017,59 @@ static int tiziano_adr_algorithm(void)
 			ctc_kneepoint_x[i] = param_adr_ctc_kneepoint_array[i];
 	}
 
+	{
+		static int adr_ctrl_log;
+
+		if (adr_ctrl_log < 5 || (adr_ctrl_log % 300) == 0) {
+			pr_info("ADR_CTRL14[%d]: ev=%u idx=%d map=%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\n",
+				adr_ctrl_log, ev_val, idx,
+				adr_map_mode_now[0], adr_map_mode_now[1], adr_map_mode_now[2],
+				adr_map_mode_now[3], adr_map_mode_now[4], adr_map_mode_now[5],
+				adr_map_mode_now[6], adr_map_mode_now[7], adr_map_mode_now[8],
+				adr_map_mode_now[9], adr_map_mode_now[10]);
+			pr_info("ADR_CTRL15A[%d]: le=%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\n",
+				adr_ctrl_log,
+				adr_light_end_now[0], adr_light_end_now[1], adr_light_end_now[2],
+				adr_light_end_now[3], adr_light_end_now[4], adr_light_end_now[5],
+				adr_light_end_now[6], adr_light_end_now[7], adr_light_end_now[8],
+				adr_light_end_now[9], adr_light_end_now[10]);
+			pr_info("ADR_CTRL15B[%d]: le14=%u le18=%u le19=%u le20=%u le21=%u le22=%u le23=%u le24=%u le25=%u le26=%u le28=%u\n",
+				adr_ctrl_log,
+				adr_light_end_now[14], adr_light_end_now[18], adr_light_end_now[19],
+				adr_light_end_now[20], adr_light_end_now[21], adr_light_end_now[22],
+				adr_light_end_now[23], adr_light_end_now[24], adr_light_end_now[25],
+				adr_light_end_now[26], adr_light_end_now[28]);
+			pr_info("ADR_CTRL16[%d]: blk=%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\n",
+				adr_ctrl_log,
+				adr_block_light_now[0], adr_block_light_now[1], adr_block_light_now[2],
+				adr_block_light_now[3], adr_block_light_now[4], adr_block_light_now[5],
+				adr_block_light_now[6], adr_block_light_now[7], adr_block_light_now[8],
+				adr_block_light_now[9], adr_block_light_now[10], adr_block_light_now[11],
+				adr_block_light_now[12], adr_block_light_now[13], adr_block_light_now[14]);
+		}
+		adr_ctrl_log++;
+	}
+
+	{
+		static int adr_x_log;
+
+		if (adr_x_log < 3 || (adr_x_log % 300) == 0) {
+			pr_info("ADR_MINX[%d]: %u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\n",
+				adr_x_log,
+				min_kneepoint_x[0], min_kneepoint_x[1], min_kneepoint_x[2],
+				min_kneepoint_x[3], min_kneepoint_x[4], min_kneepoint_x[5],
+				min_kneepoint_x[6], min_kneepoint_x[7], min_kneepoint_x[8],
+				min_kneepoint_x[9], min_kneepoint_x[10]);
+			pr_info("ADR_MAPX[%d]: %u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\n",
+				adr_x_log,
+				map_kneepoint_x[0], map_kneepoint_x[1], map_kneepoint_x[2],
+				map_kneepoint_x[3], map_kneepoint_x[4], map_kneepoint_x[5],
+				map_kneepoint_x[6], map_kneepoint_x[7], map_kneepoint_x[8],
+				map_kneepoint_x[9], map_kneepoint_x[10]);
+		}
+		adr_x_log++;
+	}
+
 	/* === Phase 4: Set up FPGA struct pointers and call Tiziano_adr_fpga === */
 	TizianoAdrFpgaStructMe = ctc_kneepoint_x;
 	data_c03e0 = adr_hist;
@@ -27674,6 +28157,22 @@ static int tiziano_adr_algorithm(void)
 			data_9ce74 = rate;
 	}
 
+	{
+		static int adr_final_log;
+
+		if (adr_final_log < 5 || (adr_final_log % 300) == 0) {
+			pr_info("ADR_FINAL11[%d]: smooth=%u rate=%u mean0=%d mean5=%d mean12=%d mean23=%d\n",
+				adr_final_log, data_9ce70, data_9ce74,
+				block_mean_y[0], block_mean_y[5],
+				block_mean_y[12], block_mean_y[23]);
+			adr_log_curve11("ADR_FBLK11", adr_final_log, 0, &map_kneepoint_y[0 * 11]);
+			adr_log_curve11("ADR_FBLK11", adr_final_log, 5, &map_kneepoint_y[5 * 11]);
+			adr_log_curve11("ADR_FBLK11", adr_final_log, 12, &map_kneepoint_y[12 * 11]);
+			adr_log_curve11("ADR_FBLK11", adr_final_log, 23, &map_kneepoint_y[23 * 11]);
+		}
+		adr_final_log++;
+	}
+
 	return 0;
 }
 
@@ -27730,11 +28229,22 @@ push_event:
 /* tiziano_adr_init - Binary Ninja SIMPLIFIED implementation */
 int tiziano_adr_init(uint32_t width, uint32_t height)
 {
+    int blk;
+
     /* Binary Ninja: Store resolution parameters */
     data_af158 = width;
     data_af15c = height;
     width_def = width;
     height_def = height;
+
+    /* Seed OEM ADR curve state before the first interrupt/smoothing pass. */
+    memcpy(min_kneepoint_y, adr_init_curve11, sizeof(min_kneepoint_y));
+    memcpy(ctc_kneepoint_y, adr_init_ctc_y, sizeof(ctc_kneepoint_y));
+    adr_grid_debug_budget = 2;
+    for (blk = 0; blk < 24; blk++) {
+        memcpy(&map_kneepoint_y[blk * 11], adr_init_curve11, sizeof(adr_init_curve11));
+        memcpy(&map_kneepoint_y_pre[blk * 11], adr_init_curve11, sizeof(adr_init_curve11));
+    }
 
     /* Binary Ninja: Calculate basic ADR parameters */
     uint32_t width_div = width / 6;
@@ -30641,6 +31151,7 @@ static int tiziano_dpc_dn_params_refresh(void)
  * Reloads ADR params from tuning binary for current day/night mode. */
 void tiziano_adr_dn_params_refresh(void)
 {
+    adr_grid_debug_budget = 2;
     tiziano_adr_params_refresh();
     tiziano_adr_params_init();
 }
@@ -33462,28 +33973,12 @@ int tisp_s_adr_str_internal(int strength)
 EXPORT_SYMBOL(tisp_s_adr_str_internal);
 
 /* tisp_s_ae_at_list - AE auto-target list control */
-int tisp_s_ae_at_list(uint32_t target_value)
+int tisp_s_ae_at_list(uint32_t *target_list)
 {
-    uint8_t param_buffer[0x1c];
-    int i;
+    if (!target_list)
+        return -EINVAL;
 
-    pr_info("tisp_s_ae_at_list: Setting AE auto-target to %u\n", target_value);
-
-    /* Binary Ninja shows copying 0x18 bytes from stack arguments */
-    /* This appears to be setting up an AE target list */
-
-    /* Initialize parameter buffer */
-    memset(param_buffer, 0, sizeof(param_buffer));
-
-    /* Set up AE target parameters */
-    for (i = 0; i < 0x18; i++) {
-        param_buffer[i] = (target_value >> (i % 4 * 8)) & 0xff;
-    }
-
-    /* Apply AE target list - simplified implementation */
-    pr_info("tisp_s_ae_at_list: Applied AE target list\n");
-
-    return 0;
+    return tisp_ae_s_at_list(target_list);
 }
 EXPORT_SYMBOL(tisp_s_ae_at_list);
 
@@ -33963,6 +34458,7 @@ EXPORT_SYMBOL(tiziano_deflicker_expt);
  *   ae_stable_tol:      +0x01c0  0x10 bytes (4 uint32)
  *   ae0_ev_list:        +0x01d0  0x28 bytes (10 uint32)
  *   _lum_list:          +0x01f8  0x28 bytes (10 uint32)
+ *   _at_list:           +0x0220  0x28 bytes (10 uint32)
  *   _deflicker_para:    +0x0248  0x0c bytes (3 uint32)
  *   _flicker_t:         +0x0254  0x18 bytes (6 uint32)
  *   _scene_para:        +0x026c  0x2c bytes (11 uint32)
@@ -33979,6 +34475,7 @@ EXPORT_SYMBOL(tiziano_deflicker_expt);
  *   _ae_stat:           +0x0dec  0x14 bytes (5 uint32)  [conditional]
  *   _ae_wm_q:           +0x0e00  0x3c bytes (15 uint32) [conditional]
  *   ae1_ev_list:        +0x0ecc  0x28 bytes (10 uint32)
+ *   _at_list_wdr:       +0x0f44  0x28 bytes (10 uint32)
  *   ae1_comp_ev_list:   +0x0fe8  0x28 bytes (10 uint32)
  */
 int tiziano_ae_params_refresh(void)
@@ -34007,6 +34504,8 @@ int tiziano_ae_params_refresh(void)
         memcpy(&ae_stable_tol,      p + 0x01c0, 0x10);
         memcpy(&ae0_ev_list,        p + 0x01d0, 0x28);
         memcpy(&_lum_list,          p + 0x01f8, 0x28);
+        /* _at_list is captured directly from the raw day/night runtime blobs
+         * at standard-bin read time. */
         memcpy(&_deflicker_para,    p + 0x0248, 0x0c);
         memcpy(&_flicker_t,         p + 0x0254, 0x18);
         memcpy(&_scene_para,        p + 0x026c, 0x2c);
@@ -34107,7 +34606,8 @@ int tiziano_ae_params_refresh(void)
     if (p && tuning_bin_loaded) {
         memcpy(&ae0_ev_list_wdr,       p + 0x0ef4, 0x28);
         memcpy(&_lum_list_wdr,         p + 0x0f1c, 0x28);
-        /* OEM also copies ae0_ev_list_wdr_2 at +0x0f44, skip */
+        /* _at_list_wdr is captured directly from the raw day/night runtime
+         * blobs at standard-bin read time. */
         memcpy(&_scene_para_wdr,       p + 0x0f6c, 0x2c);
         memcpy(&ae_scene_mode_th_wdr,  p + 0x0f98, 0x10);
         memcpy(&ae_comp_param_wdr,     p + 0x0fa8, 0x18);
@@ -34519,17 +35019,17 @@ int tisp_ae_s_min(uint32_t it_min, uint32_t ag_min, uint32_t it_short_min, uint3
     return 0;
 }
 
-/* OEM EXACT: tisp_ae_g_at_list (0x53048) — copies ae0_ev_list to output */
+/* OEM EXACT: tisp_ae_g_at_list (0x53048) — copies ae_at_list to output */
 int tisp_ae_g_at_list(uint32_t *out)
 {
-    memcpy(out, ae0_ev_list.data, 0x28);
+    memcpy(out, ae_at_list.data, 0x28);
     return 0;
 }
 
-/* OEM EXACT: tisp_ae_s_at_list (0x52ff0) — sets ae0_ev_list from input */
+/* OEM EXACT: tisp_ae_s_at_list (0x52ff0) — sets ae_at_list from input */
 int tisp_ae_s_at_list(uint32_t *in)
 {
-    memcpy(ae0_ev_list.data, in, 0x28);
+    memcpy(ae_at_list.data, in, 0x28);
     data_a0df0 = 1;
     data_a0dfc = 0;
     data_a0df4 = 1;
