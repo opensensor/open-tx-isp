@@ -3978,15 +3978,16 @@ static uint32_t ftune_wmeans_state = 0; /* OEM: ftune_wmeans.32574 */
 /* OEM ae0_tune2 persistent state — arg7 in OEM (5-element convergence state):
  *   [0] = s5: current target brightness (from tisp_ae_target)
  *   [1] = convergence mode flag (0=stable, 1=converging)
- *   [2] = stored measured luma sample
+ *   [2] = stored target-domain FIFO sample
  *   [3] = scene mode (day/night)
  *   [4] = convergence counter */
 static uint32_t ae0_conv_state[5];
 
 /* OEM ae0_tune2 EV FIFO — arg8 in OEM (15-entry history):
  * Shifted left each frame, newest value pushed at index 14.
- * The recency-weighted average is computed over measured scene luma and
- * forms the denominator of the target/current brightness ratio. */
+ * The FIFO lives in the target-luma domain, not raw measured scene luma.
+ * Phase C shifts in the previous frame's tisp_ae_target output so the
+ * s5/s6 ratio stays in the same OEM domain. */
 static uint32_t ae0_ev_fifo[16];
 
 /* OEM ae0_tune2 scaled ev/lum arrays — arg18/arg19:
@@ -4028,7 +4029,7 @@ static void ae0_weight_mean2(
     int32_t *q_ptr, int32_t mix_r, int32_t mix_b,
     uint32_t *out_wmean, int32_t *out_ratios, int32_t *out_total,
     uint32_t *out_b_ratio, uint32_t *out_r_ratio);
-static int ae0_tune2(uint32_t wmean, uint32_t q, uint32_t measured_luma,
+static int ae0_tune2(uint32_t wmean, uint32_t q, uint32_t fifo_target,
                      uint32_t *exp_out, uint32_t *ag_out, uint32_t *dg_out);
 static void tisp_set_ae0_ag(uint32_t ag, uint32_t dg);
 int tisp_ae_g_at_list(uint32_t *out);
@@ -5136,14 +5137,14 @@ static uint32_t tisp_ae_target_ex(uint32_t cur_ev_q, uint32_t *ev_list,
  *
  * wmean:      current weighted mean scene luminance (from ae0_weight_mean2)
  * q:          Q-format fixed-point position
- * measured_luma: current measured scene luma pushed into the FIFO (OEM arg27)
+ * fifo_target: previous-frame target-domain value pushed into the FIFO (OEM arg27)
  * exp_out:    output integration time
  * ag_out:     output analog gain (Q10)
  * dg_out:     output digital gain (Q10)
  *
  * Returns: 0 = converged (stable), 1 = still adjusting
  */
-static int ae0_tune2(uint32_t wmean, uint32_t q, uint32_t measured_luma,
+static int ae0_tune2(uint32_t wmean, uint32_t q, uint32_t fifo_target,
                      uint32_t *exp_out, uint32_t *ag_out, uint32_t *dg_out)
 {
     uint32_t s0 = _AePointPos.data[0];  /* OEM: *arg14 = precision */
@@ -5212,11 +5213,11 @@ static int ae0_tune2(uint32_t wmean, uint32_t q, uint32_t measured_luma,
 
     /* Computed values */
     uint32_t var_b8;     /* base EV in Q-format */
-    uint32_t s6_2;       /* historical measured-luma average (from FIFO) */
+    uint32_t s6_2;       /* historical target-domain average (from FIFO) */
     uint32_t s2_2;       /* new computed EV → written to _ae_ev */
     uint32_t var_cc_2;   /* convergence in progress flag */
     uint32_t var_c0_1 = 0; /* convergence counter for output */
-    uint32_t v0_68;      /* ratio = target_luma / measured_luma */
+    uint32_t v0_68;      /* ratio = target_luma / smoothed FIFO target */
     uint32_t v0_69;      /* new_ev = var_b8 * ratio */
 
     /* Local copies of ev_list/lum_list (may be scaled) */
@@ -5314,29 +5315,28 @@ static int ae0_tune2(uint32_t wmean, uint32_t q, uint32_t measured_luma,
     active_ev = ae0_scaled_ev;
     active_lum = ae0_scaled_lum;
 
-    /* ---- Phase C: measured-luma FIFO management ---- */
+    /* ---- Phase C: target-domain FIFO management ---- */
     /* Shift FIFO left by 1 position (OEM: entries 1..14 → 0..13) */
     for (i = 1; i < 15; i++)
         ae0_ev_fifo[i - 1] = ae0_ev_fifo[i];
-    ae0_ev_fifo[14] = measured_luma;  /* Push newest measured luma at end */
+    ae0_ev_fifo[14] = fifo_target;  /* Push newest target-domain value at end */
 
     /* Compute s6 = recency-weighted average from FIFO */
     if (IspAeFlag == 1) {
-        /* OEM: first frame bypasses FIFO averaging and uses the current
-         * measured luma directly. */
+        /* First frame: seed FIFO with the provided target-domain value. */
         ftune_wmeans_state = 1;
         if (v0_34 == 1)
             ftune_wmeans_state = 0;
         /* Pre-fill FIFO so subsequent frames don't average with zeros */
         for (i = 0; i < 15; i++)
-            ae0_ev_fifo[i] = measured_luma;
-        s6_2 = measured_luma;
+            ae0_ev_fifo[i] = fifo_target;
+        s6_2 = fifo_target;
     } else {
         if (v0_34 == 1)
             ftune_wmeans_state = 0;
 
         if (ftune_wmeans_state == 1) {
-            s6_2 = measured_luma;
+            s6_2 = fifo_target;
         } else {
             /* Compute partial weighted mean of FIFO entries */
             uint32_t depth = s2;
@@ -5352,7 +5352,7 @@ static int ae0_tune2(uint32_t wmean, uint32_t q, uint32_t measured_luma,
                 sum_w += w;
             }
 
-            s6_2 = (sum_w > 0) ? (sum_wv / sum_w) : measured_luma;
+            s6_2 = (sum_w > 0) ? (sum_wv / sum_w) : fifo_target;
         }
     }
 
@@ -5369,7 +5369,7 @@ static int ae0_tune2(uint32_t wmean, uint32_t q, uint32_t measured_luma,
         s5 = tisp_ae_target_ex(var_b8, active_ev, active_lum, s0);
     }
 
-    /* Compute ratio = target_luma / measured_luma */
+    /* Compute ratio = target_luma / smoothed target-domain FIFO value */
     {
         uint32_t s2_1 = s6_2 << qm;
         if (s2_1 == 0) s2_1 = 1;
@@ -5396,7 +5396,7 @@ static int ae0_tune2(uint32_t wmean, uint32_t q, uint32_t measured_luma,
          * lies between the two stable_tol bounds. */
         if (v0_68 < v0_6 && v0_7 < v0_68) {
             s2_2 = var_b8;
-            ae0_conv_state[2] = measured_luma;
+            ae0_conv_state[2] = fifo_target;
             var_cc_2 = 1;
         }
         ae0_conv_state[1] = 0;
@@ -5413,7 +5413,7 @@ phase_e_check_margins:
         }
         /* Within deadband — set stable */
         ae0_conv_state[1] = 1;
-        ae0_conv_state[2] = measured_luma;
+        ae0_conv_state[2] = fifo_target;
         ae0_conv_state[0] = s5;
 
         if (data_a0df4 == 1) {
@@ -6280,7 +6280,15 @@ static int tiziano_ae0_fpga_run(void)
         ae_scene_wmean = ae_wmean;
         ae_scene_total = total_wt;
 
-        ae0_tune2(ae_wmean, q, ae_wmean, &new_it, &new_ag, &new_dg);
+        {
+            uint32_t cur_ev_q = fix_point_mult3_32(q, new_it << q, new_ag, new_dg);
+            uint32_t fifo_val = ae0_conv_state[0];
+
+            if (fifo_val == 0)
+                fifo_val = tisp_ae_target(cur_ev_q, q);
+
+            ae0_tune2(ae_wmean, q, fifo_val, &new_it, &new_ag, &new_dg);
+        }
     }
     /* OEM ae0_tune2 sets _ae_ev directly; also compute here for logging */
     if (_ae_ev == 0)
