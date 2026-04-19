@@ -903,6 +903,27 @@ struct isp_tuning_data {
 	uint32_t reserved2[1000];            /* 0x198+: Reserved for future use and safety */
 } __attribute__((aligned(4)));
 
+/*
+ * Stock keeps private tuning state in a compact 0x40d0-byte object. Our
+ * reimplementation is larger, but the same shadow slots still live inside the
+ * allocation and are used by the OEM day/night event flow.
+ */
+#define ISP_TUNING_OEM_ALLOC_SIZE            0x40d0
+#define ISP_TUNING_OEM_RUNNING_MODE_OFFSET   0x40a4
+#define ISP_TUNING_OEM_STATE_OFFSET          0x40c4
+
+static inline u32 isp_tuning_oem_read_u32(const struct isp_tuning_data *tuning,
+					  size_t offset)
+{
+	return *(const u32 *)((const u8 *)tuning + offset);
+}
+
+static inline void isp_tuning_oem_write_u32(struct isp_tuning_data *tuning,
+					    size_t offset, u32 value)
+{
+	*(u32 *)((u8 *)tuning + offset) = value;
+}
+
 
 void frame_channel_wakeup_waiters(struct frame_channel_device *fcd);
 

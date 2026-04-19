@@ -7250,9 +7250,6 @@ static int tisp_day_or_night_s_ctrl(uint32_t mode)
 	/* OEM sets day_night immediately after memcpy, before bypass computation */
 	if (ourISPdev) {
 		ourISPdev->day_night = active_mode;
-		/* OEM 0x62380: signal ISR to set drop-frame counters.
-		 * 1=night transition, 2=day transition */
-		ourISPdev->dn_pending = active_mode ? 1 : 2;
 	}
 
 	pr_info("%s: applying %s mode wdr=%u\n",
@@ -7311,24 +7308,20 @@ static int tisp_day_or_night_s_ctrl(uint32_t mode)
 #define ISP_TUNING_EVENT_DMA_READY  0x4000005
 #endif
 
-static int isp_core_tuning_event(struct tx_isp_dev *dev, uint32_t event)
+static int isp_core_tuning_event(struct isp_tuning_data *tuning, uint32_t event)
 {
-    if (!dev)
+    if (!tuning)
         return -EINVAL;
 
     switch (event) {
         case ISP_TUNING_EVENT_MODE0:
-            if (dev->core_regs) {
-                writel(2, ourISPdev->core_regs + 0x40c4);
-                pr_info("isp_core_tuning_event: Set mode 0\n");
-            }
+            isp_tuning_oem_write_u32(tuning, ISP_TUNING_OEM_STATE_OFFSET, 2);
+            pr_info("isp_core_tuning_event: Set mode 0\n");
             break;
 
         case ISP_TUNING_EVENT_MODE1:
-            if (dev->core_regs) {
-                writel(1, ourISPdev->core_regs + 0x40c4);
-                pr_info("isp_core_tuning_event: Set mode 1\n");
-            }
+            isp_tuning_oem_write_u32(tuning, ISP_TUNING_OEM_STATE_OFFSET, 1);
+            pr_info("isp_core_tuning_event: Set mode 1\n");
             break;
 
         case ISP_TUNING_EVENT_FRAME:
@@ -7350,12 +7343,13 @@ static int isp_core_tuning_event(struct tx_isp_dev *dev, uint32_t event)
 
         case ISP_TUNING_EVENT_DN:
         {
-            if (dev->core_regs) {
-                uint32_t dn_mode = readl(dev->core_regs + 0x40a4);
-                tisp_day_or_night_s_ctrl(dn_mode);
-                writel(dn_mode, ourISPdev->core_regs + 0x40a4);
-                pr_info("isp_core_tuning_event: Day/night mode updated: %d\n", dn_mode);
-            }
+            uint32_t dn_mode = isp_tuning_oem_read_u32(tuning,
+                            ISP_TUNING_OEM_RUNNING_MODE_OFFSET);
+
+            tisp_day_or_night_s_ctrl(dn_mode);
+            isp_tuning_oem_write_u32(tuning, ISP_TUNING_OEM_RUNNING_MODE_OFFSET,
+                         dn_mode);
+            pr_info("isp_core_tuning_event: Day/night mode updated: %d\n", dn_mode);
         }
         break;
 
@@ -7369,7 +7363,10 @@ static int isp_core_tuning_event(struct tx_isp_dev *dev, uint32_t event)
 
 int tx_isp_tuning_notify(struct tx_isp_dev *dev, uint32_t event)
 {
-	return isp_core_tuning_event(dev, event);
+	if (!dev || !dev->tuning_data)
+		return -ENODEV;
+
+	return isp_core_tuning_event(dev->tuning_data, event);
 }
 EXPORT_SYMBOL(tx_isp_tuning_notify);
 
@@ -8643,14 +8640,17 @@ static int apical_isp_core_ops_s_ctrl(struct tx_isp_dev *dev, struct isp_core_ct
 	            uint32_t prev_running_mode = tuning->running_mode;
 
 	            tuning->running_mode = ctrl->value;
+	            isp_tuning_oem_write_u32(tuning, ISP_TUNING_OEM_RUNNING_MODE_OFFSET,
+	                         ctrl->value);
 	            if (prev_running_mode != ctrl->value) {
-	                /* OEM: switching running mode triggers a full day/night
-	                 * parameter refresh — AWB gains, CCM, BCSH colour matrix,
-	                 * etc. are reloaded from the day or night tuning binary.
-	                 * Without this, switching to night mode (IR) keeps daylight
-	                 * colour corrections active, producing a pink/magenta image. */
-	                tisp_day_or_night_s_ctrl(ctrl->value);
-	                pr_info("Set control: RUNNING_MODE %u -> %u (day/night switch applied)\n",
+	                /* OEM queues running-mode changes through tuning[0x40a4]
+	                 * and lets the ISR apply them on the next frame. */
+	                if (ourISPdev)
+	                    ourISPdev->dn_pending = 1;
+	                else
+	                    tisp_day_or_night_s_ctrl(ctrl->value);
+
+	                pr_info("Set control: RUNNING_MODE %u -> %u (queued for ISR apply)\n",
 	                    prev_running_mode, ctrl->value);
 	            }
 	            break;
@@ -12776,8 +12776,7 @@ int tisp_bcsh_param_array_set(int param_id, void *in_buf, int *size_buf)
 
     *size_buf = size;
     BCSH_real = 1;
-    if (ourISPdev && ourISPdev->tuning_data)
-        (void)tiziano_bcsh_update(ourISPdev->tuning_data);
+    (void)tiziano_bcsh_update(NULL);
 
     return 0;
 }
@@ -20952,6 +20951,11 @@ static void tisp_ccm_fill_identity_reg_data(int32_t *reg_data)
  * DP config, EV lists, and AWB thresholds are always copied. */
 void tiziano_ccm_params_refresh(void)
 {
+    const char *sensor_name = "unknown";
+
+    if (ourISPdev && ourISPdev->sensor_name[0])
+        sensor_name = ourISPdev->sensor_name;
+
     if (ccm_ctrl.params[0] == 0) {
         memcpy(tiziano_ccm_a_linear, oem_ccm_a_linear, sizeof(tiziano_ccm_a_linear));
         memcpy(tiziano_ccm_t_linear, oem_ccm_t_linear, sizeof(tiziano_ccm_t_linear));
@@ -20972,8 +20976,20 @@ void tiziano_ccm_params_refresh(void)
     memcpy(cm_ev_list_wdr, oem_cm_ev_list, sizeof(cm_ev_list_wdr));
     memcpy(cm_awb_list, oem_cm_awb_list, sizeof(cm_awb_list));
 
-    pr_info("tiziano_ccm_params_refresh: OEM static CCM payload applied (ctrl0=%u)\n",
-        ccm_ctrl.params[0]);
+    pr_info("tiziano_ccm_params_refresh: sensor=%s source=static-oem ctrl0=%u "
+        "D=%04x,%04x,%04x T=%04x,%04x,%04x A=%04x,%04x,%04x "
+        "sat0=%u ev0=%u awb=%u,%u\n",
+        sensor_name, ccm_ctrl.params[0],
+        (uint32_t)tiziano_ccm_d_linear[0] & 0x3fff,
+        (uint32_t)tiziano_ccm_d_linear[1] & 0x3fff,
+        (uint32_t)tiziano_ccm_d_linear[2] & 0x3fff,
+        (uint32_t)tiziano_ccm_t_linear[0] & 0x3fff,
+        (uint32_t)tiziano_ccm_t_linear[1] & 0x3fff,
+        (uint32_t)tiziano_ccm_t_linear[2] & 0x3fff,
+        (uint32_t)tiziano_ccm_a_linear[0] & 0x3fff,
+        (uint32_t)tiziano_ccm_a_linear[1] & 0x3fff,
+        (uint32_t)tiziano_ccm_a_linear[2] & 0x3fff,
+        cm_sat_list[0], cm_ev_list[0], cm_awb_list[0], cm_awb_list[1]);
 }
 
 /* tisp_ccm_ct_update - OEM-like CT threshold check using cached global CT */
@@ -28574,35 +28590,6 @@ static void tiziano_bcsh_seed_fallback_defaults(void)
     bcsh_OffsetRGB_wdr[0] = bcsh_OffsetRGB_wdr[1] = bcsh_OffsetRGB_wdr[2] = 0x400;
 }
 
-static void tiziano_bcsh_sync_active_bank(struct isp_tuning_data *tuning)
-{
-    const uint32_t *ev;
-    const uint32_t *smin_s;
-    const uint32_t *smax_s;
-    const uint32_t *smin_m;
-    const uint32_t *smax_m;
-    int i;
-
-    if (!tuning)
-        return;
-
-    ev = bcsh_wdr_enabled ? bcsh_EvList_wdr : bcsh_EvList;
-    smin_s = bcsh_wdr_enabled ? bcsh_SminListS_wdr : bcsh_SminListS;
-    smax_s = bcsh_wdr_enabled ? bcsh_SmaxListS_wdr : bcsh_SmaxListS;
-    smin_m = bcsh_wdr_enabled ? bcsh_SminListM_wdr : bcsh_SminListM;
-    smax_m = bcsh_wdr_enabled ? bcsh_SmaxListM_wdr : bcsh_SmaxListM;
-
-    mutex_lock(&tuning->mutex);
-    for (i = 0; i < 9; ++i) {
-        tuning->bcsh_au32EvList_now[i]    = ev[i];
-        tuning->bcsh_au32SminListS_now[i] = smin_s[i];
-        tuning->bcsh_au32SmaxListS_now[i] = smax_s[i];
-        tuning->bcsh_au32SminListM_now[i] = smin_m[i];
-        tuning->bcsh_au32SmaxListM_now[i] = smax_m[i];
-    }
-    mutex_unlock(&tuning->mutex);
-}
-
 static void tiziano_bcsh_params_refresh(void)
 {
     const u8 *p = (const u8 *)(tparams_active ? tparams_active : tparams_day);
@@ -28676,8 +28663,6 @@ static void tiziano_bcsh_params_refresh(void)
 /* tiziano_bcsh_init - BCSH initialization */
 int tiziano_bcsh_init(void)
 {
-    struct isp_tuning_data *tuning = ourISPdev ? ourISPdev->tuning_data : NULL;
-
     tiziano_bcsh_select_active_bank();
     memset(bcsh_attr_blob, 0, sizeof(bcsh_attr_blob));
     bcsh_ctrl = 0;
@@ -28686,15 +28671,13 @@ int tiziano_bcsh_init(void)
     s_bcsh_mjpeg_y_range_low = 0;
     s_bcsh_fixed_contrast = 0;
     bcsh_hue_user = 0x80;
-    bcsh_hue_scaled = tuning ? tuning->bcsh_hue : 0x3c;
+    bcsh_hue_scaled = 0x3c;
     bcsh_brightness_user = 0x80;
     bcsh_contrast_user = 0x80;
     bcsh_saturation_user = 0x80;
     bcsh_hlsp_lo_idx = 0;
     bcsh_hlsp_tail_enable = 0;
     bcsh_hlsp_hi_idx = 0;
-    bcsh_ev_current = tuning ? tuning->bcsh_ev : 0;
-    bcsh_ct_current = tuning ? tuning->wb_temp : 0;
     tiziano_bcsh_params_refresh();
     tiziano_bcsh_Tccm_Comp2Orig();
     memcpy(tisp_BCSH_as32CCMMatrix, tisp_BCSH_as32CCMMatrix_d,
@@ -28704,20 +28687,7 @@ int tiziano_bcsh_init(void)
     bcsh_ev_threshold = 0x28;
     bcsh_last_ct = bcsh_ct_current;
     bcsh_ct_threshold = 0x64;
-
-    if (tuning) {
-        uint32_t raw_hue = (((uint32_t)tuning->bcsh_hue * 0x100u) + 0x3cu) / 0x78u;
-
-        tiziano_bcsh_sync_active_bank(tuning);
-        if (raw_hue > 0xff)
-            raw_hue = 0xff;
-        bcsh_hue_user = (uint8_t)raw_hue;
-        bcsh_brightness_user = tuning->bcsh_brightness;
-        bcsh_contrast_user = tuning->bcsh_contrast;
-        bcsh_saturation_user = tuning->bcsh_saturation;
-    }
-
-    tiziano_bcsh_update(tuning);
+    tiziano_bcsh_update(NULL);
     return 0;
 }
 
@@ -30079,16 +30049,10 @@ int tisp_ccm_wdr_en(int enable)
 
 int tisp_bcsh_wdr_en(int enable)
 {
-    struct isp_tuning_data *tuning;
-
     bcsh_wdr_enabled = !!enable;
     tiziano_bcsh_select_active_bank();
-
-    tuning = ourISPdev ? ourISPdev->tuning_data : NULL;
     BCSH_real = 1;
-    if (tuning)
-        tiziano_bcsh_sync_active_bank(tuning);
-    tiziano_bcsh_update(tuning);
+    tiziano_bcsh_update(NULL);
     return 0;
 }
 
@@ -31205,8 +31169,6 @@ static int tiziano_bcsh_dn_params_refresh(void)
 {
 	tiziano_bcsh_params_refresh();
 	BCSH_real = 1;
-	if (ourISPdev && ourISPdev->tuning_data)
-		tiziano_bcsh_sync_active_bank(ourISPdev->tuning_data);
 	tiziano_bcsh_update(NULL);
 	return 0;
 }
@@ -34149,6 +34111,9 @@ void *isp_core_tuning_init(void *arg1)
     size_t struct_size = sizeof(struct isp_tuning_data);
     size_t aligned_size = ALIGN(struct_size, 16);  /* 16-byte alignment for MIPS32 safety */
 
+    if (aligned_size < ISP_TUNING_OEM_ALLOC_SIZE)
+        aligned_size = ALIGN(ISP_TUNING_OEM_ALLOC_SIZE, 16);
+
     pr_info("isp_core_tuning_init: Struct size=%zu, aligned size=%zu\n", struct_size, aligned_size);
 
     /* CRITICAL: Allocate with explicit alignment guarantee - use kmem_cache or aligned allocation */
@@ -34239,6 +34204,8 @@ void *isp_core_tuning_init(void *arg1)
     tuning_data->bcsh_saturation_mult = 0x100;
     tuning_data->exposure = 0x1000;
     tuning_data->total_gain = 0x100;
+    isp_tuning_oem_write_u32(tuning_data, ISP_TUNING_OEM_RUNNING_MODE_OFFSET, 0);
+    isp_tuning_oem_write_u32(tuning_data, ISP_TUNING_OEM_STATE_OFFSET, 1);
 
     /* Initialize synchronization primitives */
     spin_lock_init(&tuning_data->lock);

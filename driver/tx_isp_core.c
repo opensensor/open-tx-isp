@@ -1631,30 +1631,44 @@ irqreturn_t ispcore_interrupt_service_routine(int irq, void *dev_id)
     }
 
     /* OEM EXACT 0x69a34-0x69aec: Day/night transition handler.
-     * tisp_day_or_night_s_ctrl sets dn_pending=1(night)/2(day)/3(custom).
-     * ISR picks it up, sets drop-frame counters, writes fill color to 0x6030,
-     * sends event 0x4000003 to sensor, then clears pending. */
+     * RUNNING_MODE writes the requested mode into tuning[0x40a4] and queues
+     * dn_pending=1; the ISR then applies that deferred mode through the tuning
+     * callback. dn_pending=2/3 remain fill-only transitions used by custom mode. */
     {
         extern uint8_t isp_day_night_switch_drop_frame_cnt[3];
         extern uint8_t isp_day_night_switch_drop_frame_cnt_pdq_interrupt;
         extern int isp_day_night_switch_drop_frame_num;
         u32 dn_mode;
+        u32 staged_mode = 0;
+
+        if (isp_dev && isp_dev->tuning_data)
+            staged_mode = isp_tuning_oem_read_u32(isp_dev->tuning_data,
+                              ISP_TUNING_OEM_RUNNING_MODE_OFFSET);
 
         /* OEM: data_ba560 check — if DN transition is active, wait for sensor ack */
         if (dn_transition_active == 1) {
-            /* OEM checks sensor->0x40a4 for ack; we just clear immediately */
-            dn_transition_active = 0;
+            if (staged_mode != 0)
+                dn_transition_active = 0;
+            else {
+                system_reg_write(0x6030, 0xff00ff00);
+                dn_transition_active = 0;
+            }
         }
 
         dn_mode = isp_dev->dn_pending;
         if (dn_mode == 1) {
-            /* Night mode transition */
             u8 drop_n = (u8)isp_day_night_switch_drop_frame_num;
             isp_day_night_switch_drop_frame_cnt[0] = drop_n;
             isp_day_night_switch_drop_frame_cnt[1] = drop_n;
             isp_day_night_switch_drop_frame_cnt[2] = drop_n;
             isp_day_night_switch_drop_frame_cnt_pdq_interrupt = drop_n;
-            system_reg_write(0x6030, 0xff008080);  /* Gray fill during transition */
+
+            if (staged_mode == 1)
+                system_reg_write(0x6030, 0xff008080);
+
+            if (isp_dev->tuning_data)
+                tx_isp_tuning_notify(isp_dev, ISP_TUNING_EVENT_DN);
+
             isp_dev->dn_pending = 0;
             dn_transition_active = 1;
         } else if (dn_mode == 2) {
@@ -2401,20 +2415,13 @@ int ispcore_slake_module(struct tx_isp_dev *isp_dev)
                 pr_info("ispcore_slake_module: Channel %d enabled", i);
             }
 
-            /* Binary Ninja: (*($a0_1 + 0x40cc))($a0_1, 0x4000001, 0) */
-            if (vic_dev && vic_dev->vic_regs) {
-                uint32_t *vic_control_reg;
-
-                pr_info("ispcore_slake_module: Calling VIC control function (0x4000001, 0)");
-                vic_control_reg = (uint32_t *)((char *)vic_dev->vic_regs + 0x40cc);
-                if (vic_control_reg) {
-                    writel(0x4000001, vic_control_reg);
-                    wmb();
-                    pr_info("ispcore_slake_module: VIC control register written: 0x4000001");
-                }
-            }
-
             if (isp_dev->tuning_data) {
+                int tuning_ret = tx_isp_tuning_notify(isp_dev, ISP_TUNING_EVENT_MODE1);
+
+                if (tuning_ret != 0 && tuning_ret != -ENOIOCTLCMD)
+                    pr_warn("ispcore_slake_module: tuning MODE1 notify returned %d\n",
+                        tuning_ret);
+
                 isp_dev->tuning_data->state = 1;
                 pr_info("ispcore_slake_module: tuning_data->state set to 1");
             } else {
