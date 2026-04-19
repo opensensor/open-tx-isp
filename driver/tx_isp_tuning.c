@@ -71,15 +71,15 @@ extern void tx_isp_wakeup_frame_channels(void);
 #define TISP_TOP_BYPASS_DEFOG_BIT	BIT(11)
 #define TISP_TOP_BYPASS_MDNS_BIT	BIT(16)
 
-static int tisp_force_bypass_adr = 1; /* Keep ADR bypassed by default until the OEM tone-mapping path is fully validated */
+static int tisp_force_bypass_adr = 0; /* ADR enabled by default; set to 1 only for targeted isolation */
 module_param_named(force_bypass_adr, tisp_force_bypass_adr, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(force_bypass_adr,
-			 "Force ADR bypass (default: 1 — keep ADR disabled on this platform unless explicitly testing tone mapping)");
+				 "Force ADR bypass (default: 0 — keep OEM ADR path live unless explicitly isolating it)");
 
 static int tisp_force_bypass_defog = 1; /* Keep Defog disabled on this platform unless explicitly testing it */
 module_param_named(force_bypass_defog, tisp_force_bypass_defog, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(force_bypass_defog,
-			 "Force Defog bypass (default: 1 — keep Defog disabled on this platform unless explicitly testing it)");
+				 "Force Defog bypass (default: 1 — keep Defog disabled on this platform unless explicitly testing it)");
 
 static int tisp_force_identity_ccm = 0; /* Keep OEM CCM active by default; identity only for targeted isolation */
 module_param_named(force_identity_ccm, tisp_force_identity_ccm, int, S_IRUGO | S_IWUSR);
@@ -7028,13 +7028,17 @@ static int32_t tisp_log2_int_to_fixed(uint32_t value, char precision_bits, char 
         normalized = value << ((15 - bit_pos) & 0x1f);
     }
 
-    // Iterative fixed-point calculation
+    // Iterative fixed-point calculation.
+    // OEM branches on the top bit of the 32-bit square and then performs
+    // logical shifts. Using signed overflow here collapses many mid-range
+    // gains onto powers of two (for example 0x61e/0x68e -> 0x8000 log2),
+    // which matches the dark-image gain compression seen in the logs.
     int32_t result = 0;
     for (int32_t i = 0; i < precision; i++) {
-        int32_t square = normalized * normalized;
+        uint32_t square = normalized * normalized;
         result <<= 1;
 
-        if (square >= 0) {
+        if ((square & 0x80000000U) == 0) {
             normalized = square >> 15;
         } else {
             result += 1;
@@ -25716,80 +25720,177 @@ static int tiziano_adr_gamma_refresh(void)
 
 /* tiziano_adr_params_refresh - OEM-exact ADR payload refresh
  * OEM address: 0x4d074
- * Copies built-in ADR defaults from the OEM data payload, then conditionally
- * selects weight/centre LUTs based on tool_control[0]. */
+ * Reloads ADR data from the active tuning block at the same offsets the OEM
+ * module uses after tisp_day_or_night_s_ctrl copies day/night params into the
+ * live buffer. The recovered static payload remains as a fallback when no
+ * tuning blob has been loaded yet. */
+
+/* ADR tuning-block offsets derived from OEM addresses relative to the active
+ * tparams base at 0x84b10 (for example 0x95ddc -> 0x112cc). */
+#define ADR_TBIN_OFF_W20_LUT          0x1104c
+#define ADR_TBIN_OFF_W02_LUT          0x110cc
+#define ADR_TBIN_OFF_W12_LUT          0x1114c
+#define ADR_TBIN_OFF_W22_LUT          0x111cc
+#define ADR_TBIN_OFF_W21_LUT          0x1124c
+#define ADR_TBIN_OFF_CTC_KP           0x112cc
+#define ADR_TBIN_OFF_MIN_KP           0x11310
+#define ADR_TBIN_OFF_MAP_KP           0x1136c
+#define ADR_TBIN_OFF_COC_Y1           0x113c8
+#define ADR_TBIN_OFF_COC_Y2           0x113f8
+#define ADR_TBIN_OFF_COC_Y3           0x11428
+#define ADR_TBIN_OFF_COC_Y4           0x11458
+#define ADR_TBIN_OFF_COC_Y5           0x11488
+#define ADR_TBIN_OFF_COC_ADJ          0x114b8
+#define ADR_TBIN_OFF_CENTRE_WDIS      0x114f0
+#define ADR_TBIN_OFF_HIST_DIFF        0x1156c
+#define ADR_TBIN_OFF_TM_BASE          0x1157c
+#define ADR_TBIN_OFF_GAM_X            0x115a0
+#define ADR_TBIN_OFF_GAM_Y            0x116a2
+#define ADR_TBIN_OFF_CTC_MAP2CUT      0x117a4
+#define ADR_TBIN_OFF_LIGHT_END        0x117c8
+#define ADR_TBIN_OFF_BLOCK_LIGHT      0x1183c
+#define ADR_TBIN_OFF_MAP_MODE         0x11878
+#define ADR_TBIN_OFF_HISTSUB_DIFF     0x118a4
+#define ADR_TBIN_OFF_TOOL_CTL         0x118c4
+#define ADR_TBIN_OFF_EV_LIST          0x118fc
+#define ADR_TBIN_OFF_LIGB_LIST        0x11920
+#define ADR_TBIN_OFF_MAPB1_LIST       0x11944
+#define ADR_TBIN_OFF_MAPB2_LIST       0x11968
+#define ADR_TBIN_OFF_MAPB3_LIST       0x1198c
+#define ADR_TBIN_OFF_MAPB4_LIST       0x119b0
+#define ADR_TBIN_OFF_CTC_MAP2CUT_WDR  0x119d4
+#define ADR_TBIN_OFF_LIGHT_END_WDR    0x119f8
+#define ADR_TBIN_OFF_BLOCK_LIGHT_WDR  0x11a6c
+#define ADR_TBIN_OFF_MAP_MODE_WDR     0x11aa8
+#define ADR_TBIN_OFF_EV_LIST_WDR      0x11ad4
+#define ADR_TBIN_OFF_LIGB_LIST_WDR    0x11af8
+#define ADR_TBIN_OFF_MAPB1_LIST_WDR   0x11b1c
+#define ADR_TBIN_OFF_MAPB2_LIST_WDR   0x11b40
+#define ADR_TBIN_OFF_MAPB3_LIST_WDR   0x11b64
+#define ADR_TBIN_OFF_MAPB4_LIST_WDR   0x11b88
+#define ADR_TBIN_OFF_BLP2_LIST_WDR    0x11bac
+#define ADR_TBIN_OFF_BLP2_LIST        0x11bd0
+
 int tiziano_adr_params_refresh(void)
 {
     const uint8_t *blob = oem_adr_refresh_blob;
+    const uint8_t *params = (const uint8_t *)(tparams_active ? tparams_active : tparams_day);
+    const uint8_t *src = (params && tuning_bin_loaded) ? params : NULL;
     uint32_t tool_ctl_local[0x38 / 4];
     int i;
 
     memcpy(param_adr_para_array, oem_param_adr_para_array, sizeof(oem_param_adr_para_array));
 
-    /* The refresh blob slices for the ADR basis tables are shifted relative to
-     * the dedicated OEM symbols. Pull these directly from the recovered symbol
-     * tables so map/min/ctc X data and the ADR gamma basis stay consistent. */
-    memcpy(param_adr_ctc_kneepoint_array,
-           oem_param_adr_ctc_kneepoint_array,
-           sizeof(oem_param_adr_ctc_kneepoint_array));
-    memcpy(param_adr_min_kneepoint_array,
-           oem_param_adr_min_kneepoint_array,
-           sizeof(oem_param_adr_min_kneepoint_array));
-    memcpy(param_adr_map_kneepoint_array,
-           oem_param_adr_map_kneepoint_array,
-           sizeof(oem_param_adr_map_kneepoint_array));
-    memcpy(param_adr_coc_kneepoint_y1_array, blob + ADR_BLOB_OFF_COC_Y1, 0x30);
-    memcpy(param_adr_coc_kneepoint_y2_array, blob + ADR_BLOB_OFF_COC_Y2, 0x30);
-    memcpy(param_adr_coc_kneepoint_y3_array, blob + ADR_BLOB_OFF_COC_Y3, 0x30);
-    memcpy(param_adr_coc_kneepoint_y4_array, blob + ADR_BLOB_OFF_COC_Y4, 0x30);
-    memcpy(param_adr_coc_kneepoint_y5_array, blob + ADR_BLOB_OFF_COC_Y5, 0x30);
-    memcpy(param_adr_coc_adjust_array, blob + ADR_BLOB_OFF_COC_ADJ, 0x38);
-    memcpy(param_adr_stat_block_hist_diff_array, blob + ADR_BLOB_OFF_HIST_DIFF, 0x10);
-    memcpy(adr_tm_base_lut, blob + ADR_BLOB_OFF_TM_BASE, 0x24);
-    memcpy(param_adr_gam_x_array,
-           oem_param_adr_gam_x_array,
-           sizeof(oem_param_adr_gam_x_array));
-    memcpy(param_adr_gam_y_array,
-           oem_param_adr_gam_y_array,
-           sizeof(oem_param_adr_gam_y_array));
-    memcpy(adr_ctc_map2cut_y, blob + ADR_BLOB_OFF_CTC_MAP2CUT, 0x24);
-    memcpy(adr_light_end, oem_adr_light_end, sizeof(oem_adr_light_end));
-    memcpy(adr_block_light, oem_adr_block_light, sizeof(oem_adr_block_light));
-    memcpy(adr_map_mode, oem_adr_map_mode, sizeof(oem_adr_map_mode));
-    memcpy(histSub_4096_diff, blob + ADR_BLOB_OFF_HISTSUB_DIFF, 0x20);
+    if (src) {
+        memcpy(param_adr_ctc_kneepoint_array, src + ADR_TBIN_OFF_CTC_KP, 0x44);
+        memcpy(param_adr_min_kneepoint_array, src + ADR_TBIN_OFF_MIN_KP, 0x5c);
+        memcpy(param_adr_map_kneepoint_array, src + ADR_TBIN_OFF_MAP_KP, 0x5c);
+        memcpy(param_adr_coc_kneepoint_y1_array, src + ADR_TBIN_OFF_COC_Y1, 0x30);
+        memcpy(param_adr_coc_kneepoint_y2_array, src + ADR_TBIN_OFF_COC_Y2, 0x30);
+        memcpy(param_adr_coc_kneepoint_y3_array, src + ADR_TBIN_OFF_COC_Y3, 0x30);
+        memcpy(param_adr_coc_kneepoint_y4_array, src + ADR_TBIN_OFF_COC_Y4, 0x30);
+        memcpy(param_adr_coc_kneepoint_y5_array, src + ADR_TBIN_OFF_COC_Y5, 0x30);
+        memcpy(param_adr_coc_adjust_array, src + ADR_TBIN_OFF_COC_ADJ, 0x38);
+        memcpy(param_adr_stat_block_hist_diff_array, src + ADR_TBIN_OFF_HIST_DIFF, 0x10);
+        memcpy(adr_tm_base_lut, src + ADR_TBIN_OFF_TM_BASE, 0x24);
+        memcpy(param_adr_gam_x_array, src + ADR_TBIN_OFF_GAM_X, 0x102);
+        memcpy(param_adr_gam_y_array, src + ADR_TBIN_OFF_GAM_Y, 0x102);
+        memcpy(adr_ctc_map2cut_y, src + ADR_TBIN_OFF_CTC_MAP2CUT, 0x24);
+        memcpy(adr_light_end, src + ADR_TBIN_OFF_LIGHT_END, 0x74);
+        memcpy(adr_block_light, src + ADR_TBIN_OFF_BLOCK_LIGHT, 0x3c);
+        memcpy(adr_map_mode, src + ADR_TBIN_OFF_MAP_MODE, 0x2c);
+        memcpy(histSub_4096_diff, src + ADR_TBIN_OFF_HISTSUB_DIFF, 0x20);
+        memcpy(tool_ctl_local, src + ADR_TBIN_OFF_TOOL_CTL, 0x38);
+        memcpy(adr_ev_list, src + ADR_TBIN_OFF_EV_LIST, 0x24);
+        memcpy(adr_ligb_list, src + ADR_TBIN_OFF_LIGB_LIST, 0x24);
+        memcpy(adr_mapb1_list, src + ADR_TBIN_OFF_MAPB1_LIST, 0x24);
+        memcpy(adr_mapb2_list, src + ADR_TBIN_OFF_MAPB2_LIST, 0x24);
+        memcpy(adr_mapb3_list, src + ADR_TBIN_OFF_MAPB3_LIST, 0x24);
+        memcpy(adr_mapb4_list, src + ADR_TBIN_OFF_MAPB4_LIST, 0x24);
+        memcpy(adr_blp2_list, src + ADR_TBIN_OFF_BLP2_LIST, 0x24);
+        memcpy(adr_ev_list_wdr, src + ADR_TBIN_OFF_EV_LIST_WDR, 0x24);
+        memcpy(adr_ligb_list_wdr, src + ADR_TBIN_OFF_LIGB_LIST_WDR, 0x24);
+        memcpy(adr_mapb1_list_wdr, src + ADR_TBIN_OFF_MAPB1_LIST_WDR, 0x24);
+        memcpy(adr_mapb2_list_wdr, src + ADR_TBIN_OFF_MAPB2_LIST_WDR, 0x24);
+        memcpy(adr_mapb3_list_wdr, src + ADR_TBIN_OFF_MAPB3_LIST_WDR, 0x24);
+        memcpy(adr_mapb4_list_wdr, src + ADR_TBIN_OFF_MAPB4_LIST_WDR, 0x24);
+        memcpy(adr_blp2_list_wdr, src + ADR_TBIN_OFF_BLP2_LIST_WDR, 0x24);
+        memcpy(adr_ctc_map2cut_y_wdr, src + ADR_TBIN_OFF_CTC_MAP2CUT_WDR, 0x24);
+        memcpy(adr_light_end_wdr, src + ADR_TBIN_OFF_LIGHT_END_WDR, 0x74);
+        memcpy(adr_block_light_wdr, src + ADR_TBIN_OFF_BLOCK_LIGHT_WDR, 0x3c);
+        memcpy(adr_map_mode_wdr, src + ADR_TBIN_OFF_MAP_MODE_WDR, 0x2c);
+    } else {
+        /* Fallback for early init before the tuning blob is loaded. */
+        memcpy(param_adr_ctc_kneepoint_array,
+               oem_param_adr_ctc_kneepoint_array,
+               sizeof(oem_param_adr_ctc_kneepoint_array));
+        memcpy(param_adr_min_kneepoint_array,
+               oem_param_adr_min_kneepoint_array,
+               sizeof(oem_param_adr_min_kneepoint_array));
+        memcpy(param_adr_map_kneepoint_array,
+               oem_param_adr_map_kneepoint_array,
+               sizeof(oem_param_adr_map_kneepoint_array));
+        memcpy(param_adr_coc_kneepoint_y1_array, blob + ADR_BLOB_OFF_COC_Y1, 0x30);
+        memcpy(param_adr_coc_kneepoint_y2_array, blob + ADR_BLOB_OFF_COC_Y2, 0x30);
+        memcpy(param_adr_coc_kneepoint_y3_array, blob + ADR_BLOB_OFF_COC_Y3, 0x30);
+        memcpy(param_adr_coc_kneepoint_y4_array, blob + ADR_BLOB_OFF_COC_Y4, 0x30);
+        memcpy(param_adr_coc_kneepoint_y5_array, blob + ADR_BLOB_OFF_COC_Y5, 0x30);
+        memcpy(param_adr_coc_adjust_array, blob + ADR_BLOB_OFF_COC_ADJ, 0x38);
+        memcpy(param_adr_stat_block_hist_diff_array, blob + ADR_BLOB_OFF_HIST_DIFF, 0x10);
+        memcpy(adr_tm_base_lut, blob + ADR_BLOB_OFF_TM_BASE, 0x24);
+        memcpy(param_adr_gam_x_array,
+               oem_param_adr_gam_x_array,
+               sizeof(oem_param_adr_gam_x_array));
+        memcpy(param_adr_gam_y_array,
+               oem_param_adr_gam_y_array,
+               sizeof(oem_param_adr_gam_y_array));
+        memcpy(adr_ctc_map2cut_y, blob + ADR_BLOB_OFF_CTC_MAP2CUT, 0x24);
+        memcpy(adr_light_end, oem_adr_light_end, sizeof(oem_adr_light_end));
+        memcpy(adr_block_light, oem_adr_block_light, sizeof(oem_adr_block_light));
+        memcpy(adr_map_mode, oem_adr_map_mode, sizeof(oem_adr_map_mode));
+        memcpy(histSub_4096_diff, blob + ADR_BLOB_OFF_HISTSUB_DIFF, 0x20);
+        memcpy(tool_ctl_local, blob + ADR_BLOB_OFF_TOOL_CTL, 0x38);
+        memcpy(adr_ev_list, oem_adr_ev_list, sizeof(oem_adr_ev_list));
+        memcpy(adr_ligb_list, oem_adr_ligb_list, sizeof(oem_adr_ligb_list));
+        memcpy(adr_mapb1_list, oem_adr_mapb1_list, sizeof(oem_adr_mapb1_list));
+        memcpy(adr_mapb2_list, oem_adr_mapb2_list, sizeof(oem_adr_mapb2_list));
+        memcpy(adr_mapb3_list, oem_adr_mapb3_list, sizeof(oem_adr_mapb3_list));
+        memcpy(adr_mapb4_list, oem_adr_mapb4_list, sizeof(oem_adr_mapb4_list));
+        memcpy(adr_blp2_list, oem_adr_blp2_list, sizeof(oem_adr_blp2_list));
+        memcpy(adr_ev_list_wdr, blob + ADR_BLOB_OFF_EV_LIST_WDR, 0x24);
+        memcpy(adr_ligb_list_wdr, blob + ADR_BLOB_OFF_LIGB_LIST_WDR, 0x24);
+        memcpy(adr_mapb1_list_wdr, blob + ADR_BLOB_OFF_MAPB1_LIST_WDR, 0x24);
+        memcpy(adr_mapb2_list_wdr, blob + ADR_BLOB_OFF_MAPB2_LIST_WDR, 0x24);
+        memcpy(adr_mapb3_list_wdr, blob + ADR_BLOB_OFF_MAPB3_LIST_WDR, 0x24);
+        memcpy(adr_mapb4_list_wdr, blob + ADR_BLOB_OFF_MAPB4_LIST_WDR, 0x24);
+        memcpy(adr_blp2_list_wdr, blob + ADR_BLOB_OFF_BLP2_LIST_WDR, 0x24);
+        memcpy(adr_ctc_map2cut_y_wdr, blob + ADR_BLOB_OFF_CTC_MAP2CUT_WDR, 0x24);
+        memcpy(adr_light_end_wdr, blob + ADR_BLOB_OFF_LIGHT_END_WDR, 0x74);
+        memcpy(adr_block_light_wdr, blob + ADR_BLOB_OFF_BLOCK_LIGHT_WDR, 0x3c);
+        memcpy(adr_map_mode_wdr, blob + ADR_BLOB_OFF_MAP_MODE_WDR, 0x2c);
+    }
 
-    memcpy(tool_ctl_local, blob + ADR_BLOB_OFF_TOOL_CTL, 0x38);
     for (i = 0; i < 0xe; i++) {
         if (i != 1)
             param_adr_tool_control_array[i] = tool_ctl_local[i];
     }
 
-    memcpy(adr_ev_list, oem_adr_ev_list, sizeof(oem_adr_ev_list));
-    memcpy(adr_ligb_list, oem_adr_ligb_list, sizeof(oem_adr_ligb_list));
-    memcpy(adr_mapb1_list, oem_adr_mapb1_list, sizeof(oem_adr_mapb1_list));
-    memcpy(adr_mapb2_list, oem_adr_mapb2_list, sizeof(oem_adr_mapb2_list));
-    memcpy(adr_mapb3_list, oem_adr_mapb3_list, sizeof(oem_adr_mapb3_list));
-    memcpy(adr_mapb4_list, oem_adr_mapb4_list, sizeof(oem_adr_mapb4_list));
-    memcpy(adr_blp2_list, oem_adr_blp2_list, sizeof(oem_adr_blp2_list));
-    memcpy(adr_ev_list_wdr, blob + ADR_BLOB_OFF_EV_LIST_WDR, 0x24);
-    memcpy(adr_ligb_list_wdr, blob + ADR_BLOB_OFF_LIGB_LIST_WDR, 0x24);
-    memcpy(adr_mapb1_list_wdr, blob + ADR_BLOB_OFF_MAPB1_LIST_WDR, 0x24);
-    memcpy(adr_mapb2_list_wdr, blob + ADR_BLOB_OFF_MAPB2_LIST_WDR, 0x24);
-    memcpy(adr_mapb3_list_wdr, blob + ADR_BLOB_OFF_MAPB3_LIST_WDR, 0x24);
-    memcpy(adr_mapb4_list_wdr, blob + ADR_BLOB_OFF_MAPB4_LIST_WDR, 0x24);
-    memcpy(adr_blp2_list_wdr, blob + ADR_BLOB_OFF_BLP2_LIST_WDR, 0x24);
-    memcpy(adr_ctc_map2cut_y_wdr, blob + ADR_BLOB_OFF_CTC_MAP2CUT_WDR, 0x24);
-    memcpy(adr_light_end_wdr, blob + ADR_BLOB_OFF_LIGHT_END_WDR, 0x74);
-    memcpy(adr_block_light_wdr, blob + ADR_BLOB_OFF_BLOCK_LIGHT_WDR, 0x3c);
-    memcpy(adr_map_mode_wdr, blob + ADR_BLOB_OFF_MAP_MODE_WDR, 0x2c);
-
     if (param_adr_tool_control_array[0] == 1) {
-        memcpy(param_adr_weight_20_lut_array, blob + ADR_BLOB_OFF_W20_LUT, 0x80);
-        memcpy(param_adr_weight_02_lut_array, blob + ADR_BLOB_OFF_W02_LUT, 0x80);
-        memcpy(param_adr_weight_12_lut_array, blob + ADR_BLOB_OFF_W12_LUT, 0x80);
-        memcpy(param_adr_weight_22_lut_array, blob + ADR_BLOB_OFF_W22_LUT, 0x80);
-        memcpy(param_adr_weight_21_lut_array, blob + ADR_BLOB_OFF_W21_LUT, 0x80);
-        memcpy(param_adr_centre_w_dis_array, blob + ADR_BLOB_OFF_CENTRE_WDIS, 0x7c);
+        if (src) {
+            memcpy(param_adr_weight_20_lut_array, src + ADR_TBIN_OFF_W20_LUT, 0x80);
+            memcpy(param_adr_weight_02_lut_array, src + ADR_TBIN_OFF_W02_LUT, 0x80);
+            memcpy(param_adr_weight_12_lut_array, src + ADR_TBIN_OFF_W12_LUT, 0x80);
+            memcpy(param_adr_weight_22_lut_array, src + ADR_TBIN_OFF_W22_LUT, 0x80);
+            memcpy(param_adr_weight_21_lut_array, src + ADR_TBIN_OFF_W21_LUT, 0x80);
+            memcpy(param_adr_centre_w_dis_array, src + ADR_TBIN_OFF_CENTRE_WDIS, 0x7c);
+        } else {
+            memcpy(param_adr_weight_20_lut_array, blob + ADR_BLOB_OFF_W20_LUT, 0x80);
+            memcpy(param_adr_weight_02_lut_array, blob + ADR_BLOB_OFF_W02_LUT, 0x80);
+            memcpy(param_adr_weight_12_lut_array, blob + ADR_BLOB_OFF_W12_LUT, 0x80);
+            memcpy(param_adr_weight_22_lut_array, blob + ADR_BLOB_OFF_W22_LUT, 0x80);
+            memcpy(param_adr_weight_21_lut_array, blob + ADR_BLOB_OFF_W21_LUT, 0x80);
+            memcpy(param_adr_centre_w_dis_array, blob + ADR_BLOB_OFF_CENTRE_WDIS, 0x7c);
+        }
     } else if (param_adr_tool_control_array[0] == 0) {
         memcpy(param_adr_weight_20_lut_array, param_adr_weight_20_lut_array_tmp, 0x80);
         memcpy(param_adr_weight_02_lut_array, param_adr_weight_02_lut_array_tmp, 0x80);
@@ -26878,6 +26979,7 @@ static int Tiziano_adr_fpga(void *arg1, uint32_t *arg2, uint32_t *arg3,
 	int32_t var_128_1, var_11c_1, var_124_2;
 
 	int i, j, k;
+	int result = 1;
 
 	/* === Setup: compute scaling constant === */
 	v0_3 = fix_point_div_32(0x10, 0x385b0000, 0x27100000);
@@ -26965,7 +27067,6 @@ static int Tiziano_adr_fpga(void *arg1, uint32_t *arg2, uint32_t *arg3,
 	/* === Normalize histogram into data_980b0 === */
 	{
 		int32_t denom = v0_12 >> 8;
-		if (denom == 0) denom = 1;
 		for (i = 0; i < 512; i++) {
 			int32_t num = ((int32_t)adr_hist_512[i]) << 8;
 			data_980b0[i] = (num / denom) * 0x2710 / 0x10000;
@@ -27039,7 +27140,6 @@ static int Tiziano_adr_fpga(void *arg1, uint32_t *arg2, uint32_t *arg3,
 		int32_t max_y = 0, min_y = 0xfff;
 		int max_idx = 0, min_idx = 0;
 		int32_t div = v0_12 / 0x18;
-		if (div == 0) div = 1;
 
 		for (i = 0; i < 24; i++) {
 			int32_t mean = (int32_t)adr_block_y_24[i] / div;
@@ -27473,7 +27573,6 @@ static int Tiziano_adr_fpga(void *arg1, uint32_t *arg2, uint32_t *arg3,
 					d_sq = max_sq;
 
 				sigma_sq = ((var_11c_1 << 1) * var_11c_1) << 0xa;
-				if (sigma_sq == 0) sigma_sq = 1;
 				exp_arg = fix_point_div_32(0xa, d_sq << 0xa, sigma_sq);
 				exp_val = fix_point_mult2_32(0x10, exp_arg << 6, v0_3);
 				if (exp_val >= 0xf0000)
@@ -27491,7 +27590,6 @@ static int Tiziano_adr_fpga(void *arg1, uint32_t *arg2, uint32_t *arg3,
 					d_sq = max_sq;
 
 				sigma_sq = ((var_124_2 << 1) * var_124_2) << 0xa;
-				if (sigma_sq == 0) sigma_sq = 1;
 				exp_arg = fix_point_div_32(0xa, d_sq << 0xa, sigma_sq);
 				exp_val = fix_point_mult2_32(0x10, exp_arg << 6, v0_3);
 				if (exp_val >= 0xf0000)
@@ -27683,16 +27781,13 @@ static int Tiziano_adr_fpga(void *arg1, uint32_t *arg2, uint32_t *arg3,
 							int32_t y_cur = out_ptr[j];
 							int32_t actual_slope;
 
-							if (x_diff == 0)
-								continue;
 							actual_slope = ((y_cur - y_prev) << 0x10) / x_diff;
 							if (max_slope_val < actual_slope) {
 								out_ptr[j] = (x_diff * max_slope_val + (y_prev << 0x10)) / 0x10000;
 							}
 						} else {
 							int32_t actual_slope;
-							if (x_cur == 0)
-								continue;
+
 							actual_slope = (out_ptr[0] << 0x10) / x_cur;
 							if (max_slope_val < actual_slope) {
 								out_ptr[0] = x_cur * max_slope_val / 0x10000;
@@ -27750,18 +27845,15 @@ static int Tiziano_adr_fpga(void *arg1, uint32_t *arg2, uint32_t *arg3,
 			 * shared map_kneepoint_x axis. This looks counterintuitive, but the
 			 * decompiled OEM routine does in fact use arg5 here, not arg4_s. */
 			if (a0_20 == 1) {
-				int32_t hist_val = (int32_t)data_980b0[v1_15];
-				int result_val = hist_val;
+				result = (int32_t)data_980b0[v1_15];
 
-			if (result_val >= a0_21) {
-				if (a0_22 >= result_val) {
-					/* Blend proportionally */
-					int32_t blend_amt = result_val - a0_21;
-					int32_t blend_range = a0_22 - a0_21;
-					int32_t *blk_ptr = arg6_s;
+				if (result >= a0_21) {
+					if (a0_22 >= result) {
+						/* Blend proportionally. */
+						int32_t blend_amt = result - a0_21;
+						int32_t blend_range = a0_22 - a0_21;
+						int32_t *blk_ptr = arg6_s;
 
-						if (blend_range == 0)
-							blend_range = 1;
 						for (i = 0; i < 24; i++) {
 							for (j = 0; j < 11; j++) {
 								int32_t blk_y = blk_ptr[j];
@@ -27772,16 +27864,18 @@ static int Tiziano_adr_fpga(void *arg1, uint32_t *arg2, uint32_t *arg3,
 							blk_ptr += 11;
 						}
 					} else {
-						/* Above threshold: OEM copies arg5_s to all blocks. */
+						/* Above threshold: OEM copies arg5_s to all blocks and returns 0. */
 						int32_t *blk_ptr = arg6_s;
+
+						result = 0;
 						for (i = 0; i < 24; i++) {
 							for (j = 0; j < 11; j++)
 								blk_ptr[j] = arg5_s[j];
 							blk_ptr += 11;
 						}
+					}
 				}
 			}
-		}
 
 		if (adr_grid_debug_budget > 0) {
 			int32_t mean_grid[24];
@@ -27803,7 +27897,7 @@ static int Tiziano_adr_fpga(void *arg1, uint32_t *arg2, uint32_t *arg3,
 		}
 	}
 
-	return 1;
+	return result;
 }
 
 /* tiziano_adr_algorithm - OEM-exact ADR algorithm
@@ -33901,6 +33995,15 @@ int tisp_s_adr_str_internal(int strength)
             value3 = src3[i] + ((((src3[i] >= 0x258) ? 0 : (0x258 - src3[i])) * (strength - 0x80)) >> 7);
             value4 = src4[i] + ((((src4[i] >= 0x258) ? 0 : (0x258 - src4[i])) * (strength - 0x80)) >> 7);
         }
+
+        if (value1 < histSub_4096_diff[0])
+            value1 = histSub_4096_diff[0];
+        if (value2 < histSub_4096_diff[1])
+            value2 = histSub_4096_diff[1];
+        if (value3 < histSub_4096_diff[2])
+            value3 = histSub_4096_diff[2];
+        if (value4 < histSub_4096_diff[3])
+            value4 = histSub_4096_diff[3];
 
         adr_mapb1_list_now[i] = value1;
         adr_mapb2_list_now[i] = value2;
