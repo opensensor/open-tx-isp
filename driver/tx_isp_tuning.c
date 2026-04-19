@@ -3670,8 +3670,9 @@ static struct flicker_t _flicker_t = { .data = {
 	0x019, 0x000, 0x000, 0x014, 0x032, 0x190001
 }};
 static struct scene_para _scene_para = { .data = {
-	/* OEM: _scene_para is NOT the AE target. The AE target is computed by
-	 * tisp_ae_target() interpolating ae_at_list + _lum_list based on EV.
+	/* OEM: _scene_para is NOT the AE target. The AE solver interpolates
+	 * ae0_ev_list + _lum_list based on EV. ae_at_list is a separate tuning
+	 * table that is exposed to userspace and loaded from the runtime blob.
 	 * _scene_para fields are scene detection thresholds/modes.
 	 * Stock tuning blobs commonly encode [0]=1 [1]=0xe6 [2]=0x65400 [3]=0x1e ... */
 	0x0546, 0x0a00, 0x034c, 0x03f4, 0x0001, 0x00e6, 0x65400, 0x001e,
@@ -5003,10 +5004,10 @@ static void ae0_weight_mean2(
     }
 }
 
-/* tisp_ae_target — OEM EXACT: Interpolate AE brightness target from AT tables.
+/* tisp_ae_target — OEM EXACT: Interpolate AE brightness target from EV tables.
  *
  * OEM (0x4ff98): Given current EV value, interpolate the target brightness
- * from ae_at_list (threshold X values) and _lum_list (target Y values).
+ * from ae0_ev_list (threshold X values) and _lum_list (target Y values).
  * Both arrays have 10 entries.
  *
  * cur_ev:  current total exposure value (unshifted, i.e. >> q already)
@@ -5018,31 +5019,31 @@ static uint32_t tisp_ae_target(uint32_t cur_ev_q, uint32_t q)
 {
     uint32_t qm = q & 31;
     uint32_t cur_ev = cur_ev_q >> qm;
-    const uint32_t *at_list = ae_wdr_mode ? ae_at_list_wdr.data : ae_at_list.data;
+    const uint32_t *ev_list = ae_wdr_mode ? ae0_ev_list_wdr.data : ae0_ev_list.data;
     const uint32_t *lum_list = ae_wdr_mode ? _lum_list_wdr.data : _lum_list.data;
     int i, idx;
     uint32_t x0, x1, y0, y1, dx, num;
 
     /* Edge cases: below first threshold or above last */
-    if (cur_ev <= at_list[0])
+    if (cur_ev <= ev_list[0])
         return lum_list[0];
-    if (cur_ev >= at_list[9])
+    if (cur_ev >= ev_list[9])
         return lum_list[9];
 
     /* Find bracketing interval */
     idx = 0;
     for (i = 0; i < 9; i++) {
-        if (cur_ev >= at_list[i] && cur_ev <= at_list[i + 1]) {
+        if (cur_ev >= ev_list[i] && cur_ev <= ev_list[i + 1]) {
             idx = i;
             break;
         }
         /* OEM: if cur_ev < threshold, still increment (skip) */
-        if (cur_ev < at_list[i])
+        if (cur_ev < ev_list[i])
             idx = i;
     }
 
-    x0 = at_list[idx];
-    x1 = at_list[idx + 1];
+    x0 = ev_list[idx];
+    x1 = ev_list[idx + 1];
     y0 = lum_list[idx];
     y1 = lum_list[idx + 1];
 
@@ -5240,7 +5241,7 @@ static int ae0_tune2(uint32_t wmean, uint32_t q, uint32_t measured_luma,
 
     /* ---- Phase A: Copy ev/lum tables and optional histogram scaling ---- */
     {
-        const uint32_t *base_ev = ae_wdr_mode ? ae_at_list_wdr.data : ae_at_list.data;
+        const uint32_t *base_ev = ae_wdr_mode ? ae0_ev_list_wdr.data : ae0_ev_list.data;
         const uint32_t *base_lum = ae_wdr_mode ? _lum_list_wdr.data : _lum_list.data;
 
         for (i = 0; i < 10; i++) {
@@ -6176,7 +6177,8 @@ static int tiziano_ae0_fpga_run(void)
      * point from which it converges downward to the correct exposure.
      *
      * With IT=1 (the previous default), var_b8 = 1.0 Q10, the FIFO seeds at
-     * a tiny value, tisp_ae_target maps it to lum_list[0]=5039, and the FIFO
+     * a tiny value, tisp_ae_target maps it through ae0_ev_list/_lum_list to
+     * lum_list[0]=5039, and the FIFO
      * immediately equals the target → false convergence → stuck dark forever.
      *
      * With IT=max_IT, var_b8 is large, the AE correctly sees "overexposed"
