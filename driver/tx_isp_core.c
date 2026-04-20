@@ -4873,8 +4873,8 @@ EXPORT_SYMBOL(tisp_math_exp2);
 /* tiziano_sync_sensor_attr - sync packed OEM-style sensor info blob */
 int tiziano_sync_sensor_attr(const struct tisp_sensor_info_blob *attr)
 {
-    uint32_t again_val, dgain_val, exp2_result1, exp2_result2;
-    uint32_t max_again_q10, max_dgain_q10;
+    static uint32_t data_c46c0 = 0, data_c46c4 = 0, data_c46fc = 0, data_c4700 = 0, data_c4730 = 0, data_c46c8 = 0;
+    uint32_t again_val, dgain_val, exp2_result1, exp2_result2, cached_gain;
 
     if (!attr) {
         pr_err("tiziano_sync_sensor_attr: Invalid sensor attributes\n");
@@ -4888,23 +4888,26 @@ int tiziano_sync_sensor_attr(const struct tisp_sensor_info_blob *attr)
     dgain_val = tisp_si_dgain(attr);
     exp2_result1 = tisp_math_exp2(again_val, 0x10, 0xa);
     exp2_result2 = tisp_math_exp2(dgain_val, 0x10, 0xa);
-    max_again_q10 = tisp_math_exp2(tisp_si_max_again_limit(attr), 0x10, 0xa);
-    max_dgain_q10 = tisp_si_word(attr, TISP_SI_WORD_MAX_DGAIN) ?
-                    tisp_math_exp2(tisp_si_word(attr, TISP_SI_WORD_MAX_DGAIN), 0x10, 0xa) :
-                    0x400;
+    cached_gain = data_c46c0;
 
-    /* Keep the live AE runtime in sync with the sensor blob instead of
-     * populating throwaway local statics. */
-    tiziano_ae_sync_sensor_gain_limits(attr);
+    if (cached_gain == 0 || cached_gain == exp2_result1)
+        data_c46c0 = exp2_result1;
+    else
+        data_c46c0 = cached_gain;
+
+    data_c46c4 = exp2_result2;
+    data_c46fc = tisp_math_exp2(tisp_si_max_again_limit(attr), 0x10, 0xa);
+    data_c4700 = tisp_si_max_integration_time_short(attr);
+    data_c4730 = tisp_si_min_integration_time(attr);
+    data_c46c8 = tisp_si_max_integration_time(attr);
 
     pr_info("*** tiziano_sync_sensor_attr: synced blob active=%ux%u total=%ux%u fps=%u bayer=%u mode=%u ***\n",
             tisp_si_width(attr), tisp_si_height(attr),
             tisp_si_total_width(attr), tisp_si_total_height(attr),
             tisp_fps_from_raw(tisp_si_fps(attr)), tisp_si_bayer(attr),
             tisp_si_mode(attr));
-    pr_info("***   - Again: 0x%x -> 0x%x, Dgain: 0x%x -> 0x%x, MaxAgain=0x%x MaxDgain=0x%x ***\n",
-            again_val, exp2_result1, dgain_val, exp2_result2,
-            max_again_q10, max_dgain_q10);
+    pr_info("***   - Again: 0x%x -> 0x%x, Dgain: 0x%x -> 0x%x ***\n",
+            again_val, exp2_result1, dgain_val, exp2_result2);
 
     return 0;
 }
