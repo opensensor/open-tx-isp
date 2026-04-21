@@ -13167,24 +13167,21 @@ int tisp_hldc_param_array_set(int param_id, void *in_buf, int *size_buf)
 #define AWB_STATS_ROWS   15
 #define AWB_STATS_ZONES  (AWB_STATS_COLS * AWB_STATS_ROWS)
 
-/* Live AWB stats arrays — OEM writes AWB DMA samples directly into these
- * before it queues event 10. Keep the consumer on the same storage so a later
- * IRQ cannot replace a good bank in shadow staging before AWB runs. */
+/* Live AWB stats arrays — consumed by the AWB event callback. */
 static uint32_t awb_array_r[AWB_STATS_ZONES];
 static uint32_t awb_array_g[AWB_STATS_ZONES];
 static uint32_t awb_array_b[AWB_STATS_ZONES];
 static uint32_t awb_array_ir[AWB_STATS_ZONES];
 static uint32_t awb_array_p[AWB_STATS_ZONES];
 
-/* Shadow AWB stats arrays — written by awb_interrupt_static (ISR context).
- * Decoupled from the live arrays so repeated ip_done polls don't overwrite
- * data that the event thread is about to consume. */
+/* Shadow AWB stats arrays — written by awb_interrupt_static (IRQ context),
+ * then copied into the live arrays once from JZ_Isp_Awb(). */
 static uint32_t awb_shadow_r[AWB_STATS_ZONES];
 static uint32_t awb_shadow_g[AWB_STATS_ZONES];
 static uint32_t awb_shadow_b[AWB_STATS_ZONES];
 static uint32_t awb_shadow_ir[AWB_STATS_ZONES];
 static uint32_t awb_shadow_p[AWB_STATS_ZONES];
-static int      awb_shadow_ready;  /* set by ISR, cleared by dispatch */
+static int      awb_shadow_ready;  /* set by IRQ snapshot, cleared by AWB consume */
 static uint32_t awb_irq_last_offset;
 static uint32_t awb_irq_last_raw[4];
 static uint32_t awb_transition_diag_frames;
@@ -13573,6 +13570,7 @@ int tiziano_awb_dn_params_refresh(void)
 	 * zone cache/history state here. */
 	awb_history_reset = 1;
 	awb_dn_refresh_flag = 1;
+	awb_shadow_ready = 0;
 	awb_irq_diag_armed = 1;
 	awb_transition_diag_frames = 4;
 	tiziano_awb_params_refresh();
@@ -13592,6 +13590,7 @@ int tiziano_awb_stream_start_refresh(void)
 		return 0;
 
 	pr_info("tiziano_awb_stream_start_refresh: re-applying AWB hardware params on stream enable\n");
+	awb_shadow_ready = 0;
 	awb_irq_diag_armed = 1;
 	awb_transition_diag_frames = 4;
 	tiziano_awb_dump_producer_state("stream-before-hw");
@@ -19320,17 +19319,27 @@ static int JZ_Isp_Get_Awb_Statistics(void *buffer, uint32_t flags)
 			u32 w2 = src[2];
 			u32 w3 = src[3];
 
-			awb_array_r[idx] = w0 & 0x1fffff;
-			awb_array_g[idx] = ((w1 & 0x3ff) << 11) | (w0 >> 21);
-			awb_array_b[idx] = (w1 & 0x7ffffc00) >> 10;
-			awb_array_ir[idx] = ((w2 & 0xfffff) << 1) | (w1 >> 31);
-			awb_array_p[idx] = ((w3 & 1) << 12) | (w2 >> 20);
+			awb_shadow_r[idx] = w0 & 0x1fffff;
+			awb_shadow_g[idx] = ((w1 & 0x3ff) << 11) | (w0 >> 21);
+			awb_shadow_b[idx] = (w1 & 0x7ffffc00) >> 10;
+			awb_shadow_ir[idx] = ((w2 & 0xfffff) << 1) | (w1 >> 31);
+			awb_shadow_p[idx] = ((w3 & 1) << 12) | (w2 >> 20);
 			src += 4;
 		}
 	}
 
-	awb_shadow_ready = 0;
+	awb_shadow_ready = 1;
 	return 0;
+}
+
+static void awb_copy_shadow_to_live(void)
+{
+	memcpy(awb_array_r, awb_shadow_r, sizeof(awb_array_r));
+	memcpy(awb_array_g, awb_shadow_g, sizeof(awb_array_g));
+	memcpy(awb_array_b, awb_shadow_b, sizeof(awb_array_b));
+	memcpy(awb_array_ir, awb_shadow_ir, sizeof(awb_array_ir));
+	memcpy(awb_array_p, awb_shadow_p, sizeof(awb_array_p));
+	awb_shadow_ready = 0;
 }
 
 static void tiziano_awb_fill_zone_geometry(uint32_t height, uint32_t width)
@@ -19405,8 +19414,8 @@ static int tiziano_awb_set_lum_th_freq(void)
 static int JZ_Isp_Awb(void)
 {
 	uint32_t wb_attr_mode = 0;
-    u32 normal_rg = (awb_hw_rg_th_high << 16) | awb_hw_rg_th_low;
-    u32 normal_bg = (awb_hw_bg_th_high << 16) | awb_hw_bg_th_low;
+	u32 normal_rg = (awb_hw_rg_th_high << 16) | awb_hw_rg_th_low;
+	u32 normal_bg = (awb_hw_bg_th_high << 16) | awb_hw_bg_th_low;
 	u32 ev_low = _awb_mode[0] << 10;
 	u32 ev_high = _awb_mode[1] << 10;
 	u32 lowlight_rg = ((_awb_lowlight_rg_th[1] & 0x0fff) << 16) |
@@ -19419,6 +19428,9 @@ static int JZ_Isp_Awb(void)
 	if (awb_algo_count <= 3 || (awb_algo_count % 300) == 0)
 		pr_info("JZ_Isp_Awb[%u]: ct=%u ev_data=%u algo_mode=%u\n",
 			awb_algo_count, _awb_ct, awb_ev_data, awb_algo_mode);
+
+	if (awb_shadow_ready != 0)
+		awb_copy_shadow_to_live();
 
 	if (awb_transition_diag_frames != 0) {
 		pr_info("AWB_CONSUME[%u]: bank_off=0x%x raw0=[%08x %08x %08x %08x] "
@@ -19520,16 +19532,20 @@ int awb_interrupt_static(void)
 	if (data_a2f5c == 0)
 		return 0;
 
+	/* Keep one AWB snapshot outstanding until the event thread consumes it. */
+	if (awb_shadow_ready != 0)
+		return 1;
+
 	/* OEM EXACT: read bank status, shift left 12 for byte offset */
 	offset = system_reg_read(0xb050) << 12;
 	buffer_addr = (void *)(unsigned long)(data_a2f5c + offset);
-	awb_irq_last_offset = offset;
 
 	/* OEM EXACT: invalidate cache for this bank before reading */
 	private_dma_cache_sync(NULL, buffer_addr, 0x1000, 0);
 
 	/* OEM EXACT: unpack stats from DMA buffer */
 	JZ_Isp_Get_Awb_Statistics(buffer_addr, 0xf001f001);
+	awb_irq_last_offset = offset;
 
 	/* OEM EXACT: update luminance threshold/frequency */
 	tiziano_awb_set_lum_th_freq();
@@ -19554,8 +19570,8 @@ int awb_interrupt_static(void)
 			pr_info("AWB_IRQ1: zone0 raw=[%08x %08x %08x %08x] "
 				"R=%u G=%u B=%u P=%u\n",
 				buf[0], buf[1], buf[2], buf[3],
-				awb_array_r[0], awb_array_g[0],
-				awb_array_b[0], awb_array_p[0]);
+				awb_shadow_r[0], awb_shadow_g[0],
+				awb_shadow_b[0], awb_shadow_p[0]);
 		}
 	} else {
 		u32 *buf = (u32 *)buffer_addr;
@@ -19567,7 +19583,8 @@ int awb_interrupt_static(void)
 
 	/* OEM EXACT: push event 10 → triggers JZ_Isp_Awb */
 	event_data.event_id = 0xa;
-	tisp_event_push(&event_data);
+	if (tisp_event_push(&event_data) != 0)
+		awb_shadow_ready = 0;
 	return 1;
 }
 
@@ -19652,12 +19669,13 @@ int tiziano_awb_init(uint32_t height, uint32_t width)
     /* OEM EXACT: reset state */
     awb_first = 0;
     awb_zone_cache_valid = 0;
-    awb_history_count = 0;
-    awb_history_reset = 1;
-    awb_zero_zone_count = 0;
-    awb_irq_diag_armed = 1;
-    awb_transition_diag_frames = 4;
-    memset(tisp_wb_attr, 0, 0x1c);
+	awb_history_count = 0;
+	awb_history_reset = 1;
+	awb_zero_zone_count = 0;
+	awb_shadow_ready = 0;
+	awb_irq_diag_armed = 1;
+	awb_transition_diag_frames = 4;
+	memset(tisp_wb_attr, 0, 0x1c);
 
     /* OEM EXACT: load AWB params from tuning bin BEFORE hardware config */
     tiziano_awb_params_refresh();
