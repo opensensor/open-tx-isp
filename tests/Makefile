@@ -6,6 +6,15 @@ CFLAGS += -std=c99 -Wall -Wextra -Werror
 .PHONY: all check clean t30_storage_audit
 
 all check: tx_isp_t41_ysp_test
+all check: tx_isp_t31_wdr_test tx_isp_t31_wdr_runtime_test
+
+tx_isp_t31_wdr_test: tx_isp_t31_wdr_test.c ../driver/t31/tx_isp_t31_wdr.h
+	$(CC) $(CFLAGS) -o $@ $<
+
+tx_isp_t31_wdr_runtime_test: tx_isp_t31_wdr_runtime_test.c t31_wdr_fixture.h t31_wdr_oracle_expected.h \
+	../driver/t31/tx_isp_t31_wdr_runtime.inc ../driver/t31/tx_isp_t31_wdr_params.inc \
+	../driver/t31/tx_isp_t31_wdr_control.h ../driver/t31/tx_isp_t31_wdr_math.h ../driver/t31/tx_isp_t31_wdr.h
+	$(CC) $(CFLAGS) -o $@ $<
 all check: tx_isp_t41_cdns_test
 all check: tx_isp_t41_mdns_test
 all check: tx_isp_t41_lce_test
@@ -341,6 +350,8 @@ check: tx_isp_math_test tx_isp_modulation_test tx_isp_daynight_test tx_isp_awb_m
 	./tx_isp_exposure_test
 	./tx_isp_t31_adr_test
 	./tx_isp_t31_mdns_test
+	./tx_isp_t31_wdr_test
+	./tx_isp_t31_wdr_runtime_test
 	./tx_isp_t31_sensor_policy_test
 	./tx_isp_scaler_test
 	./tx_isp_t41_capture_gate_test
@@ -350,6 +361,7 @@ t30_storage_audit:
 	../driver/t30/check_storage.sh
 
 clean:
+	$(RM) tx_isp_t31_wdr_test tx_isp_t31_wdr_runtime_test
 	$(RM) tx_isp_t41_awb_frame_test
 	$(RM) tx_isp_t41_awb_control_test
 	$(RM) tx_isp_t41_awb_runtime_test

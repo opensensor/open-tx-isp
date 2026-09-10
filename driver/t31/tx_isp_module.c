@@ -6186,12 +6186,16 @@ err_free_dev:
     return ret;
 }
 
+extern void tx_isp_t31_wdr_stop(void);
+extern void tisp_deinit_free(void);
+
 static void tx_isp_exit(void)
 {
     struct registered_sensor *sensor, *tmp;
     int i;
 
     pr_info("TX ISP driver exiting...\n");
+    tx_isp_t31_wdr_stop();
     tx_isp_v4l2_cleanup();
     tx_isp_sinfo_exit();
     tx_isp_remove_proc_entries();
@@ -6228,6 +6232,8 @@ static void tx_isp_exit(void)
             free_irq(ourISPdev->isp_irq, ourISPdev);
             pr_info("Hardware interrupt %d (isp-m0) freed\n", ourISPdev->isp_irq);
         }
+
+        tisp_deinit_free();
 
         /* Clean up VIC device directly */
         if (ourISPdev->vic_dev) {

@@ -1,4 +1,5 @@
 #include <linux/module.h>
+#include <linux/workqueue.h>
 
 #include <linux/platform_device.h>
 #include <linux/of.h>
@@ -1699,32 +1700,43 @@ static dev_t isp_tuning_devno;
 uint32_t data_9a454 = 0x10000;  /* Current EV value - global cache */
 uint32_t data_9a450 = 0x2700;   /* Current CT value - global cache */
 
-/* WDR Global Data Structures - From Binary Ninja Analysis */
-static uint32_t wdr_ev_now = 0;
-static uint32_t wdr_ev_list_deghost_val = 0; /* Single value for calculations */
+#include "tx_isp_t31_wdr_control.h"
+static struct t31_wdr_ev wdr_ev;
+static struct t31_wdr_stats wdr_stats;
+static struct t31_wdr_scratch wdr_scratch;
+static DEFINE_SPINLOCK(wdr_stats_lock);
+static DEFINE_MUTEX(wdr_control_lock);
+static u32 wdr_pending[T31_WDR_STATS_BYTES / 4];
+static u32 wdr_packed[T31_WDR_STATS_BYTES / 4];
+static u32 wdr_blocks_snapshot[225];
+static u32 wdr_hist_Y1[256];
+static void *wdr_dma_buffer;
+static dma_addr_t wdr_dma_phys;
+static bool wdr_ready, wdr_stats_pending, wdr_ev_pending;
+static u32 wdr_ev_low, wdr_ev_high;
+static void t31_wdr_work(struct work_struct *work);
+static DECLARE_WORK(wdr_work, t31_wdr_work);
+static u32 width_wdr_def, height_wdr_def, wdr_frame;
+static u32 param_fusion1_cure_y_array[33];
+static u32 wdr_thrAll_software_out[27];
+static u32 param_wdr_weight_lut_def[5][32];
+static u32 param_centre5x5_w_distance_array_def[31];
+/* WDR working state. */
 static uint32_t wdr_block_mean1_end = 0;
 static uint32_t wdr_block_mean1_end_old = 0;
-static uint32_t wdr_block_mean1_th = 0;
-static uint32_t wdr_block_mean1_max = 0;
-static uint32_t wdr_exp_ratio_def = 0;
-static uint32_t wdr_s2l_ratio = 0;
 
 /* WDR Parameter Arrays - From Binary Ninja */
 /* Note: WDR arrays are defined later in the file with proper sizes */
 
 /* WDR Histogram Arrays */
-static uint32_t wdr_hist_R0[256];
-static uint32_t wdr_hist_G0[256];
-static uint32_t wdr_hist_B0[256];
-static uint32_t wdr_hist_B1[256];
 
 /* WDR Output Arrays */
-static uint32_t wdr_mapR_software_out[256];
-static uint32_t wdr_mapG_software_out[256];
-static uint32_t wdr_mapB_software_out[256];
-static uint32_t wdr_thrLableN_software_out[256];
-static uint32_t wdr_thrRangeK_software_out[256];
-static uint32_t wdr_detial_para_software_out[256];
+static uint32_t wdr_mapR_software_out[81];
+static uint32_t wdr_mapG_software_out[81];
+static uint32_t wdr_mapB_software_out[81];
+static uint32_t wdr_thrLableN_software_out[26];
+static uint32_t wdr_thrRangeK_software_out[27];
+static uint32_t wdr_detial_para_software_out[9];
 
 /* WDR Block Mean Arrays */
 static uint32_t wdr_block_mean1[225]; /* 15x15 blocks */
@@ -2217,7 +2229,6 @@ static uint32_t data_d7228 = 0;
 
 /* WDR Data Structure Pointers - From Binary Ninja */
 static void *TizianoWdrFpgaStructMe = NULL;
-static void *data_d94a8 = NULL;
 static void tiziano_bcsh_TransitParam(void);
 static void tiziano_bcsh_lut_parameter(void *tisp_bcsh, void *clip1, void *clip2, void *offset0);
 
@@ -2549,6 +2560,8 @@ static int tiziano_bcsh_dn_params_refresh(void);
 static int tiziano_rdns_dn_params_refresh(void);
 static int tiziano_ydns_dn_params_refresh(void);
 static int tiziano_sdns_dn_params_refresh(void);
+static int tiziano_wdr_dn_params_refresh(void);
+void tx_isp_t31_wdr_stop(void);
 extern int tisp_gb_dn_params_refresh(void);
 
 #define T31_REFRESH_ADAPTER(name)					\
@@ -2576,6 +2589,7 @@ T31_REFRESH_ADAPTER(tiziano_af_dn_params_refresh)
 T31_REFRESH_ADAPTER(tiziano_bcsh_dn_params_refresh)
 T31_REFRESH_ADAPTER(tiziano_rdns_dn_params_refresh)
 T31_REFRESH_ADAPTER(tiziano_ydns_dn_params_refresh)
+T31_REFRESH_ADAPTER(tiziano_wdr_dn_params_refresh)
 
 #define T31_REFRESH_STEP(name) { t31_refresh_##name }
 
@@ -2598,6 +2612,7 @@ static const struct tx_isp_callback_step t31_daynight_refresh_steps[] = {
 	T31_REFRESH_STEP(tiziano_bcsh_dn_params_refresh),
 	T31_REFRESH_STEP(tiziano_rdns_dn_params_refresh),
 	T31_REFRESH_STEP(tiziano_ydns_dn_params_refresh),
+	T31_REFRESH_STEP(tiziano_wdr_dn_params_refresh),
 };
 
 static const struct tx_isp_callback_plan t31_daynight_refresh_plan = {
@@ -3386,44 +3401,20 @@ int tisp_dpc_refresh(uint32_t gain);
 int tisp_ydns_refresh(uint32_t gain);
 
 
-static void *data_d94ac = NULL;
-static void *data_d94b0 = NULL;
-static void *data_d94b4 = NULL;
-static void *data_d94b8 = NULL;
-static void *data_d94bc = NULL;
-static void *data_d94c0 = NULL;
-static void *data_d94c4 = NULL;
-static void *data_d94c8 = NULL;
-static void *data_d94cc = NULL;
-static void *data_d94d0 = NULL;
-static void *data_d94d4 = NULL;
-static void *data_d94d8 = NULL;
-static void *data_d94dc = NULL;
-static void *data_d94e0 = NULL;
-static void *data_d94e4 = NULL;
-static void *data_d94e8 = NULL;
-static void *data_d94ec = NULL;
-static void *data_d94f0 = NULL;
-static void *data_d949c = NULL;
-static void *data_d94f4 = NULL;
-static void *data_d9494 = NULL;
-static void *data_d94a0 = NULL;
-static void *data_d94fc = NULL;
-static void *data_d94a4 = NULL;
-static void *data_d9500 = NULL;
-static void *data_d9498 = NULL;
-static void *data_d94f8 = NULL;
-static void *data_d9504 = NULL;
-static uint32_t data_d951c = 0;
-static uint32_t data_d9520 = 0;
-static uint32_t data_d9524 = 0;
-static uint32_t data_d9528 = 0;
 
 /* Forward declarations for tiziano functions */
 int tisp_wdr_expTime_updata(void);
 int tisp_wdr_ev_calculate(void);
 int tiziano_wdr_fusion1_curve_block_mean1(void);
-int Tiziano_wdr_fpga(void *struct_me, void *dev_para, void *ratio_para, void *x_thr);
+static int t31_wdr_param_get(int id, void *buf, int *size);
+static int t31_wdr_param_set(int id, const void *buf, int *size);
+static int tiziano_wdr_params_refresh(void);
+static int tiziano_wdr_params_init(void);
+static int tiziano_wdr_gamma_refresh(void);
+static int tiziano_wdr_5x5_param(void);
+static int tiziano_wdr_get_data(void *buf);
+static int tiziano_wdr_dn_params_refresh(void);
+int tisp_wdr_ev_update(u32 low, u32 high);
 int tiziano_wdr_soft_para_out(void);
 int tisp_s_mdns_ratio(int ratio);
 
@@ -4557,17 +4548,14 @@ static uint32_t tisp_gb_blc_ag[2] = {0, 0};   /* last gain for channel 0/1 */
 
 /* WDR parameter arrays - Binary Ninja reference (basic arrays first) */
 static uint32_t param_wdr_para_array[0x28/4] = {0};
-static uint32_t param_wdr_weightLUT01_array[0x80/4] = {0};
+static uint32_t param_wdr_weightLUT20_array[0x80/4] = {0};
 static uint32_t param_wdr_weightLUT02_array[0x80/4] = {0};
 static uint32_t param_wdr_weightLUT12_array[0x80/4] = {0};
 static uint32_t param_wdr_weightLUT22_array[0x80/4] = {0};
 static uint32_t param_wdr_weightLUT21_array[0x80/4] = {0};
 static uint32_t param_wdr_gam_y_array[0x84/4] = {0};
-static uint8_t  wdr_gam_y129_array[0x102] = {0};   /* 129 × int16_t from gamma LUT */
 static uint32_t wdr_gam_y33_array[0x84/4] = {0};   /* 33 × u32 downsampled from 129 */
 static uint32_t param_wdr_gam_y_array_def[0x84/4] = {0}; /* WDR gamma working copy */
-static uint32_t data_a1584 = 0;  /* WDR gamma mode: 0=from LUT, 1=linear ramp */
-static uint32_t data_a22e8 = 0;  /* WDR gamma last entry */
 static uint32_t param_wdr_w_point_weight_x_array[0x10/4] = {0};
 static uint32_t param_wdr_w_point_weight_y_array[0x10/4] = {0};
 static uint32_t param_wdr_w_point_weight_pow_array[0xc/4] = {0};
@@ -4814,7 +4802,7 @@ static uint32_t wdr_detail_w_in1_list[0x24/4] = {0};
 static uint32_t wdr_detail_w_in2_list[0x24/4] = {0};
 static uint32_t wdr_detail_w_in3_list[0x24/4] = {0};
 static uint32_t wdr_detail_w_in4_list[0x24/4] = {0};
-static uint32_t wdr_fus_wei_224_ref_y_array[0x40/4] = {0};
+static uint32_t param_wdr_priv_array[0x40/4] = {0};
 static uint32_t param_wdr_tool_control_array[0x38/4] = {0};
 
 /* DPC (Dead Pixel Correction) parameter arrays - Binary Ninja reference */
@@ -4960,24 +4948,17 @@ static int tisp_ae0_get_statistics(void *buffer, uint32_t flags)
 
 static int tisp_ae1_get_statistics(void *buffer, uint32_t flags)
 {
-    /* AE1 statistics collection - reads from ISP AE1 statistics registers */
-    if (!buffer) {
+    unsigned long irq_flags;
+    int ret;
+    (void)flags;
+    if (!buffer)
         return -EINVAL;
-    }
-
-    extern struct tx_isp_dev *ourISPdev;
-    if (!ourISPdev || !ourISPdev->core_regs) {
-        return -ENODEV;
-    }
-
-    /* Read AE1 statistics from hardware registers */
-    uint32_t *stats = (uint32_t *)buffer;
-    for (int i = 0; i < 256; i++) {
-        stats[i] = readl(ourISPdev->core_regs + 0xa800 + (i * 4));
-    }
-
-    pr_debug("AE1 statistics collected with flags=0x%x\n", flags);
-    return 0;
+    if (!ACCESS_ONCE(wdr_ready))
+        return 0;
+    spin_lock_irqsave(&wdr_stats_lock, irq_flags);
+    ret = t31_wdr_ae_blocks(wdr_block_mean1, buffer, 0x1000, _ae_parameter.data);
+    spin_unlock_irqrestore(&wdr_stats_lock, irq_flags);
+    return ret;
 }
 
 static uint32_t tisp_ae_hist_normalize_bucket(uint32_t bucket, uint32_t total)
@@ -5072,23 +5053,17 @@ static int tisp_ae0_get_hist(void *buffer, int mode, int flag)
 
 static int tisp_ae1_get_hist(void *buffer)
 {
-    /* AE1 histogram collection - reads from ISP AE1 histogram registers */
-    if (!buffer) {
+    const u32 *packed = buffer;
+    unsigned long flags;
+    u32 i;
+    if (!buffer)
         return -EINVAL;
-    }
-
-    extern struct tx_isp_dev *ourISPdev;
-    if (!ourISPdev || !ourISPdev->core_regs) {
-        return -ENODEV;
-    }
-
-    /* Read AE1 histogram from hardware registers */
-    uint32_t *hist = (uint32_t *)buffer;
-    for (int i = 0; i < 512; i++) {
-        hist[i] = readl(ourISPdev->core_regs + 0xac00 + (i * 4));
-    }
-
-    pr_debug("AE1 histogram collected\n");
+    if (!ACCESS_ONCE(wdr_ready))
+        return 0;
+    spin_lock_irqsave(&wdr_stats_lock, flags);
+    for (i = 0; i < 256; ++i)
+        wdr_hist_Y1[i] = packed[i] & 0x1fffff;
+    spin_unlock_irqrestore(&wdr_stats_lock, flags);
     return 0;
 }
 
@@ -7176,6 +7151,7 @@ int tisp_init(void *sensor_info_arg, char *param_name)
             fps_num, fps_den, tisp_sensor_fps_from_raw(tisp_si_fps(&sensor_params)),
             tisp_si_bayer(&sensor_params), tisp_si_mode(&sensor_params));
 
+    tx_isp_t31_wdr_stop();
     wdr_enable = tisp_si_mode(&sensor_params) ? 1 : 0;
 
 	ret = tisp_alloc_param_block(&tparams_day, "day params");
@@ -7352,9 +7328,16 @@ int tisp_init(void *sensor_info_arg, char *param_name)
     }
 
     /* Binary Ninja: Main ISP LUT/processing buffer (0x8000 bytes) → regs 0x2010-0x2024 */
-    void *lut_buffer = kmalloc(0x8000, GFP_KERNEL);
-    if (lut_buffer != NULL) {
-        dma_addr_t lut_phys = virt_to_phys(lut_buffer);
+    if (!wdr_dma_buffer) {
+        wdr_dma_buffer = kzalloc(0x8000, GFP_KERNEL);
+        if (wdr_dma_buffer)
+            wdr_dma_phys = virt_to_phys(wdr_dma_buffer);
+    }
+    if (wdr_enable && !wdr_dma_buffer)
+        return -ENOMEM;
+    if (wdr_dma_buffer) {
+        dma_addr_t lut_phys = wdr_dma_phys;
+        private_dma_cache_sync(NULL, wdr_dma_buffer, 0x8000, DMA_BIDIRECTIONAL);
         system_reg_write(0x2010, lut_phys);
         system_reg_write(0x2014, lut_phys + 0x2000);
         system_reg_write(0x2018, lut_phys + 0x4000);
@@ -7403,7 +7386,9 @@ int tisp_init(void *sensor_info_arg, char *param_name)
     /* Binary Ninja: WDR initialization if enabled */
     if (wdr_enable) {
         pr_info("*** tisp_init: WDR MODE ENABLED - Initializing WDR components ***\n");
-        tiziano_wdr_init(tisp_si_width(&sensor_params), tisp_si_height(&sensor_params));
+        ret = tiziano_wdr_init(tisp_si_width(&sensor_params), tisp_si_height(&sensor_params));
+        if (ret)
+            return ret;
         tisp_gb_init();
         tisp_dpc_wdr_en(1);
         tisp_lsc_wdr_en(1);
@@ -10638,265 +10623,13 @@ int tisp_lsc_param_array_get(int param_id, void *out_buf, int *size_buf)
 /* tisp_wdr_param_array_get - Binary Ninja EXACT implementation */
 int tisp_wdr_param_array_get(int param_id, void *out_buf, int *size_buf)
 {
-    /* Binary Ninja: if (arg1 - 0x3ff u>= 0x33) return error */
-    if ((param_id - 0x3ff) >= 0x33) {
-        pr_err("tisp_wdr_param_array_get: Invalid parameter ID 0x%x\n", param_id);
-        return -1;
-    }
-
-    if (!out_buf || !size_buf) {
-        pr_err("tisp_wdr_param_array_get: NULL buffer pointers\n");
-        return -EINVAL;
-    }
-
-    void *source_ptr = NULL;
-    int data_size = 0;
-
-    /* Binary Ninja switch statement implementation (first batch) */
-    switch (param_id) {
-        case 0x3ff:  /* param_wdr_para_array */
-            source_ptr = &param_wdr_para_array;
-            data_size = 0x28;
-            break;
-        case 0x400:  /* param_wdr_weightLUT01_array */
-            source_ptr = &param_wdr_weightLUT01_array;
-            data_size = 0x80;
-            break;
-
-
-
-
-
-        case 0x401:  /* param_wdr_weightLUT02_array */
-            source_ptr = &param_wdr_weightLUT02_array;
-            data_size = 0x80;
-            break;
-        case 0x402:  /* param_wdr_weightLUT12_array */
-            source_ptr = &param_wdr_weightLUT12_array;
-            data_size = 0x80;
-            break;
-        case 0x403:  /* param_wdr_weightLUT22_array */
-            source_ptr = &param_wdr_weightLUT22_array;
-            data_size = 0x80;
-            break;
-        case 0x404:  /* param_wdr_weightLUT21_array */
-            source_ptr = &param_wdr_weightLUT21_array;
-            data_size = 0x80;
-            break;
-        case 0x405:  /* param_wdr_gam_y_array */
-            source_ptr = &param_wdr_gam_y_array;
-            data_size = 0x84;
-            break;
-        case 0x406:  /* param_wdr_w_point_weight_x_array */
-            source_ptr = &param_wdr_w_point_weight_x_array;
-            data_size = 0x10;
-            break;
-        case 0x407:  /* param_wdr_w_point_weight_y_array */
-            source_ptr = &param_wdr_w_point_weight_y_array;
-            data_size = 0x10;
-            break;
-        case 0x408:  /* param_wdr_w_point_weight_pow_array */
-            source_ptr = &param_wdr_w_point_weight_pow_array;
-            data_size = 0xc;
-            break;
-        case 0x409:  /* Special case - Binary Ninja shows string data */
-            /* For now, use a placeholder array */
-            source_ptr = &param_wdr_gam_y_array;  /* Reuse similar sized array */
-            data_size = 0x84;
-            break;
-        case 0x40a:  /* param_wdr_detail_th_w_array */
-            source_ptr = &param_wdr_detail_th_w_array;
-            data_size = 0x1c;
-            break;
-        case 0x40b:  /* param_wdr_contrast_t_y_mux_array */
-            source_ptr = &param_wdr_contrast_t_y_mux_array;
-            data_size = 0x14;
-            break;
-        case 0x40c:  /* param_wdr_ct_cl_para_array */
-            source_ptr = &param_wdr_ct_cl_para_array;
-            data_size = 0x10;
-            break;
-        case 0x40d:  /* param_centre5x5_w_distance_array */
-            source_ptr = &param_centre5x5_w_distance_array;
-            data_size = 0x7c;
-            break;
-        case 0x40e:  /* param_wdr_stat_para_array */
-            source_ptr = &param_wdr_stat_para_array;
-            data_size = 0x1c;
-            break;
-        case 0x40f:  /* param_wdr_degost_para_array */
-            source_ptr = &param_wdr_degost_para_array;
-            data_size = 0x34;
-            break;
-        case 0x410:  /* param_wdr_darkLable_array */
-            source_ptr = &param_wdr_darkLable_array;
-            data_size = 0x14;
-            break;
-        case 0x411:  /* param_wdr_darkLableN_array */
-            source_ptr = &param_wdr_darkLableN_array;
-            data_size = 0x10;
-            break;
-        case 0x412:  /* param_wdr_darkWeight_array */
-            source_ptr = &param_wdr_darkWeight_array;
-            data_size = 0x14;
-            break;
-        case 0x413:  /* param_wdr_thrLable_array */
-            source_ptr = &param_wdr_thrLable_array;
-            data_size = 0x6c;
-            break;
-        default:
-            /* Handle remaining cases in next chunk */
-            return tisp_wdr_param_array_get_extended(param_id, out_buf, size_buf);
-    }
-
-    /* Binary Ninja: memcpy(arg2, $a1_1, $s1_1); *arg3 = $s1_1 */
-    memcpy(out_buf, source_ptr, data_size);
-    *size_buf = data_size;
-    pr_debug("tisp_wdr_param_array_get: ID=0x%x, size=%d\n", param_id, data_size);
-    return 0;
+    return t31_wdr_param_get(param_id, out_buf, size_buf);
 }
 
 /* tisp_wdr_param_array_get_extended - Handle remaining WDR parameter cases */
 int tisp_wdr_param_array_get_extended(int param_id, void *out_buf, int *size_buf)
 {
-    void *source_ptr = NULL;
-    int data_size = 0;
-
-    /* Binary Ninja switch statement implementation (remaining cases) */
-    switch (param_id) {
-        case 0x414:  /* param_computerModle_software_in_array */
-            source_ptr = &param_computerModle_software_in_array;
-            data_size = 0x10;
-            break;
-        case 0x415:  /* param_deviationPara_software_in_array */
-            source_ptr = &param_deviationPara_software_in_array;
-            data_size = 0x14;
-            break;
-        case 0x416:  /* param_ratioPara_software_in_array */
-            source_ptr = &param_ratioPara_software_in_array;
-            data_size = 0x1c;
-            break;
-        case 0x417:  /* param_x_thr_software_in_array */
-            source_ptr = &param_x_thr_software_in_array;
-            data_size = 0x10;
-            break;
-        case 0x418:  /* param_y_thr_software_in_array */
-            source_ptr = &param_y_thr_software_in_array;
-            data_size = 0x10;
-            break;
-        case 0x419:  /* param_thrPara_software_in_array */
-            source_ptr = &param_thrPara_software_in_array;
-            data_size = 0x50;
-            break;
-        case 0x41a:  /* param_xy_pix_low_software_in_array */
-            source_ptr = &param_xy_pix_low_software_in_array;
-            data_size = 0x58;
-            break;
-        case 0x41b:  /* param_motionThrPara_software_in_array */
-            source_ptr = &param_motionThrPara_software_in_array;
-            data_size = 0x44;
-            break;
-        case 0x41c:  /* param_d_thr_normal_software_in_array */
-            source_ptr = &param_d_thr_normal_software_in_array;
-            data_size = 0x68;
-            break;
-        case 0x41d:  /* param_d_thr_normal1_software_in_array */
-            source_ptr = &param_d_thr_normal1_software_in_array;
-            data_size = 0x68;
-            break;
-        case 0x41e:  /* param_d_thr_normal2_software_in_array */
-            source_ptr = &param_d_thr_normal2_software_in_array;
-            data_size = 0x68;
-            break;
-        case 0x41f:  /* param_d_thr_normal_min_software_in_array */
-            source_ptr = &param_d_thr_normal_min_software_in_array;
-            data_size = 0x68;
-            break;
-        case 0x420:  /* param_multiValueLow_software_in_array */
-            source_ptr = &param_multiValueLow_software_in_array;
-            data_size = 0x68;
-            break;
-        case 0x421:  /* param_multiValueHigh_software_in_array */
-            source_ptr = &param_multiValueHigh_software_in_array;
-            data_size = 0x68;
-            break;
-        case 0x422:  /* param_d_thr_2_software_in_array */
-            source_ptr = &param_d_thr_2_software_in_array;
-            data_size = 0x68;
-            break;
-        case 0x423:  /* param_wdr_detial_para_software_in_array */
-            source_ptr = &param_wdr_detial_para_software_in_array;
-            data_size = 0x20;
-            break;
-        case 0x424:  /* Special case - Binary Ninja shows string data */
-            /* For now, use a placeholder array */
-            source_ptr = &param_wdr_thrLable_array;  /* Reuse similar sized array */
-            data_size = 0x6c;
-            break;
-        case 0x425:  /* param_wdr_dbg_out_array */
-            source_ptr = &param_wdr_dbg_out_array;
-            data_size = 8;
-            break;
-        case 0x426:  /* wdr_ev_list */
-            source_ptr = &wdr_ev_list;
-            data_size = 0x24;
-            break;
-        case 0x427:  /* wdr_weight_b_in_list */
-            source_ptr = &wdr_weight_b_in_list;
-            data_size = 0x24;
-            break;
-        case 0x428:  /* wdr_weight_p_in_list */
-            source_ptr = &wdr_weight_p_in_list;
-            data_size = 0x24;
-            break;
-
-
-        case 0x429:  /* wdr_ev_list_deghost */
-            source_ptr = &wdr_ev_list_deghost;
-            data_size = 0x24;
-            break;
-        case 0x42a:  /* wdr_weight_in_list_deghost */
-            source_ptr = &wdr_weight_in_list_deghost;
-            data_size = 0x24;
-            break;
-        case 0x42b:  /* wdr_detail_w_in0_list */
-            source_ptr = &wdr_detail_w_in0_list;
-            data_size = 0x24;
-            break;
-        case 0x42c:  /* wdr_detail_w_in1_list */
-            source_ptr = &wdr_detail_w_in1_list;
-            data_size = 0x24;
-            break;
-        case 0x42d:  /* wdr_detail_w_in2_list */
-            source_ptr = &wdr_detail_w_in2_list;
-            data_size = 0x24;
-            break;
-        case 0x42e:  /* wdr_detail_w_in3_list */
-            source_ptr = &wdr_detail_w_in3_list;
-            data_size = 0x24;
-            break;
-        case 0x42f:  /* wdr_detail_w_in4_list */
-            source_ptr = &wdr_detail_w_in4_list;
-            data_size = 0x24;
-            break;
-        case 0x430:  /* wdr_fus_wei_224_ref_y_array */
-            source_ptr = &wdr_fus_wei_224_ref_y_array;
-            data_size = 0x40;
-            break;
-        case 0x431:  /* param_wdr_tool_control_array */
-            source_ptr = &param_wdr_tool_control_array;
-            data_size = 0x38;
-            break;
-        default:
-            pr_err("tisp_wdr_param_array_get_extended: Unhandled parameter ID 0x%x\n", param_id);
-            return -1;
-    }
-
-    /* Binary Ninja: memcpy(arg2, $a1_1, $s1_1); *arg3 = $s1_1 */
-    memcpy(out_buf, source_ptr, data_size);
-    *size_buf = data_size;
-    pr_debug("tisp_wdr_param_array_get_extended: ID=0x%x, size=%d\n", param_id, data_size);
-    return 0;
+    return t31_wdr_param_get(param_id, out_buf, size_buf);
 }
 
 /* tisp_dpc_param_array_get - Binary Ninja EXACT implementation */
@@ -14864,49 +14597,7 @@ int tisp_lsc_param_array_set(int param_id, void *in_buf, int *size_buf)
 /* tisp_wdr_param_array_set - Binary Ninja mirror of GET mapping (first batch) */
 int tisp_wdr_param_array_set(int param_id, void *in_buf, int *size_buf)
 {
-    if ((param_id - 0x3ff) >= 0x33) {
-        pr_err("tisp_wdr_param_array_set: Invalid parameter ID 0x%x\n", param_id);
-        return -1;
-    }
-    if (!in_buf || !size_buf) {
-        pr_err("tisp_wdr_param_array_set: NULL buffer pointers\n");
-        return -EINVAL;
-    }
-
-    void *dest_ptr = NULL;
-    int data_size = 0;
-
-    switch (param_id) {
-        case 0x3ff: dest_ptr = &param_wdr_para_array; data_size = 0x28; break;
-        case 0x400: dest_ptr = &param_wdr_weightLUT01_array; data_size = 0x80; break;
-        case 0x401: dest_ptr = &param_wdr_weightLUT02_array; data_size = 0x80; break;
-        case 0x402: dest_ptr = &param_openRatioMove0_array; data_size = 0x10; break;
-        case 0x403: dest_ptr = &param_openRatioMove1_array; data_size = 0x10; break;
-        case 0x404: dest_ptr = &param_openRatioMove2_array; data_size = 0x10; break;
-        case 0x405: dest_ptr = &param_closeRatioMove0_array; data_size = 0x10; break;
-        case 0x406: dest_ptr = &param_closeRatioMove1_array; data_size = 0x10; break;
-        case 0x407: dest_ptr = &param_closeRatioMove2_array; data_size = 0x10; break;
-        case 0x408: dest_ptr = &param_aeStren_array; data_size = 0x24; break;
-        case 0x409: dest_ptr = &param_dehazeThre_array; data_size = 0x24; break;
-        case 0x40a: dest_ptr = &param_specClipSharpenThr_a; data_size = 0x80; break;
-        case 0x40b: dest_ptr = &param_specClipSharpenThr_t; data_size = 0x80; break;
-        case 0x40c: dest_ptr = &param_specClipSharpenThr_d; data_size = 0x80; break;
-        case 0x40d: dest_ptr = &param_wdr_R1_Array; data_size = 0x14; break;
-        case 0x40e: dest_ptr = &param_wdr_R2_Array; data_size = 0x24; break;
-        case 0x40f: dest_ptr = &param_wdr_master_array; data_size = 0x4c; break;
-        case 0x410: dest_ptr = &param_Nr_Wdr_array; data_size = 0x24; break;
-        case 0x411: dest_ptr = &param_wdr_ui_para_array; data_size = 0x2c; break;
-        case 0x412: dest_ptr = &param_smallInfo_array; data_size = 0x28; break;
-        case 0x413: dest_ptr = &param_wdr_thrLable_array; data_size = 0x6c; break;
-        default:
-            /* Delegate remaining cases */
-            return tisp_wdr_param_array_set_extended(param_id, in_buf, size_buf);
-    }
-
-    memcpy(dest_ptr, in_buf, data_size);
-    *size_buf = data_size;
-    pr_debug("tisp_wdr_param_array_set: ID=0x%x, size=%d\n", param_id, data_size);
-    return 0;
+    return t31_wdr_param_set(param_id, in_buf, size_buf);
 }
 
 EXPORT_SYMBOL(data_b2e74);
@@ -16518,565 +16209,7 @@ int isp_m0_chardev_release(struct inode *inode, struct file *file)
 }
 EXPORT_SYMBOL(isp_m0_chardev_release);
 
-/* ===== TIZIANO WDR PROCESSING IMPLEMENTATION - Binary Ninja Reference ===== */
-
-/* tisp_wdr_expTime_updata - Binary Ninja implementation */
-int tisp_wdr_expTime_updata(void)
-{
-    /* Update exposure time based on WDR algorithm */
-    /* This function updates the WDR exposure timing parameters */
-    pr_debug("tisp_wdr_expTime_updata: Updating WDR exposure timing\n");
-
-    /* Binary Ninja shows this updates global exposure variables */
-    /* In real implementation, this would read from hardware registers and update timing */
-
-    return 0;
-}
-
-/* tisp_wdr_ev_calculate - Binary Ninja implementation */
-int tisp_wdr_ev_calculate(void)
-{
-    /* Calculate exposure value for WDR processing */
-    pr_debug("tisp_wdr_ev_calculate: Calculating WDR exposure values\n");
-
-    /* Binary Ninja shows this calculates the current exposure values */
-    /* for use in the WDR algorithm processing */
-
-    return 0;
-}
-
-/* Tiziano_wdr_fpga - Binary Ninja implementation */
-int Tiziano_wdr_fpga(void *struct_me, void *dev_para, void *ratio_para, void *x_thr)
-{
-    /* FPGA-based WDR processing implementation */
-    pr_debug("Tiziano_wdr_fpga: Processing WDR parameters via FPGA\n");
-
-    /* Binary Ninja shows this configures FPGA registers for WDR processing */
-    /* This is the hardware acceleration part of the WDR algorithm */
-
-    return 0;
-}
-
-/* tiziano_wdr_fusion1_curve_block_mean1 - Binary Ninja implementation */
-int tiziano_wdr_fusion1_curve_block_mean1(void)
-{
-    /* WDR fusion curve processing for block mean calculations */
-    pr_debug("tiziano_wdr_fusion1_curve_block_mean1: Processing WDR fusion curves\n");
-
-    /* Binary Ninja shows this processes fusion curves for block mean values */
-    /* This is part of the WDR tone mapping algorithm */
-
-    return 0;
-}
-
-/* tiziano_wdr_soft_para_out - Binary Ninja implementation */
-int tiziano_wdr_soft_para_out(void)
-{
-    /* Output WDR software parameters */
-    pr_debug("tiziano_wdr_soft_para_out: Outputting WDR software parameters\n");
-
-    /* Binary Ninja shows this outputs the processed WDR parameters */
-    /* to the hardware registers for final image processing */
-
-    return 0;
-}
-
-/* tiziano_wdr_algorithm - Binary Ninja EXACT implementation */
-static int tiziano_wdr_algorithm(void)
-{
-    uint32_t wdr_ev_now_1;
-    void *v1;
-    void *a0;
-    int32_t wdr_ev_list_deghost_1;
-    int32_t t5, t1, v0, t6, a1;
-    uint32_t *a2_1;
-    int32_t a3, i, t2;
-
-    pr_debug("tiziano_wdr_algorithm: Starting WDR algorithm processing\n");
-
-    /* Binary Ninja: Call sub-functions first */
-    tisp_wdr_expTime_updata();
-    tisp_wdr_ev_calculate();
-
-    /* Binary Ninja: Initialize local variables */
-    wdr_ev_now_1 = wdr_ev_now;
-    v1 = &param_multiValueHigh_software_in_array;
-    a0 = &param_multiValueLow_software_in_array;
-    wdr_ev_list_deghost_1 = wdr_ev_list_deghost_val;
-    t5 = data_b1bcc;
-    t1 = data_b1c34;
-    v0 = data_b148c;
-    t6 = wdr_ev_now_1 - wdr_ev_list_deghost_1;
-    a1 = wdr_ev_list_deghost_1 - v0;
-
-    /* Binary Ninja: if (v0 u>= wdr_ev_list_deghost_1) a1 = v0 - wdr_ev_list_deghost_1 */
-    if (v0 >= wdr_ev_list_deghost_1) {
-        a1 = v0 - wdr_ev_list_deghost_1;
-    }
-
-    /* Binary Ninja: Initialize output array pointer */
-    if (!data_d94f8) {
-        /* CRITICAL: Initialize data_d94f8 to prevent NULL pointer crash */
-        data_d94f8 = kmalloc(27 * sizeof(uint32_t), GFP_KERNEL);
-        if (!data_d94f8) {
-            pr_err("tiziano_wdr_algorithm: Failed to allocate output array\n");
-            return -ENOMEM;
-        }
-        memset(data_d94f8, 0, 27 * sizeof(uint32_t));
-        pr_info("tiziano_wdr_algorithm: Allocated WDR output array at %p\n", data_d94f8);
-    }
-
-    a2_1 = (uint32_t *)data_d94f8; /* Points to wdr output array */
-    a3 = (wdr_ev_list_deghost_1 < wdr_ev_now_1) ? 1 : 0;
-    i = 0;
-    t2 = (wdr_ev_now_1 < v0) ? 1 : 0;
-
-    /* Binary Ninja: Main processing loop - do/while (i != 0x1b) */
-    do {
-        if (i != 0x1a) {
-            uint32_t v0_4;
-
-            /* Binary Ninja: Complex interpolation logic */
-            if (a3 == 0) {
-                v0_4 = *((uint32_t*)a0);
-            } else if (t2 != 0) {
-                int32_t t0_1 = *((uint32_t*)a0);
-                int32_t v0_5 = *((uint32_t*)v1);
-
-                /* CRITICAL: Prevent division by zero */
-                if (a1 == 0) {
-                    v0_4 = t0_1; /* Default to input value */
-                } else if (v0_5 >= t0_1) {
-                    v0_4 = ((v0_5 - t0_1) * t6) / (uint32_t)a1 + t0_1;
-                } else {
-                    v0_4 = t0_1 - ((t0_1 - v0_5) * t6) / (uint32_t)a1;
-                }
-            } else {
-                v0_4 = *((uint32_t*)v1);
-            }
-
-            /* Binary Ninja: Store result */
-            *a2_1 = v0_4;
-
-        } else {
-            /* Binary Ninja: Special case for i == 0x1a */
-            if (a3 == 0) {
-                data_b16a8 = t1;
-            } else if (t2 != 0) {
-                int32_t v0_2;
-
-                if (t5 >= t1) {
-                    v0_2 = ((t5 - t1) * t6) / (uint32_t)a1 + t1;
-                } else {
-                    v0_2 = t1 - ((t1 - t5) * t6) / (uint32_t)a1;
-                }
-
-                data_b16a8 = v0_2;
-            } else {
-                data_b16a8 = t5;
-            }
-        }
-
-        /* Binary Ninja: Increment loop variables */
-        i += 1;
-        a0 = (uint32_t*)a0 + 1;
-        a2_1 += 1;
-        v1 = (uint32_t*)v1 + 1;
-
-    } while (i != 0x1b);
-
-    /* Binary Ninja: Set up data structure pointers */
-    data_b1e54 = data_b1ff8;
-    TizianoWdrFpgaStructMe = &param_computerModle_software_in_array;
-    data_d94a8 = &param_xy_pix_low_software_in_array;
-    data_d94ac = &param_motionThrPara_software_in_array;
-    data_d94b0 = &param_d_thr_normal_software_in_array;
-    data_d94b4 = &param_d_thr_normal1_software_in_array;
-    data_d94b8 = &param_d_thr_normal2_software_in_array;
-    data_d94bc = &param_d_thr_normal_min_software_in_array;
-    data_d94c0 = &param_d_thr_2_software_in_array;
-    data_d94cc = &wdr_hist_R0;
-    data_d94d0 = &wdr_hist_G0;
-    data_d94d4 = &wdr_hist_B0;
-    data_d94d8 = &mdns_y_ass_wei_adj_value1_intp;
-    data_d94dc = &mdns_c_false_edg_thres1_intp;
-    data_d94e0 = &wdr_hist_B1;
-    data_d94e4 = &wdr_mapR_software_out;
-    data_d94e8 = &wdr_mapB_software_out;
-    data_d94ec = &wdr_mapG_software_out;
-    data_d94f0 = &param_wdr_thrLable_array;
-    data_d949c = &param_x_thr_software_in_array;
-    data_d94f4 = &wdr_thrLableN_software_out;
-    data_d9494 = &param_deviationPara_software_in_array;
-    data_d94a0 = &param_y_thr_software_in_array;
-    data_d94fc = &wdr_thrRangeK_software_out;
-    data_d94c4 = &param_multiValueLow_software_in_array;
-    data_d94a4 = &param_thrPara_software_in_array;
-    data_d9500 = &param_wdr_detial_para_software_in_array;
-    data_d9498 = &param_ratioPara_software_in_array;
-    data_d94c8 = &param_multiValueHigh_software_in_array;
-    data_d94f8 = (void*)data_d94f8; /* Output array pointer */
-    data_d9504 = &wdr_detial_para_software_out;
-
-    /* Binary Ninja: Copy parameter array */
-    /* for (int32_t i_1 = 0; i_1 u< 0x68; i_1 += 1) */
-    for (int i_1 = 0; i_1 < 0x68; i_1++) {
-        /* char var_80[0x68]; var_80[i_1] = *(&data_d94a0 + i_1) */
-        /* This copies parameter data - simplified for kernel implementation */
-    }
-
-    /* Binary Ninja: Call FPGA processing function */
-    Tiziano_wdr_fpga(TizianoWdrFpgaStructMe, data_d9494, data_d9498, data_d949c);
-
-    /* Binary Ninja: WDR tool control */
-    if (param_wdr_tool_control_array == 1) {
-        data_b1ff8 = 0;
-    }
-
-    /* Binary Ninja: Calculate exposure ratio */
-    uint32_t divisor = param_ratioPara_software_in_array[0] + 1;
-    if (divisor == 0) divisor = 1; /* Prevent division by zero */
-    uint32_t lo_5 = (data_b1ee8 << 0xc) / divisor;
-    int32_t a2_5 = data_b15a8;
-    wdr_exp_ratio_def = lo_5;
-    data_b15a0 = lo_5;
-
-    if (a2_5 == 1) {
-        wdr_exp_ratio_def = wdr_s2l_ratio;
-    }
-
-    /* Binary Ninja: Set WDR parameters */
-    uint32_t wdr_exp_ratio_def_1 = wdr_exp_ratio_def;
-    int32_t a1_4 = data_b1598;
-    data_b15a4 = wdr_exp_ratio_def_1;
-    wdr_detial_para_software_out[0] = 0;
-    data_b15bc = 0;
-    data_b15c8 = 0;
-    data_b15b4 = 0;
-    data_b15c0 = 0;
-    data_b15cc = 0;
-
-    if (a1_4 == 1) {
-        wdr_exp_ratio_def_1 -= data_b159c;
-    }
-
-    data_b15b8 = wdr_exp_ratio_def_1;
-    data_b15c4 = wdr_exp_ratio_def_1;
-    data_b15d0 = wdr_exp_ratio_def_1;
-
-    /* Binary Ninja: Initialize block mean arrays */
-    /* for (int32_t i_2 = 0; i_2 != 0x20; ) */
-    for (int i_2 = 0; i_2 < 0x20; i_2 += 4) {
-        void *v0_16 = (void*)((char*)&wdr_block_mean1_max + i_2);
-        *((uint32_t*)v0_16) = 0;
-    }
-
-    /* Binary Ninja: Complex block mean processing */
-    int32_t t5_1 = data_d951c;
-    int32_t t2_1 = data_d9520;
-    int32_t t1_1 = data_d9524;
-    int32_t t0_2 = data_d9528;
-    int i_3 = 0;
-    void *v1_6 = &wdr_block_mean1;
-
-    /* Binary Ninja: Main block processing loop */
-    do {
-        int32_t v1_7 = *((uint32_t*)v1_6);
-
-        /* Binary Ninja: Complex block mean sorting algorithm */
-        if (wdr_block_mean1_max < v1_7) {
-            /* Copy and shift block mean values */
-            for (int j = 0; j < 0x1c; j += 4) {
-                int32_t s0_2 = *((uint32_t*)((char*)&wdr_block_mean1 + j));
-                void *t9_1 = (void*)((char*)&wdr_block_mean1_max + j);
-                *((uint32_t*)((char*)t9_1 + 4)) = s0_2;
-            }
-            wdr_block_mean1_max = v1_7;
-
-        } else if (data_d7210 < v1_7) {
-            for (int j_1 = 0; j_1 < 0x18; j_1 += 4) {
-                int32_t s0_4 = *((uint32_t*)(j_1 + 0xd9514));
-                void *t9_2 = (void*)((char*)&wdr_block_mean1_max + j_1);
-                *((uint32_t*)((char*)t9_2 + 8)) = s0_4;
-            }
-            data_d7210 = v1_7;
-
-        } else if (data_d7214 < v1_7) {
-            for (int j_2 = 0; j_2 < 0x14; j_2 += 4) {
-                int32_t s0_6 = *((uint32_t*)(j_2 + 0xd9518));
-                void *t9_3 = (void*)((char*)&wdr_block_mean1_max + j_2);
-                *((uint32_t*)((char*)t9_3 + 0xc)) = s0_6;
-            }
-            data_d7214 = v1_7;
-
-        } else if (data_d7218 < v1_7) {
-            data_d721c = t5_1;
-            data_d7220 = t2_1;
-            data_d7224 = t1_1;
-            data_d7228 = t0_2;
-            data_d7218 = v1_7;
-
-        } else if (data_d721c < v1_7) {
-            data_d7220 = t2_1;
-            data_d7224 = t1_1;
-            data_d7228 = t0_2;
-            data_d721c = v1_7;
-
-        } else if (data_d7220 < v1_7) {
-            data_d7224 = t1_1;
-            data_d7228 = t0_2;
-            data_d7220 = v1_7;
-
-        } else if (data_d7224 < v1_7) {
-            data_d7228 = t0_2;
-            data_d7224 = v1_7;
-
-        } else if (data_d7228 < v1_7) {
-            data_d7228 = v1_7;
-        }
-
-        i_3 += 4;
-        v1_6 = (void*)((char*)&wdr_block_mean1 + i_3);
-
-    } while (i_3 != 0x384);
-
-    /* Binary Ninja: Block mean end calculation */
-    int32_t v1_8 = data_d9080;
-    wdr_block_mean1_end = 0;
-    int32_t t0_3;
-
-    if (v1_8 < 4) {
-        data_d9080 = 4;
-        t0_3 = data_d9080;
-    } else if (v1_8 < 9) {
-        t0_3 = data_d9080;
-    } else {
-        data_d9080 = 8;
-        t0_3 = data_d9080;
-    }
-
-    /* Binary Ninja: Calculate average */
-    int32_t v1_11 = 0;
-    uint32_t wdr_block_mean1_end_2 = 0;
-    int32_t a1_21 = 0;
-    uint32_t *v0_17 = &wdr_block_mean1_max;
-
-    while (a1_21 != t0_3) {
-        a1_21 += 1;
-        wdr_block_mean1_end_2 += *v0_17;
-        v0_17 += 1;
-        v1_11 = 1;
-    }
-
-    uint32_t wdr_block_mean1_end_1 = wdr_block_mean1_end;
-
-    if (v1_11 != 0) {
-        wdr_block_mean1_end_1 = wdr_block_mean1_end_2;
-    }
-
-    /* Binary Ninja: Calculate final result */
-    uint32_t lo_6 = wdr_block_mean1_end_1 / a1_21;
-    wdr_block_mean1_end = lo_6;
-    uint32_t wdr_block_mean1_end_old_1 = wdr_block_mean1_end_old;
-    uint32_t v1_13 = lo_6 - wdr_block_mean1_end_old_1;
-    wdr_block_mean1_th = v1_13;
-
-    /* Binary Ninja: Threshold processing */
-    if ((int32_t)v1_13 <= 0) {
-        if (v1_13 == 0) {
-            wdr_block_mean1_end_old = lo_6;
-        } else if (data_d9074 != 1) {
-            wdr_block_mean1_end_old = lo_6;
-        } else {
-            int32_t v1_15 = -(int32_t)v1_13;
-            wdr_block_mean1_th = v1_15;
-            int32_t t0_5 = data_d9078;
-
-            if (t0_5 >= v1_15) {
-                wdr_block_mean1_end_old = lo_6;
-            } else {
-                wdr_block_mean1_end_old = wdr_block_mean1_end_old_1 - t0_5;
-            }
-        }
-    } else {
-        if (data_d9074 != 1) {
-            wdr_block_mean1_end_old = lo_6;
-        } else {
-            int32_t t0_4 = data_d9078;
-
-            if (t0_4 < (int32_t)v1_13) {
-                wdr_block_mean1_end_old = wdr_block_mean1_end_old_1 + t0_4;
-            } else {
-                wdr_block_mean1_end_old = lo_6;
-            }
-        }
-    }
-
-    /* Binary Ninja: Special fusion processing */
-    if (param_wdr_gam_y_array == 2 && data_b15ac == 1) {
-        tiziano_wdr_fusion1_curve_block_mean1();
-    }
-
-    pr_debug("tiziano_wdr_algorithm: WDR algorithm processing complete\n");
-    return 0;
-}
-
-/* tisp_wdr_process - Binary Ninja EXACT implementation */
-int tisp_wdr_process(void)
-{
-    int32_t v0_1;
-
-    pr_info("tisp_wdr_process: Starting WDR processing pipeline\n");
-
-    /* Binary Ninja: Call main WDR algorithm */
-    tiziano_wdr_algorithm();
-
-    /* Binary Ninja: Call software parameter output */
-    tiziano_wdr_soft_para_out();
-
-    /* Binary Ninja: Update median window optimization array */
-    v0_1 = mdns_y_pspa_ref_median_win_opt_idx + 1;
-
-    if (v0_1 == 0x1e) {
-        v0_1 = 0;
-    }
-
-    mdns_y_pspa_ref_median_win_opt_idx = v0_1;
-
-    pr_info("tisp_wdr_process: WDR processing pipeline complete\n");
-    return 0;
-}
-EXPORT_SYMBOL(tisp_wdr_process);
-
-/* OEM EXACT: wdr_detail_para_rgb — WDR detail LUT interpolation.
- * Decompiled from OEM at 0x1f6b8. Computes averaged curve values for
- * two ranges defined by arg2[], using the 256-entry LUT in arg3[].
- * Output: arg1[0]=avg_x1, arg1[1]=avg_y1, arg1[2]=slope between ranges. */
-static int wdr_detail_para_rgb(int32_t *arg1, const int32_t *arg2, const int32_t *arg3)
-{
-    int32_t center1 = arg2[0];
-    int32_t half1   = arg2[2];
-    int32_t center2 = arg2[3];
-    int32_t half2   = arg2[5];
-    int32_t lo1 = center1 - half1;
-    int32_t lo2 = center2 - half2;
-    int32_t x, count1, count2;
-    int32_t sum_x1 = 0, sum_y1 = 0;
-    int32_t sum_x2 = 0, sum_y2 = 0;
-
-    /* Range 1: [center1-half1 .. center1+half1] */
-    x = lo1;
-    count1 = 0;
-    while (x <= center1 + (int32_t)arg2[1]) {
-        int32_t y = arg3[0xff]; /* default to last entry */
-        int i;
-        for (i = 0x1f; i < 0x100f; i += 0x10) {
-            int32_t next = arg3[(i - 0x1f) / 0x10 + 1];
-            if (x < i) {
-                int32_t prev = arg3[(i - 0x1f) / 0x10];
-                y = ((next << 12) - (((next - prev) * (i - x)) << 12) / 0x10 + 0x800) / 0x1000;
-                break;
-            }
-        }
-        sum_x1 += x;
-        sum_y1 += y;
-        count1++;
-        x++;
-    }
-
-    /* Range 2: [center2-half2 .. center2+half2] */
-    x = lo2;
-    count2 = 0;
-    while (x <= center2 + (int32_t)arg2[4]) {
-        int32_t y = arg3[0xff]; /* default to last entry */
-        int i;
-        for (i = 0x1f; i < 0x100f; i += 0x10) {
-            int32_t next = arg3[(i - 0x1f) / 0x10 + 1];
-            if (x < i) {
-                int32_t prev = arg3[(i - 0x1f) / 0x10];
-                y = ((next << 12) - (((next - prev) * (i - x)) << 12) / 0x10 + 0x800) / 0x1000;
-                break;
-            }
-        }
-        sum_x2 += x;
-        sum_y2 += y;
-        count2++;
-        x++;
-    }
-
-    /* Compute averages */
-    int32_t avg_x1 = (sum_x1 + count1 / 2) / count1;
-    int32_t avg_y1 = (sum_y1 + count1 / 2) / count1;
-    int32_t avg_x2 = (sum_x2 + count2 / 2) / count2;
-    int32_t avg_y2 = (sum_y2 + count2 / 2) / count2;
-
-    /* Slope between the two averaged points */
-    int32_t dx = avg_x2 - avg_x1;
-    int32_t dy = avg_y2 - avg_y1;
-    int32_t slope = (dx != 0) ? ((dy << 12) + dx / 2) / dx : 0;
-
-    arg1[0] = avg_x1;
-    arg1[1] = avg_y1;
-    arg1[2] = slope;
-    return slope;
-}
-
-/* tiziano_wdr_init - WDR module initialization */
-int tiziano_wdr_init(uint32_t width, uint32_t height)
-{
-    pr_info("tiziano_wdr_init: Initializing WDR processing (%dx%d)\n", width, height);
-
-    /* Initialize WDR-specific components and enable WDR mode */
-    tisp_gb_init();
-
-    /* Enable WDR processing for all pipeline components */
-    tisp_dpc_wdr_en(1);
-    tisp_lsc_wdr_en(1);
-    tisp_gamma_wdr_en(1);
-    tisp_sharpen_wdr_en(1);
-    tisp_ccm_wdr_en(1);
-    tisp_bcsh_wdr_en(1);
-    tisp_rdns_wdr_en(1);
-    tisp_adr_wdr_en(1);
-    tisp_defog_wdr_en(1);
-    tisp_mdns_wdr_en(1);
-    tisp_dmsc_wdr_en(1);
-    tisp_ae_wdr_en(1);
-    tisp_sdns_wdr_en(1);
-
-    pr_info("tiziano_wdr_init: WDR processing initialized successfully\n");
-    return 0;
-}
-
-/* Initialize WDR processing parameters */
-int tisp_wdr_init(void)
-{
-    pr_info("tisp_wdr_init: Initializing WDR processing parameters\n");
-
-    /* Initialize default values for WDR parameters */
-    wdr_ev_now = 0x1000;
-    wdr_ev_list_deghost_val = 0x800;
-    wdr_block_mean1_end = 0;
-    wdr_block_mean1_end_old = 0;
-    wdr_block_mean1_th = 0;
-    wdr_block_mean1_max = 0;
-    wdr_exp_ratio_def = 0x1000;
-    wdr_s2l_ratio = 0x800;
-
-    /* Initialize parameter arrays with default values */
-    memset(param_multiValueHigh_software_in_array, 0, sizeof(param_multiValueHigh_software_in_array));
-    memset(param_multiValueLow_software_in_array, 0, sizeof(param_multiValueLow_software_in_array));
-    memset(param_computerModle_software_in_array, 0, sizeof(param_computerModle_software_in_array));
-
-    /* Set some default parameter values */
-    param_multiValueHigh_software_in_array[0] = 0x2000;
-    param_multiValueLow_software_in_array[0] = 0x1000;
-    param_computerModle_software_in_array[0] = 1;
-
-    pr_info("tisp_wdr_init: WDR parameters initialized\n");
-    return 0;
-}
-EXPORT_SYMBOL(tiziano_wdr_init);
+#include "tx_isp_t31_wdr_runtime.inc"
 
 /* ===== MISSING TIZIANO ISP PIPELINE COMPONENTS - Binary Ninja Reference ===== */
 
@@ -20128,13 +19261,26 @@ static irqreturn_t af_interrupt_static_wrapper(int irq, void *dev_id)
  * Decompiled from OEM at 0x5d2a0. Only relevant in WDR mode. */
 int tiziano_wdr_interrupt_static(void)
 {
-    /* WDR interrupt handler — not needed for non-WDR mode.
-     * The OEM reads WDR stat DMA buffer, rearranges data,
-     * calls tiziano_wdr_get_data, and pushes event 11.
-     * Stubbed for non-WDR operation. */
-    struct tisp_event_record ev = {0};
-    ev.event_id = 0xb;
-    tisp_event_push(&ev);
+    struct tisp_event_record event = {0};
+    unsigned long flags;
+    u32 address, offset;
+    if (!ACCESS_ONCE(wdr_ready) || !wdr_dma_buffer)
+        return 0;
+    address = system_reg_read(0x2680);
+    if (address < wdr_dma_phys || address >= wdr_dma_phys + 0x8000)
+        return 0;
+    offset = address - wdr_dma_phys;
+    if (offset % T31_WDR_DMA_SLOT_BYTES)
+        return 0;
+    private_dma_cache_sync(NULL, (u8 *)wdr_dma_buffer + offset,
+                           T31_WDR_DMA_SLOT_BYTES, DMA_FROM_DEVICE);
+    spin_lock_irqsave(&wdr_stats_lock, flags);
+    t31_wdr_compact_stats((u8 *)wdr_pending, sizeof(wdr_pending),
+                         (u8 *)wdr_dma_buffer + offset, T31_WDR_DMA_SLOT_BYTES);
+    wdr_stats_pending = true;
+    spin_unlock_irqrestore(&wdr_stats_lock, flags);
+    event.event_id = 11;
+    tisp_event_push(&event);
     return 1;
 }
 
@@ -29545,11 +28691,24 @@ int tisp_hv_flip_get(void)
 }
 
 /* OEM EXACT: tisp_deinit_free — free ISP DMA buffers on deinit */
+void tx_isp_t31_wdr_stop(void)
+{
+    ACCESS_ONCE(wdr_ready) = false;
+    if (ourISPdev && ourISPdev->isp_irq > 0)
+        synchronize_irq(ourISPdev->isp_irq);
+    cancel_work_sync(&wdr_work);
+}
+
+/* Call after ISP DMA has stopped. */
 void tisp_deinit_free(void)
 {
-	/* OEM frees the 7 DMA buffers allocated in tisp_init.
-	 * Currently handled by module unload cleanup. */
-	pr_debug("tisp_deinit_free: ISP buffers released\n");
+    tx_isp_t31_wdr_stop();
+    mutex_lock(&wdr_control_lock);
+    kfree(wdr_dma_buffer);
+    wdr_dma_buffer = NULL;
+    wdr_dma_phys = 0;
+    wdr_stats_pending = false;
+    mutex_unlock(&wdr_control_lock);
 }
 
 /* OEM EXACT: tisp_event_exit (0x1708c) — shutdown event system */
@@ -31527,6 +30686,8 @@ int tisp_ev_update(uint32_t ev, uint32_t aux_ev)
         tisp_adr_ev_update(ev, aux_ev);
     if ((reg_0c & 0x800) == 0)
         tisp_defog_ev_update(ev, aux_ev);
+    if (wdr_ready && (reg_0c & 8) == 0)
+        tisp_wdr_ev_update(ev, aux_ev);
 
     return 0;
 }
@@ -32401,104 +31562,6 @@ static int tiziano_adr_5x5_param(void)
 
     return 0;
 }
-
-/* ========================================================================
- * WDR functions — stubs for future WDR sensor support
- * All decompiled from OEM Binary Ninja. Bodies are complex algorithms
- * requiring hundreds of WDR-specific globals. Implemented as stubs
- * until a WDR sensor is available for testing.
- * ======================================================================== */
-
-/* OEM at 0x5f308: WDR 5x5 distance — same as ADR but /4 instead of /8 */
-static int tiziano_wdr_5x5_param_distance(int32_t cx, int32_t cy,
-    int32_t x, int32_t y, const int32_t *dist_lut)
-{
-    int32_t dx = (x >= cx) ? (x - cx) / 4 : (cx - x) / 4;
-    int32_t dy = (y >= cy) ? (y - cy) / 4 : (cy - y) / 4;
-    int64_t dist_sq = (int64_t)dx * dx + (int64_t)dy * dy;
-    int i;
-    for (i = 30; i >= 0; i--) {
-        if (dist_lut[i] >= (int32_t)dist_sq)
-            return i + 1;
-    }
-    return 0;
-}
-
-/* OEM at 0x5f39c: WDR 5x5 spatial weight computation */
-static int tiziano_wdr_5x5_param(void)
-{
-    /* WDR spatial weight LUT computation — requires WDR-specific globals.
-     * Stubbed until WDR sensor testing. */
-    return 0;
-}
-
-/* OEM at 0x60474: Load all WDR params from tuning binary */
-static int tiziano_wdr_params_refresh(void)
-{
-    /* ~50 memcpy calls loading WDR param arrays from tuning binary offsets.
-     * Stubbed until WDR sensor testing. */
-    return 0;
-}
-
-/* OEM at 0x5f8c8: Initialize WDR hardware registers from params */
-static int tiziano_wdr_params_init(void)
-{
-    /* Programs ~80 WDR registers (0x2030-0x2684) from param arrays.
-     * Stubbed until WDR sensor testing. */
-    return 0;
-}
-
-/* OEM at 0x5d114: Unpack WDR histogram DMA data */
-static int tiziano_wdr_get_data(void *buf)
-{
-    /* Unpacks R0/G0/B0/R1/G1/B1 histograms from 4KB DMA buffer.
-     * Stubbed until WDR sensor testing. */
-    return 0;
-}
-
-/* OEM EXACT: tiziano_wdr_gamma_refresh — refresh WDR gamma LUT.
- * Decompiled at 0x60368. Gets WDR gamma LUT (0x3d), downsamples
- * 129→33 entries, copies to param_wdr_gam_y_array_def. */
-static int tiziano_wdr_gamma_refresh(void)
-{
-    int size = 0;
-    int i;
-    uint16_t *y129 = (uint16_t *)wdr_gam_y129_array;
-
-    tisp_gamma_param_array_get(0x3d, wdr_gam_y129_array, &size);
-    if (size != 0x102) {
-        pr_err("get gamma error!!!\n");
-        return -1;
-    }
-
-    /* Downsample 129 → 33: take every 4th entry */
-    for (i = 0; i < 33; i++)
-        wdr_gam_y33_array[i] = (uint32_t)(uint16_t)y129[i * 4];
-
-    if (data_a1584 == 0) {
-        /* Normal: copy downsampled LUT */
-        for (i = 0; i < 33; i++)
-            param_wdr_gam_y_array_def[i] = wdr_gam_y33_array[i];
-    } else if (data_a1584 == 1) {
-        /* Linear ramp: 0, 0x80, 0x100, ..., 0x1000 */
-        for (i = 0; i < 33; i++)
-            param_wdr_gam_y_array_def[i] = i * 0x80;
-        data_a22e8 = 0xfff;
-    }
-
-    return 0;
-}
-
-/* OEM at 0x609a4: WDR DN params refresh — simple wrapper */
-static int tiziano_wdr_dn_params_refresh(void)
-{
-    tiziano_wdr_params_refresh();
-    return 0;
-}
-
-/* tiziano_wdr_fusion1_curve_block_mean1, tiziano_wdr_fusion1_curve,
- * tiziano_wdr_algorithm, tiziano_wdr_soft_para_out, Tiziano_wdr_fpga
- * — already defined earlier in file (~line 13758-13800) */
 
 EXPORT_SYMBOL(tiziano_rdns_init);
 EXPORT_SYMBOL(tiziano_defog_init);
@@ -35593,33 +34656,43 @@ static uint32_t wdr_block_mean0[225];
 
 int tisp_wdr_rx_ae0_infm(uint32_t *hist, uint32_t *block_mean)
 {
-    memcpy(&wdr_hist_Y0, hist, 4);
-    memcpy(&wdr_block_mean0, block_mean, 4);
+    if (!hist || !block_mean)
+        return -EINVAL;
+    memcpy(wdr_hist_Y0, hist, sizeof(wdr_hist_Y0));
+    memcpy(wdr_block_mean0, block_mean, sizeof(wdr_block_mean0));
     return 0;
 }
 
 /* OEM EXACT: tisp_wdr_rx_ae0_dms (0x5c844) */
 int tisp_wdr_rx_ae0_dms(uint32_t *r, uint32_t *g, uint32_t *b, uint32_t *params)
 {
-    int total = params[1] * params[3];
-    int i;
-    for (i = 0; i < total; i++) {
-        uint32_t sum = r[i] + g[i] + b[i];
-        uint32_t divisor = params[4 + (i % params[3])] * params[0xf + (i / params[3])];
-        if (divisor == 0) divisor = 1;
-        wdr_block_mean0[i] = sum / divisor;
+    u32 i, cols, rows, area;
+    if (!r || !g || !b || !params)
+        return -EINVAL;
+    cols = params[1];
+    rows = params[3];
+    if (!cols || cols > 15 || !rows || rows > 15)
+        return -EINVAL;
+    for (i = 0; i < cols * rows; ++i) {
+        area = params[4 + i % cols] * params[19 + i / cols];
+        if (!area)
+            return -EINVAL;
+        wdr_block_mean0[i] = (r[i] + g[i] + b[i]) / area;
     }
     return 0;
 }
 
 /* OEM EXACT: tisp_wdr_rx_ae1_infm (0x5c7e8) */
-static uint32_t wdr_hist_Y1[256];
-static uint32_t wdr_block_mean1[225];
 
 int tisp_wdr_rx_ae1_infm(uint32_t *hist, uint32_t *block_mean)
 {
-    memcpy(&wdr_hist_Y1, hist, 0x400);
-    memcpy(&wdr_block_mean1, block_mean, 0x384);
+    unsigned long flags;
+    if (!hist || !block_mean)
+        return -EINVAL;
+    spin_lock_irqsave(&wdr_stats_lock, flags);
+    memcpy(wdr_hist_Y1, hist, sizeof(wdr_hist_Y1));
+    memcpy(wdr_block_mean1, block_mean, sizeof(wdr_block_mean1));
+    spin_unlock_irqrestore(&wdr_stats_lock, flags);
     return 0;
 }
 
@@ -36316,46 +35389,7 @@ static int data_b2f08(uint32_t param, int flag)
 /* Top-level definitions moved from accidental nesting: */
 int tisp_wdr_param_array_set_extended(int param_id, void *in_buf, int *size_buf)
 {
-    void *dest_ptr = NULL; int data_size = 0;
-    switch (param_id) {
-        case 0x414: dest_ptr = &param_computerModle_software_in_array; data_size = 0x10; break;
-        case 0x415: dest_ptr = &param_deviationPara_software_in_array; data_size = 0x14; break;
-        case 0x416: dest_ptr = &param_ratioPara_software_in_array; data_size = 0x1c; break;
-        case 0x417: dest_ptr = &param_x_thr_software_in_array; data_size = 0x10; break;
-        case 0x418: dest_ptr = &param_y_thr_software_in_array; data_size = 0x10; break;
-        case 0x419: dest_ptr = &param_thrPara_software_in_array; data_size = 0x50; break;
-        case 0x41a: dest_ptr = &param_xy_pix_low_software_in_array; data_size = 0x58; break;
-        case 0x41b: dest_ptr = &param_motionThrPara_software_in_array; data_size = 0x44; break;
-        case 0x41c: dest_ptr = &param_d_thr_normal_software_in_array; data_size = 0x68; break;
-        case 0x41d: dest_ptr = &param_d_thr_normal1_software_in_array; data_size = 0x68; break;
-        case 0x41e: dest_ptr = &param_d_thr_normal2_software_in_array; data_size = 0x68; break;
-        case 0x41f: dest_ptr = &param_d_thr_normal_min_software_in_array; data_size = 0x68; break;
-        case 0x420: dest_ptr = &param_multiValueLow_software_in_array; data_size = 0x68; break;
-        case 0x421: dest_ptr = &param_multiValueHigh_software_in_array; data_size = 0x68; break;
-        case 0x422: dest_ptr = &param_d_thr_2_software_in_array; data_size = 0x68; break;
-        case 0x423: dest_ptr = &param_wdr_detial_para_software_in_array; data_size = 0x20; break;
-        case 0x424: dest_ptr = &param_wdr_thrLable_array; data_size = 0x6c; break;
-        case 0x425: dest_ptr = &param_wdr_dbg_out_array; data_size = 8; break;
-        case 0x426: dest_ptr = &wdr_ev_list; data_size = 0x24; break;
-        case 0x427: dest_ptr = &wdr_weight_b_in_list; data_size = 0x24; break;
-        case 0x428: dest_ptr = &wdr_weight_p_in_list; data_size = 0x24; break;
-        case 0x429: dest_ptr = &wdr_ev_list_deghost; data_size = 0x24; break;
-        case 0x42a: dest_ptr = &wdr_weight_in_list_deghost; data_size = 0x24; break;
-        case 0x42b: dest_ptr = &wdr_detail_w_in0_list; data_size = 0x24; break;
-        case 0x42c: dest_ptr = &wdr_detail_w_in1_list; data_size = 0x24; break;
-        case 0x42d: dest_ptr = &wdr_detail_w_in2_list; data_size = 0x24; break;
-        case 0x42e: dest_ptr = &wdr_detail_w_in3_list; data_size = 0x24; break;
-        case 0x42f: dest_ptr = &wdr_detail_w_in4_list; data_size = 0x24; break;
-        case 0x430: dest_ptr = &wdr_fus_wei_224_ref_y_array; data_size = 0x40; break;
-        case 0x431: dest_ptr = &param_wdr_tool_control_array; data_size = 0x38; break;
-        default:
-            pr_err("tisp_wdr_param_array_set_extended: Unhandled parameter ID 0x%x\n", param_id);
-            return -1;
-    }
-    memcpy(dest_ptr, in_buf, data_size);
-    *size_buf = data_size;
-    pr_debug("tisp_wdr_param_array_set_extended: ID=0x%x, size=%d\n", param_id, data_size);
-    return 0;
+    return t31_wdr_param_set(param_id, in_buf, size_buf);
 }
 
 int tisp_gib_param_array_get(int param_id, void *out_buf, int *size_buf)
@@ -36448,6 +35482,8 @@ int tisp_deinit(void)
     pr_info("tisp_deinit: Deinitializing ISP system\n");
 
     /* OEM calls tisp_param_operate_deinit() — cleanup is handled by module unload */
+
+    tisp_deinit_free();
 
     /* Free mscaler mask buffers (OEM data_ba480/data_ba47c) */
     kfree(mscaler_mask_active);
