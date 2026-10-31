@@ -4,6 +4,12 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-01, state of `next`
+
+- **Closed with camera proof:** driver hardening #158 #160 #161 #164 #165 #166 (the `/dev/tisp` parameter node exists only with `TX_ISP_T40_TISP_PAR=y`); T40 image agg63 (includes #161): apitest all areas PASS 279, 6 of 6 reload cycles of our module clean, dark IR scene stable. T23 backlog (Jooan T23 camera PASS 68), T41 (PASS 44 / FAIL 0, 17 N/A), T10/T20/T21 (127/0, 127/0, 133/0), T31 (14 + 4 cells on the T31L cameras). #104: the T31L boots Linux 7.2.11 with the IRQ balance fix. #2 (AE limit cycle) closed.
+- **Open:** #171 T41 module routes for the ISP controls the library calls (branch `claude/t41-isp-routes`, not merged). #173 (T40 AWB algorithm close indexes the wrong array: the custom AE/AWB algorithm callbacks stay off by default, #65). #84 (waits for the light measurement box), #94 and #108 (unexplained resets). A fleet image needs the next modules (T23 ISP OSD pictures).
+- **Reset diagnostics:** see the OpenIMP document `docs/RESET_DIAGNOSTICS.md` (RTC scratch record on the T31, reset-PC sled on the T23, SD ring log).
+
 ## 2026-10-31, late evening (`next` = agg60; Eufy T40XP)
 
 Device proof: apitest all areas plus 28 cases PASS 270 / FAIL 0, 0 oopses, 0 `unresolved jalr`; the call counters of the former lost-argument sites (`cnt_core_ops_init`, `cnt_sec_init`, `cnt_main_long_tgain_update`) stay 0; raw ioctl probe ok.
