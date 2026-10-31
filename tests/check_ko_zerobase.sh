@@ -3,8 +3,7 @@
 #
 # Lifted code that lost a base register compiles to loads/stores relative to $zero ("sw v0,268(zero)"): a kernel
 # NULL-page access, an oops as soon as the path runs (same bug class as #139).  The T40 build must not contain
-# any, except the functions listed in tests/ko_zerobase_baseline.txt (known, not reached in the default flow,
-# not fixed yet; remove a line when its function is fixed).
+# any, except the functions listed in tests/ko_zerobase_baseline.txt (empty since the last three were fixed, #161).
 # Exit 0 = none new, 1 = new ones (listed), 2 = usage/tool error.
 [ $# -eq 2 ] && [ -f "$2" ] || { echo "usage: $0 <objdump> <module.ko>" >&2; exit 2; }
 out=$("$1" -d "$2" 2>/dev/null) || { echo "check_ko_zerobase: objdump failed" >&2; exit 2; }

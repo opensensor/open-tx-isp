@@ -1,3 +1,0 @@
-<tisp_af_set_hardware_param>:
-<tx_isp_unlocked_ioctl>:
-<vic_mdma_irq_function0>:
