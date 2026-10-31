@@ -22717,6 +22717,104 @@ static int t41_tuning_face_ae(unsigned int channel, unsigned int is_get,
 }
 
 /*
+ * Issue #171, vendor-AE values of ae_cache[ch] and the AE state (OEM
+ * 1.2.5 tx_isp_core_ops_s/g_ctrl):
+ *  0x08000036 IMPISPFaceAeWeiget {global, roi, smooth} (12 bytes, get/set):
+ *             tisp_s/g_face_ae_weiget -> tisp_ae_api_set/get_face_ae_tune_
+ *             params, cache +0x5f8/+0x5fc/+0x600 (the vendor AE reads them
+ *             when it meters a face window);
+ *  0x08000037 IMPISPFaceAeLuma {global, roi} (8 bytes, get):
+ *             tisp_g_face_ae_luma -> tisp_ae_api_get_gobal_roi_luma, cache
+ *             +0x5f0/+0x5f4 (written by the vendor AE every frame);
+ *  0x0800003a flicker flag (4 bytes, get): tisp_g_ae_flicker_flag ->
+ *             tisp_ae_api_get_flicker_flag, cache +0x67c (vendor AE);
+ *  0x080000b3 BV (4 bytes, get; libimp 1.2.6 only, no handler in the 1.2.5
+ *             module): the brightness value tisp_ae_get_bv stores at AE
+ *             state +0x2614 every frame (inferred mapping).
+ * Stock answers these without checks; here they need the running vendor
+ * AE (t41_vendor_ae, its first frame for the reads) and take the
+ * histogram lock the vendor AE updates them under.
+ */
+#define T41_AE_CACHE_FACE_LUMA		0x5f0U
+#define T41_AE_CACHE_FACE_WEIGHT	0x5f8U
+#define T41_AE_CACHE_FLICKER_FLAG	0x67cU
+#define T41_AE_STATE_BV			0x2614U
+
+static int t41_tuning_ae_extra(unsigned int channel, uint32_t id,
+                               unsigned int is_get, uintptr_t user_ptr)
+{
+    uint32_t v[3];
+    unsigned int bytes;
+    unsigned char *cache, *state = NULL;
+    uint32_t *info;
+    spinlock_t *lock;
+    unsigned long flags;
+
+    BUILD_BUG_ON(T41_AE_CACHE_FLICKER_FLAG + 4U > T41_AE_CACHE_BYTES);
+    BUILD_BUG_ON(T41_AE_STATE_BV + 4U > T41_AE_STATE_BYTES);
+    if (channel >= ARRAY_SIZE(ae_info) || channel >= 2 || is_get > 1 ||
+        !user_ptr)
+        return -EINVAL;
+    if (t41_vendor_ae <= 0)
+        return -EOPNOTSUPP;
+    if (!smp_load_acquire(&t41_ae_ready[channel]))
+        return -EAGAIN;
+    if (is_get && id != TX_ISP_TUNING_CMD_T41_FACE_AE_WEIGHT &&
+        !READ_ONCE(t41_vae_hist_frames[channel]))
+        return -EAGAIN;
+    cache = t41_ae_cache_ptr(channel);
+    if (!cache)
+        return -ENODEV;
+    if (id == TX_ISP_TUNING_CMD_T41_AE_BV) {
+        info = (uint32_t *)(uintptr_t)ae_info[channel];
+        if (!t41_kernel_data_ptr(info))
+            return -ENODEV;
+        state = (unsigned char *)(uintptr_t)info[1];
+        if (!t41_kernel_data_ptr(state))
+            return -ENODEV;
+    }
+    switch (id) {
+    case TX_ISP_TUNING_CMD_T41_FACE_AE_WEIGHT:
+        bytes = 12;
+        break;
+    case TX_ISP_TUNING_CMD_T41_FACE_AE_LUMA:
+        bytes = 8;
+        break;
+    default:
+        bytes = 4;
+        break;
+    }
+    if (!is_get &&
+        private_copy_from_user(v, (void __user *)user_ptr, bytes))
+        return -EFAULT;
+    lock = (spinlock_t *)(void *)(slock_hist_storage +
+                                  channel * sizeof(uint32_t));
+    spin_lock_irqsave(lock, flags);
+    switch (id) {
+    case TX_ISP_TUNING_CMD_T41_FACE_AE_WEIGHT:
+        if (is_get)
+            memcpy(v, cache + T41_AE_CACHE_FACE_WEIGHT, 12);
+        else
+            memcpy(cache + T41_AE_CACHE_FACE_WEIGHT, v, 12);
+        break;
+    case TX_ISP_TUNING_CMD_T41_FACE_AE_LUMA:
+        memcpy(v, cache + T41_AE_CACHE_FACE_LUMA, 8);
+        break;
+    case TX_ISP_TUNING_CMD_T41_AE_FLICKER_FLAG:
+        memcpy(v, cache + T41_AE_CACHE_FLICKER_FLAG, 4);
+        break;
+    default:
+        memcpy(v, state + T41_AE_STATE_BV, 4);
+        break;
+    }
+    spin_unlock_irqrestore(lock, flags);
+    if (is_get)
+        return private_copy_to_user((void __user *)user_ptr, v, bytes) ?
+            -EFAULT : 0;
+    return 0;
+}
+
+/*
  * IMPISPAeExpListAttr (stock 0x08000027, 324 bytes;
  * tisp_ae_api_set/get_exp_list): see t41_ae_explist_set/get.
  */
@@ -23036,6 +23134,15 @@ static int64_t isp_core_tunning_unlocked_ioctl_body(uintptr_t a0, uint32_t a1, u
             { TX_ISP_TUNING_CMD_T41_OSD_BLOCK, T41_OSD_BLOCK_BYTES,
               TX_ISP_TUNING_DIR_GET | TX_ISP_TUNING_DIR_SET,
               TX_ISP_TUNING_PAYLOAD_USER_PTR },
+            { TX_ISP_TUNING_CMD_T41_FACE_AE_WEIGHT, 12,
+              TX_ISP_TUNING_DIR_GET | TX_ISP_TUNING_DIR_SET,
+              TX_ISP_TUNING_PAYLOAD_USER_PTR },
+            { TX_ISP_TUNING_CMD_T41_FACE_AE_LUMA, 8,
+              TX_ISP_TUNING_DIR_GET, TX_ISP_TUNING_PAYLOAD_USER_PTR },
+            { TX_ISP_TUNING_CMD_T41_AE_FLICKER_FLAG, 4,
+              TX_ISP_TUNING_DIR_GET, TX_ISP_TUNING_PAYLOAD_USER_PTR },
+            { TX_ISP_TUNING_CMD_T41_AE_BV, 4,
+              TX_ISP_TUNING_DIR_GET, TX_ISP_TUNING_PAYLOAD_USER_PTR },
             { TX_ISP_TUNING_CMD_T41_SWITCH_BIN,
               TX_ISP_TUNING_T41_SWITCH_BIN_BYTES,
               TX_ISP_TUNING_DIR_SET, TX_ISP_TUNING_PAYLOAD_USER_PTR },
@@ -23346,6 +23453,13 @@ static int64_t isp_core_tunning_unlocked_ioctl_body(uintptr_t a0, uint32_t a1, u
         if (route && route->id == TX_ISP_TUNING_CMD_T41_OSD_BLOCK)
             return t41_tuning_osd_block(request.channel, request.is_get,
                                         request.value_or_ptr);
+        /* Issue #171 groups (README "Issue 171 controls"). */
+        if (route && (route->id == TX_ISP_TUNING_CMD_T41_FACE_AE_WEIGHT ||
+                      route->id == TX_ISP_TUNING_CMD_T41_FACE_AE_LUMA ||
+                      route->id == TX_ISP_TUNING_CMD_T41_AE_FLICKER_FLAG ||
+                      route->id == TX_ISP_TUNING_CMD_T41_AE_BV))
+            return t41_tuning_ae_extra(request.channel, route->id,
+                                       request.is_get, request.value_or_ptr);
         /*
          * Public tuning IDs with no open implementation yet: report it
          * instead of acknowledging the request unchanged.
