@@ -933,6 +933,44 @@ little-endian word, so a bitmap with the bytes B,G,R,A in memory needs
 the stock ones, so the vendor stack should show the same (not compared on the
 vendor stack).
 
+## Issue 171 controls (branch `claude/t41-isp-routes`, 2026-10-31)
+
+Tuning controls (ioctl 0xc0105435) that the T41 libimp 1.2.5/1.2.6 sends
+and the open module answered with EPERM before. Each follows the OEM
+`tx-isp-t41.ko` of SDK 1.2.5 (`tx_isp_core_ops_s/g_ctrl`, Ghidra + objdump):
+
+| control | call | OEM path | open |
+|---|---|---|---|
+| `0x08000036` 12 B get/set | Get/SetFaceAeWeiget | tisp_ae_api_set/get_face_ae_tune_params, ae_cache +0x5f8/+0x5fc/+0x600 | same fields of the vendor AE cache |
+| `0x08000037` 8 B get | GetFaceAeLuma | tisp_ae_api_get_gobal_roi_luma, ae_cache +0x5f0/+0x5f4 | same (vendor AE writes them per frame) |
+| `0x0800003a` 4 B get | GetAEFlickerFlag | tisp_ae_api_get_flicker_flag, ae_cache +0x67c | same |
+| `0x080000b3` 4 B get | GetAeBv (libimp 1.2.6) | no handler in the 1.2.5 module | AE state +0x2614, the BV tisp_ae_get_bv stores per frame (inferred) |
+| `0x08000097` 12 B get/set | Get/SetCsccrMode | tisp_csccr_api_set/get and the 3 presets | `tx_isp_t41_isp_extra.h` t41_csccr_plan, 0xf08e0..0xf08ec, 0xf0010 |
+| `0x080000a0` 32 B get/set | Get/SetDrawBlock (and IMP_OSD_*RgnAttr_ISP line/rect) | tisp_s/g_draw_block_attr, drawn by tisp_msca_set_line | `t41_draw_set/get/emit`, drawn by the per-frame MSCA shadow commit after the OSD pictures |
+
+The AE values need the vendor AE (`t41_vendor_ae`, default on): -EOPNOTSUPP
+without it, -EAGAIN before its first frame. CSCCR GET returns the last
+custom record (stock: the presets leave it unchanged). Draw units: 20 units,
+registers 0xf0400 + 16n (position, size, colour | width << 24, control);
+type 2 is a line between two points, sloped lines only on units 0..7 (stock).
+Read-only counter `draw_commits`. Host test `tests/tx_isp_t41_isp_extra_test.c`.
+
+Differences to stock: draw unit >= 20 refused (stock writes past its
+table); GetDrawBlock takes the unit from the request (stock reads it from an
+uninitialised stack buffer) and returns the YUV colour in its three bytes
+(stock writes v over u); a custom CSCCR range with an empty input range is
+refused (stock divides by zero); the AE reads check the AE is running.
+
+Not served (still EPERM/ENOTTY, reasons): GetAFMetricesInfo `0x08000034` and
+GetAfStatistics `0x08000031` (the AF statistics path is not ported, the
+buffers would only hold zeros); SetTmoFaceae `0x08000062` (writes the TMO
+runtime block and 0x1e040..0x1e07c, which the open TMO profile also owns);
+ISP-device ioctls StartNightMode 0xc004542e, Set/GetInternalChnAttr
+0xc004542f/30 (rebinds frame channels through the core ioctl), WDR_OPEN
+0xc004548d (start-mode flags read at sensor add), LDC 0xc0045479..7b and
+GPIO 0xc004548e/f (no handler at all in the 1.2.5 module: it returns 0 for
+them without doing anything; a newer OEM module is needed to derive them).
+
 ## Known issues (2026-10-10)
 
 - **Heap overwrite across module reloads.** `rmmod tx_isp_t41` sometimes
