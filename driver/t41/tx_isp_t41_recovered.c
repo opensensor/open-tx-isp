@@ -8044,7 +8044,7 @@ int64_t vic_frame_channel_streamoff(uintptr_t a0)
     uint32_t a1 = 0;
     uint32_t ra = 0;
     uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Arithmetic */
     v0 = (unsigned int *)&ivdc_threshold_line;
@@ -8333,9 +8333,9 @@ int64_t tx_isp_vic_start(uintptr_t a0, uint32_t a1)
     uint32_t s3 = 0;
     uint32_t *s4 = 0;
     uint32_t s5 = 0;
-    uint32_t *s6 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    uintptr_t s6 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -9270,7 +9270,7 @@ int64_t vic_frame_channel_qbuf(uintptr_t a0, uintptr_t a1)
     uint32_t s3 = 0;
     uint32_t *s4 = 0;
     uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -9485,14 +9485,14 @@ int64_t vic_frame_channel_streamon(uintptr_t a0)
     uint32_t *a3 = 0;
     uint32_t ra = 0;
     uintptr_t *s0 = 0;
-    uintptr_t *s1 = 0;
+    uintptr_t s1 = 0;
     uint32_t *s2 = 0;
     uint32_t s3 = 0;
     uint32_t *s4 = 0;
     uint32_t s5 = 0;
     uint32_t t0 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -9765,7 +9765,7 @@ int64_t vic_frame_channel_set_fmt(uintptr_t a0, uintptr_t a1)
     uint32_t *t1 = 0;
     uint32_t *t2 = 0;
     uintptr_t *v0 = 0;
-    uint32_t *v1 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -10521,7 +10521,7 @@ int32_t vic_core_ops_init(uintptr_t a0, uintptr_t a1)
     uint32_t *a3 = 0;
     uint32_t ra = 0;
     uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Branch */
     v0 = a0 < -4095;
@@ -10554,11 +10554,11 @@ int32_t vic_core_ops_init(uintptr_t a0, uintptr_t a1)
     if (a1 == v1) { goto vic_core_ops_init0xa4; }
 
     /* fragment 7: Epilogue */
+    /* #189: the OEM `jr ra` carries this store in its delay slot (state record = 2 when it was not 2 yet);
+     * the lift put the return in front of it and lost the store. */
+    *(uint32_t *)((char *)a0 + 388) = v1;
     /* function epilogue: restore registers and return */
     return (int32_t)v0;
-
-    /* fragment 8: CallSetup */
-    *(uint32_t *)((char *)a0 + 388) = v1;
 
 vic_core_ops_init0x50:
     /* fragment 9: Prologue */
@@ -14195,7 +14195,7 @@ int32_t tx_isp_vin_resume_module(uintptr_t a0)
     uint32_t a2 = 0;
     uint32_t *a3 = 0;
     uint32_t ra = 0;
-    uintptr_t *s0 = 0;
+    uintptr_t s0 = 0;
     uint32_t *s1 = 0;
     uintptr_t *s2 = 0;
     uint32_t s3 = 0;
@@ -14344,7 +14344,7 @@ int32_t tx_isp_vin_suspend_module(uintptr_t a0)
     uint32_t a2 = 0;
     uint32_t *a3 = 0;
     uint32_t ra = 0;
-    uintptr_t *s0 = 0;
+    uintptr_t s0 = 0;
     uintptr_t *s1 = 0;
     uint32_t *s2 = 0;
     uint32_t s3 = 0;
@@ -18749,7 +18749,7 @@ uint32_t tx_isp_switch_bin_isra_78(uint32_t a0, uintptr_t a1, uint32_t a2)
     uint32_t *a3 = 0;
     uint32_t ra = 0;
     uint32_t *s0 = 0;
-    uintptr_t *s1 = 0;
+    uintptr_t s1 = 0;
     uint32_t *s2 = 0;
     uintptr_t s3 = 0;
     uintptr_t *v0 = 0;
@@ -24169,7 +24169,7 @@ int32_t isp_frame_done_wakeup(uint32_t a0)
     uint32_t ra = 0;
     uint32_t *s0 = 0;
     uintptr_t *v0 = 0;
-    uint32_t *v1 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -28247,7 +28247,7 @@ int64_t ivdc_core_ops_init(uintptr_t a0, uintptr_t a1)
     uint32_t *a3 = 0;
     uint32_t ra = 0;
     uintptr_t *s0 = 0;
-    uintptr_t *v0 = 0;
+    uintptr_t v0 = 0;
     uintptr_t *v1 = 0;
 
     /* fragment 0: Prologue */
@@ -29200,9 +29200,9 @@ int32_t fs_resume_module(uintptr_t a0)
     uint32_t a2 = 0;
     uint32_t *a3 = 0;
     uint32_t ra = 0;
-    uintptr_t *s0 = 0;
+    uintptr_t s0 = 0;
     uintptr_t *s1 = 0;
-    uintptr_t *s2 = 0;
+    uintptr_t s2 = 0;
     uint32_t s3 = 0;
     uint32_t *s4 = 0;
     uint32_t s5 = 0;
@@ -29952,7 +29952,7 @@ int64_t __fill_tisp_buffer(uintptr_t a0, uintptr_t a1)
     uintptr_t *s1 = 0;
     uintptr_t *s2 = 0;
     uintptr_t *v0 = 0;
-    uint32_t *v1 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -34885,10 +34885,10 @@ int32_t tx_isp_resume(uintptr_t a0)
     uint32_t a2 = 0;
     uint32_t *a3 = 0;
     uint32_t ra = 0;
-    uint32_t *s0 = 0;
-    uintptr_t *s1 = 0;
-    uint32_t *s2 = 0;
-    uintptr_t *v0 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t s2 = 0;
+    uintptr_t v0 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -34974,10 +34974,10 @@ int32_t tx_isp_suspend(uintptr_t a0)
     uint32_t a2 = 0;
     uint32_t *a3 = 0;
     uint32_t ra = 0;
-    uint32_t *s0 = 0;
-    uintptr_t *s1 = 0;
-    uint32_t *s2 = 0;
-    uintptr_t *v0 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t s2 = 0;
+    uintptr_t v0 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -37442,12 +37442,12 @@ int32_t tx_isp_set_ae_algo_open_isra_23(uintptr_t a0, uint32_t a1)
     uint32_t a2 = 0;
     uint32_t *a3 = 0;
     uint32_t ra = 0;
-    uint32_t *s0 = 0;
+    uintptr_t s0 = 0;
     uintptr_t *s1 = 0;
     uintptr_t *s2 = 0;
     uint32_t s3 = 0;
     uintptr_t *s4 = 0;
-    uintptr_t *v0 = 0;
+    uintptr_t v0 = 0;
     uintptr_t *v1 = 0;
 
     /* fragment 0: Prologue */
@@ -105354,12 +105354,12 @@ int32_t tisp_lce_clr_ram_part_0(void)
     uint32_t local_14 = 0;
     uint32_t *local_18 = 0;
     uint32_t local_1c = 0;
-    uint32_t *a0 = 0;
+    uintptr_t a0 = 0;
     uint32_t a1 = 0;
     uint32_t ra = 0;
     uint32_t *s0 = 0;
-    uint32_t *s1 = 0;
-    uint32_t *s2 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t s2 = 0;
     uint32_t *t9 = 0;
 
     /* fragment 0: Prologue */
@@ -158936,8 +158936,8 @@ int32_t tisp_s_wdr_en(uint32_t a0, uint32_t a1, uint32_t a2)
     uint32_t s7 = 0;
     uint32_t s8 = 0;
     uint32_t t0 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -161403,7 +161403,7 @@ uint32_t tisp_switch_bin(uint32_t a0, uint32_t a1)
     uint32_t local_1c = 0;
     uint32_t a2 = 0;
     uint32_t ra = 0;
-    uint32_t *s0 = 0;
+    uintptr_t s0 = 0;
     uint32_t *s1 = 0;
     uintptr_t *v0 = 0;
     uint32_t *v1 = 0;
@@ -165652,7 +165652,7 @@ int64_t isp_mbus_to_bayer_isra_1(uintptr_t a0, uint32_t a1, uint32_t a2)
     uint32_t *a3 = 0;
     uint32_t ra = 0;
     uintptr_t *s0 = 0;
-    uintptr_t *v0 = 0;
+    uintptr_t v0 = 0;
     uint32_t *v1 = 0;
 
     /* fragment 0: Prologue */
@@ -167638,10 +167638,10 @@ int64_t isp_info_show_isra_6(uintptr_t a0)
     uintptr_t s3 = 0;
     uintptr_t *s4 = 0;
     uint32_t s5 = 0;
-    uintptr_t *s6 = 0;
+    uintptr_t s6 = 0;
     uint32_t s7 = 0;
     uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -169598,7 +169598,7 @@ int32_t ispcore_suspend_module(uintptr_t a0)
     uint32_t *s1 = 0;
     uint32_t *s2 = 0;
     uintptr_t s3 = 0;
-    uintptr_t *s4 = 0;
+    uintptr_t s4 = 0;
     uint32_t s5 = 0;
     uint32_t *s6 = 0;
     uintptr_t *v0 = 0;

@@ -606,6 +606,11 @@ t40_hardcoded_anchor_check:
 lifted_ptr_scale_check:
 	python3 ./lifted_ptr_scale_check.py --selftest
 	python3 ./lifted_ptr_scale_check.py --baseline lifted_ptr_scale_baseline.txt
+	python3 ./lifted_ptr_scale_check.py --expect-clean t41:tx_isp_suspend t41:tx_isp_resume t41:vic_frame_channel_streamon t41:vic_frame_channel_streamoff \
+		t41:vic_frame_channel_qbuf t41:vic_frame_channel_set_fmt t41:isp_frame_done_wakeup t41:tisp_s_wdr_en t41:tx_isp_vic_start t41:isp_info_show_isra_6 \
+		t41:isp_mbus_to_bayer_isra_1 t41:ivdc_core_ops_init t41:tisp_lce_clr_ram_part_0 t41:tx_isp_set_ae_algo_open_isra_23 t41:tx_isp_vin_suspend_module \
+		t41:tx_isp_vin_resume_module t41:fs_resume_module t41:ispcore_suspend_module t41:vic_core_ops_init t41:tx_isp_switch_bin_isra_78 t41:tisp_switch_bin \
+		t41:frame_channel_unlocked_ioctl t41:tx_isp_unlocked_ioctl t41:__fill_tisp_buffer
 
 # T40 module exit gates the ISP/CSI clocks it enabled (#152)
 t40_clk_teardown_check:

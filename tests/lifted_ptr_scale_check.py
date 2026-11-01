@@ -13,6 +13,8 @@ end, and stores land behind the object (#186: tisp_g/s_mscaler_mask_attr).  Clas
   ctr    a `loop` whose stepped pointer starts at a literal, is stepped by literal N and meets a literal bound that
          (bound - start) is not a multiple of N*sizeof(*P): the compiled counter never equals the bound, the loop
          only ends through another exit (#190-class: streamoff wait loop ran without its 21 * 100 ms limit)
+  var    `X = P + Y`, `X = P + (uintptr_t)Y` with a typed P (element size > 1) and a variable byte offset Y: the index is
+         scaled by sizeof(*P) (vic_frame_channel_streamon: a flag byte array read at 4 * index)
   unal   `*(uint32_t *)((char *)X + k)` with k not a multiple of 4 (u16: odd k): unaligned access, usually a
          u16 field read as a word
 
@@ -35,6 +37,7 @@ DECL = re.compile(r"\b(uintptr_t|uint32_t|int32_t|int|uint16_t|int16_t|int64_t|u
 NUM = r"(0x[0-9a-fA-F]+|\d+)"
 FUNC = re.compile(r"^[A-Za-z_][\w \*]*?[ \*](\w+)\(([^;]*)\)\s*$")
 RE_OFF = re.compile(r"^\s*(\w+)\s*=\s*(?:(\w+)\s*[+-]\s*" + NUM + r"|" + NUM + r"\s*\+\s*(\w+))\s*;")
+RE_VAR = re.compile(r"^\s*(\w+)\s*=\s*(?:\(\s*\w+(?: \w+)?\s*\*\s*\)\s*)?(\w+)\s*\+\s*(?:\(uintptr_t\)\s*)?([A-Za-z_]\w*)\s*;")
 RE_ACC = re.compile(r"^\s*(\w+)\s*(\+=|-=)\s*" + NUM + r"\s*;")
 RE_BACK = re.compile(r"if \((\w+) (!=|==) (\w+)\) \{ goto (\w+); \}")
 RE_UNAL = re.compile(r"\(\s*(uint32_t|int32_t|uint16_t|int16_t)\s*\*\s*\)\s*\(\s*\(\s*(?:char|uint8_t)\s*\*\s*\)\s*\w+\s*\+\s*" + NUM + r"\s*\)")
@@ -116,6 +119,33 @@ def cut_stub_tails(lines):
     return out
 
 
+def cut_hard_returns(lines):
+    """A function body that returns unconditionally at top level (`    return X;`, no goto before it, next line neither a
+    label nor the closing brace) is a hand-written dispatcher in front of the old lifted body (frame_channel_unlocked_ioctl:
+    "recovered dispatch disabled"; T4x_UNRECOVERED_RET(...) is a `return`): the code behind it can never run.  Blank it."""
+    out = list(lines)
+    i = 0
+    while i < len(out):
+        if FUNC.match(out[i]) and i + 1 < len(out) and out[i + 1] == "{":
+            j = i + 1
+            while j < len(out) and out[j] != "}":
+                j += 1
+            for k in range(i + 2, j):
+                if "goto " in out[k]:
+                    break
+                if re.match(r"^    (return\b[^;]*|T[0-9]+_UNRECOVERED_RET\(.*\));\s*$", out[k]):
+                    n = k + 1
+                    while n < j and (not out[n].strip() or out[n].lstrip().startswith(("/*", "*", "//"))):
+                        n += 1
+                    if n < j and not re.match(r"^\w+:", out[n]) and not out[n].lstrip().startswith(("#", "}")):
+                        for q in range(n, j):
+                            out[q] = ""
+                    break
+            i = j
+        i += 1
+    return out
+
+
 def functions(lines):
     i = 0
     while i < len(lines):
@@ -133,7 +163,7 @@ def live_set(rec, others):
     """Static over-approximation of the functions that can run: hand-written functions, anything named in other
     files / EXPORT_SYMBOL / ops tables is a root, edges are identifier references (an `if (1) { ... return }` stub
     cuts the rest of its body).  Functions outside it are marked `unreach` in the baseline (not device-proven)."""
-    lines=mask_inactive(cut_stub_tails(open(rec,errors='replace').read().split("\n")))
+    lines=mask_inactive(cut_hard_returns(cut_stub_tails(open(rec,errors='replace').read().split("\n"))))
     funcs={};i=0;span=[]
     while i<len(lines):
         m=re.match(r'^[A-Za-z_][\w \*]*?[ \*](\w+)\(([^;]*)\)\s*$',lines[i])
@@ -155,7 +185,9 @@ def live_set(rec, others):
         return b
     refs={f:set(idre.findall(strip(b)))&F-{f} for f,(b,c) in funcs.items()}
     oth=""
-    for f in others: oth+=open(f,errors='replace').read()
+    for f in others:
+        t=open(f,errors='replace').read()
+        oth+=re.sub(r'/\*.*?\*/|//[^\n]*','',t,flags=re.S)   # comments name functions without calling them
     roots={f for f,(b,c) in funcs.items() if not c}
     roots|=set(idre.findall(oth))&F
     roots|=set(idre.findall("\n".join(l for l in non.split("\n") if re.search(r"EXPORT_SYMBOL|module_init|module_exit|\.\w+\s*=|^\s*    roots|=set(idre.findall(non))&F?\w+,\s*$",l))))&F
@@ -169,7 +201,7 @@ def live_set(rec, others):
 
 def scan(path):
     """-> {(func, class): [(line, text)]}"""
-    lines = mask_inactive(cut_stub_tails(open(path, encoding="utf-8", errors="replace").read().split("\n")))
+    lines = mask_inactive(cut_hard_returns(cut_stub_tails(open(path, encoding="utf-8", errors="replace").read().split("\n"))))
     res = collections.defaultdict(list)
     for name, first, body in functions(lines):
         tv = {}
@@ -206,6 +238,9 @@ def scan(path):
                         stepn[p].append(int(m.group(3), 0) * (1 if "+" in s.split("=", 1)[1] else -1))
                     else:
                         res[(name, "off")].append((first + k, s.strip()))
+            m = RE_VAR.match(s)
+            if m and m.group(2) in tv and tv[m.group(2)] > 1 and m.group(3) not in tv:
+                res[(name, "var")].append((first + k, s.strip()))
             for u in ([] if "_setLeftPart32" in s or "_setRightPart32" in s else RE_UNAL.finditer(s)):  # lwl/lwr pair
                 w = 4 if "32" in u.group(1) else 2
                 if int(u.group(2), 0) % w:
@@ -268,6 +303,27 @@ int64_t stub_fn(uintptr_t a0)
     v0 = v0 + 4;
     return 0;
 }
+
+int64_t var_fn(uintptr_t a0, uintptr_t a1)
+{
+    uintptr_t *v0 = 0;
+    uintptr_t v1 = 0;
+    v0 = (unsigned int *)&a0;
+    v0 = v0 + a1;
+    v1 = v1 + a1;
+    return 0;
+}
+
+int64_t early_return_fn(uintptr_t a0)
+{
+    uintptr_t *v0 = 0;
+    if (a0 == 1) {
+        return 5;
+    }
+    return -ENOTTY;
+    v0 = v0 + 4;
+    return 0;
+}
 """
 
 
@@ -280,12 +336,22 @@ def selftest():
     finally:
         os.unlink(f.name)
     got = {k: len(v) for k, v in r.items()}
-    want = {("bad_fn", "step"): 1, ("bad_fn", "off"): 1, ("bad_fn", "loop"): 1, ("bad_fn", "ctr"): 1}
+    want = {("bad_fn", "step"): 1, ("bad_fn", "off"): 1, ("bad_fn", "loop"): 1, ("bad_fn", "ctr"): 1, ("var_fn", "var"): 1}
     if got != want:
         print("selftest FAIL: got %s want %s" % (got, want))
         return 1
     print("lifted_ptr_scale_check selftest: ok (typed pointer flagged, uintptr_t byte arithmetic and KERNEL_TREE stub tail not)")
     return 0
+
+
+def allres_for(tag):
+    out = {}
+    for t_, rel in FILES:
+        p = os.path.join(HERE, rel)
+        if t_ == tag and os.path.exists(p):
+            for (fn, cl), v in scan(p).items():
+                out[(t_, fn, cl)] = v
+    return out
 
 
 def main():
@@ -295,10 +361,28 @@ def main():
     ap.add_argument("--write-baseline")
     ap.add_argument("--list")
     ap.add_argument("--func")
+    ap.add_argument("--expect-clean", nargs="+", metavar="TAG:FUNC",
+                    help="host regression test: these reviewed/fixed functions must be defined and have no finding in any class")
     ap.add_argument("files", nargs="*")
     a = ap.parse_args()
     if a.selftest:
         return selftest()
+    if a.expect_clean:
+        bad = 0
+        for item in a.expect_clean:
+            tag, fn = item.split(":", 1)
+            rel = dict(FILES)[tag]
+            src = open(os.path.join(HERE, rel), errors="replace").read()
+            if not re.search(r"^[A-Za-z_][\w \*]*?[ \*]" + re.escape(fn) + r"\([^;]*\)\s*\n\{", src, re.M):
+                print("FAIL: %s %s is not defined (renamed or removed: update the --expect-clean list)" % (tag, fn))
+                bad += 1
+                continue
+            hits = [(cl, v[0]) for (t_, f_, cl), v in allres_for(tag).items() if f_ == fn]
+            for cl, (ln, t) in hits:
+                print("FAIL: %s %s still has a %s finding (typed-pointer byte arithmetic came back): line %d: %s" % (tag, fn, cl, ln, t))
+                bad += 1
+        print("lifted_ptr_scale_check --expect-clean: %s (%d functions)" % ("FAIL" if bad else "ok", len(a.expect_clean)))
+        return 1 if bad else 0
     allres = {}
     for tag, rel in FILES:
         p = os.path.join(HERE, rel)
@@ -330,6 +414,8 @@ def main():
                     "# status open = not yet compared with the OEM, dead/ok/fixed = reviewed (see the script header)\n")
             for (tag, fn, cl), v in sorted(allres.items()):
                 st, note = old.get((tag, fn, cl), ("open" if fn in live[tag] else "unreach", ""))
+                if st in ("open", "unreach"):
+                    st = "open" if fn in live[tag] else "unreach"   # refresh when the reachability analysis changes
                 o.write(("%s %s %s %d %s %s" % (tag, fn, cl, len(v), st, note)).rstrip() + "\n")
         print("wrote %d entries" % len(allres))
         return 0
