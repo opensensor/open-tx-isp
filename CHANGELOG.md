@@ -4,6 +4,10 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-01, T40 bit-exactness and alignment proofs run in `make check` without fixtures (`claude/issue-163`)
+
+- `tests/t40_bitexact_host.sh` (in `make -C tests check`) now always runs all seven C-chain comparisons against the literal OEM chains (ADR, DPC, LCE, SDNS, Defog, CDNS, BCSH; every register write and chain state) on two generated deterministic tuning bins (`fuzz:1`, `fuzz:2`), plus the ADR chain once with `-fsanitize=alignment` (no unaligned access). About 55 s. A real tuning bin (`T40_TUNING_BIN`) is added when set. The AWB long_alogrithm/ct_detect replay still needs the vendor tuning bin and OEM `.data` and skips without them. Host only.
+
 ## 2026-11-01, T40 pipeline-top block cleared at ISP init (`claude/issue-150`)
 
 - **T40 ISP top block "main" not zero after the ISP open (#150):** the kernel-build `tisp_main_init` shim never ran the OEM `tisp_tstp_main_init` (fresh zeroed 154-byte block + `tisp_tstp_reg_cfg(0)`), so the 31 registers at ISP + 0x60000 kept their hardware defaults (0x28=0x200, 0x40=0x22, 0x90=2, 0xa8=2) while the vendor reads 0. The shim now frees the block of an earlier stream start and runs the OEM init right after the block inits; the sec block keeps its defaults like the vendor. Host check `tests/check_t40_tstp_init.sh` (`make -C tests check`, 120 passed, 0 failed).
