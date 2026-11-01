@@ -31,7 +31,10 @@ module_param_named(t40_vawb_faults, vawb_faults, uint, 0444);
 module_param_named(t40_vawb_frames, vawb_frames, uint, 0444);
 
 /* OEM private state of the chain (not shared with other driver code) */
-static u32 vawb_tawb_custom_en[2];
+/* #65: OEM tawb_custom_en[2] is ONE array: tisp_awb_algo_init (custom AWB library registered, ioctl 0xc0045425) writes it and
+ * tisp_awb_main_process reads it to complete(awb_algo_comp) after the algorithm step.  The private copy that stood here was never
+ * written, so the user-space AWB worker (0xc0045423) never woke up: alias the driver's array (awb_algo_enable). */
+#define vawb_tawb_custom_en ((u32 *)awb_algo_enable)
 static u32 vawb_awb_num;
 static u32 vawb_peter_test_count[2];
 static u32 vawb_converge_tele_gain = 0x00010001U;              /* OEM .data 0x2bf14 */

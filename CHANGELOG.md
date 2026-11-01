@@ -4,6 +4,13 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-02, T40 custom AE/AWB algorithm workers are woken (Lu-Fi/openimp#65, host and QEMU only, camera run incomplete)
+
+- Why `handle()` of a user-space AE/AWB library (`IMP_ISP_SetAeAlgoFunc` / `SetAwbAlgoFunc`) was never called: (1) AWB: the translated vendor AWB chain read a private copy of `tawb_custom_en` that `tisp_awb_algo_init` never writes, so `complete(awb_algo_comp)` at the end of `tisp_awb_main_process` was never reached; it now reads the driver's array (`awb_algo_enable`). (2) AE: the vendor ends `tisp_ae_main_process` (event 1) with `complete(ae_algo_comp)` when a custom AE is registered; this driver does not push event 1 (T40-DROP-OEM-AE), so nothing woke the get-handle ioctl. The AE histogram IRQ now does that last step (statistics are already filled there), and the own NV12 exposure loop stands still while a custom AE is registered, as the vendor skips its exposure allocation (`ta_custom_en == 0` guard).
+- Host: `make -C tests check` 126 passed / 0 failed (new source guard `check_t40_custom_algo_wake.sh`).
+- QEMU T40 (debug kernel, `slub_debug=FZPU`, one CPU), apitest case `customalgo_t40`: before 26 PASS / 2 FAIL (AE and AWB `handle()` 0 calls); after 28 PASS / 0 FAIL (AE handle 121-182 calls, about 12 per second, AWB 122-252 calls, open and close 1 of 1, FPS notify reached), 0 oops; an occasional slab-validate hit in a dirty guest (timps running on the same channels) was not reproducible in 3 clean runs.
+- Camera: AWB `handle()` reached (266 calls), but the AE open ioctl answered EPERM there (`tx_isp_set_ae_algo_open` returns -1; the QEMU guest accepts it), so the AE leg is not device-proven yet.
+
 ## 2026-11-01, T40 lost tail calls / lost ALU in lifted code, camera proof (Lu-Fi/openimp#189 pass 4, camera-tested on T40; T41 proc open left as a shim)
 
 - Restored on T40 (vendor T40 module and libt40-firmware compared): `system_reg_write_af` (both legs fall through to the AF register store), `tisp_s_module_control` (lost mask `0x200080` and the MDNS trigger tail), `tisp_ae_s_comp` (hand translation of the lost tail), `tisp_csc_set_attr` and `tisp_dmsc_params_refresh` (no default runtime change). Host test `tests/t40_lost_tail_host.sh`.

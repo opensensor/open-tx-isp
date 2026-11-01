@@ -79840,7 +79840,13 @@ int32_t tisp_ae_main_interrupt_hist(void)
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)tisp_ae_ai_main_interrupt_static)(a0); /* jalr target resolved by relocation */
 
     /* fragment 5: T40-DROP-OEM-AE: the OEM pushes event 1 (tisp_ae_main_process) here; the lifted OEM AE
-     * is removed, the statistics above still feed the frame-3A AE and the tuning getters. */
+     * is removed, the statistics above still feed the frame-3A AE and the tuning getters.
+     * #65: the only part of event 1 that survives is its last step: with a custom AE library registered
+     * (ta_custom_en[0] == 1, tisp_ae_algo_init) tisp_ae_main_process ends with private_complete(ae_algo_comp),
+     * which wakes the get-handle ioctl (0xc004541b) of the user-space AE worker.  The histogram and zone
+     * statistics it reads are the ones filled above. */
+    if (READ_ONCE(ta_custom_en[0]) == 1)
+        private_complete((uintptr_t)&ae_algo_comp[0]);
 
     /* fragment 6: Epilogue */
     /* function epilogue: restore registers and return */
@@ -79889,6 +79895,8 @@ int32_t tisp_ae_sec_interrupt_hist(void)
 
     /* fragment 5: T40-DROP-OEM-AE: OEM event 24 push (tisp_ae_sec_process) removed. */
     (void)event_10;
+    if (READ_ONCE(ta_custom_en[1]) == 1)    /* #65: the custom AE wake-up of sensor 1 (sec process ends like the main one) */
+        private_complete((uintptr_t)&ae_algo_comp[4]);
 
     /* fragment 6: Epilogue */
     /* function epilogue: restore registers and return */
@@ -86245,7 +86253,10 @@ static void regtrace_frame_3a_sample(int channel, uint32_t y_phys, uint32_t uv_p
      * one period, AUTO may go below in bright light).  With none of them set
      * the loop is the tuned default.
      */
-    if (regtrace_enable_ae_sensor_apply) {
+    /* #65: with a custom AE library registered the vendor skips its own exposure allocation
+     * (tisp_ae_main_process: ev_alloc only when ta_custom_en == 0); the library's result ioctl
+     * (tisp_ae_algo_handle) drives the sensor instead. */
+    if (regtrace_enable_ae_sensor_apply && READ_ONCE(ta_custom_en[0]) != 1) {
         uint32_t it = regtrace_ae_soft_cur_it;
         uint32_t again = regtrace_ae_soft_cur_again;
         uint32_t max_again = regtrace_t40_ae_max_again_index();
