@@ -9433,6 +9433,7 @@ module_param_named(ae_target_comp, regtrace_ae_target_comp, uint, 0444);
  */
 #include "tx_isp_t40_ae_api.h"
 #include "tx_isp_t40_osd_slot.h"
+#include "tx_isp_t40_draw.h"
 /* T40-LAYOUT: all AE API state lives in .t40c2 (new .bss objects shift the lifted &isp_memopt+N strays:
  * a first build with ~5 KB of new .bss delivered no frames on .184) */
 static spinlock_t t40_ae_api_lock T40C2 = __SPIN_LOCK_UNLOCKED(t40_ae_api_lock);
@@ -148937,8 +148938,6 @@ int32_t Tzn_Msca_Shd_mask(uint32_t arg1, void *arg2)
     int32_t var_30_1;
     uint32_t a1_6;
     int32_t a1_8;
-    uint32_t v0_16;
-    uint32_t tmp1, tmp2;
 
     __private_spin_lock_irqsave((uintptr_t)arg2 + 0x740, &var_40);
 
@@ -148981,11 +148980,9 @@ int32_t Tzn_Msca_Shd_mask(uint32_t arg1, void *arg2)
         s6_1 = (void *)(uintptr_t)((uintptr_t)s6_1 + (0x268));
     } while (s4_1 + 0x16468 != i);
 
-    tmp1 = *(uint32_t *)((char *)arg2 + 0x28c) | *(uint32_t *)((char *)arg2 + 0x29c) | *(uint32_t *)((char *)arg2 + 0x2ac) | *(uint32_t *)((char *)arg2 + 0x2bc);
-    tmp2 = *(uint32_t *)((char *)arg2 + 0x4f4) | *(uint32_t *)((char *)arg2 + 0x504) | *(uint32_t *)((char *)arg2 + 0x514) | *(uint32_t *)((char *)arg2 + 0x524);
-    v0_16 = (tmp1 << 1) | (tmp2 << 2);
-
-    system_reg_write(0x50324, v0_16 | *(uint32_t *)((char *)arg2 + 0x24) | *(uint32_t *)((char *)arg2 + 0x34) | *(uint32_t *)((char *)arg2 + 0x44) | *(uint32_t *)((char *)arg2 + 0x54));
+    /* OEM: BYTE enables ORed per output channel (the 32-bit reads of the lift pulled the u16 position fields into the
+     * register word; #186) */
+    system_reg_write(0x50324, t40_mask_en_word((const u8 *)arg2));
     system_reg_write(0x50324, s4_1 + 0x16014);
     system_reg_write(0x50320, 0x250102);
     system_reg_write(0x50420, 0x24000001);
@@ -149103,182 +149100,33 @@ int32_t Tzn_Msca_Shd_osd(int32_t arg1, void* arg2)
     return private_spin_unlock_irqrestore();
 }
 
+static void t40_line_sink(void *ctx, u32 value, u32 addr)
+{
+    (void)ctx;
+    system_reg_write(0x50324, value);
+    system_reg_write(0x50324, addr);
+}
+
 /* WHOLE_DRIVER_CANDIDATE fn_000000000006cf9c origin=fragment_seed original=Tzn_Msca_Shd_line_chx */
 int32_t Tzn_Msca_Shd_line_chx(int32_t arg1, int32_t arg2, int32_t arg3)
 {
+    /* Rewritten from the OEM (Eufy tx-isp-t40.ko Tzn_Msca_Shd_line_chx @0x7d9bc), #187.  arg1 = vin, arg2 = state
+     * (mscaler_s0/s1), arg3 = output channel (the caller toggles line_switch).  The lift read the u16 unit fields as
+     * unaligned 32-bit words and always took the negative-slope branch of the line quantiser; the register
+     * sequence now lives in tx_isp_t40_draw.h. */
     uint32_t var_48 = 0;
-    uint32_t s6 = arg2 + 0x740;
-    uint32_t s7 = arg2;
-    uint32_t s5 = arg3;
-    uint32_t *s1 = arg1;
-    uint32_t *v0;
-    uint32_t *a2;
-    
-    __private_spin_lock_irqsave(s6, &var_48);
-    
-    v0 = Tzn_Msca_Shd_Sta();
-    if (v0 != 0) {
+    int32_t *a2 = 0;
+    unsigned bad;
+
+    __private_spin_lock_irqsave((uintptr_t)arg2 + 0x740, &var_48);
+    if (Tzn_Msca_Shd_Sta() != 0) {
         return isp_printf(1, "[Tzn Msca Err] : SHD dma is busy, write reg value is err\n", a2);
     }
-    
-    int32_t a2_1 = system_reg_write(0x50320, 0x101);
-    int32_t *i = 0;
-    void *s7_1 = (void *)(arg3 * 0x268 + arg2);
-    int32_t s1_2 = (arg1 << 0xc) + (arg3 << 8);
-    char const *var_40_1 = "[Tzn Msca Warn] : This type is not supported!\n";
-    
-    do {
-        uint32_t v0_4 = *(uint32_t *)(s7_1 + 0x64);
-        uint32_t v0_12, a1_5, a1_11, a1_47;
-        
-        if (v0_4 == 2) {
-            system_reg_write(0x50324, (*(uint32_t *)((uintptr_t)s7_1 + 0x6a) << 0x10) | *(uint32_t *)((uintptr_t)s7_1 + 0x6c));
-            system_reg_write(0x50324, s1_2 + 0x16400);
-            a1_5 = (*(uint32_t *)((uintptr_t)s7_1 + 0x6e) << 0x10) | *(uint32_t *)((uintptr_t)s7_1 + 0x70);
-        label_6d0e8:
-            system_reg_write(0x50324, a1_5);
-            system_reg_write(0x50324, s1_2 + 0x16404);
-            system_reg_write(0x50324, (*(uint32_t *)((uintptr_t)s7_1 + 0x74) & 0xffffff) | (*(uint32_t *)((uintptr_t)s7_1 + 0x78) << 0x18));
-            system_reg_write(0x50324, s1_2 + 0x16408);
-            a1_11 = *(uint32_t *)(s7_1 + 0x68);
-            v0_12 = *(uint32_t *)((uintptr_t)s7_1 + 0x79) << 8;
-            goto label_6d1ec;
-        }
-        
-        if (v0_4 == 1) {
-            system_reg_write(0x50324, (*(uint32_t *)((uintptr_t)s7_1 + 0x6a) << 0x10) | *(uint32_t *)((uintptr_t)s7_1 + 0x6c));
-            system_reg_write(0x50324, s1_2 + 0x16400);
-            system_reg_write(0x50324, (*(uint32_t *)((uintptr_t)s7_1 + 0x6e) << 0x10) | *(uint32_t *)((uintptr_t)s7_1 + 0x70));
-            system_reg_write(0x50324, s1_2 + 0x16404);
-            system_reg_write(0x50324, (*(uint32_t *)((uintptr_t)s7_1 + 0x74) & 0xffffff) | (*(uint32_t *)((uintptr_t)s7_1 + 0x78) << 0x18));
-            system_reg_write(0x50324, s1_2 + 0x16408);
-            v0_12 = (*(uint32_t *)((uintptr_t)s7_1 + 0x64) << 4) | (*(uint32_t *)((uintptr_t)s7_1 + 0x79) << 8) | *(uint32_t *)((uintptr_t)s7_1 + 0x68);
-            a1_11 = *(uint32_t *)((uintptr_t)s7_1 + 0x7a) << 0x10;
-        label_6d1ec:
-            a1_47 = v0_12 | a1_11;
-        label_6d3d8:
-            system_reg_write(0x50324, a1_47);
-            a2_1 = system_reg_write(0x50324, s1_2 + 0x1640c);
-            i = (void *)(uintptr_t)((uintptr_t)i + (1));
-        } else if (v0_4 != 0) {
-            a2_1 = isp_printf(1, var_40_1, a2_1);
-            i = (void *)(uintptr_t)((uintptr_t)i + (1));
-        } else {
-            uint32_t a0_1 = *(uint32_t *)(s7_1 + 0x6e);
-            uint32_t t6_1 = *(uint32_t *)(s7_1 + 0x6a);
-            uint32_t v0_22 = *(uint32_t *)(s7_1 + 0x6c);
-            uint32_t t5_1 = *(uint32_t *)(s7_1 + 0x70);
-            int32_t a2_3 = (int16_t)a0_1 - (int16_t)t6_1;
-            int32_t t1_2 = (int16_t)t5_1 - (int16_t)v0_22;
-            int16_t t2_1 = (int16_t)a0_1;
-            
-            if (t6_1 < a0_1) {
-                t2_1 = (int16_t)t6_1;
-            }
-            
-            uint32_t t2_2 = (uint32_t)t2_1;
-            int16_t t3_1 = (int16_t)t5_1;
-            
-            if (v0_22 < t5_1) {
-                t3_1 = (int16_t)v0_22;
-            }
-            
-            uint32_t t3_2 = (uint32_t)t3_1;
-            
-            if (t1_2 == 0 || a2_3 == 0) {
-                int16_t v0_31 = (int16_t)(a2_3 >> 0x1f);
-                uint32_t a2_11 = (int32_t)((v0_31 ^ (int16_t)a2_3) - v0_31);
-                int16_t v0_32 = (int16_t)(t1_2 >> 0x1f);
-                
-                if (a2_11 == 0) {
-                    a2_11 = *(uint32_t *)(s7_1 + 0x78);
-                }
-                
-                uint32_t t1_9 = (int32_t)((v0_32 ^ (int16_t)t1_2) - v0_32);
-                
-                if (t1_9 == 0) {
-                    t1_9 = *(uint32_t *)(s7_1 + 0x78);
-                }
-                
-                system_reg_write(0x50324, t2_2 << 0x10 | t3_2);
-                system_reg_write(0x50324, s1_2 + 0x16400);
-                a1_5 = a2_11 << 0x10 | t1_9;
-                goto label_6d0e8;
-            }
-            
-            uint32_t t0_1 = *(uint32_t *)(s7_1 + 0x68);
-            uint32_t *a3_4;
-            
-            if (i < 8) {
-                if (a0_1 < t6_1 && t5_1 < v0_22) {
-                label_6d2e4:
-                    a2_3 = (int16_t)t6_1 - (int16_t)a0_1;
-                    t1_2 = (int16_t)v0_22 - (int16_t)t5_1;
-                }
-                
-                a3_4 = 0;
-                
-                if (t0_1 != 0) {
-                    int16_t v0_24 = (int16_t)(t1_2 >> 0x1f);
-                    
-                    if (t1_2 < 0) {
-                        goto label_6d410;
-                    }
-                    
-                    if (a2_3 < 0) {
-                        v0_24 = (int16_t)(t1_2 >> 0x1f);
-                    }
-                label_6d410:
-                    int16_t a1_49 = (int16_t)(a2_3 >> 0x1f);
-                    a2_3 = (int32_t)((a1_49 ^ (int16_t)a2_3) - a1_49);
-                    t1_2 = (int32_t)((v0_24 ^ (int16_t)t1_2) - v0_24);
-                    
-                    if (a2_3 < t1_2) {
-                        t0_1 = 3;
-                        a3_4 = (uint32_t *)((int16_t)((a2_3 << 8) / t1_2));
-                    } else {
-                        t0_1 = 1;
-                        a3_4 = (uint32_t *)((int16_t)((t1_2 << 8) / a2_3));
-                    }
-                } else if (a2_3 < t1_2) {
-                    t0_1 = 2;
-                    a3_4 = (uint32_t *)((int16_t)((a2_3 << 8) / t1_2));
-                } else {
-                    t0_1 = 0;
-                    a3_4 = (uint32_t *)((int16_t)((t1_2 << 8) / a2_3));
-                }
-                
-                goto label_6d340;
-            }
-            
-            if (t0_1 == 0) {
-                a3_4 = 0;
-                
-                if (a0_1 >= t6_1) {
-                    goto label_6d340;
-                }
-                
-                if (t5_1 < v0_22) {
-                    goto label_6d2e4;
-                }
-                
-                a3_4 = t0_1;
-            }
-        label_6d340:
-            system_reg_write(0x50324, t2_2 << 0x10 | t3_2);
-            system_reg_write(0x50324, s1_2 + 0x16400);
-            system_reg_write(0x50324, a2_3 << 0x10 | t1_2);
-            system_reg_write(0x50324, s1_2 + 0x16404);
-            system_reg_write(0x50324, (*(uint32_t *)((uintptr_t)s7_1 + 0x74) & 0xffffff) | (*(uint32_t *)((uintptr_t)s7_1 + 0x78) << 0x18));
-            system_reg_write(0x50324, s1_2 + 0x16408);
-            a1_47 = *(uint32_t *)((uintptr_t)s7_1 + 0x68) | 0x20 | (*(uint32_t *)((uintptr_t)s7_1 + 0x79) << 8) | ((t0_1 << 9 | (uintptr_t)a3_4) << 0x10);
-            goto label_6d3d8;
-        }
-        
-        s7_1 = (void *)((char *)s7_1 + 0x18);
-        s1_2 += 0x10;
-    } while (i != 0x10);
-    
+    system_reg_write(0x50320, 0x101);
+    bad = t40_line_chx_emit((const u8 *)(uintptr_t)arg2 + (uint32_t)arg3 * 0x268u,
+                            ((uint32_t)arg1 << 12) + ((uint32_t)arg3 << 8), t40_line_sink, NULL);
+    while (bad--)
+        isp_printf(1, "[Tzn Msca Warn] : This type is not supported!\n", a2);
     system_reg_write(0x50320, 0x400102);
     /* OEM Tzn_Msca_Shd_line_chx @0x6d258: a0 = 0x50000 + 0x420 (shadow kick), not 0x834 */
     system_reg_write(0x50420, 0x3f000001);
@@ -156554,82 +156402,10 @@ int32_t tisp_g_osd_single_attr(uint32_t a0, uintptr_t a1)
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000073e78 origin=model_output original=tisp_s_draw_attr */
 int32_t tisp_s_draw_attr(int32_t arg1, int32_t* arg2)
 {
-    int16_t* a0;
-    int16_t* v1_1;
-    int32_t* v0_1;
-    int32_t j;
-    int32_t a2_2;
-    char a2_3;
-    uint32_t a2_8;
-    int16_t t0_7;
-    
-    if (arg1 != 0) {
-        a0 = &mscaler_s1[0];
-    } else {
-        a0 = &mscaler_s0[0];
-    }
-    
-    do {
-        v1_1 = a0;
-        v0_1 = arg2;
-        
-        for (j = 0; j != 16; ) {
-            ((void **)v1_1)[50] = (char)(*v0_1);
-            a2_2 = *v0_1;
-            
-            if (a2_2 == 0) {
-                a2_3 = ((char*)v0_1)[2];
-                goto label_73ebc;
-            } else if (a2_2 == 1) {
-                a2_3 = ((char*)v0_1)[2];
-                ((void **)v1_1)[52] = a2_3;
-                
-                if (a2_3 != 0) {
-                    a2_8 = ((uint32_t)((char*)(uintptr_t)v0_1)[21]) << 16 | 
-                           ((uint32_t)((char*)(uintptr_t)v0_1)[22]) << 8 | 
-                           ((uint32_t)((char*)v0_1)[23]);
-                    ((void **)v1_1)[53] = ((int16_t*)v0_1)[5];
-                    ((void **)v1_1)[54] = v0_1[3];
-                    ((void **)v1_1)[55] = ((int16_t*)v0_1)[7];
-                    t0_7 = v0_1[4];
-                    ((uint32_t*)v1_1)[29] = a2_8;
-                    ((void **)v1_1)[56] = t0_7;
-                    ((char*)v1_1)[60] = ((char*)v0_1)[6];
-                    ((char*)v1_1)[61] = ((char*)v0_1)[25];
-                    ((void **)v1_1)[61] = ((int16_t*)v0_1)[26];
-                }
-            } else if (a2_2 == 2) {
-                a2_3 = ((char*)v0_1)[2];
-                goto label_73ebc;
-            }
-            
-            j += 1;
-            v0_1 = (void *)(uintptr_t)((uintptr_t)v0_1 + (7));
-            v1_1 = (void *)(uintptr_t)((uintptr_t)v1_1 + (12));
-        }
-        
-        arg2 += 112;
-        a0 = (void *)(uintptr_t)((uintptr_t)a0 + (308));
-    } while (arg2 != (int32_t*)((char*)arg2 + 224));
-    
+    /* Rewritten from the OEM (Eufy tx-isp-t40.ko tisp_s_draw_attr @0x84898), #187: the lift stored 8-byte words at
+     * doubled offsets and its loop never ended (see tx_isp_t40_draw.h). */
+    t40_draw_set_state((u8 *)(arg1 ? (void *)mscaler_s1 : (void *)mscaler_s0), (const u8 *)arg2);
     return 0;
-
-label_73ebc:
-    ((void **)v1_1)[52] = a2_3;
-    
-    if (a2_3 != 0) {
-        a2_8 = ((uint32_t)((char*)(uintptr_t)v0_1)[21]) << 16 | 
-               ((uint32_t)((char*)(uintptr_t)v0_1)[22]) << 8 | 
-               ((uint32_t)((char*)v0_1)[23]);
-        ((void **)v1_1)[53] = ((int16_t*)v0_1)[5];
-        ((void **)v1_1)[54] = v0_1[3];
-        ((void **)v1_1)[55] = ((int16_t*)v0_1)[7];
-        t0_7 = v0_1[4];
-        ((uint32_t*)v1_1)[29] = a2_8;
-        ((void **)v1_1)[56] = t0_7;
-        ((char*)v1_1)[60] = ((char*)v0_1)[6];
-        ((char*)v1_1)[61] = ((char*)v0_1)[25];
-    }
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000073fd0 origin=fragment_seed original=tisp_msca_state */
@@ -158497,15 +158273,16 @@ char* ispcore_irq_sec_fd_work(void)
     uint32_t arg[2] = { 0, 0 };
 
     if (core && !tisp_msca_state()) {
-        /* OEM 0x75830..0x75878: shadow slot idx = core+696; if its entry (core+660+idx*12) is armed,
-         * tisp_msca_Shd_ctrl(1, idx) and then idx = (idx + 1) % 3 */
-        uint32_t idx = regtrace_get_u32(core, 696);
+        /* OEM 0x765d4..0x7664c (vendor image 0x7660c): advance the slot index first, idx = (core+696 + 1) % 3, store it, then
+         * when its entry (core+660+idx*12) is armed run tisp_msca_Shd_ctrl(1, idx); the OEM does not decrement
+         * (#187: the old order only advanced after an armed entry and stayed on idx 0 forever) */
+        uint32_t idx = regtrace_get_u32(core, 696) + 1;
 
-        if (idx < 3 && regtrace_get_u32(core, 660 + idx * 12)) {
+        if (idx >= 3)
+            idx = 0;
+        regtrace_put_u32(core, 696, idx);
+        if (regtrace_get_u32(core, 660 + idx * 12))
             tisp_msca_Shd_ctrl(1, idx);
-            idx++;
-            regtrace_put_u32(core, 696, idx < 3 ? idx : 0);
-        }
     }
     t40_core_sd_ioctl(0x2000015, arg);   /* OEM 0x758a8: arg {0, -} */
     if (core)
