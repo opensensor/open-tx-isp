@@ -153,8 +153,9 @@ def cut_hard_returns(lines):
             for k in range(i + 2, j):
                 if "goto " in out[k]:
                     break
-                if re.match(r"^    (return\b[^;]*|T[0-9]+_UNRECOVERED_RET\(.*\));\s*$", out[k]):
-                    n = k + 1
+                two = k + 1 < j and re.match(r"^    return\b[^;]*$", out[k]) and re.match(r"^\s+[^;]*;\s*$", out[k + 1])   # `return c ?\n  x(a) : 0;` (two lines)
+                if two or re.match(r"^    (return\b[^;]*|T[0-9]+_UNRECOVERED_RET\(.*\));\s*$", out[k]):
+                    n = k + (2 if two else 1)
                     while n < j and (not out[n].strip() or out[n].lstrip().startswith(("/*", "*", "//"))):
                         n += 1
                     if n < j and not re.match(r"^\w+:", out[n]) and not out[n].lstrip().startswith(("#", "}")):

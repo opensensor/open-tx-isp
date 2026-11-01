@@ -14595,7 +14595,10 @@ int32_t video_input_cmd_open(uint32_t a0, uint32_t a1)
     /* unmatched fragment 7 (Arithmetic): arithmetic fragment did not contain supported register operations */
     /* asm: 5ddc:	27bd0018 	addiu	sp,sp,24 */
 
-    return 0;
+    /* stock tail call: single_open_size(file, video_input_cmd_show, PDE_DATA(inode), 512) (vendor41 video_input_cmd_open 0x148b8); the lift dropped
+     * the `jr t9` (a1 = %lo of the show function was never resolved), so `cat` of the proc file ran seq_read with NULL private_data (#189) */
+    return private_single_open_size((struct file *)(uintptr_t)s0, (int (*)(struct seq_file *, void *))video_input_cmd_show,
+                                    (void *)(uintptr_t)v0, 512);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000005de0 origin=fragment_seed original=video_input_cmd_set */

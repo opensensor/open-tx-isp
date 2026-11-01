@@ -80430,82 +80430,26 @@ int32_t tisp_ae_long_deflicker_tune(uint32_t a0, uint32_t a1, uint32_t a2, uint3
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_00000000000294b4 origin=fragment_seed original=tisp_ae_s_comp */
+/* #189: hand translation of OEM tisp_ae_s_comp (SDK 1.3.1 0x294b4, vendor T40 module 0x39ed4).  The lift lost the `jr t9` tail call to
+ * tisp_ae_set_hardware_param(ctx, ch), fell through into the pstMainAeOri block (loop until the loop guard) and indexed
+ * pstSec/MainAeOri through isp_memopt.  Reached from tisp_ae_wdr_en / tisp_s_ae_scence_attr (lifted); the frame AE applies the
+ * same factor itself (t40_ae_comp_factor). */
 int32_t tisp_ae_s_comp(uint32_t a0, uint32_t a1)
 {
-    uint32_t __lg = REGTRACE_LOOPGUARD_BUDGET;
-    uintptr_t *a2 = 0;
-    uintptr_t *a3 = 0;
-    uint32_t t9 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    const uint32_t ch = a0 ? 1 : 0;
+    unsigned char *ctx = ch ? (unsigned char *)&pstSecAeOri : (unsigned char *)&pstMainAeOri;
+    const uint32_t base = *(uint16_t *)(uintptr_t)((uint32_t)tparamsN[ch] + 1024);
+    int16_t target;
 
-    /* fragment 0: Branch */
-    v0 = (uintptr_t *)&isp_memopt;
-    if (a0 == 0) { goto tisp_ae_s_comp0x70; }
-
-    /* fragment 1: ConstantLoad */
-    v0 = ((char *)&pstSecAeOri);
-
-tisp_ae_s_comp0x10:
-    /* fragment 2: ConstantLoad */
-    a2 = 0x0;
-
-    /* fragment 3: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v1 + 0);
-    a2 = *(uint32_t *)((char *)v0 + 276);
-    v1 = *(uint16_t *)((char *)v1 + 1024);
-    *(uint32_t *)((char *)a2 + 0) = a1;
-    a2 = a1 < 129;
-
-    /* fragment 4: Branch */
-    a3 = *(uint32_t *)((char *)(v0) + 328);
-    if (a2 == 0) { goto tisp_ae_s_comp0x78; }
-
-    /* fragment 5: Arithmetic */
-    v1 = (uintptr_t)v1 * a1;
-    v1 = (uintptr_t)v1 >> 7;
-
-tisp_ae_s_comp0x44:
-    /* fragment 6: MemoryAccess */
-    *(uint16_t *)((char *)a3 + 4) = v1;
-    a1 = *(uint32_t *)((char *)v0 + 160);
-    v1 = 1;
-    t9 = (uintptr_t)&tisp_ae_set_hardware_param;
-    *(uint8_t *)((char *)a1 + 0) = v1;
-    a1 = *(uint32_t *)((char *)v0 + 164);
-    t9 = t9;
-    *(uint8_t *)((char *)a1 + 0) = v1;
-    a1 = a0 & 255;
-
-    /* fragment 7: Unknown */
-    /* unmatched fragment 7 (Unknown): no deterministic matcher for Unknown */
-    /* asm: 2951c:	03200408 	jr.hb	t9 */
-
-    /* fragment 8: Arithmetic */
-    a0 = v0;
-
-tisp_ae_s_comp0x70:
-    /* fragment 9: Branch */
-    v0 = (uintptr_t *)((char *)&pstMainAeOri);
-    { if (__lg == 0U) regtrace_loopguard("tisp_ae_s_comp", "0x10"); else { __lg--; goto tisp_ae_s_comp0x10; } }
-
-tisp_ae_s_comp0x78:
-    /* fragment 10: Arithmetic */
-    a2 = 300;
-    a1 = a1 * (uintptr_t)a2;
-    a2 = 127;
-
-    /* fragment 11: Unknown */
-    /* unmatched fragment 11 (Unknown): no deterministic matcher for Unknown */
-    /* asm: 29538:	00a6001a 	div	zero,a1,a2 */
-
-    /* fragment 12: Arithmetic */
-    v1 = v1 + a1;
-
-    /* fragment 13: Branch */
-    v1 = v1 - 302;
-    { if (__lg == 0U) regtrace_loopguard("tisp_ae_s_comp", "0x44"); else { __lg--; goto tisp_ae_s_comp0x44; } }
-
+    *(uint32_t *)(uintptr_t)*(uint32_t *)(ctx + 276) = a1;
+    if (a1 < 129)
+        target = (int16_t)((int32_t)(base * a1) >> 7);
+    else
+        target = (int16_t)(base + (int32_t)((a1 * 300) / 127) - 302);
+    *(int16_t *)((uintptr_t)*(uint32_t *)(ctx + 328) + 4) = target;
+    *(uint8_t *)(uintptr_t)*(uint32_t *)(ctx + 160) = 1;
+    *(uint8_t *)(uintptr_t)*(uint32_t *)(ctx + 164) = 1;
+    tisp_ae_set_hardware_param((uintptr_t)ctx, ch);
     return 0;
 }
 
@@ -83097,7 +83041,9 @@ system_reg_write_af0x40:
 
     /* fragment 7: Epilogue */
     /* function epilogue: restore registers and return */
-    return (int32_t)v0;
+    /* #189 stock fall-through: both legs continue with system_reg_write(a2, a3) (the AF register store); the lift returned after the
+     * trigger write and also dropped the `jr t9` tail call (s0 = system_reg_write), so no AF register ever got written */
+    goto system_reg_write_af0x4c;
 
 system_reg_write_af0x4c:
     /* fragment 8: Arithmetic */
@@ -83112,7 +83058,6 @@ system_reg_write_af0x4c:
 
     /* fragment 11: Epilogue */
     /* function epilogue: restore registers and return */
-    return (int32_t)v0;
 
     /* fragment 12: Unknown */
     /* unmatched fragment 12 (Unknown): no deterministic matcher for Unknown */
@@ -83121,6 +83066,9 @@ system_reg_write_af0x4c:
     /* fragment 13: Arithmetic */
     /* unmatched fragment 13 (Arithmetic): arithmetic fragment did not contain supported register operations */
     /* asm: 2d684:	27bd0020 	addiu	sp,sp,32 */
+
+    /* stock tail call: system_reg_write(a2, a3) (a0 = s1, a1 = s2 in the delay slots, t9 = s0 = system_reg_write) (#189) */
+    return (int32_t)system_reg_write((uintptr_t)s1, (uintptr_t)s2);
 
 system_reg_write_af0x6c:
     /* fragment 14: Branch */
@@ -106462,6 +106410,10 @@ tisp_dmsc_params_refresh0x20:
     /* fragment 12: Arithmetic */
     /* unmatched fragment 12 (Arithmetic): arithmetic fragment did not contain supported register operations */
     /* asm: 481a0:	27bd0020 	addiu	sp,sp,32 */
+
+    /* stock tail call: tisp_dmsc_sharpness_set(a0 = ch, dmsc_ratio[ch] & 0xff) when the ratio is not 128; the lift dropped the `jr t9` and fell
+     * into the 0x88 block (memcpy again, endless loop for a changed sharpness).  The hand tisp_dmsc_sharpness_set above is safe (#189) */
+    return tisp_dmsc_sharpness_set((uint32_t)(uintptr_t)s1, (uint32_t)(uintptr_t)a1 & 255U);
 
 tisp_dmsc_params_refresh0x88:
     /* fragment 13: Arithmetic */
@@ -153793,6 +153745,8 @@ int32_t tisp_csc_set_attr(uint32_t a0, uintptr_t a1)
 
     /* fragment 4: Arithmetic */
     a1 = v0;
+    /* stock tail call: tisp_set_csc_version(a0, *a1) for every mode != 4 (the lift dropped the `jr t9`, so a mode != 4 request fell through into the mode-4 matrix body) (#189) */
+    return tisp_set_csc_version(a0, (uint32_t)(uintptr_t)v0);
 
 tisp_csc_set_attr0x1c:
     /* fragment 5: Prologue */
@@ -154640,6 +154594,8 @@ int32_t tisp_s_module_control(uint32_t a0, uint32_t a1)
 tisp_s_module_control0x68:
     /* fragment 5: ConstantLoad */
     v0 = 0x200080;
+    /* stock `and s0, s0, v0` (lost by the lift: any changed control bit called tisp_lce_top_change_state) (#189) */
+    s0 = (uintptr_t)s0 & (uintptr_t)v0;
 
     /* fragment 6: Branch */
     v1 = (int32_t *)&tparams_status;
@@ -154727,6 +154683,9 @@ tisp_s_module_control0x128:
     /* fragment 26: Arithmetic */
     /* unmatched fragment 26 (Arithmetic): arithmetic fragment did not contain supported register operations */
     /* asm: 71ec4:	27bd0030 	addiu	sp,sp,48 */
+
+    /* stock tail call: tisp_mdns_reg_trig(a0) = system_reg_write((a0 + 30) << 11 | 4, 1) (a0 = s1); only after a changed bit 13 (MDNS enable) (#189) */
+    system_reg_write(((uintptr_t)s1 + 30) * 2048 + 4, 1);
 
     return 0;
 }
@@ -157744,7 +157703,8 @@ int32_t tisp_s_fixed_contrast_attr(uintptr_t a0, uintptr_t a1)
     /* fragment 2: MemoryAccess */
     a1 = *(uint8_t *)((char *)a1 + 0);
 
-    return 0;
+    /* stock tail call: tisp_bcsh_set_mjpeg_contrast(a0, a1[0], a1[1], a1[2]) (the lift dropped the `jr t9`; SetMjpegContrast never reached the BCSH state) (#189) */
+    return tisp_bcsh_set_mjpeg_contrast(a0, (uint32_t)a1, (uint32_t)(uintptr_t)a2, (uint32_t)(uintptr_t)a3);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_00000000000759a0 origin=fragment_seed original=tisp_lsc_hvflip */

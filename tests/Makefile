@@ -3,7 +3,7 @@ CC ?= cc
 CFLAGS ?= -O2
 CFLAGS += -std=c99 -Wall -Wextra -Werror
 
-.PHONY: all check clean lifted_ptr_scale_check t40_hardcoded_anchor_check t30_storage_audit t30_fw_irq_gate t40_vct_host t40_af_stats_host t40_bcsh_dn_host t40_tstp_host t40_bitexact_host t40_callarg_check t41_sensor_barrier_check t40_hardcoded_anchor_check t40_clk_teardown_check t40_tstp_init_check t41_af_gate_check lifted_ptr_scale_check
+.PHONY: all check clean t40_lost_tail_host lifted_ptr_scale_check t40_hardcoded_anchor_check t30_storage_audit t30_fw_irq_gate t40_vct_host t40_af_stats_host t40_bcsh_dn_host t40_tstp_host t40_bitexact_host t40_callarg_check t41_sensor_barrier_check t40_hardcoded_anchor_check t40_clk_teardown_check t40_tstp_init_check t41_af_gate_check lifted_ptr_scale_check
 
 # Every host test binary.  A new test is registered with "TESTS += name"
 # (plus its build rule); `check` builds and runs all of them, keeps going
@@ -12,7 +12,7 @@ CFLAGS += -std=c99 -Wall -Wextra -Werror
 # so a test cannot be added and then silently never run.
 TESTS :=
 # Further check steps, run as "$(MAKE) <target>" after the binaries.
-CHECK_TARGETS := t30_storage_audit t30_fw_irq_gate t41_dfg_host t40_vct_host t40_af_stats_host t40_bcsh_dn_host t40_tstp_host t40_bitexact_host t40_callarg_check t41_sensor_barrier_check t40_hardcoded_anchor_check t40_clk_teardown_check t40_tstp_init_check t41_af_gate_check lifted_ptr_scale_check
+CHECK_TARGETS := t30_storage_audit t30_fw_irq_gate t41_dfg_host t40_vct_host t40_af_stats_host t40_bcsh_dn_host t40_tstp_host t40_bitexact_host t40_callarg_check t41_sensor_barrier_check t40_hardcoded_anchor_check t40_clk_teardown_check t40_tstp_init_check t41_af_gate_check lifted_ptr_scale_check t40_lost_tail_host
 # Sources that only run on the camera (not built on the host).
 TARGET_TESTS := $(basename $(wildcard t41_v4l2_*_test.c)) t41_antiflicker_ioctl_test
 TEST_TIMEOUT ?= 600
@@ -622,6 +622,13 @@ lifted_ptr_scale_check:
 		t41:tisp_tstp_reg_cfg:tailcall t41:tisp_tstp_reg_cfg:argc t41:tisp_lce_clr_ram_part_0:tailcall t41:tisp_lce_clr_ram_part_0:argc \
 		t41:tisp_gib_write_reg:argc t41:tisp_csc_yuv_dmo:tailcall t41:tisp_csccr_default_mode:tailcall t41:tisp_csccr_range_stretch_mode:tailcall \
 		t41:tisp_csccr_range_compress_mode:tailcall t41:tisp_raw_rdma_fd_interrupt
+	@# #189 pass 4 (T40, vendor T40 module + libt40-firmware compared): restored tail calls / the lost module-control mask
+	python3 ./lifted_ptr_scale_check.py --expect-clean t40:system_reg_write_af:tailcall t40:tisp_s_module_control:tailcall t40:tisp_ae_s_comp:tailcall \
+		t40:tisp_csc_set_attr:tailcall t40:tisp_dmsc_params_refresh:tailcall t40:tisp_s_fixed_contrast_attr:tailcall t41:video_input_cmd_open:tailcall
+
+# T40 lost tail calls / ALU restored in lifted code, run against callee stubs (#189)
+t40_lost_tail_host:
+	sh ./t40_lost_tail_host.sh
 
 # T40 module exit gates the ISP/CSI clocks it enabled (#152)
 t40_clk_teardown_check:

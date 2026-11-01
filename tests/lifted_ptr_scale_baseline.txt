@@ -1,8 +1,6 @@
 # lifted_ptr_scale_check.py baseline: <tag> <function> <class> <count> <status> [note]
 # status open = not yet compared with the OEM, dead/ok/fixed = reviewed (see the script header)
-# #189 pass 3 (open-tx-isp next cf60cb1b + this branch, host/compile/QEMU only, no camera): scanner stub-tail cut now also resolves a one-line `#ifdef REGTRACE_KERNEL_TREE_BUILD return X; #endif` (and `#if 0 /* comment */`) before the hard-return cut; T23 core is scanned with all classes; new classes tailcall (lost `jr t9` tail call) and argc (system_reg_write with one argument); QEMU TB coverage of the linked modules (T41 gc5603, T23 sc2336; stream + snapshots + 3x day/night + tuning calls) is in the audit notes of the pass, not in the repo
-# #189 T41 dispositions: dead = reached only through tisp_event callbacks that t41_safe_tuning_events=1 suppresses (AE event 1 rebound to the vendor AE / safe controller, AWB 12 / WDR 13 / AF 15 / GSM 16 / TMO 17 / DN 18), never-called lifted tuning ioctl handlers, tisp_msca_Shd_ctrl, WDR-sensor paths; fixed (vendor-compared in Ghidra vendor41, runtime-changing, camera-proven on the T41 sc5336 camera, see the next comment line) = tisp_msca_ir_init (tail system_reg_write(0x2001c, a2)), tisp_msca_addr_ir_fifo_write (tail 0x20018), system_reg_set_ae_trig (tail 0x19000 = 1), tisp_tstp_reg_cfg (reg 0x60004 value argument + tail 0x600a8), tisp_lce_clr_ram_part_0 (value argument 0 of the 1440 RAM-clear writes + tail 0x501c0), tisp_gib_write_reg (value argument of the 0x50140 commit), tisp_csc_yuv_dmo (tail 0xd000 = -1, YUV sensors only), tisp_raw_rdma_fd_interrupt (typed frame counters), tisp_bcsh_wdr_en (KERNEL_TREE stub: the lifted body used ivdc_threshold_line as the bcsh_info slot table and stored at address 335; WDR-sensor tisp_init only)
-# #189 pass 3 camera proof (T41 sc5336 camera, normal image = open-tx-isp next 1b10caaf + OpenIMP next 086f2191, no RTC/SADC test kernel): apitest areas sys,fs,enc,osd,ivs,isp,su PASS 266 / FAIL 3 (AF statistics, AF metrics, LDC attr: no handler, same 3 as the previous image), default cases PASS 164 / FAIL 0, wdrtoggle_t41 / fscycle / switchbin day+night / wdr cases all PASS, 7 module reload cycles and 8 stream off-on + day/night loops with 0 oopses, snapshot 200. Register readback (devmem, ISP core base + offset) before (previous image) / after (this image): 0x2001c 0 / 0xB40 (the msca stride 2880, written by tisp_msca_ir_init at every tisp_init = verified effect); 0x60004 0x771C00 / 0 and 0x600a8 2 / 0 (tisp_tstp_reg_cfg: the old values were the stale argument register, the OEM computes both from main_tstp fields that are 0 here = verified effect, neutral); 0x19000 (ae trig), 0x50140 / 0x501c0 (GIB / LCE RAM ports) read 0 on both images, i.e. write-only or self-clearing: reached by the ISP open code path only, effect not observable by readback. Same-light picture A/B by runtime swap of the two kos (previous image ko / this ko, night mode, 3 shots each, scene unchanged): luma 82.1 / 82.0, edge energy 0.555 / 0.556, mean absolute pixel difference 0.39 (previous-previous 0.96), i.e. no picture change beyond noise; LCE RAM clear and GIB LUT are not visible in that scene. tisp_msca_addr_ir_fifo_write (IR frame channel only), tisp_csc_yuv_dmo and tisp_bcsh_wdr_en (YUV / WDR-sensor legs) and tisp_raw_rdma_fd_interrupt (rpars NULL, early return) are not exercisable on this camera: compile/host/QEMU only
+# #189 pass 4 (T40 tailcall/argc triage, host/compile only, no camera): scanner cuts a two-line `return c ?\n x : 0;` hard return (func_adr_reg_write_* are shadowed by hand code); T40 reachability = events 6..13 skipped (t40_ev_updates=0), REGCALL_* mdns -> *_lit, VIC MDMA never enabled, tisp_deinit skipped; fixed: system_reg_write_af, tisp_s_module_control (lost `and` mask + mdns trig tail), tisp_ae_s_comp (hand translation), tisp_csc_set_attr, tisp_dmsc_params_refresh, tisp_s_fixed_contrast_attr; T41: video_input_cmd_open fixed, tisp_suspend_all / tisp_resume_all dead (PM, tpm_cb unresolved). Known scanner limit: only the first `jr t9` of a function is reported; the only T40 functions with two tails are vic_mdma_irq_function1/2 (checked by hand).
 t23 JZ_Isp_Awb ctr 6 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
 t23 JZ_Isp_Awb loop 8 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
 t23 JZ_Isp_Awb step 9 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
@@ -238,7 +236,6 @@ t23 tx_isp_unregister_platforms step 1 unreach
 t23 tx_isp_vic_activate_subdev off 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
 t23 tx_isp_vic_probe off 1 unreach
 t23 tx_isp_vic_probe step 1 unreach
-t23 tx_isp_vic_start var 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
 t23 tx_isp_video_link_destroy_isra_9 loop 3 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
 t23 tx_isp_video_link_destroy_isra_9 step 5 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
 t23 tx_isp_video_link_destroy_isra_9 var 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
@@ -298,23 +295,6 @@ t40 frame_channel_vidioc_get_fmt step 2 unreach
 t40 fs_slake_module step 3 open
 t40 func_adr_map_curve1 step 1 open
 t40 func_adr_pars_display step 2 unreach
-t40 func_adr_reg_write_5x5 ctr 6 open
-t40 func_adr_reg_write_5x5 loop 6 open
-t40 func_adr_reg_write_5x5 off 7 open
-t40 func_adr_reg_write_5x5 step 6 open
-t40 func_adr_reg_write_5x5 tailcall 1 open
-t40 func_adr_reg_write_every argc 1 open
-t40 func_adr_reg_write_every ctr 7 open
-t40 func_adr_reg_write_every loop 5 open
-t40 func_adr_reg_write_every off 4 open
-t40 func_adr_reg_write_every step 7 open
-t40 func_adr_reg_write_one off 1 open
-t40 func_adr_reg_write_one tailcall 1 open
-t40 func_adr_reg_write_sometimes argc 1 open
-t40 func_adr_reg_write_sometimes ctr 6 open
-t40 func_adr_reg_write_sometimes loop 6 open
-t40 func_adr_reg_write_sometimes off 8 open
-t40 func_adr_reg_write_sometimes step 7 open
 t40 func_gam_x2y ctr 1 unreach
 t40 func_gam_x2y loop 1 unreach
 t40 func_gam_x2y step 2 unreach
@@ -367,7 +347,7 @@ t40 ispcore_pad_event_handle loop 47 shim #189: replaced at runtime by hand-writ
 t40 ispcore_pad_event_handle off 8 shim #189: replaced at runtime by hand-written regtrace_ispcore_pad_event_handle (installed by tx_isp_core_probe); lifted body unreferenced
 t40 ispcore_pad_event_handle step 14 shim #189: replaced at runtime by hand-written regtrace_ispcore_pad_event_handle (installed by tx_isp_core_probe); lifted body unreferenced
 t40 ispcore_pad_event_handle var 19 unreach
-t40 ispcore_s_wdr_en tailcall 1 open
+t40 ispcore_s_wdr_en tailcall 1 shim #189 T40: confirmed lost tail call to tisp_s_wdr_en(vinum, enable, bayer) (libt40-firmware). Reached only by the WDR-enable ioctl (linear sensor on the test board); restoring it runs the lifted WDR switch (tisp_s_wdr_en -> tisp_ae_wdr_en, never run on T40): needs a QEMU case first
 t40 ispcore_video_s_stream ctr 1 shim OEM 0xd8 channel stride vs lifted x4 stride never meets 1296 (stream-off loop); core skipped by regtrace_slot_is_core
 t40 ispcore_video_s_stream loop 3 shim OEM 0xd8 channel stride vs lifted x4 stride never meets 1296 (stream-off loop); core skipped by regtrace_slot_is_core
 t40 ispcore_video_s_stream off 6 shim OEM 0xd8 channel stride vs lifted x4 stride never meets 1296 (stream-off loop); core skipped by regtrace_slot_is_core
@@ -411,9 +391,9 @@ t40 printf_func_long step 3 unreach
 t40 printf_func_short loop 2 unreach
 t40 printf_func_short off 3 unreach
 t40 printf_func_short step 4 unreach
-t40 private_i2c_new_device tailcall 1 open
+t40 private_i2c_new_device tailcall 1 dead #189 T40: no symbol in the linked module (t40_func_cov.txt); sensor I2C clients come from the hand-written sensor layer
 t40 private_i2c_register_driver tailcall 1 unreach
-t40 private_i2c_unregister_device tailcall 1 open
+t40 private_i2c_unregister_device tailcall 1 dead #189 T40: no symbol in the linked module (t40_func_cov.txt); sensor I2C clients come from the hand-written sensor layer
 t40 private_reset_tx_isp_module loop 1 unreach
 t40 private_reset_tx_isp_module off 1 unreach
 t40 private_reset_tx_isp_module step 1 unreach
@@ -421,13 +401,12 @@ t40 regtrace_t40_tuning_copy_ae_stats var 1 open
 t40 sensor_alloc_integration_time var 1 unreach
 t40 sensor_alloc_integration_time_short var 1 unreach
 t40 sensor_set_integration_time var 1 unreach
-t40 system_reg_write_af tailcall 1 open
 t40 table_intp step 1 unreach
 t40 tisp_adr_dn_params_refresh step 1 unreach
 t40 tisp_adr_dn_params_refresh tailcall 1 unreach
 t40 tisp_adr_dn_params_refresh var 2 unreach
 t40 tisp_adr_main_deinit off 1 open
-t40 tisp_adr_main_deinit tailcall 1 open
+t40 tisp_adr_main_deinit tailcall 1 shim #189 T40: reached only from the lifted tisp_deinit, which is skipped by default (skip_tisp_deinit=1); the lifted body locks &isp_memopt and loses the tail mutex_unlock(adr_mlock); ADR is torn down by t40_adr_cleanup. Fix both before skip_tisp_deinit=0
 t40 tisp_adr_main_process step 1 open
 t40 tisp_adr_sec_process step 1 unreach
 t40 tisp_ae_api_get_exp_list step 1 open
@@ -437,9 +416,6 @@ t40 tisp_ae_dn_params_refresh tailcall 1 unreach
 t40 tisp_ae_ev_start_set step 1 open
 t40 tisp_ae_main_mean_update step 2 open
 t40 tisp_ae_main_s_min step 1 unreach
-t40 tisp_ae_s_comp step 1 open
-t40 tisp_ae_s_comp tailcall 1 open
-t40 tisp_ae_s_comp var 1 open
 t40 tisp_ae_sec_mean_update step 2 open
 t40 tisp_ae_sec_s_min step 1 unreach
 t40 tisp_ae_short_alogrithm tailcall 1 unreach
@@ -460,10 +436,10 @@ t40 tisp_af_set_attr step 2 open
 t40 tisp_af_set_attr_refresh step 2 unreach
 t40 tisp_af_set_hardware_param off 49 open
 t40 tisp_awb_dn_params_refresh tailcall 1 unreach
-t40 tisp_awb_sec_ev_update tailcall 1 open
+t40 tisp_awb_sec_ev_update tailcall 1 dead #189 T40: reached only through the lifted tisp events 6..13 (tisp_main_long_tgain_update / ev_update, skipped by default: t40_ev_updates=0) and the lifted module inits (enable_tisp_main_init_color_inits=0); the live EV/CT chains are the hand-written t40_vawb / t40_bcsh / t40_vct code. Lost tail call confirmed against libt40-firmware, not fixed
 t40 tisp_awb_sec_face_pos var 2 unreach
-t40 tisp_awb_tgain_update tailcall 1 open
-t40 tisp_bcsh_Tccm_Comp2Orig tailcall 1 open
+t40 tisp_awb_tgain_update tailcall 1 dead #189 T40: reached only through the lifted tisp events 6..13 (tisp_main_long_tgain_update / ev_update, skipped by default: t40_ev_updates=0) and the lifted module inits (enable_tisp_main_init_color_inits=0); the live EV/CT chains are the hand-written t40_vawb / t40_bcsh / t40_vct code. Lost tail call confirmed against libt40-firmware, not fixed
+t40 tisp_bcsh_Tccm_Comp2Orig tailcall 1 dead #189 T40: reached only through the lifted tisp events 6..13 (tisp_main_long_tgain_update / ev_update, skipped by default: t40_ev_updates=0) and the lifted module inits (enable_tisp_main_init_color_inits=0); the live EV/CT chains are the hand-written t40_vawb / t40_bcsh / t40_vct code. Lost tail call confirmed against libt40-firmware, not fixed
 t40 tisp_bcsh_Tccm_RGBYUV ctr 2 open
 t40 tisp_bcsh_Tccm_RGBYUV loop 2 open
 t40 tisp_bcsh_Tccm_RGBYUV off 1 open
@@ -473,17 +449,17 @@ t40 tisp_bcsh_Toffset_RGB2YUV step 3 open
 t40 tisp_bcsh_brightness tailcall 1 unreach
 t40 tisp_bcsh_contrast tailcall 1 unreach
 t40 tisp_bcsh_csc_attr step 1 open
-t40 tisp_bcsh_ct_update tailcall 1 open
-t40 tisp_bcsh_ev_set_parameter tailcall 1 open
+t40 tisp_bcsh_ct_update tailcall 1 dead #189 T40: reached only through the lifted tisp events 6..13 (tisp_main_long_tgain_update / ev_update, skipped by default: t40_ev_updates=0) and the lifted module inits (enable_tisp_main_init_color_inits=0); the live EV/CT chains are the hand-written t40_vawb / t40_bcsh / t40_vct code. Lost tail call confirmed against libt40-firmware, not fixed
+t40 tisp_bcsh_ev_set_parameter tailcall 1 dead #189 T40: reached only through the lifted tisp events 6..13 (tisp_main_long_tgain_update / ev_update, skipped by default: t40_ev_updates=0) and the lifted module inits (enable_tisp_main_init_color_inits=0); the live EV/CT chains are the hand-written t40_vawb / t40_bcsh / t40_vct code. Lost tail call confirmed against libt40-firmware, not fixed
 t40 tisp_bcsh_ev_update off 2 open
-t40 tisp_bcsh_ev_update tailcall 1 open
+t40 tisp_bcsh_ev_update tailcall 1 dead #189 T40: reached only through the lifted tisp events 6..13 (tisp_main_long_tgain_update / ev_update, skipped by default: t40_ev_updates=0) and the lifted module inits (enable_tisp_main_init_color_inits=0); the live EV/CT chains are the hand-written t40_vawb / t40_bcsh / t40_vct code. Lost tail call confirmed against libt40-firmware, not fixed (the lifted tail call is tisp_bcsh_ev_set_parameter(ctx, ch))
 t40 tisp_bcsh_ev_update var 5 open
 t40 tisp_bcsh_ev_update_TransitParam loop 1 open
 t40 tisp_bcsh_ev_update_TransitParam step 3 open
 t40 tisp_bcsh_ev_update_TransitParam var 1 open
 t40 tisp_bcsh_param_array_set step 1 open
 t40 tisp_bcsh_s_hue step 2 unreach
-t40 tisp_bcsh_saturation tailcall 1 open
+t40 tisp_bcsh_saturation tailcall 1 dead #189 T40: reached only from the lifted tisp_set_saturation; SetSaturation runs the hand-written regtrace_isp_m0_apply_saturation / t40_bcsh_ev_update
 t40 tisp_bcsh_set_attr step 3 open
 t40 tisp_bcsh_set_offset_rgb step 1 unreach
 t40 tisp_blc_ag_interp step 1 open
@@ -510,13 +486,12 @@ t40 tisp_clm_real_write_lut var 1 open
 t40 tisp_clm_wdr_en step 15 unreach
 t40 tisp_csc_get_attr step 1 open
 t40 tisp_csc_set_attr off 1 open
-t40 tisp_csc_set_attr tailcall 1 open
 t40 tisp_day_or_night_s_ctrl loop 3 unreach
 t40 tisp_day_or_night_s_ctrl step 2 unreach
 t40 tisp_day_or_night_s_ctrl var 4 unreach
 t40 tisp_defog_dn_params_refresh off 7 unreach
 t40 tisp_defog_dn_params_refresh step 1 unreach
-t40 tisp_defog_ev_update tailcall 1 open
+t40 tisp_defog_ev_update tailcall 1 dead #189 T40: reached only through the lifted tisp events 6..13 (tisp_main_long_tgain_update / ev_update, skipped by default: t40_ev_updates=0) and the lifted module inits (enable_tisp_main_init_color_inits=0); the live EV/CT chains are the hand-written t40_vawb / t40_bcsh / t40_vct code. Lost tail call confirmed against libt40-firmware, not fixed
 t40 tisp_defog_get_data_part_0 loop 1 open
 t40 tisp_defog_get_data_part_0 step 2 open
 t40 tisp_defog_img_filter25 ctr 2 unreach
@@ -558,7 +533,6 @@ t40 tisp_defog_write_reg_para3 off 2 unreach
 t40 tisp_defog_write_reg_para3 step 5 unreach
 t40 tisp_defog_write_reg_para3 tailcall 1 unreach
 t40 tisp_dmsc_dn_params_refresh tailcall 1 unreach
-t40 tisp_dmsc_params_refresh tailcall 1 open
 t40 tisp_dmsc_wdr_en off 463 open
 t40 tisp_dmsc_wdr_en step 2 open
 t40 tisp_dpc_all_reg_refresh tailcall 1 unreach
@@ -600,13 +574,13 @@ t40 tisp_lce_awdr_to_used step 1 unreach
 t40 tisp_lce_awdr_to_used tailcall 1 unreach
 t40 tisp_lce_clr_ram0 loop 1 open
 t40 tisp_lce_clr_ram0 step 4 open
-t40 tisp_lce_clr_ram0 tailcall 1 open
+t40 tisp_lce_clr_ram0 tailcall 1 dead #189 T40: no symbol in the linked module; LCE RAM clear is the hand-written t40_lce code
 t40 tisp_lce_clr_ram1 step 2 open
 t40 tisp_lce_curve_init_default ctr 1 open
 t40 tisp_lce_curve_init_default loop 2 open
 t40 tisp_lce_curve_init_default off 5 open
 t40 tisp_lce_curve_init_default step 3 open
-t40 tisp_lce_curve_init_default tailcall 1 open
+t40 tisp_lce_curve_init_default tailcall 1 dead #189 T40: no symbol in the linked module (only referenced from the lifted tisp_lce_top_change_state, address unused)
 t40 tisp_lce_get_data loop 3 unreach
 t40 tisp_lce_get_data off 15 unreach
 t40 tisp_lce_get_data step 6 unreach
@@ -615,16 +589,16 @@ t40 tisp_lce_main_interrupt_static loop 1 unreach
 t40 tisp_lce_main_interrupt_static step 3 unreach
 t40 tisp_lce_main_process step 1 unreach
 t40 tisp_lce_seco_process step 1 unreach
-t40 tisp_lce_tgain_update tailcall 1 open
+t40 tisp_lce_tgain_update tailcall 1 dead #189 T40: reached only through the lifted tisp events 6..13 (tisp_main_long_tgain_update / ev_update, skipped by default: t40_ev_updates=0) and the lifted module inits (enable_tisp_main_init_color_inits=0); the live EV/CT chains are the hand-written t40_vawb / t40_bcsh / t40_vct code. Lost tail call confirmed against libt40-firmware, not fixed
 t40 tisp_lce_tool_to_awdr off 55 unreach
 t40 tisp_lce_tool_to_awdr step 2 unreach
 t40 tisp_lce_top_change_state off 1 open
-t40 tisp_lce_top_change_state tailcall 1 open
+t40 tisp_lce_top_change_state tailcall 1 shim #189 T40: lost tail call tisp_lce_curve_init_default(ch) (+ the flag store in its delay slot); the function returns at once unless the lifted LCE tool_para exists (T40-LCE-TOP-GUARD: hand LCE active), and the typed-pointer step in its flag address is open as well
 t40 tisp_lce_wdr_en tailcall 1 unreach
 t40 tisp_lce_write_all_reg loop 1 open
 t40 tisp_lce_write_all_reg off 3 open
 t40 tisp_lce_write_all_reg step 3 open
-t40 tisp_lsc_hvflip tailcall 1 open
+t40 tisp_lsc_hvflip tailcall 1 ok #189 T40: confirmed lost tail call tisp_lsc_mirror_flip(a0..a3, arg4); the callee is a REGTRACE_KERNEL_TREE_BUILD stub returning 0 (LSC flip is the hand-written lsc_lit code), so restoring it changes nothing
 t40 tisp_lsc_init step 1 open
 t40 tisp_lsc_interp_by_gain step 1 open
 t40 tisp_lsc_real_write_lut off 3 open
@@ -633,20 +607,20 @@ t40 tisp_lsc_upside_down_lut var 1 unreach
 t40 tisp_lsc_write_reg off 2 open
 t40 tisp_lsc_write_reg step 2 open
 t40 tisp_main_day_night_mode_ctl tailcall 1 unreach
-t40 tisp_mdns_all_reg_refresh tailcall 1 open
+t40 tisp_mdns_all_reg_refresh tailcall 1 dead #189 T40: no symbol; REGCALL_* routes MDNS to the *_lit literal translation
 t40 tisp_mdns_intp_reg_refresh tailcall 1 unreach
 t40 tisp_mdns_par_refresh step 1 open
-t40 tisp_mdns_par_refresh tailcall 1 open
+t40 tisp_mdns_par_refresh tailcall 1 dead #189 T40: no symbol; REGCALL_* routes MDNS to the *_lit literal translation
 t40 tisp_mdns_par_refresh var 1 open
-t40 tisp_mdns_reg_cfg argc 15 open
+t40 tisp_mdns_reg_cfg argc 15 dead #189 T40: no symbol; REGCALL_tisp_mdns_reg_cfg routes to tisp_mdns_reg_cfg_lit (literal translation)
 t40 tisp_mdns_reg_cfg off 15 open
 t40 tisp_mdns_reg_cfg step 5 open
-t40 tisp_mdns_reg_cfg tailcall 1 open
+t40 tisp_mdns_reg_cfg tailcall 1 dead #189 T40: no symbol; REGCALL_tisp_mdns_reg_cfg routes to tisp_mdns_reg_cfg_lit (literal translation)
 t40 tisp_mdns_reg_cfg var 3 open
 t40 tisp_mdns_reg_cfg_equation_dif off 1 open
 t40 tisp_mdns_reg_cfg_equation_smp var 4 open
-t40 tisp_mdns_reg_trig tailcall 1 open
-t40 tisp_mdns_start tailcall 1 open
+t40 tisp_mdns_reg_trig tailcall 1 dead #189 T40: no symbol; REGCALL_tisp_mdns_reg_trig routes to tisp_mdns_reg_trig_lit
+t40 tisp_mdns_start tailcall 1 dead #189 T40: no symbol; REGCALL_tisp_mdns_start routes to tisp_mdns_start_lit
 t40 tisp_mdns_wdr_en off 162 unreach
 t40 tisp_mdns_wdr_en step 3 unreach
 t40 tisp_s_ae_scence_attr loop 2 open
@@ -674,15 +648,13 @@ t40 tisp_s_drc_ratio loop 1 unreach
 t40 tisp_s_drc_ratio off 14 unreach
 t40 tisp_s_drc_ratio step 2 unreach
 t40 tisp_s_drc_ratio tailcall 1 unreach
-t40 tisp_s_fixed_contrast_attr tailcall 1 open
-t40 tisp_s_hldc_attr tailcall 1 open
+t40 tisp_s_hldc_attr tailcall 1 shim #189 T40: confirmed lost tail call tisp_hldc_set_attr(ch, attr) (SetHLDC ctrl); the callee reads main_hldc_para/sec_hldc_para from the lifted HLDC init and never ran on T40: needs a QEMU case before the tail is restored
 t40 tisp_s_mdns_ratio ctr 1 unreach
 t40 tisp_s_mdns_ratio loop 1 unreach
 t40 tisp_s_mdns_ratio off 1 unreach
 t40 tisp_s_mdns_ratio step 2 unreach
 t40 tisp_s_mdns_ratio tailcall 1 unreach
 t40 tisp_s_mdns_ratio var 2 unreach
-t40 tisp_s_module_control tailcall 1 open
 t40 tisp_s_statis_config_attr off 1 open
 t40 tisp_sdns_wdr_en off 248 unreach
 t40 tisp_sdns_wdr_en step 2 unreach
@@ -691,7 +663,7 @@ t40 tisp_sec_init step 1 open
 t40 tisp_set_csc_version step 1 open
 t40 tisp_set_fps off 1 open
 t40 tisp_slake_all step 2 open
-t40 tisp_slake_all tailcall 1 open
+t40 tisp_slake_all tailcall 1 shim #189 T40: confirmed lost tail call tisp_wdr_process_deinit() (WDR buffers only, linear sensors never allocate them); the lifted callee frees private_kfree(NULL) pointers: rewrite it before restoring the tail
 t40 tisp_tstp_mark1_func off 2 unreach
 t40 tisp_tstp_mark1_func step 8 unreach
 t40 tisp_wdr_default_reg_refresh step 1 unreach
@@ -781,10 +753,10 @@ t40 vic_core_ops_ioctl_1 off 1 open
 t40 vic_mdma_enable off 19 unreach
 t40 vic_mdma_enable step 1 unreach
 t40 vic_mdma_enable var 11 unreach
-t40 vic_mdma_irq_function1 tailcall 1 open
-t40 vic_mdma_irq_function1 var 3 open
-t40 vic_mdma_irq_function2 tailcall 1 open
-t40 vic_mdma_irq_function2 var 3 open
+t40 vic_mdma_irq_function1 tailcall 1 dead #189 T40: both lost tails (isp_printf diagnostic, private_complete of the MDMA completion) sit in the VIC MDMA irq path; vic_mdma_enable is unreachable, the MDMA irq bits are never enabled
+t40 vic_mdma_irq_function1 var 3 dead #189 T40: VIC MDMA irq path, MDMA never enabled (vic_mdma_enable unreachable)
+t40 vic_mdma_irq_function2 tailcall 1 dead #189 T40: both lost tails (isp_printf diagnostic, private_complete of the MDMA completion) sit in the VIC MDMA irq path; vic_mdma_enable is unreachable, the MDMA irq bits are never enabled
+t40 vic_mdma_irq_function2 var 3 dead #189 T40: VIC MDMA irq path, MDMA never enabled (vic_mdma_enable unreachable)
 t40 vic_mdma_sec_enable step 1 unreach
 t40 vic_mdma_sec_enable var 2 unreach
 t40 vic_sensor_ops_ioctl off 1 open
@@ -1266,8 +1238,8 @@ t41 tisp_raw_set_rw_control off 2 unreach
 t41 tisp_raw_set_rw_control step 2 unreach
 t41 tisp_reg_map_get var 1 unreach
 t41 tisp_reg_map_set argc 2 unreach
-t41 tisp_resume_all loop 1 open #189 T41: PM path only (no PM on the cameras), compile/host only; not triaged against the OEM
-t41 tisp_resume_all step 1 open #189 T41: PM path only (no PM on the cameras), compile/host only; not triaged against the OEM
+t41 tisp_resume_all loop 1 dead #189 T41 (vendor41 compared): PM suspend/resume chain tx_isp_pm_ops -> ispcore_suspend_module -> tisp_suspend_all; no suspend happens on the cameras. The lift cannot work as it stands: the 28 tpm_cb save/restore callbacks are dispatched through t41_unresolved_jalr, the reg_list store goes to `*(0 + 5552)` (anchor lost, kernel oops on the first call) and the register save loop steps use typed pointers. A faithful port needs the tpm_cb table of the module inits first, not a one-line fix
+t41 tisp_resume_all step 1 dead #189 T41 (vendor41 compared): PM suspend/resume chain tx_isp_pm_ops -> ispcore_suspend_module -> tisp_suspend_all; no suspend happens on the cameras. The lift cannot work as it stands: the 28 tpm_cb save/restore callbacks are dispatched through t41_unresolved_jalr, the reg_list store goes to `*(0 + 5552)` (anchor lost, kernel oops on the first call) and the register save loop steps use typed pointers. A faithful port needs the tpm_cb table of the module inits first, not a one-line fix
 t41 tisp_s_ae_converge_step tailcall 1 unreach
 t41 tisp_s_ae_explist tailcall 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
 t41 tisp_s_autozoom_control step 1 unreach
@@ -1315,10 +1287,10 @@ t41 tisp_set_scaler_level tailcall 1 unreach
 t41 tisp_set_scaler_level_control_set argc 2 unreach
 t41 tisp_set_scaler_level_control_set var 2 unreach
 t41 tisp_slake_all tailcall 1 shim #189 T41: lost tail call tisp_wdr_process_deinit (frees the WDR sum/rate buffers, which only the WDR-sensor path allocates): linear sensors unaffected, WDR sensors would leak on unload
-t41 tisp_suspend_all ctr 3 open #189 T41: PM path only (no PM on the cameras), compile/host only; not triaged against the OEM
-t41 tisp_suspend_all loop 3 open #189 T41: PM path only (no PM on the cameras), compile/host only; not triaged against the OEM
-t41 tisp_suspend_all off 3 open #189 T41: PM path only (no PM on the cameras), compile/host only; not triaged against the OEM
-t41 tisp_suspend_all step 6 open #189 T41: PM path only (no PM on the cameras), compile/host only; not triaged against the OEM
+t41 tisp_suspend_all ctr 3 dead #189 T41 (vendor41 compared): PM suspend/resume chain tx_isp_pm_ops -> ispcore_suspend_module -> tisp_suspend_all; no suspend happens on the cameras. The lift cannot work as it stands: the 28 tpm_cb save/restore callbacks are dispatched through t41_unresolved_jalr, the reg_list store goes to `*(0 + 5552)` (anchor lost, kernel oops on the first call) and the register save loop steps use typed pointers. A faithful port needs the tpm_cb table of the module inits first, not a one-line fix
+t41 tisp_suspend_all loop 3 dead #189 T41 (vendor41 compared): PM suspend/resume chain tx_isp_pm_ops -> ispcore_suspend_module -> tisp_suspend_all; no suspend happens on the cameras. The lift cannot work as it stands: the 28 tpm_cb save/restore callbacks are dispatched through t41_unresolved_jalr, the reg_list store goes to `*(0 + 5552)` (anchor lost, kernel oops on the first call) and the register save loop steps use typed pointers. A faithful port needs the tpm_cb table of the module inits first, not a one-line fix
+t41 tisp_suspend_all off 3 dead #189 T41 (vendor41 compared): PM suspend/resume chain tx_isp_pm_ops -> ispcore_suspend_module -> tisp_suspend_all; no suspend happens on the cameras. The lift cannot work as it stands: the 28 tpm_cb save/restore callbacks are dispatched through t41_unresolved_jalr, the reg_list store goes to `*(0 + 5552)` (anchor lost, kernel oops on the first call) and the register save loop steps use typed pointers. A faithful port needs the tpm_cb table of the module inits first, not a one-line fix
+t41 tisp_suspend_all step 6 dead #189 T41 (vendor41 compared): PM suspend/resume chain tx_isp_pm_ops -> ispcore_suspend_module -> tisp_suspend_all; no suspend happens on the cameras. The lift cannot work as it stands: the 28 tpm_cb save/restore callbacks are dispatched through t41_unresolved_jalr, the reg_list store goes to `*(0 + 5552)` (anchor lost, kernel oops on the first call) and the register save loop steps use typed pointers. A faithful port needs the tpm_cb table of the module inits first, not a one-line fix
 t41 tisp_tmo_faceae_reg_refresh tailcall 1 unreach
 t41 tisp_tmo_get_data ctr 1 unreach
 t41 tisp_tmo_get_data loop 1 unreach
@@ -1404,6 +1376,5 @@ t41 vic_mdma_irq_function off 7 unreach
 t41 vic_mdma_irq_function step 7 unreach
 t41 vic_mdma_irq_function tailcall 1 unreach
 t41 vic_mdma_irq_function var 5 unreach
-t41 video_input_cmd_open tailcall 1 open #189 T41: debug proc open lost its tail call private_single_open_size(file, show, data, 512): cat of the proc file would run with NULL private_data; not reachable by the streamer, show function anchor (.text+offset) unresolved, not fixed
 t41 video_input_cmd_set loop 4 unreach
 t41 video_input_cmd_set step 7 unreach
