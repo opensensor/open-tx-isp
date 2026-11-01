@@ -1221,7 +1221,7 @@ static uintptr_t defog_zoomk_saved;
 static uintptr_t deghost_en;
 static uintptr_t diff;
 static uintptr_t diff_thr_maxvalue;
-static uintptr_t dmsc_wdr_en;
+static uintptr_t dmsc_wdr_en __attribute__((unused));   /* #182: stand-in only, the code uses the OEM [2] arrays below */
 static uintptr_t dpc_wdr_en;
 static uintptr_t ev_change_switch;
 static uintptr_t ev_last;
@@ -1248,6 +1248,8 @@ static uint64_t gamma_frame_num_saved[2];
 static uintptr_t gamma_para;
 #define T40_GAMMA_CTX_BASE ((char *)t40_gamma_ctx_tab)   /* T40-GAMMA-CTX: OEM gamma_para[2] ctx table (the lift used &gamma_para + 17184, out of bounds) */
 static uint32_t t40_sdns_wdr_en[2];   /* OEM .bss sdns_wdr_en[2] */
+static uint32_t t40_dmsc_wdr_en[2];   /* #182: OEM .bss dmsc_wdr_en[2], written by tisp_dmsc_wdr_en, read by tisp_dmsc_dn_params_refresh and the init (ydns/ysp use regtrace_ydns_wdr_flag / regtrace_ysp_wdr_flags) */
+static uint32_t t40_lce_tgain_oem[2]; /* #182: OEM .bss lce_tgain[2] of the lifted tisp_lce_tgain_update/_interp_strength pair (the LCE C chain keeps its own t40_lce_tgain) */
 static uint32_t t40_gamma_ctx_tab[2];
 static uintptr_t gamma_wlut_flag;
 static uintptr_t gamma_wlut_times;
@@ -1279,7 +1281,7 @@ static uintptr_t lce_stat_ram_hist1;
 static uintptr_t lce_stat_ram_sumy0;
 static uintptr_t lce_stat_ram_sumy1;
 static uintptr_t lce_static_tmp;
-static uintptr_t lce_tgain;
+static uintptr_t lce_tgain __attribute__((unused));   /* #182: stand-in only, the code uses the OEM [2] arrays below */
 static uintptr_t lce_wdr_en;
 static uintptr_t line_switch;
 static uintptr_t lsc_flip_en;
@@ -1507,8 +1509,8 @@ static uintptr_t wdr_fus_par01_tmp;
 static uintptr_t wdr_init;
 static uintptr_t wdr_sum_block;
 static uintptr_t width_adr;
-static uintptr_t ydns_wdr_en;
-static uintptr_t ysp_wdr_en;
+static uintptr_t ydns_wdr_en __attribute__((unused));   /* #182: stand-in only, the code uses the OEM [2] arrays below */
+static uintptr_t ysp_wdr_en __attribute__((unused));   /* #182: stand-in only, the code uses the OEM [2] arrays below */
 #endif
 
 #ifdef REGTRACE_KERNEL_TREE_BUILD
@@ -105021,9 +105023,8 @@ int64_t tisp_dmsc_wdr_en(uint32_t a0, uint32_t a1)
 
 tisp_dmsc_wdr_en0x18:
     /* fragment 3: Arithmetic */
-    a2 = (uint32_t *)&dmsc_wdr_en;
-    a0 = a0 << 2;
-    a2 = a2 + 17176;
+    a2 = (uint32_t *)t40_dmsc_wdr_en;   /* #182: OEM dmsc_wdr_en[2]; the lift wrote &dmsc_wdr_en + 17176 words */
+    a0 = (a0 & 1) << 2;
     a0 = a0 + (uintptr_t)a2;
 
     /* fragment 4: Branch */
@@ -106428,7 +106429,7 @@ int32_t tisp_dmsc_main_init(void)
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)tisp_dmsc_params_refresh)(0); /* jalr target resolved by relocation */
 
     /* fragment 8: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)tisp_dmsc_wdr_en)(0, *(uint32_t *)((char *)((char *)&dmsc_wdr_en))); /* jalr target resolved by relocation */
+    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)tisp_dmsc_wdr_en)(0, t40_dmsc_wdr_en[0]); /* jalr target resolved by relocation */
 
     /* fragment 9: CallSetup */
     regtrace_dmsc_lit_gain_now = 0xffffffffU;   /* OEM dmsc_gain_old[0] (.data+0x2bfc8); the lift stored through &sclk_name - 16408 */
@@ -106493,7 +106494,7 @@ int32_t tisp_dmsc_sec_init(void)
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)tisp_dmsc_params_refresh)(1); /* jalr target resolved by relocation */
 
     /* fragment 8: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)tisp_dmsc_wdr_en)(1, *(uint32_t *)((char *)((char *)&dmsc_wdr_en + 0x4))); /* jalr target resolved by relocation */
+    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)tisp_dmsc_wdr_en)(1, t40_dmsc_wdr_en[1]); /* jalr target resolved by relocation */
 
     /* fragment 9: CallSetup */
     t40_dmsc_gain_old1 = 0xffffffffU;   /* OEM dmsc_gain_old[1] (.data+0x2bfcc); the lift stored through &sclk_name - 16404 */
@@ -106531,7 +106532,7 @@ int32_t tisp_dmsc_dn_params_refresh(uint32_t a0)
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)tisp_dmsc_params_refresh)(a0); /* jalr target resolved by relocation */
 
     /* fragment 2: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)tisp_dmsc_wdr_en)((uintptr_t)s0, *(uint32_t *)((char *)(((uintptr_t)s0 << 2) + &isp_memopt) + 0)); /* jalr target resolved by relocation */
+    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)tisp_dmsc_wdr_en)((uintptr_t)s0, t40_dmsc_wdr_en[(uintptr_t)s0 ? 1 : 0]); /* #182: OEM dmsc_wdr_en[vinum] */ /* jalr target resolved by relocation */
 
     /* fragment 3: ConstantLoad */
     v0 = ((char *)&gain_old);
@@ -106540,7 +106541,7 @@ int32_t tisp_dmsc_dn_params_refresh(uint32_t a0)
     /* function epilogue: restore registers and return */
 
     /* fragment 5: MemoryAccess */
-    a1 = *(uint32_t *)((char *)&isp_memopt);
+    a1 = (uintptr_t)s0 ? t40_dmsc_gain_old1 : regtrace_dmsc_lit_gain_now;   /* #182: OEM dmsc_gain_old[vinum]; the lift read the isp_memopt module parameter */
     a0 = s0;
     s0 = local_10;
     t9 = (uintptr_t)&tisp_dmsc_all_reg_refresh;
@@ -113818,14 +113819,12 @@ int32_t tisp_lce_tgain_interp_strength(uint32_t a0)
     if (a0 == 0) { goto tisp_lce_tgain_interp_strength0x13c; }
 
     /* fragment 2: CallSetup */
-    v0 = (uintptr_t *)&isp_memopt;
     s3 = *(uint32_t *)((char *)((char *)&lce_seco_awdr_para));
-    v0 = (uintptr_t *)&isp_memopt;
     s2 = *(uint32_t *)((char *)((char *)&lce_seco_used_para));
 
 tisp_lce_tgain_interp_strength0x30:
     /* fragment 3: CallSetup */
-    s0 = *(uint32_t *)((char *)((a0 << 2) + &isp_memopt) + 0);
+    s0 = t40_lce_tgain_oem[a0 & 1];   /* #182: OEM lce_tgain[ch] */
     s4 = (uintptr_t *)((uintptr_t)s0 >> 16);
     s0 = (uintptr_t)s0 & 65535;
     v0 = (uintptr_t)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)tisp_simple_intp_int8)((uintptr_t *)((uintptr_t)s0 >> 16), (uintptr_t)s0 & 65535, *(uint32_t *)((char *)((uintptr_t)s3) + 8)); /* jalr target resolved by relocation */
@@ -113881,11 +113880,9 @@ tisp_lce_tgain_interp_strength0x30:
 
 tisp_lce_tgain_interp_strength0x13c:
     /* fragment 15: Arithmetic */
-    v0 = (uintptr_t *)&isp_memopt;
 
     /* fragment 16: MemoryAccess */
     s3 = *(uint32_t *)((char *)((char *)&lce_main_awdr_para));
-    v0 = (uintptr_t *)&isp_memopt;
 
     /* fragment 17: Branch */
     s2 = *(uint32_t *)((char *)((char *)&lce_main_used_para));
@@ -114831,7 +114828,8 @@ int tisp_lce_remove(struct platform_device *pdev)
     lce_wdr_en = 0;
     lce_frm_num = 0;
     lce_data_refresh_flag = 0;
-    lce_tgain = 0;
+    t40_lce_tgain_oem[0] = 0;
+    t40_lce_tgain_oem[1] = 0;
     lce_sensor_tolal_num = 1;
     t40_lce_wdr_duan1 = 0x1f;
     if (!regtrace_t40_lce_active) {
@@ -115573,9 +115571,8 @@ int32_t tisp_lce_tgain_update(uint32_t a0, uint32_t a1)
     uintptr_t *v1 = 0;
 
     /* fragment 0: Arithmetic */
-    v0 = (uintptr_t *)&lce_tgain;
-    a3 = a0 << 2;
-    v0 = v0 + 17280;
+    v0 = (uintptr_t *)t40_lce_tgain_oem;   /* #182: OEM lce_tgain[2]; the lift used &lce_tgain + 17280 words */
+    a3 = (a0 & 1) << 2;
     v1 = (uintptr_t)a3 + (uintptr_t)v0;
 
     /* fragment 1: MemoryAccess */
@@ -138034,7 +138031,7 @@ int32_t tisp_ydns_sec_init(void)
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)tisp_ydns_params_refresh)(1); /* jalr target resolved by relocation */
 
     /* fragment 8: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)tisp_ydns_wdr_en)(1, *(uint32_t *)((char *)((char *)&ydns_wdr_en + 0x4))); /* jalr target resolved by relocation */
+    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)tisp_ydns_wdr_en)(1, regtrace_ydns_wdr_flag[1]); /* jalr target resolved by relocation */
 
     /* fragment 9: CallSetup */
     regtrace_ydns_gain_old[1] = 0xffffffffU;   /* OEM ydns_gain_old[1] (.data+0x2c8c4); the lift stored through &sclk_name - 14108 */
@@ -138075,7 +138072,7 @@ int32_t tisp_ydns_dn_params_refresh(uint32_t a0)
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)tisp_ydns_params_refresh)(a0); /* jalr target resolved by relocation */
 
     /* fragment 2: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)tisp_ydns_wdr_en)((uintptr_t)s0, *(uint32_t *)((char *)(((uintptr_t)s0 << 2) + &isp_memopt) + 0)); /* jalr target resolved by relocation */
+    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)tisp_ydns_wdr_en)((uintptr_t)s0, regtrace_ydns_wdr_flag[(uintptr_t)s0 ? 1 : 0]); /* #182: OEM ydns_wdr_en[vinum] */ /* jalr target resolved by relocation */
 
     /* fragment 3: ConstantLoad */
     v0 = ((char *)&gain_old);
@@ -138084,7 +138081,7 @@ int32_t tisp_ydns_dn_params_refresh(uint32_t a0)
     /* function epilogue: restore registers and return */
 
     /* fragment 5: MemoryAccess */
-    a1 = *(uint32_t *)((char *)&isp_memopt);
+    a1 = regtrace_ydns_gain_old[(uintptr_t)s0 ? 1 : 0];   /* #182: OEM ydns_gain_old[vinum]; the lift read the isp_memopt module parameter */
     a0 = s0;
     s0 = local_10;
     t9 = (uintptr_t)&tisp_ydns_all_reg_refresh;
@@ -142519,7 +142516,7 @@ int32_t tisp_ysp_sec_init(void)
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)tisp_ysp_params_refresh)(1); /* jalr target resolved by relocation */
 
     /* fragment 8: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)tisp_ysp_wdr_en)(1, *(uint32_t *)((char *)((char *)&ysp_wdr_en + 0x4))); /* jalr target resolved by relocation */
+    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)tisp_ysp_wdr_en)(1, regtrace_ysp_wdr_flags[1]); /* jalr target resolved by relocation */
 
     /* fragment 9: CallSetup */
     regtrace_ysp_gain_old[1] = 0xffffffffU;   /* OEM ysp_gain_old[1] (.data+0x2c8f4); the lift stored through &sclk_name - 14060 */
@@ -142557,7 +142554,7 @@ int32_t tisp_ysp_dn_params_refresh(uint32_t a0)
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)tisp_ysp_params_refresh)(a0); /* jalr target resolved by relocation */
 
     /* fragment 2: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)tisp_ysp_wdr_en)((uintptr_t)s0, *(uint32_t *)((char *)(((uintptr_t)s0 << 2) + &isp_memopt) + 0)); /* jalr target resolved by relocation */
+    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)tisp_ysp_wdr_en)((uintptr_t)s0, regtrace_ysp_wdr_flags[(uintptr_t)s0 ? 1 : 0]); /* #182: OEM ysp_wdr_en[vinum] */ /* jalr target resolved by relocation */
 
     /* fragment 3: ConstantLoad */
     v0 = ((char *)&gain_old);
@@ -142566,7 +142563,7 @@ int32_t tisp_ysp_dn_params_refresh(uint32_t a0)
     /* function epilogue: restore registers and return */
 
     /* fragment 5: MemoryAccess */
-    a1 = *(uint32_t *)((char *)&isp_memopt);
+    a1 = regtrace_ysp_gain_old[(uintptr_t)s0 ? 1 : 0];   /* #182: OEM ysp_gain_old[vinum]; the lift read the isp_memopt module parameter */
     a0 = s0;
     s0 = local_10;
     t9 = (uintptr_t)&tisp_ysp_all_reg_refresh;
