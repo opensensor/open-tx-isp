@@ -43,14 +43,14 @@ static unsigned int regtrace_cdns_refresh_count;
 static unsigned int regtrace_cdns_skip_count;
 static uint32_t regtrace_cdns_gain_now;
 static uint regtrace_cdns_thresh = 0x10000U;
-module_param_named(cdns_thresh, regtrace_cdns_thresh, uint, 0644);
+t40_bringup_param_named(cdns_thresh, regtrace_cdns_thresh, uint, 0644);
 module_param_named(enable_cdns, regtrace_enable_cdns, bool, 0644);
 MODULE_PARM_DESC(enable_cdns, "1 runs the CDNS chroma denoise and clears TOP bit 19 (default 0)");
-module_param_named(cdns_dbg_init_ret, regtrace_cdns_dbg_init_ret, int, 0444);
-module_param_named(cdns_init_count, regtrace_cdns_init_count, uint, 0444);
-module_param_named(cdns_refresh_count, regtrace_cdns_refresh_count, uint, 0444);
-module_param_named(cdns_skip_count, regtrace_cdns_skip_count, uint, 0444);
-module_param_named(cdns_gain_now, regtrace_cdns_gain_now, uint, 0444);
+t40_bringup_param_named(cdns_dbg_init_ret, regtrace_cdns_dbg_init_ret, int, 0444);
+t40_bringup_param_named(cdns_init_count, regtrace_cdns_init_count, uint, 0444);
+t40_bringup_param_named(cdns_refresh_count, regtrace_cdns_refresh_count, uint, 0444);
+t40_bringup_param_named(cdns_skip_count, regtrace_cdns_skip_count, uint, 0444);
+t40_bringup_param_named(cdns_gain_now, regtrace_cdns_gain_now, uint, 0444);
 
 static struct t40_cdns_chan {
 	uint8_t par[T40_CDNS_PAR_BYTES];	/* OEM main_cdns / sec_cdns */

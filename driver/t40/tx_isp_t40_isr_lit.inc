@@ -19,7 +19,7 @@
 static bool regtrace_enable_oem_isr_lit;
 static uint32_t regtrace_oem_isr_lit_count;
 module_param_named(enable_oem_isr_lit, regtrace_enable_oem_isr_lit, bool, 0644);
-module_param_named(oem_isr_lit_count, regtrace_oem_isr_lit_count, uint, 0444);
+t40_bringup_param_named(oem_isr_lit_count, regtrace_oem_isr_lit_count, uint, 0444);
 
 /*
  * Bisection cut-point for localizing the hard-hang the full lit ISR causes.

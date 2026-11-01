@@ -35,6 +35,12 @@ typedef int8_t s8; typedef int16_t s16; typedef int32_t s32; typedef int64_t s64
 #define module_param_named(a, b, c, d)
 #define module_param_cb(a, b, c, d)
 #define MODULE_PARM_DESC(a, b)
+/* bring-up-only parameters of the driver (Kbuild TX_ISP_T40_BRINGUP_PARAMS) */
+#define t40_bringup_param(...)
+#define t40_bringup_param_named(...)
+#define t40_bringup_param_array_named(...)
+#define t40_bringup_param_cb(...)
+#define t40_bringup_parm_desc(...)
 #define scnprintf snprintf
 #define printk(...) (harness_verbose ? printf(__VA_ARGS__) : 0)
 #define div64_u64(a, b) ((a) / (b))

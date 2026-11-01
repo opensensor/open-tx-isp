@@ -24,21 +24,30 @@
 #ifndef TX_ISP_T40_VCT_H
 #define TX_ISP_T40_VCT_H
 
+static uint t40_ct_top_apply;
+module_param(t40_ct_top_apply, uint, 0644);
+MODULE_PARM_DESC(t40_ct_top_apply, "1: commit the OEM-derived TOP word (t40_ct_top) at isp-block-init instead of the profile value");
+static u32 t40_ct_top, t40_ct_top_sel;
+module_param_named(t40_ct_top, t40_ct_top, uint, 0444);
+
+/*
+ * The translated chain itself (about 118 KB of vawb_gen code, opt-in, never device-tested) is only
+ * built with TX_ISP_T40_VCT=y (Kbuild; issue #85).  Without it t40_ct_chains is the constant 0: the
+ * literal/C CT and EV follow-ups run as with the parameter's default, and the compiler drops the
+ * translated functions that only this path reaches.  tests/t40_vct_host.sh keeps testing the chain.
+ */
+#ifdef TX_ISP_T40_VCT
 static uint t40_ct_chains;
 module_param(t40_ct_chains, uint, 0644);
 MODULE_PARM_DESC(t40_ct_chains, "1: OEM tisp_ct_update / ccm+bcsh ev_update chains (translated) instead of the literal CT/EV follow-ups");
 static uint t40_ct_fnum_tick;
 module_param(t40_ct_fnum_tick, uint, 0644);
 MODULE_PARM_DESC(t40_ct_fnum_tick, "1: advance the OEM frame number per AWB process (OEM never does: LSC CT LUT write deferral never fires)");
-static uint t40_ct_top_apply;
-module_param(t40_ct_top_apply, uint, 0644);
-MODULE_PARM_DESC(t40_ct_top_apply, "1: commit the OEM-derived TOP word (t40_ct_top) at isp-block-init instead of the profile value");
-static u32 t40_ct_top, t40_ct_top_sel;
-module_param_named(t40_ct_top, t40_ct_top, uint, 0444);
 static u32 vct_ct_calls, vct_ev_calls, vct_lut_writes, vct_skips;
 module_param_named(t40_ct_calls, vct_ct_calls, uint, 0444);
 module_param_named(t40_ct_lut_writes, vct_lut_writes, uint, 0444);
 module_param_named(t40_ct_skips, vct_skips, uint, 0444);
+#endif
 
 /* OEM lsc_ram_lock[bank] (4 B each): the chain passes the lock address, map it to the literal bank lock */
 static u64 vawb_x___private_spin_lock_irqsave(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
@@ -91,6 +100,7 @@ static u32 t40_vct_top_word(const u8 *bin, u32 sel, u32 status, u32 *reg6c)
 	return top;
 }
 
+#ifdef TX_ISP_T40_VCT
 /* bind the OEM LSC pointer objects to the literal bank buffers (OEM layout: tool para 0xa324 B,
  * real para 27656 B with nodes @13828 / packed LUT @13832) */
 static bool t40_vct_bind(void)
@@ -151,5 +161,11 @@ static int t40_vct_diag_get(char *buf, const struct kernel_param *kp)
 }
 static const struct kernel_param_ops t40_vct_diag_ops = { .get = t40_vct_diag_get };
 module_param_cb(t40_ct_diag, &t40_vct_diag_ops, NULL, 0444);
+
+#else
+#define t40_ct_chains 0U
+static inline void t40_vct_ct_update(u32 ct) { }
+static inline void t40_vct_ev_update(u32 ev) { }
+#endif /* TX_ISP_T40_VCT */
 
 #endif

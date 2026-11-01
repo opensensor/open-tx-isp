@@ -42,6 +42,12 @@ typedef int8_t s8; typedef int16_t s16; typedef int32_t s32; typedef int64_t s64
 #define PAGE_SIZE 4096
 #define THREAD_SIZE 8192
 #define module_param(a, b, c)
+/* bring-up-only parameters of the driver (Kbuild TX_ISP_T40_BRINGUP_PARAMS) */
+#define t40_bringup_param(...)
+#define t40_bringup_param_named(...)
+#define t40_bringup_param_array_named(...)
+#define t40_bringup_param_cb(...)
+#define t40_bringup_parm_desc(...)
 #define module_param_named(a, b, c, d)
 #define module_param_cb(a, b, c, d)
 #define MODULE_PARM_DESC(a, b)

@@ -22,6 +22,12 @@ typedef uint8_t u8; typedef uint16_t u16; typedef uint32_t u32; typedef int32_t 
 #define module_param_named(a, b, c, d)
 #define module_param(a, b, c)
 #define MODULE_PARM_DESC(a, b)
+/* bring-up-only parameters of the driver (Kbuild TX_ISP_T40_BRINGUP_PARAMS) */
+#define t40_bringup_param(...)
+#define t40_bringup_param_named(...)
+#define t40_bringup_param_array_named(...)
+#define t40_bringup_param_cb(...)
+#define t40_bringup_parm_desc(...)
 #define KERN_INFO ""
 #define KERN_ERR ""
 #define KERN_WARNING ""
