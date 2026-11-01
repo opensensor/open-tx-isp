@@ -624,7 +624,7 @@ lifted_ptr_scale_check:
 		t41:tisp_csccr_range_compress_mode:tailcall t41:tisp_raw_rdma_fd_interrupt
 	@# #189 pass 4 (T40, vendor T40 module + libt40-firmware compared): restored tail calls / the lost module-control mask
 	python3 ./lifted_ptr_scale_check.py --expect-clean t40:system_reg_write_af:tailcall t40:tisp_s_module_control:tailcall t40:tisp_ae_s_comp:tailcall \
-		t40:tisp_csc_set_attr:tailcall t40:tisp_dmsc_params_refresh:tailcall t41:video_input_cmd_open:tailcall
+		t40:tisp_csc_set_attr:tailcall t40:tisp_dmsc_params_refresh:tailcall
 
 # T40 lost tail calls / ALU restored in lifted code, run against callee stubs (#189)
 t40_lost_tail_host:

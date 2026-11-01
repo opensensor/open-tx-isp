@@ -6422,11 +6422,6 @@ static struct file_operations tx_isp_fops = {
 static struct file_operations video_input_cmd_fops = {
     .owner = THIS_MODULE,
     .open = (int (*)(struct inode *, struct file *))video_input_cmd_open,
-    /* #189 pass 4: open now allocates a single_open_size() seq_file, so the stock seq trio is needed (without .release every open leaked it; without .read a
-     * read of the proc file returned -EIO) */
-    .llseek = (loff_t (*)(struct file *, loff_t, int))seq_lseek,
-    .read = (ssize_t (*)(struct file *, char __user *, size_t, loff_t *))seq_read,
-    .release = (int (*)(struct inode *, struct file *))single_release,
 };
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000000000 origin=fragment_seed original=private_math_exp2 */
 uint32_t private_math_exp2(uint32_t arg1, uint32_t arg2, uint32_t arg3)
@@ -14600,10 +14595,11 @@ int32_t video_input_cmd_open(uint32_t a0, uint32_t a1)
     /* unmatched fragment 7 (Arithmetic): arithmetic fragment did not contain supported register operations */
     /* asm: 5ddc:	27bd0018 	addiu	sp,sp,24 */
 
-    /* stock tail call: single_open_size(file, video_input_cmd_show, PDE_DATA(inode), 512) (vendor41 video_input_cmd_open 0x148b8); the lift dropped
-     * the `jr t9` (a1 = %lo of the show function was never resolved), so `cat` of the proc file ran seq_read with NULL private_data (#189) */
-    return private_single_open_size((struct file *)(uintptr_t)s0, (int (*)(struct seq_file *, void *))video_input_cmd_show,
-                                    (void *)(uintptr_t)v0, 512);
+    /* #189 pass 4: the stock tail is single_open_size(file, video_input_cmd_show, PDE_DATA(inode), 512) (vendor41 video_input_cmd_open 0x148b8), but the
+     * lifted video_input_cmd_fops has no .read/.release (a read already returns -EIO, so the old `NULL private_data` suspicion was wrong) and the lifted
+     * video_input_cmd_show prints through wrong string labels (camera: garbage text). Restoring the tail with the seq trio printed garbage
+     * from isp-w00, so it stays a shim until show is re-lifted. */
+    return 0;
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000005de0 origin=fragment_seed original=video_input_cmd_set */

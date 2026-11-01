@@ -4,6 +4,13 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-01, T40 lost tail calls / lost ALU in lifted code, camera proof (Lu-Fi/openimp#189 pass 4, camera-tested on T40; T41 proc open left as a shim)
+
+- Restored on T40 (vendor T40 module and libt40-firmware compared): `system_reg_write_af` (both legs fall through to the AF register store), `tisp_s_module_control` (lost mask `0x200080` and the MDNS trigger tail), `tisp_ae_s_comp` (hand translation of the lost tail), `tisp_csc_set_attr` and `tisp_dmsc_params_refresh` (no default runtime change). Host test `tests/t40_lost_tail_host.sh`.
+- Camera (T40 test board, image with `tx-isp-t40.ko` of this tree): apitest 398 PASS / 0 FAIL, t40dev equal to the previous image in a same-scene runtime ko A/B, 6 module reload cycles clean, no oops. The module-control word follows toggled bits (`0x7FD9000D` -> `0x7FD9008D` / `0x7FD9000F`), the AF register 0x1a038/0x1a238 reads `0xC8F1` on the old and the new module (the stored value is not distinguishable on that board), contrast and AE compensation numbers equal. These are "reached by that code path" results, not a visible picture change.
+- Reverted after the first camera run: `tisp_s_fixed_contrast_attr` stays a shim. The restored tail `tisp_bcsh_set_mjpeg_contrast` runs the dead lifted `tisp_bcsh_ev_update` (NULL state) and oopsed on `IMP_ISP_Tuning_SetFixedContraster`.
+- T41 `video_input_cmd_open` stays a shim: the lifted `video_input_cmd_fops` has no `.read`/`.release` (a read is -EIO), and with the tail plus the seq trio restored the proc file printed garbage because the lifted `video_input_cmd_show` uses wrong string labels. Re-lift `video_input_cmd_show` first.
+
 ## 2026-11-01, T40 module size: opt-in colour chains and bring-up parameters out of the default build (Lu-Fi/openimp#85, camera-tested on T40)
 
 - `TX_ISP_T40_VCT=y` (Kbuild, default off) builds the translated OEM CT/EV colour chains (`t40_ct_chains=1`, opt-in, never device-tested, 0 hits in QEMU coverage); without it `t40_ct_chains` is the constant 0 and the literal/C follow-ups run as before. `t40_ct_top` / `t40_ct_top_apply` stay. `tests/t40_vct_host.sh` keeps testing the chain on the host.
