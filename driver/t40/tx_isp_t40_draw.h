@@ -86,6 +86,32 @@ static inline u32 t40_mask_en_word(const u8 *state)
 	return w;
 }
 
+/* OEM tisp_s_mscaler_mask_attr (state part): the lift stepped its pointers in words of their pointer type (+96 instead of
+ * +24 per unit, +2464 instead of +616 per channel), so only unit 0 of output channel 0 was stored and the others hit
+ * the memory behind the state.  User block 3 channels x 4 units x 24 bytes (enable +0, u16 +2/+4/+6/+8, y u v +19..+21). */
+static inline void t40_mask_set_state(u8 *state, const u8 *user)
+{
+	unsigned ch, unit;
+
+	for (ch = 0; ch < 3; ch++, state += T40_DRAW_CH_BYTES, user += 96) {
+		for (unit = 0; unit < 4; unit++) {
+			const u8 *d = user + unit * 24;
+			u8 *s = state + unit * 16;
+
+			if (d[0] == 1) {
+				s[36] = 1;
+				t40_dr_w16(s + 40, t40_dr_u16(d + 2));
+				t40_dr_w16(s + 38, t40_dr_u16(d + 4));
+				t40_dr_w16(s + 42, t40_dr_u16(d + 6));
+				t40_dr_w16(s + 44, t40_dr_u16(d + 8));
+				t40_dr_w32(s + 48, (u32)d[19] << 16 | (u32)d[20] << 8 | d[21]);
+			} else {
+				s[36] = 0;
+			}
+		}
+	}
+}
+
 /* OEM tisp_g_mscaler_mask_attr: 3 output channels x 4 units; state unit = 16 bytes at +36 (enable), +38 top... */
 static inline void t40_mask_get_state(const u8 *state, u8 *user)
 {

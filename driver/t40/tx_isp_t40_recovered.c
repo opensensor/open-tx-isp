@@ -155883,139 +155883,14 @@ int32_t tisp_g_autozoom_control(int32_t arg1, uint32_t* arg2)
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000073200 origin=fragment_seed original=tisp_s_mscaler_mask_attr */
 int32_t tisp_s_mscaler_mask_attr(uint32_t a0, uintptr_t a1)
 {
-    uint32_t local_14 = 0;
-    uint32_t *local_18 = 0;
-    uint32_t local_1c = 0;
-    uint32_t *local_20 = 0;
-    uint32_t *local_24 = 0;
-    uint32_t *a2 = 0;
-    uint32_t *a3 = 0;
-    uint32_t ra = 0;
-    uint32_t *s0 = 0;
-    uint32_t *s1 = 0;
-    uint32_t *s2 = 0;
-    uint32_t *s3 = 0;
-    uint32_t t0 = 0;
-    uint32_t *t1 = 0;
-    uint32_t *t2 = 0;
-    uint32_t *t3 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    /* Rewritten from the OEM (Eufy tx-isp-t40.ko tisp_s_mscaler_mask_attr @0x83c20), #186: the lift advanced typed pointers
+     * (unit +96 bytes instead of +24, channel +2464 instead of +616), so only unit 0 of output channel 0 was stored. */
+    void *state = a0 ? (void *)mscaler_s1 : (void *)mscaler_s0;
 
-    /* fragment 0: Prologue */
-    /* function prologue: stack frame and callee-saved register setup */
-
-    /* fragment 1: Branch */
-    s1 = a0;
-    if (a0 != 0) { goto tisp_s_mscaler_mask_attr0xe0; }
-
-    /* fragment 2: ConstantLoad */
-    /* T40-MASK-S0: the lift lost the vinum 0 state base (movz a1,zero,a0 compiled it to NULL: kernel oops at
-     * tisp_s_mscaler_mask_attr+0x50 on the first SetMask, Eufy agg43d 2026-10-24); the get uses mscaler_s0. */
-    s0 = (uintptr_t *)mscaler_s0;
-
-tisp_s_mscaler_mask_attr0x28:
-    /* fragment 3: Arithmetic */
-    a3 = s0;
-    t2 = a1 + 288;
-    t1 = 1;
-    t3 = 4;
-
-tisp_s_mscaler_mask_attr0x38:
-    /* fragment 4: Arithmetic */
-    v1 = a3;
-    v0 = a1;
-    a2 = 0;
-
-tisp_s_mscaler_mask_attr0x44:
-    /* fragment 5: MemoryAccess */
-    a0 = *(uint8_t *)((char *)v0 + 0);
-
-    /* fragment 6: Branch */
-    if (a0 != t1) { goto tisp_s_mscaler_mask_attr0xec; }
-
-    /* fragment 7: MemoryAccess */
-    *(uint8_t *)((char *)v1 + 36) = t1;
-    a0 = *(uint16_t *)((char *)v0 + 2);
-    *(uint16_t *)((char *)v1 + 40) = a0;
-    a0 = *(uint16_t *)((char *)v0 + 4);
-    *(uint16_t *)((char *)v1 + 38) = a0;
-    a0 = *(uint16_t *)((char *)v0 + 6);
-    *(uint16_t *)((char *)v1 + 42) = a0;
-    a0 = *(uint16_t *)((char *)v0 + 8);
-    *(uint16_t *)((char *)v1 + 44) = a0;
-    a0 = *(uint8_t *)((char *)v0 + 19);
-    t0 = *(uint8_t *)((char *)v0 + 20);
-    a0 = a0 << 16;
-    t0 = t0 << 8;
-    a0 = a0 | t0;
-    t0 = *(uint8_t *)((char *)v0 + 21);
-    a0 = a0 | t0;
-    *(uint32_t *)((char *)v1 + 48) = a0;
-
-tisp_s_mscaler_mask_attr0x94:
-    /* fragment 8: Arithmetic */
-    a2 = a2 + 1;
-    v0 = v0 + 24;
-
-    /* fragment 9: Branch */
-    v1 = v1 + 16;
-    if (a2 != t3) { goto tisp_s_mscaler_mask_attr0x44; }
-
-    /* fragment 10: Arithmetic */
-    a1 = a1 + 96;
-
-    /* fragment 11: Branch */
-    a3 = a3 + 616;
-    if (a1 != t2) { goto tisp_s_mscaler_mask_attr0x38; }
-
-    /* fragment 12: CallSetup */
-    s3 = (uint32_t *)&Tzn_Msca_Shd_Sta;
-    s2 = (uintptr_t *)&msleep;
-    s3 = s3;
-    s2 = s2;
-
-tisp_s_mscaler_mask_attr0xc0:
-    /* fragment 13: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)Tzn_Msca_Shd_Sta)(a0); /* jalr target resolved by relocation */
-
-    /* fragment 14: Branch */
-    int _bc_v0_14 = v0 == 0;
-    v0 = (uintptr_t *)&Tzn_Msca_Shd_mask;
-    if (_bc_v0_14) { goto tisp_s_mscaler_mask_attr0xf4; }
-
-    /* fragment 15: CallSetup */
-    msleep(1); /* jalr target resolved by relocation */
-
-    /* fragment 16: Branch */
-    goto tisp_s_mscaler_mask_attr0xc0;
-
-tisp_s_mscaler_mask_attr0xe0:
-    /* fragment 17: Arithmetic */
-    s0 = (uintptr_t *)&mscaler_s1;
-
-    /* fragment 18: Branch */
-    s0 = (uintptr_t *)&mscaler_s1;
-    goto tisp_s_mscaler_mask_attr0x28;
-
-tisp_s_mscaler_mask_attr0xec:
-    /* fragment 19: Branch */
-    *(uint8_t *)((char *)v1 + 36) = 0;
-    goto tisp_s_mscaler_mask_attr0x94;
-
-tisp_s_mscaler_mask_attr0xf4:
-    /* fragment 20: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)Tzn_Msca_Shd_mask)((uintptr_t)s1 & 255, (uintptr_t)s0); /* jalr target resolved by relocation */
-
-    /* fragment 21: Epilogue */
-    /* function epilogue: restore registers and return */
-
-    /* fragment 22: Arithmetic */
-    v0 = 0;
-
-    /* fragment 23: Epilogue */
-    /* function epilogue: restore registers and return */
-
+    t40_mask_set_state((u8 *)state, (const u8 *)a1);
+    while (Tzn_Msca_Shd_Sta() != 0)
+        msleep(1);
+    Tzn_Msca_Shd_mask(a0 & 255, state);
     return 0;
 }
 

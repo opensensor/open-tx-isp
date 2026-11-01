@@ -140,6 +140,40 @@ int main(void)
 		}
 		assert(mo[1] == 0xa5 && mo[287] == 0xa5);      /* bytes the OEM does not write stay as they were */
 	}
+
+	/* tisp_s_mscaler_mask_attr: every unit of every output channel is stored (the lift kept only ch0 / unit 0) and read back */
+	{
+		static u8 gs[1860 + 64], us[288], uo[288];
+		unsigned c, k;
+
+		memset(gs, 0xee, sizeof gs);
+		memset(gs, 0, 1860);
+		memset(us, 0, sizeof us);
+		for (c = 0; c < 3; c++)
+			for (k = 0; k < 4; k++) {
+				u8 *d = us + c * 96 + k * 24;
+
+				d[0] = (c + k) & 1 ? 1 : 0;
+				put16(d + 2, 100 + c * 10 + k); put16(d + 4, 200 + c * 10 + k);
+				put16(d + 6, 300 + c * 10 + k); put16(d + 8, 400 + c * 10 + k);
+				d[19] = 10 + c; d[20] = 20 + k; d[21] = 30;
+			}
+		t40_mask_set_state(gs, us);
+		for (i = 1860; i < sizeof gs; i++)
+			assert(gs[i] == 0xee);                          /* nothing behind the state */
+		memset(uo, 0, sizeof uo);
+		t40_mask_get_state(gs, uo);
+		for (c = 0; c < 3; c++)
+			for (k = 0; k < 4; k++) {
+				const u8 *d = us + c * 96 + k * 24, *o = uo + c * 96 + k * 24;
+
+				assert(o[0] == d[0]);
+				if (d[0])
+					assert(!memcmp(o + 2, d + 2, 8) && !memcmp(o + 19, d + 19, 3));
+			}
+		assert(t40_mask_en_word(gs) == 7u);
+		assert(gs[616 + 0 * 16 + 36] == 1 && gs[616 + 1 * 16 + 36] == 0 && gs[1232 + 1 * 16 + 36] == 1);
+	}
 	puts("tx_isp_t40_draw_test: ok");
 	return 0;
 }
