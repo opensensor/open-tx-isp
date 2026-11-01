@@ -48,9 +48,9 @@ module_param_named(lsc_lit_ct_cool_x, regtrace_lsc_lit_ct_cool_x, uint, 0644);
 static uint regtrace_lsc_lit_ct_cool_ct = 6500;
 module_param_named(lsc_lit_ct_cool_ct, regtrace_lsc_lit_ct_cool_ct, uint, 0644);
 static uint regtrace_lsc_lit_ct_min = 2300;
-module_param_named(lsc_lit_ct_min, regtrace_lsc_lit_ct_min, uint, 0444);
+t40_bringup_param_named(lsc_lit_ct_min, regtrace_lsc_lit_ct_min, uint, 0444);
 static uint regtrace_lsc_lit_ct_max = 8000;
-module_param_named(lsc_lit_ct_max, regtrace_lsc_lit_ct_max, uint, 0444);
+t40_bringup_param_named(lsc_lit_ct_max, regtrace_lsc_lit_ct_max, uint, 0444);
 static uint regtrace_lsc_lit_ct_now; /* last CT pushed into the LSC chain */
 module_param_named(lsc_lit_ct_now, regtrace_lsc_lit_ct_now, uint, 0444);
 

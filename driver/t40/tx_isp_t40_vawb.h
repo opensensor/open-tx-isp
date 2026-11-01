@@ -160,7 +160,7 @@ static inline void vawb_fn_enter(void) { vawb_calls++; }
 
 /* label trace (gen.sh VAE_TRACE=<fns>): t40_vawb_trace=1 arms one process call, t40_vawb_tbuf reads it */
 static uint t40_vawb_trace;
-module_param(t40_vawb_trace, uint, 0644);
+t40_bringup_param(t40_vawb_trace, uint, 0644);
 static u32 vawb_tbuf[256], vawb_tn, vawb_tarmed;
 static inline void vawb_trace(u32 pc)
 {
@@ -183,7 +183,7 @@ module_param_cb(t40_vawb_tbuf, &t40_vawb_tbuf_ops, NULL, 0444);
  * must not spin the event thread / IRQ forever */
 static u32 vawb_loop_n, vawb_loop_trips, vawb_loop_pc;
 module_param_named(t40_vawb_loop_trips, vawb_loop_trips, uint, 0444);
-module_param_named(t40_vawb_loop_pc, vawb_loop_pc, uint, 0444);
+t40_bringup_param_named(t40_vawb_loop_pc, vawb_loop_pc, uint, 0444);
 #define VAWB_LOOP_LIMIT 2000000U
 static noinline bool vawb_loop_trip(u32 pc)
 {
@@ -368,8 +368,8 @@ static int vawb_stacks_alloc(void)
 /* bring-up switches: t40_vawb_run bit0 = stats in the AWB IRQ, bit1 = per-frame process;
  * t40_vawb_debug = 1: init steps logged with a pause (kmsg capture before a hang) */
 static uint t40_vawb_run = 3;
-module_param(t40_vawb_run, uint, 0644);
-module_param(t40_vawb_debug, uint, 0644);
+t40_bringup_param(t40_vawb_run, uint, 0644);
+t40_bringup_param(t40_vawb_debug, uint, 0644);
 #define VAWB_STEP(n) do { if (t40_vawb_debug) { printk(KERN_WARNING "t40: vawb init step %d faults=%u\n", n, vawb_faults); msleep(400); } } while (0)
 #define VAWB_CSP ((u32)(uintptr_t)vawb_argarea)
 #include "tx_isp_t40_vct.h"
@@ -470,7 +470,7 @@ static u32 t40_vawb_ev, t40_vawb_ev_sent;
 #define VAWB_DUMP_ONE (64 + 60328 + 4752 + 512 + 136 + 356)
 #define VAWB_DUMP_BYTES (VAWB_DUMP_ONE + 60328 + 4752)
 static uint t40_vawb_dump_req;
-module_param(t40_vawb_dump_req, uint, 0644);
+t40_bringup_param(t40_vawb_dump_req, uint, 0644);
 static u32 vawb_dump_len;
 static ssize_t vawb_dump_read(struct file *f, char __user *u, size_t n, loff_t *off)
 {
@@ -549,13 +549,13 @@ static int64_t t40_vawb_process(void)
 /* CT consumers (OEM tisp_ct_update, event 13: ccm/lsc/bcsh main_ct_update) driven from the
  * frame-done work with the literal CCM/LSC/BCSH chains of this driver.  CT = *ctx[7]. */
 static uint32_t t40_vawb_ct, t40_vawb_lsc_ct;
-module_param_named(t40_vawb_ct, t40_vawb_ct, uint, 0444);
+t40_bringup_param_named(t40_vawb_ct, t40_vawb_ct, uint, 0444);
 static uint t40_vawb_lsc_step = 200;
-module_param(t40_vawb_lsc_step, uint, 0644);
-MODULE_PARM_DESC(t40_vawb_lsc_step, "vendor AWB: LSC LUT re-interpolation CT step in K (default 200)");
+t40_bringup_param(t40_vawb_lsc_step, uint, 0644);
+t40_bringup_parm_desc(t40_vawb_lsc_step, "vendor AWB: LSC LUT re-interpolation CT step in K (default 200)");
 /* EV like the OEM AE event 8 payload: integration time (lines) x total gain, Q10.  The open AE
  * does not push event 8, so AWB (Y weights / day-night EV gates), CCM and BCSH get it here. */
-module_param_named(t40_vawb_ev, t40_vawb_ev, uint, 0444);
+t40_bringup_param_named(t40_vawb_ev, t40_vawb_ev, uint, 0444);
 static u32 t40_vawb_ev_now(void)
 {
 	u32 it, again_log2, again_x1024;

@@ -2618,7 +2618,7 @@ static int32_t irq_func_cb[T40_IRQ_FUNC_CB_N];
 static bool regtrace_t40_ae_par_calc = true;
 static bool regtrace_t40_ae_force_auto;   /* test aid: force the AE mode u16 at *(ctx+4)+6 to 1 so tune2 runs the per-frame EV allocation */
 t40_bringup_param_named(t40_ae_force_auto, regtrace_t40_ae_force_auto, bool, 0644);
-module_param_named(t40_ae_par_calc, regtrace_t40_ae_par_calc, bool, 0644);
+t40_bringup_param_named(t40_ae_par_calc, regtrace_t40_ae_par_calc, bool, 0644);
 static uint32_t regtrace_t40_ae_par_calc_count;
 t40_bringup_param_named(t40_ae_par_calc_count, regtrace_t40_ae_par_calc_count, uint, 0444);
 static inline uintptr_t t40_sensor_cb2(uint32_t off, uintptr_t a0, uintptr_t a1);   /* T40-SENSOR-CB, defined before tisp_set_sensor_analog_gain */
@@ -7476,9 +7476,9 @@ static struct task_struct *t40_ls_ev_task;
 static unsigned int t40_ls_ev_slot;
 static unsigned int t40_ls_reg_w[64], t40_ls_reg_r[64], t40_ls_reg_cyc[64];
 static unsigned int t40_ls_reg_num = 64;
-module_param_array_named(t40_ls_reg_w, t40_ls_reg_w, uint, &t40_ls_reg_num, 0444);
-module_param_array_named(t40_ls_reg_r, t40_ls_reg_r, uint, &t40_ls_reg_num, 0444);
-module_param_array_named(t40_ls_reg_cyc, t40_ls_reg_cyc, uint, &t40_ls_reg_num, 0444);
+t40_bringup_param_array_named(t40_ls_reg_w, t40_ls_reg_w, uint, &t40_ls_reg_num, 0444);
+t40_bringup_param_array_named(t40_ls_reg_r, t40_ls_reg_r, uint, &t40_ls_reg_num, 0444);
+t40_bringup_param_array_named(t40_ls_reg_cyc, t40_ls_reg_cyc, uint, &t40_ls_reg_num, 0444);
 #define T40_LS_REG_IN(arr) \
 	bool t40_ls_on = READ_ONCE(t40_ls_ev_task) == current && t40_ls_ev_slot < 64; \
 	u32 t40_ls_c0 = 0; \
@@ -7490,7 +7490,7 @@ module_param_array_named(t40_ls_reg_cyc, t40_ls_reg_cyc, uint, &t40_ls_reg_num, 
 #define T40_LS_REG_OUT() do { } while (0)
 #endif
 static bool regtrace_t40_ct_update;             /* run the event-13 colour-temperature updates (CCM/LSC/BCSH/CLM); needs their init */
-module_param_named(t40_ct_update, regtrace_t40_ct_update, bool, 0644);
+t40_bringup_param_named(t40_ct_update, regtrace_t40_ct_update, bool, 0644);
 static bool regtrace_t40_ev_updates;            /* run events 6..13 (tgain/again/ev/ct module updates pushed by the 3A); needs the module inits */
 module_param_named(t40_ev_updates, regtrace_t40_ev_updates, bool, 0644);
 /* loop-guard helpers are defined near the event dispatcher; forward declarations for the CCM/BCSH code above it */
@@ -7635,7 +7635,7 @@ static unsigned int t40_csc_unsafe;  /* 1: allow the broken lifted CSC and CCM g
 module_param(t40_csc_unsafe, uint, 0644);
 MODULE_PARM_DESC(t40_csc_unsafe, "allow the lifted OEM CSC get/set (stack/bss overflow, debug only)");
 static unsigned int regtrace_t40_module_ctx_inits;  /* bitmask: run the lifted module inits (1 gamma 2 lsc 4 ccm 8 bcsh 16 clm) after the lit inits */
-module_param_named(t40_module_ctx_inits, regtrace_t40_module_ctx_inits, uint, 0644);
+t40_bringup_param_named(t40_module_ctx_inits, regtrace_t40_module_ctx_inits, uint, 0644);
 static unsigned int regtrace_t40_antiflick_hz;      /* 0 = bin default (60 Hz), 50/60 = set after AE init like the vendor app does */
 module_param_named(t40_antiflick_hz, regtrace_t40_antiflick_hz, uint, 0644);
 static uint32_t t40_antiflick_pending[2];        /* SetAntiFlickerAttr received before the AE context exists (timps start order) */
@@ -9563,15 +9563,15 @@ static bool regtrace_t40_msca_late_work_en = true;
 static bool regtrace_t40_isr_ch1_direct = true;
 module_param_named(t40_isr_ch1_direct, regtrace_t40_isr_ch1_direct, bool, 0644);
 static uint regtrace_t40_isr_ch1_irq, regtrace_t40_isr_ch1_pop;
-module_param_named(t40_isr_ch1_irq, regtrace_t40_isr_ch1_irq, uint, 0444);
-module_param_named(t40_isr_ch1_pop, regtrace_t40_isr_ch1_pop, uint, 0444);
-module_param_named(t40_msca_late_work_en, regtrace_t40_msca_late_work_en, bool, 0644);
+t40_bringup_param_named(t40_isr_ch1_irq, regtrace_t40_isr_ch1_irq, uint, 0444);
+t40_bringup_param_named(t40_isr_ch1_pop, regtrace_t40_isr_ch1_pop, uint, 0444);
+t40_bringup_param_named(t40_msca_late_work_en, regtrace_t40_msca_late_work_en, bool, 0644);
 /* OEM stop (Eufy tisp_channel_main_stop 0x1c588): enable flag = 0, then Tzn_Msca_cfg_load: 0x16010=0, geometry,
  * 0x16010=1, 0x16008 = flag0 | flag1 << 1 | flag2 << 2 - one work_en write with the remaining channels. */
 static bool regtrace_t40_msca_oem_stop = true;
-module_param_named(t40_msca_oem_stop, regtrace_t40_msca_oem_stop, bool, 0644);
+t40_bringup_param_named(t40_msca_oem_stop, regtrace_t40_msca_oem_stop, bool, 0644);
 static uint regtrace_t40_msca_oem_stop_count;
-module_param_named(t40_msca_oem_stop_count, regtrace_t40_msca_oem_stop_count, uint, 0444);
+t40_bringup_param_named(t40_msca_oem_stop_count, regtrace_t40_msca_oem_stop_count, uint, 0444);
 static bool regtrace_t40_msca_clear_load_after_program = true;
 static bool regtrace_t40_msca_shadow_write_load_mask;
 static bool regtrace_t40_msca_rewrite_full_size_late;
@@ -9944,7 +9944,7 @@ module_param_named(awb_manual_bgain, regtrace_awb_manual_bgain, uint, 0644);
 t40_bringup_param_named(awb_control_mode, regtrace_awb_control_mode, uint, 0444);
 t40_bringup_param_named(awb_control_frozen, regtrace_awb_control_frozen, bool, 0444);
 module_param_named(running_mode, regtrace_running_mode, uint, 0444);
-module_param_named(sensor_fps_packed, regtrace_sensor_fps_packed, uint, 0444);
+t40_bringup_param_named(sensor_fps_packed, regtrace_sensor_fps_packed, uint, 0444);
 t40_bringup_param_named(day_awb_rgain, regtrace_day_awb_rgain, uint, 0444);
 t40_bringup_param_named(day_awb_bgain, regtrace_day_awb_bgain, uint, 0444);
 t40_bringup_param_named(dmsc_sharpness, regtrace_dmsc_sharpness, uint, 0444);
@@ -10008,7 +10008,7 @@ t40_bringup_param_named(t40_msca_shadow_write_load_mask, regtrace_t40_msca_shado
 t40_bringup_param_named(t40_msca_rewrite_full_size_late, regtrace_t40_msca_rewrite_full_size_late, bool, 0644);
 t40_bringup_param_named(t40_msca_rewrite_coeffs_late, regtrace_t40_msca_rewrite_coeffs_late, bool, 0644);
 t40_bringup_param_named(t40_msca_work_en_dma_bits, regtrace_t40_msca_work_en_dma_bits, bool, 0644);
-module_param_named(t40_msca_fifo_ctrl_on_set_fmt, regtrace_t40_msca_fifo_ctrl_on_set_fmt, bool, 0644);
+t40_bringup_param_named(t40_msca_fifo_ctrl_on_set_fmt, regtrace_t40_msca_fifo_ctrl_on_set_fmt, bool, 0644);
 t40_bringup_param_named(t40_msca_fifo_ctrl_on_qbuf, regtrace_t40_msca_fifo_ctrl_on_qbuf, bool, 0644);
 module_param_named(enable_msca_rearm_guard, regtrace_enable_msca_rearm_guard, bool, 0644);
 module_param_named(enable_msca_spare, regtrace_enable_msca_spare, bool, 0644);
@@ -10133,7 +10133,7 @@ t40_bringup_param_named(t40_msca_coeff_override, regtrace_t40_msca_coeff_overrid
 static bool regtrace_t40_msca_oem_coeffs;
 t40_bringup_param_named(t40_msca_oem_coeffs, regtrace_t40_msca_oem_coeffs, bool, 0644);
 static bool regtrace_t40_msca_oem_1602c;
-module_param_named(t40_msca_oem_1602c, regtrace_t40_msca_oem_1602c, bool, 0644);
+t40_bringup_param_named(t40_msca_oem_1602c, regtrace_t40_msca_oem_1602c, bool, 0644);
 static bool regtrace_t40_msca_ch1_kick;
 t40_bringup_param_named(t40_msca_ch1_kick, regtrace_t40_msca_ch1_kick, bool, 0644);
 module_param_named(t40_profile_no_direct_addr_source, regtrace_t40_profile_no_direct_addr_source, uint, 0644);
@@ -10240,8 +10240,8 @@ struct regtrace_fr_entry { uint32_t id; uint32_t aux; uint32_t jiffies_lo; uint3
 /* t40_fr_big=1 (diagnostic, default 0): big mark ring + MSCA/FIFO/ISR-status marks + MSCA snapshots */
 static bool regtrace_fr_big;
 static bool regtrace_fr_regs;
-module_param_named(t40_fr_regs, regtrace_fr_regs, bool, 0644);
-module_param_named(t40_fr_big, regtrace_fr_big, bool, 0644);
+t40_bringup_param_named(t40_fr_regs, regtrace_fr_regs, bool, 0644);
+t40_bringup_param_named(t40_fr_big, regtrace_fr_big, bool, 0644);
 static uint32_t regtrace_fr_seq;
 static int regtrace_fr_mark(uint32_t id, uint32_t aux)
 {
@@ -12736,8 +12736,8 @@ MODULE_PARM_DESC(t40_gates_oem_offset, "1 (default) reads the bin bypass flags a
  * t40_gates_awb=0 keeps the profile's bits 2/6 (old behaviour).
  */
 static bool regtrace_t40_gates_awb = true;
-module_param_named(t40_gates_awb, regtrace_t40_gates_awb, bool, 0644);
-MODULE_PARM_DESC(t40_gates_awb, "1 (default) takes TOP bits 2 (AWB0) and 6 (AWB1) from the bin flags like stock; 0 keeps the profile bits");
+t40_bringup_param_named(t40_gates_awb, regtrace_t40_gates_awb, bool, 0644);
+t40_bringup_parm_desc(t40_gates_awb, "1 (default) takes TOP bits 2 (AWB0) and 6 (AWB1) from the bin flags like stock; 0 keeps the profile bits");
 static uint regtrace_t40_gates_offset_now = 0x20U;
 /*
  * A/B aid, not stock behaviour: the OEM linear gate set bypasses BLC
@@ -12747,7 +12747,7 @@ static uint regtrace_t40_gates_offset_now = 0x20U;
  * the linear set switches.  Default 0.
  */
 static bool regtrace_t40_gates_keep_blc;
-module_param_named(t40_gates_keep_blc, regtrace_t40_gates_keep_blc, bool, 0644);
+t40_bringup_param_named(t40_gates_keep_blc, regtrace_t40_gates_keep_blc, bool, 0644);
 /*
  * Day/night BLC policy for t40_gates_oem_offset=1.  The bin's linear mask
  * bypasses BLC and leaves the black level to GIB, but GIB sits behind WBG:
@@ -12781,8 +12781,8 @@ t40_bringup_param_named(t40_gates_offset_now, regtrace_t40_gates_offset_now, uin
  */
 static uint32_t regtrace_tisp_main_init_last_reg6c;
 static bool regtrace_t40_gates_reg6c;
-module_param_named(t40_gates_reg6c, regtrace_t40_gates_reg6c, bool, 0644);
-MODULE_PARM_DESC(t40_gates_reg6c, "1 (with t40_gates_oem_offset=1) writes TOP 0x6c from the active bank like stock (default 0)");
+t40_bringup_param_named(t40_gates_reg6c, regtrace_t40_gates_reg6c, bool, 0644);
+t40_bringup_parm_desc(t40_gates_reg6c, "1 (with t40_gates_oem_offset=1) writes TOP 0x6c from the active bank like stock (default 0)");
 static uint regtrace_t40_gates_reg6c_value;
 t40_bringup_param_named(t40_gates_reg6c_value, regtrace_t40_gates_reg6c_value, uint, 0444);
 static unsigned int regtrace_t40_gates_reg6c_writes;
@@ -13109,7 +13109,7 @@ static void regtrace_t40_gib_calc_dgain(uint16_t self_gain, bool ir_mode,
  * this setup is above the bin value.  Default 0 (OEM values).
  */
 static int regtrace_t40_gib_blc_delta;
-module_param_named(t40_gib_blc_delta, regtrace_t40_gib_blc_delta, int, 0644);
+t40_bringup_param_named(t40_gib_blc_delta, regtrace_t40_gib_blc_delta, int, 0644);
 
 static int regtrace_gib_main_gain_update_lit(uint32_t gain, bool init)
 {
@@ -19839,8 +19839,8 @@ static bool t40_exit_stats_off = true;
 module_param(t40_exit_stats_off, bool, 0644);
 MODULE_PARM_DESC(t40_exit_stats_off, "exit: also clear the AE/AWB statistics enables (0x19000/0x18000) before freeing their buffers");
 static bool t40_exit_vic_reset = true;
-module_param(t40_exit_vic_reset, bool, 0644);
-MODULE_PARM_DESC(t40_exit_vic_reset, "exit: reset the started VICs before the statistics buffers are freed");
+t40_bringup_param(t40_exit_vic_reset, bool, 0644);
+t40_bringup_parm_desc(t40_exit_vic_reset, "exit: reset the started VICs before the statistics buffers are freed");
 
 static void t40_exit_quiesce_dma(void)
 {
@@ -24044,9 +24044,9 @@ static atomic_t regtrace_tx_isp_open_count = ATOMIC_INIT(0);
 static bool regtrace_t40_release_reset = true;
 static uint regtrace_t40_release_reset_count;
 static uint regtrace_t40_release_reset_last_ack;   /* polls until 0x204 bit0, 0xffffffff = timeout */
-module_param_named(t40_release_reset, regtrace_t40_release_reset, bool, 0644);
+t40_bringup_param_named(t40_release_reset, regtrace_t40_release_reset, bool, 0644);
 module_param_named(t40_release_reset_count, regtrace_t40_release_reset_count, uint, 0444);
-module_param_named(t40_release_reset_last_ack, regtrace_t40_release_reset_last_ack, uint, 0444);
+t40_bringup_param_named(t40_release_reset_last_ack, regtrace_t40_release_reset_last_ack, uint, 0444);
 
 static void regtrace_t40_core_slake_reset(void)
 {
@@ -49618,10 +49618,10 @@ int64_t vic_frame_done_wakeup(uint32_t a0)
 static void regtrace_t40_dn_event_work_fn(struct work_struct *work);
 static DECLARE_WORK(regtrace_t40_dn_event_work, regtrace_t40_dn_event_work_fn);
 static uint regtrace_t40_dn_event_runs;
-module_param_named(t40_dn_event_runs, regtrace_t40_dn_event_runs, uint, 0444);
+t40_bringup_param_named(t40_dn_event_runs, regtrace_t40_dn_event_runs, uint, 0444);
 static int regtrace_t40_dn_event_last_ret;
 static bool regtrace_t40_dn_event_off;	/* module exit: no new work */
-module_param_named(t40_dn_event_last_ret, regtrace_t40_dn_event_last_ret, int, 0444);
+t40_bringup_param_named(t40_dn_event_last_ret, regtrace_t40_dn_event_last_ret, int, 0444);
 
 static void regtrace_t40_dn_event_work_fn(struct work_struct *work)
 {
@@ -75309,9 +75309,9 @@ tisp_event_process0x1c8:
 /* RC2: diagnostics default-off.  t40_loopguard=1 restores the 2M backward-goto budget,
  * t40_ae_diag=1 the AE one-shot printks (AEHW/AETUNE2/AEEV.../AEIN/AECTRLS/AEEXPLIST/AE vendor). */
 static bool regtrace_t40_loopguard;
-module_param_named(t40_loopguard, regtrace_t40_loopguard, bool, 0644);
+t40_bringup_param_named(t40_loopguard, regtrace_t40_loopguard, bool, 0644);
 static unsigned int regtrace_t40_ae_diag;
-module_param_named(t40_ae_diag, regtrace_t40_ae_diag, uint, 0644);   /* 1 = summary one-shots, 2 = tune2/EV-loop traces (AEEVL, AETUNE2IN/NL/OUT, AEEV, AEX) */
+t40_bringup_param_named(t40_ae_diag, regtrace_t40_ae_diag, uint, 0644);   /* 1 = summary one-shots, 2 = tune2/EV-loop traces (AEEVL, AETUNE2IN/NL/OUT, AEEV, AEX) */
 
 /* T40-AE-EVTAB-DIAG (fable) */
 /* T40-LOOPGUARD (fable): per-call budget on every backward goto of the lifted tisp_ae_* functions;
@@ -86567,7 +86567,7 @@ static void regtrace_awb_grayworld_apply(uint32_t rgain, uint32_t bgain)
  * The soft-AE mean keeps using the raw sums.
  */
 static int regtrace_t40_awb_stats_ped;
-module_param_named(t40_awb_stats_ped, regtrace_t40_awb_stats_ped, int, 0644);
+t40_bringup_param_named(t40_awb_stats_ped, regtrace_t40_awb_stats_ped, int, 0644);
 static uint regtrace_t40_awb_stats_ped_now;
 t40_bringup_param_named(t40_awb_stats_ped_now, regtrace_t40_awb_stats_ped_now, uint, 0444);
 
@@ -89228,7 +89228,7 @@ static uint t40_gib_dgain_ok;
 static uint t40_gib_dgain_last;                    /* final_gain[1] << 16 | final_gain[0] of the last apply */
 static uint t40_gib_dgain_last_in;                 /* ae_gain[0] of the last apply */
 t40_bringup_param_named(t40_gib_init_calls, t40_gib_init_calls, uint, 0444);
-module_param_named(t40_gib_init_ret, t40_gib_init_ret, int, 0444);
+t40_bringup_param_named(t40_gib_init_ret, t40_gib_init_ret, int, 0444);
 t40_bringup_param_named(t40_gib_dgain_calls, t40_gib_dgain_calls, uint, 0444);
 t40_bringup_param_named(t40_gib_dgain_ok, t40_gib_dgain_ok, uint, 0444);
 t40_bringup_param_named(t40_gib_dgain_last, t40_gib_dgain_last, uint, 0444);
@@ -89504,7 +89504,7 @@ int32_t tisp_gib_write_reg(uint32_t s, uint32_t mode)
 
 /* OEM 0x368e4 (tisp_main/sec_long_tgain_update) */
 static uint t40_gib_again_calls;
-module_param_named(t40_gib_again_calls, t40_gib_again_calls, uint, 0444);
+t40_bringup_param_named(t40_gib_again_calls, t40_gib_again_calls, uint, 0444);
 int32_t tisp_gib_a_gian_update(uint32_t s, uint32_t gain)
 {
 	int32_t ret = tisp_gib_interp_by_gain(s, gain, 0);
@@ -89613,7 +89613,7 @@ t40_bringup_param_named(t40_gib_status_word, t40_gib_status_word, uint, 0444);
  * (device 10-18: mean Y 72 -> 54, crushed shadows), so the old state is kept there.  0 off, 1 on.
  */
 static int t40_gib_real = -1;
-module_param_named(t40_gib_real, t40_gib_real, int, 0644);
+t40_bringup_param_named(t40_gib_real, t40_gib_real, int, 0644);
 /* set once the OEM GIB flow initialised (block init); the sensor gain update then follows the OEM
  * tisp_main_long_tgain_update -> tisp_gib_a_gian_update(0, again) so the GIB black level is
  * re-interpolated from the bin's gain tables instead of staying at the init gain */

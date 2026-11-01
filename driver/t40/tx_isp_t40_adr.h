@@ -1483,7 +1483,7 @@ module_param_named(t40_adr_on, regtrace_t40_adr_on, bool, 0644);
 MODULE_PARM_DESC(t40_adr_on, "1 (with t40_gates_oem_offset=1) runs the ADR chain and clears TOP bit 7 after a successful init (default 1)");
 static bool regtrace_t40_adr_active T40C2;
 static unsigned int t40_adr_blocked T40C2;	/* forced statistics fan-out calls not run (ADR runs on its own bit 9) */
-module_param_named(adr_forced_blocked, t40_adr_blocked, uint, 0444);
+t40_bringup_param_named(adr_forced_blocked, t40_adr_blocked, uint, 0444);
 
 /* statistics IRQ 9 (OEM tiziano_adr_main_interrupt_static) */
 static int32_t t40_adr_isr(void)
