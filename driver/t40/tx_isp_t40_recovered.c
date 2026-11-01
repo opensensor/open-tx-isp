@@ -156548,140 +156548,39 @@ int32_t tisp_msca_state(void)
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000073fe0 origin=fragment_seed original=tisp_g_draw_attr */
 int64_t tisp_g_draw_attr(uint32_t a0, uintptr_t a1)
 {
-    uint32_t *a2 = 0;
-    uint32_t *a3 = 0;
-    uint32_t ra = 0;
-    uint32_t t0 = 0;
-    uint32_t *t1 = 0;
-    uint32_t *t2 = 0;
-    uint32_t *t3 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    /* Rewritten from the OEM (Eufy tx-isp-t40.ko tisp_g_draw_attr @0x84a00).  The lift loaded NULL for the a0 == 0 state
+     * (the &mscaler_s0 relocation was lost: IMP_ISP_GetDrawAttr oopsed on every call, BadVA 0x64, leaving the opener
+     * thread dead and the module reference held) and fell from the end of the loop back into the type dispatch.  Two ISP
+     * output channels x 16 units: state 616 bytes per channel, 24 bytes per unit (type at +100, fields +104..+122),
+     * user block 448 bytes per channel, 28 bytes per unit; type 1 also copies the half word at +122. */
+    const char *st = a0 ? (const char *)mscaler_s1 : (const char *)mscaler_s0;
+    uint8_t *out = (uint8_t *)a1;
+    unsigned int ch, unit;
 
-    /* fragment 0: Branch */
-    int _bc_a0_0 = a0 != 0;
-    a0 = (uint32_t *)&mscaler_s1;
-    if (_bc_a0_0) { goto tisp_g_draw_attr0x90; }
+    for (ch = 0; ch < 2; ch++, st += 616, out += 448) {
+        for (unit = 0; unit < 16; unit++) {
+            const char *s = st + unit * 24;
+            uint8_t *d = out + unit * 28;
+            uint32_t type = *(const uint8_t *)(s + 100);
 
-    /* fragment 1: ConstantLoad */
-    a0 = 0x0;
-
-tisp_g_draw_attr0x10:
-    /* fragment 2: Arithmetic */
-    t0 = a0 + 1232;
-    t2 = 1;
-    t3 = 2;
-    t1 = 16;
-
-tisp_g_draw_attr0x20:
-    /* fragment 3: Arithmetic */
-    v1 = a1;
-    v0 = a0;
-    a3 = 0;
-
-tisp_g_draw_attr0x2c:
-    /* fragment 4: MemoryAccess */
-    a2 = *(uint8_t *)((char *)v0 + 100);
-
-    /* fragment 5: Branch */
-    int _bc_a2_5 = a2 != 0;
-    *(uint32_t *)((char *)v1 + 0) = a2;
-    if (_bc_a2_5) { goto tisp_g_draw_attr0x98; }
-
-    /* fragment 6: MemoryAccess */
-    a2 = *(uint8_t *)((char *)v0 + 104);
-
-tisp_g_draw_attr0x3c:
-    /* fragment 7: MemoryAccess */
-    *(uint8_t *)((char *)v1 + 8) = a2;
-    a2 = *(uint16_t *)((char *)v0 + 106);
-    *(uint16_t *)((char *)v1 + 10) = a2;
-    a2 = *(uint16_t *)((char *)v0 + 108);
-    *(uint16_t *)((char *)v1 + 12) = a2;
-    a2 = *(uint16_t *)((char *)v0 + 110);
-    *(uint16_t *)((char *)v1 + 14) = a2;
-    a2 = *(uint16_t *)((char *)v0 + 112);
-    *(uint16_t *)((char *)v1 + 16) = a2;
-    a2 = *(uint16_t *)((char *)v0 + 118);
-    *(uint8_t *)((char *)v1 + 21) = a2;
-    a2 = *(uint32_t *)((char *)v0 + 116);
-    a2 = (uintptr_t)a2 >> 8;
-    *(uint8_t *)((char *)v1 + 22) = a2;
-    a2 = *(uint32_t *)((char *)v0 + 116);
-    *(uint8_t *)((char *)v1 + 23) = a2;
-    a2 = *(uint8_t *)((char *)v0 + 120);
-    *(uint8_t *)((char *)v1 + 24) = a2;
-    a2 = *(uint8_t *)((char *)v0 + 121);
-
-    /* fragment 8: Branch */
-    *(uint8_t *)((char *)v1 + 25) = a2;
-    goto tisp_g_draw_attr0xfc;
-
-tisp_g_draw_attr0x90:
-    /* fragment 9: Branch */
-    a0 = (uint32_t *)&mscaler_s1;
-    goto tisp_g_draw_attr0x10;
-
-tisp_g_draw_attr0x98:
-    /* fragment 10: Branch */
-    if (a2 != t2) { goto tisp_g_draw_attr0x120; }
-
-    /* fragment 11: MemoryAccess */
-    a2 = *(uint8_t *)((char *)v0 + 104);
-    *(uint8_t *)((char *)v1 + 8) = a2;
-    a2 = *(uint16_t *)((char *)v0 + 106);
-    *(uint16_t *)((char *)v1 + 10) = a2;
-    a2 = *(uint16_t *)((char *)v0 + 108);
-    *(uint16_t *)((char *)v1 + 12) = a2;
-    a2 = *(uint16_t *)((char *)v0 + 110);
-    *(uint16_t *)((char *)v1 + 14) = a2;
-    a2 = *(uint16_t *)((char *)v0 + 112);
-    *(uint16_t *)((char *)v1 + 16) = a2;
-    a2 = *(uint16_t *)((char *)v0 + 118);
-    *(uint8_t *)((char *)v1 + 21) = a2;
-    a2 = *(uint32_t *)((char *)v0 + 116);
-    a2 = (uintptr_t)a2 >> 8;
-    *(uint8_t *)((char *)v1 + 22) = a2;
-    a2 = *(uint32_t *)((char *)v0 + 116);
-    *(uint8_t *)((char *)v1 + 23) = a2;
-    a2 = *(uint8_t *)((char *)v0 + 120);
-    *(uint8_t *)((char *)v1 + 24) = a2;
-    a2 = *(uint8_t *)((char *)v0 + 121);
-    *(uint8_t *)((char *)v1 + 25) = a2;
-    a2 = *(uint16_t *)((char *)v0 + 122);
-    *(uint16_t *)((char *)v1 + 26) = a2;
-
-tisp_g_draw_attr0xfc:
-    /* fragment 12: Arithmetic */
-    a3 = a3 + 1;
-    v0 = v0 + 24;
-
-    /* fragment 13: Branch */
-    v1 = v1 + 28;
-    if (a3 != t1) { goto tisp_g_draw_attr0x2c; }
-
-    /* fragment 14: Arithmetic */
-    a0 = a0 + 616;
-
-    /* fragment 15: Branch */
-    a1 = a1 + 448;
-    if (a0 != t0) { goto tisp_g_draw_attr0x20; }
-
-    /* fragment 16: Epilogue */
-    /* function epilogue: restore registers and return */
-
-    /* fragment 17: Arithmetic */
-    v0 = 0;
-
-tisp_g_draw_attr0x120:
-    /* fragment 18: Branch */
-    if (a2 != t3) { goto tisp_g_draw_attr0xfc; }
-
-    /* fragment 19: Branch */
-    a2 = *(uint8_t *)((char *)(v0) + 104);
-    goto tisp_g_draw_attr0x3c;
-
-    return ((int64_t)(uint32_t)v1 << 32) | (uint32_t)v0;
+            *(uint32_t *)d = type;
+            if (type > 2)
+                continue;
+            d[8] = *(const uint8_t *)(s + 104);
+            *(uint16_t *)(d + 10) = *(const uint16_t *)(s + 106);
+            *(uint16_t *)(d + 12) = *(const uint16_t *)(s + 108);
+            *(uint16_t *)(d + 14) = *(const uint16_t *)(s + 110);
+            *(uint16_t *)(d + 16) = *(const uint16_t *)(s + 112);
+            d[21] = (uint8_t)*(const uint16_t *)(s + 118);
+            d[22] = (uint8_t)(*(const uint32_t *)(s + 116) >> 8);
+            d[23] = (uint8_t)*(const uint32_t *)(s + 116);
+            d[24] = *(const uint8_t *)(s + 120);
+            d[25] = *(const uint8_t *)(s + 121);
+            if (type == 1)
+                *(uint16_t *)(d + 26) = *(const uint16_t *)(s + 122);
+        }
+    }
+    return 0;
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000074110 origin=fragment_seed original=tisp_msca_Shd_ctrl */

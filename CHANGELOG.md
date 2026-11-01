@@ -4,6 +4,10 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-01, T40 ISP draw state getter (`claude/t40-draw-get`)
+
+- **T40 IMP_ISP_GetDrawAttr oops (#183):** the lifted `tisp_g_draw_attr` read the draw state of the first ISP output through a NULL pointer (the `&mscaler_s0` relocation was lost) and fell from the end of its loop back into the type dispatch, so every `IMP_ISP_GetDrawAttr` oopsed (BadVA 0x64), killed the calling thread and left the `tx_isp_t40` module reference held (the apitest area `t40dev` could not be unloaded afterwards). Rewritten from the OEM function (tx-isp-t40.ko `tisp_g_draw_attr`): state `mscaler_s0` for output 0 and `mscaler_s1` otherwise, 2 channels x 16 units, type 1 also copies the half word at +26.
+
 ## 2026-11-01, T40 WDR-enable / LCE-tgain readers and writers (`claude/issue-182`)
 
 - **T40 dn_params_refresh x3 + LCE tgain (#182):** `tisp_dmsc/ydns/ysp_dn_params_refresh` read the per-channel WDR enable and `tisp_lce_tgain_interp_strength` read the LCE tgain word through `&isp_memopt` (the module parameter), and the tail call of each refresh passed the isp_memopt value as the gain. The writers used other stand-ins (`&dmsc_wdr_en + 17176` words, `&lce_tgain + 17280` words, i.e. stray stores 68 KB past a 4-byte object). Now one OEM array per block with reader and writer on the same object: `t40_dmsc_wdr_en[2]`, `regtrace_ydns_wdr_flag[2]`, `regtrace_ysp_wdr_flags[2]`, `t40_lce_tgain_oem[2]`; the refresh tails pass the per-channel gain slot like the OEM. Host check `t40_hardcoded_anchor_check.py` extended (fails on the old code).
