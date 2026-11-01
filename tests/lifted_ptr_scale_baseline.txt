@@ -1,16 +1,256 @@
 # lifted_ptr_scale_check.py baseline: <tag> <function> <class> <count> <status> [note]
 # status open = not yet compared with the OEM, dead/ok/fixed = reviewed (see the script header)
-# #189 T41 pass (vendor ISP module 1.2.5 = Ghidra project t41; not the Cinnado stock build): fixed (stepped/offset variables are plain integers, byte arithmetic as the OEM; guarded by the --expect-clean list in tests/Makefile) = tx_isp_suspend tx_isp_resume vic_frame_channel_streamon vic_frame_channel_streamoff vic_frame_channel_qbuf vic_frame_channel_set_fmt isp_frame_done_wakeup tisp_s_wdr_en tx_isp_vic_start (DVP leg; MIPI is the hand-written regtrace_t41_vic_start_mipi) isp_info_show_isra_6 isp_mbus_to_bayer_isra_1 ivdc_core_ops_init tisp_lce_clr_ram_part_0 tx_isp_set_ae_algo_open_isra_23 tx_isp_vin_suspend_module tx_isp_vin_resume_module fs_resume_module ispcore_suspend_module vic_core_ops_init (also: the lift lost the delay-slot store of state 2 behind the return) tx_isp_switch_bin_isra_78 tisp_switch_bin; dead (hand-written dispatcher returns before the lifted body, `return -ENOTTY` / T41_UNRECOVERED_RET; the scanner cuts the unreachable tail) = frame_channel_unlocked_ioctl __fill_tisp_buffer tx_isp_unlocked_ioctl isp_core_tunning_unlocked_ioctl_body aisp_core_tunning_unlocked_ioctl isp_core_tunning_default_ioctl (so tx_isp_core_ops_g_ctrl / s_ctrl and the tisp_g_* it reaches are unreach). New class var (typed pointer + variable byte offset) added: all its entries start open. Reachability now ignores function names that only appear in comments of the hand-written headers.
-# #189 device run (Cinnado T41NQ, image agg5x = open-tx-isp 0b8d9429 + OpenIMP 3035be04, i.e. before the postret set): apitest sys,fs,enc,osd,ivs,isp,su 266 pass / 3 fail (the 3 = no-handler returns for AF stats/LDC, not #189) and all cases 159/5 (the 5 full-order FAILs were triaged afterwards: wrong apitest expectations, OpenIMP 4ed4f40a, no driver fault), WDR on->off toggle read back 1/0, SwitchBin day and night, 13 FrameSource disable/enable cycles (ch0+ch1), 7 planned module reload cycles, 0 oopses. Not instrumented per function, so 'exercised' = reached by that code path: device-run clean = vic_core_ops_init (every FS enable/disable and module load, incl. the restored state=2 store: no hang), vic_frame_channel_streamon/streamoff/qbuf/set_fmt, isp_frame_done_wakeup, tisp_s_wdr_en (toggle read back), isp_mbus_to_bayer_isra_1, ivdc_core_ops_init, tisp_lce_clr_ram_part_0, tx_isp_set_ae_algo_open_isra_23, tx_isp_switch_bin_isra_78, tisp_switch_bin, isp_info_show_isra_6 (proc read). NOT exercised: tx_isp_vic_start DVP leg (no DVP camera), tx_isp_suspend/resume, tx_isp_vin_suspend/resume_module, fs_resume_module, ispcore_suspend_module (no PM on the camera).
-# #189 device run (Eufy T40, image agg65k = this tree's be621c2f): apitest all areas + t40dev with the algorithm functions on 398/0 and 83/0, 11 ioctl FrameSource disable/enable cycles, 6 planned module reload cycles, 0 oopses. Not instrumented per function, so 'exercised' = reached by that run's code path: device-run clean = Tzn_Msca_init_cfg (msca state geometry: draw/mask windows land at the set pixels), __frame_channel_vb2_streamoff (StreamOff 0-5 ms, the 21-count wait bound was never reached: bound path itself not proven), csi_core_ops_init, ispcore_activate_module (every ISP open), ispcore_slake_module, tx_isp_vin_slake_subdev (every rmmod), isp_core_tunning_open (tuning node), fs_core_ops_ioctl, subdev_sensor_ops_ioctl, tx_isp_subdev_pipo (module init), vic_mdma_irq_function1/2 (frame-done IRQ of the streaming runs, reached from the lifted ISR; not counted per function). NOT exercised: tx_isp_vic_start DVP leg (no DVP camera).
-# #189 postret class (statements behind an unconditional return = lost `jr ra` delay-slot instructions): fixed (store restored in front of the return, vendor-compared in Ghidra; guarded by the postret --expect-clean list in tests/Makefile) = t40 pop_buffer_fifo tisp_ae_get_state tisp_ae_main_mean_update tisp_ae_sec_mean_update tisp_ae_params_transmit tisp_awb_set_statis_localtion tisp_dmsc_wdr_en tisp_ae_ir_en_update tisp_af_set_attr_refresh tisp_awb_get_frz tisp_defog_wdr_choose_para tisp_mdns_wdr_en tisp_sdns_wdr_en tisp_wdr_get_lum_s, t41 api_ae_set_exprinfo_attr tisp_msca_ch_curve_write tisp_wdr_get_lum_s tisp_ae_api_get_antiflick tisp_awb_ev_update_Ywgt, t30 mem_write_u32; shim = hand-written early-return in front of the lifted body. All fixes are runtime-changing: the T40 set was reached on the camera (see the device-run line below), T41 was reached on the camera (see the T41 postret line below), T30 still needs a smoke (see issue 189).
-# #189 postret device run (Cinnado T41NQ, image agg5y = this tree's a84b6be2 + OpenIMP 246bf938, normal image): apitest sys,fs,enc,osd,ivs,isp,su 266 pass / 3 fail (AF stats/LDC no-handler returns, same as before the postret set), all default cases 164 pass / 0 fail with OpenIMP 4ed4f40a's corrected cases (the same binary before the case fix: 160/4, the 4 = apitest expectations), WDR on->off toggle read back, SwitchBin day and night, 13 FrameSource disable/enable cycles, 7 planned module reload cycles, 0 oopses, snapshot 200 after every run. Not instrumented per function: reached by that code path = tisp_ae_api_get_antiflick (GetAntiFlickerAttr read 1/50), the WDR path (tisp_wdr_get_lum_s only as part of the running ISP, not separately attributed), tisp_awb_ev_update_Ywgt (running AWB, not attributed), the whole run clean. NOT exercised: api_ae_set_exprinfo_attr (no default case calls SetAeExprInfo; picture area not run), tisp_msca_ch_curve_write (non-default scaler curve path), so the dirty-byte store of SetAeExprInfo is compile/host only. No pictures stored.
-# #189 postret device run (Eufy T40, image agg65m = this tree's a85f7b08 + OpenIMP 246bf938): apitest all areas + t40dev with the algorithm functions on 398/0 and 82/0 (same set as agg65k; the 10 t40dev PART/SKIP are the known scene/linear-sensor ones), 6 planned module reload cycles clean, 0 oopses, snapshot 200. Not instrumented per function, so 'exercised' = reached by the apitest area that drives the path, NOT a verified register/memory effect: pop_buffer_fifo (every FrameSource stream on/off cycle, done-ring push/pop counts balanced), tisp_ae_params_transmit and tisp_ae_ir_en_update (ISP open, day/night SetISPRunningMode round trip), tisp_ae_get_state / tisp_ae_main_mean_update / tisp_ae_sec_mean_update (GetAeScenceAttr, GetAeExprInfo, AE comp/HLC/BLC cases), tisp_awb_set_statis_localtion / tisp_awb_get_frz (SetStatisConfig same-value round trip, AWB cases), tisp_af_set_attr_refresh (SetAfWeight), tisp_dmsc/mdns/sdns_wdr_en, tisp_defog_wdr_choose_para, tisp_wdr_get_lum_s (WDR_ENABLE round trip on the linear sensor: flag only, picture effect not observable). AE numbers identical to agg65k for the same commanded states (comp60: IT 337 AG 1200 EV 394 in both runs); scene brightness differed between the runs, so no strict A/B of the live AE. T41 and T30 postret fixes: not yet device-proven.
+# #189 pass 3 (open-tx-isp next cf60cb1b + this branch, host/compile/QEMU only, no camera): scanner stub-tail cut now also resolves a one-line `#ifdef REGTRACE_KERNEL_TREE_BUILD return X; #endif` (and `#if 0 /* comment */`) before the hard-return cut; T23 core is scanned with all classes; new classes tailcall (lost `jr t9` tail call) and argc (system_reg_write with one argument); QEMU TB coverage of the linked modules (T41 gc5603, T23 sc2336; stream + snapshots + 3x day/night + tuning calls) is in the audit notes of the pass, not in the repo
+# #189 T41 dispositions: dead = reached only through tisp_event callbacks that t41_safe_tuning_events=1 suppresses (AE event 1 rebound to the vendor AE / safe controller, AWB 12 / WDR 13 / AF 15 / GSM 16 / TMO 17 / DN 18), never-called lifted tuning ioctl handlers, tisp_msca_Shd_ctrl, WDR-sensor paths; fixed (vendor-compared in Ghidra vendor41, runtime-changing, needs camera proof) = tisp_msca_ir_init (tail system_reg_write(0x2001c, a2)), tisp_msca_addr_ir_fifo_write (tail 0x20018), system_reg_set_ae_trig (tail 0x19000 = 1), tisp_tstp_reg_cfg (reg 0x60004 value argument + tail 0x600a8), tisp_lce_clr_ram_part_0 (value argument 0 of the 1440 RAM-clear writes + tail 0x501c0), tisp_gib_write_reg (value argument of the 0x50140 commit), tisp_csc_yuv_dmo (tail 0xd000 = -1, YUV sensors only), tisp_raw_rdma_fd_interrupt (typed frame counters), tisp_bcsh_wdr_en (KERNEL_TREE stub: the lifted body used ivdc_threshold_line as the bcsh_info slot table and stored at address 335; WDR-sensor tisp_init only)
+t23 JZ_Isp_Awb ctr 6 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 JZ_Isp_Awb loop 8 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 JZ_Isp_Awb step 9 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 JZ_Isp_Awb var 6 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 JZ_Isp_Awb_Awbg2reg step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 JZ_Isp_Awb_Awbg2reg var 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 JZ_Isp_Awb_Reg2par step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 JZ_Isp_Get_Awb_Statistics step 3 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 JZ_Isp_Get_Awb_Statistics var 4 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 Tiziano_ae0_fpga off 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 Tiziano_ae0_fpga step 8 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 Tiziano_ae0_fpga var 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 Tiziano_af_fpga loop 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 Tiziano_af_fpga off 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 Tiziano_af_fpga step 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 Tiziano_af_fpga var 5 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 Tiziano_awb_fpga ctr 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 Tiziano_awb_fpga loop 4 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 Tiziano_awb_fpga off 4 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 Tiziano_awb_fpga step 16 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 Tiziano_awb_fpga var 11 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 Tiziano_awb_set_gain off 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 __frame_channel_vb2_streamoff step 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 __vb2_queue_free off 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 __vb2_queue_free step 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 ae0_tune2 ctr 4 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 ae0_tune2 loop 6 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 ae0_tune2 off 4 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 ae0_tune2 step 9 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 ae0_tune2 var 5 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 ae0_weight_mean2 off 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 ae0_weight_mean2 step 5 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 ae0_weight_mean2 var 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 ae1_weight_mean2 step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 apical_isp_ae_zone_weight_s_attr_isra_45 ctr 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 apical_isp_ae_zone_weight_s_attr_isra_45 loop 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 apical_isp_ae_zone_weight_s_attr_isra_45 step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 apical_isp_ae_zone_weight_s_attr_isra_45 var 3 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 apical_isp_af_hist_s_attr_isra_48 step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 apical_isp_af_weight_s_attr_isra_49 ctr 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 apical_isp_af_weight_s_attr_isra_49 loop 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 apical_isp_af_weight_s_attr_isra_49 step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 apical_isp_af_weight_s_attr_isra_49 var 3 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 apical_isp_autozoom_g_attr_isra_71 step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 apical_isp_autozoom_s_attr_isra_28 step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 apical_isp_core_ops_g_ctrl off 67 shim #189 T23 triage: the hand-written switch in front handles every control id that regtrace_isp_m0_is_image_control lets through (brightness/contrast/saturation/sharpness/hue/hilight/backlight); the lifted compare chain (id base held in a typed pointer, v0 + 66 stepped x4) is not reachable for any other id
+t23 apical_isp_core_ops_g_ctrl step 24 shim #189 T23 triage: the hand-written switch in front handles every control id that regtrace_isp_m0_is_image_control lets through (brightness/contrast/saturation/sharpness/hue/hilight/backlight); the lifted compare chain (id base held in a typed pointer, v0 + 66 stepped x4) is not reachable for any other id
+t23 apical_isp_core_ops_g_ctrl var 1 shim #189 T23 triage: the hand-written switch in front handles every control id that regtrace_isp_m0_is_image_control lets through (brightness/contrast/saturation/sharpness/hue/hilight/backlight); the lifted compare chain (id base held in a typed pointer, v0 + 66 stepped x4) is not reachable for any other id
+t23 apical_isp_core_ops_s_ctrl off 43 shim #189 T23 triage: the hand-written switch in front handles every control id that regtrace_isp_m0_is_image_control lets through (brightness/contrast/saturation/sharpness/hue/hilight/backlight); the lifted compare chain (id base held in a typed pointer, v0 + 66 stepped x4) is not reachable for any other id
+t23 apical_isp_core_ops_s_ctrl step 31 shim #189 T23 triage: the hand-written switch in front handles every control id that regtrace_isp_m0_is_image_control lets through (brightness/contrast/saturation/sharpness/hue/hilight/backlight); the lifted compare chain (id base held in a typed pointer, v0 + 66 stepped x4) is not reachable for any other id
+t23 apical_isp_core_ops_s_ctrl var 1 shim #189 T23 triage: the hand-written switch in front handles every control id that regtrace_isp_m0_is_image_control lets through (brightness/contrast/saturation/sharpness/hue/hilight/backlight); the lifted compare chain (id base held in a typed pointer, v0 + 66 stepped x4) is not reachable for any other id
+t23 apical_isp_gamma_g_attr_isra_79 ctr 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 apical_isp_gamma_g_attr_isra_79 loop 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 apical_isp_gamma_g_attr_isra_79 step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 crc32 step 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 dump_vic_reg step 1 unreach
+t23 find_new_buffer step 1 unreach
+t23 fix_point_mult2_64 var 5 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 frame_chan_event off 9 unreach
+t23 frame_chan_event step 18 unreach
+t23 func_zone_ct_weight var 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 isp_core_cmd_set step 4 unreach
+t23 isp_core_tuning_init off 1 unreach
+t23 isp_core_tuning_init step 2 unreach
+t23 isp_framesource_show ctr 1 unreach
+t23 isp_framesource_show loop 1 unreach
+t23 isp_framesource_show off 5 unreach
+t23 isp_framesource_show step 9 unreach
+t23 isp_info_show_isra_1 step 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 isp_mem_init off 1 unreach
+t23 isp_subdev_release_clks step 1 unreach
+t23 isp_vic_cmd_set ctr 2 unreach
+t23 isp_vic_cmd_set loop 2 unreach
+t23 isp_vic_cmd_set off 3 unreach
+t23 isp_vic_cmd_set step 9 unreach
+t23 isp_vic_cmd_set var 2 unreach
+t23 ispcore_core_ops_init off 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 ispcore_core_ops_init step 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 ispcore_core_ops_ioctl off 2 open #189 T23: executed in the QEMU T23 run; sub-device pointer table walk steps by typed pointer (s1 + 56 -> +224, s2 += 4 -> 16) and beqzl/beql delay slots are unmatched; needs the OEM tx-isp-t23.ko in a Ghidra project (not available in this pass); apitest on the T23 camera passes, so the effect of the walk is unknown
+t23 ispcore_core_ops_ioctl step 6 open #189 T23: executed in the QEMU T23 run; sub-device pointer table walk steps by typed pointer (s1 + 56 -> +224, s2 += 4 -> 16) and beqzl/beql delay slots are unmatched; needs the OEM tx-isp-t23.ko in a Ghidra project (not available in this pass); apitest on the T23 camera passes, so the effect of the walk is unknown
+t23 ispcore_interrupt_service_routine ctr 2 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 ispcore_interrupt_service_routine loop 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 ispcore_interrupt_service_routine step 6 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 ispcore_interrupt_service_routine var 2 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 ispcore_irq_fs_work off 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 ispcore_irq_fs_work step 9 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 ispcore_irq_thread_handle off 3 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 ispcore_irq_thread_handle step 5 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 ispcore_pad_event_handle loop 7 unreach
+t23 ispcore_pad_event_handle off 6 unreach
+t23 ispcore_pad_event_handle step 12 unreach
+t23 ispcore_pad_event_handle var 5 unreach
+t23 ispvic_frame_channel_qbuf off 3 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 ispvic_frame_channel_qbuf step 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 ivdc_disable_irq step 1 unreach
+t23 ivdc_enable_irq off 1 unreach
+t23 ivdc_pad_event_handle off 7 unreach
 t23 ivdc_pad_event_handle postret 1 shim hand-written tail call / dispatcher in front of the old lifted body (the lifted rest never runs, no delay slot lost at runtime)
-t23 tiziano_gib_deir_ir_interpolation postret 1 shim hand-written tail call / dispatcher in front of the old lifted body (the lifted rest never runs, no delay slot lost at runtime)
+t23 ivdc_pad_event_handle step 1 unreach
+t23 ivdc_pad_event_handle var 3 unreach
+t23 ivdc_slake_module off 2 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 ivdc_slake_module step 2 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 ivdc_slake_module var 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 jz_isp_ccm ctr 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 jz_isp_ccm loop 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 jz_isp_ccm step 3 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 printf_func0 ctr 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 printf_func0 loop 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 printf_func0 off 4 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 printf_func0 step 3 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 private_math_exp2 step 2 unreach
+t23 private_math_exp2 var 1 unreach
+t23 proc_ivdc_writel off 1 unreach
+t23 proc_ivdc_writel step 5 unreach
+t23 sensor_init step 22 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 sub_68e08 step 6 unreach
+t23 subdev_sensor_ops_set_input off 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 subdev_sensor_ops_set_input step 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_adr_param_array_get step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_adr_param_array_set ctr 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_adr_param_array_set loop 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_adr_param_array_set off 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_adr_param_array_set step 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_ae0_get_hist ctr 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_ae0_get_hist loop 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_ae0_get_hist step 5 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_ae0_get_hist var 4 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_ae0_get_statistics step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_ae0_get_statistics var 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_ae0_process_impl off 6 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_ae0_process_impl step 14 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_ae0_process_impl var 12 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_ae1_expt off 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_ae1_expt var 5 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_ae1_get_hist step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_ae1_get_statistics step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_ae_mean_update step 2 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 tisp_ae_mean_update var 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 tisp_ae_param_array_get step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_af_get_attr off 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_af_get_attr step 5 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_af_get_statistics step 4 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_api_mdns_share_mem_en argc 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_awb_get_ct_trend ctr 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 tisp_awb_get_ct_trend loop 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 tisp_awb_get_ct_trend step 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 tisp_bcsh_param_array_get step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_ccm_param_array_get step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_ccm_set_attr step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_core_switch_bin off 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_core_switch_bin step 4 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_csccr_para_refresh_by_mode var 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_csccr_update_para step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_csccr_update_para var 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_defog_wdr_en step 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_dmsc_param_array_get step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_dpc_param_array_get step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_g_draw_block_attr var 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_g_mscaler_mask_block_attr step 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 tisp_g_mscaler_mask_block_attr var 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 tisp_gib_param_array_get step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_init unal 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_lsc_judge_ct_update_flag off 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_lsc_judge_ct_update_flag step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_lsc_param_array_set off 3 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_mdns_get_malloc_cfg step 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_mdns_get_malloc_cfg var 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_mdns_param_array_get step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_mdns_y_3d_param_cfg step 3 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_mdns_y_3d_param_cfg var 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_msca_api_set_mask argc 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 tisp_msca_api_set_mask ctr 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 tisp_msca_api_set_mask loop 2 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 tisp_msca_api_set_mask off 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 tisp_msca_api_set_mask step 7 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 tisp_msca_api_set_osd loop 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 tisp_msca_api_set_osd off 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 tisp_msca_api_set_osd step 7 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 tisp_msca_deinit step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_msca_param_array_get step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_msca_scaling_algorithm argc 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_s_adr_str_internal ctr 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 tisp_s_adr_str_internal loop 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 tisp_s_adr_str_internal step 3 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 tisp_s_adr_str_internal var 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 tisp_s_ae_at_list step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_s_ae_it_max step 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 tisp_s_af_attr step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_s_af_weight step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_s_mdns_ratio ctr 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_s_mdns_ratio loop 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_s_mdns_ratio step 3 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_s_mscaler_mask_block_attr step 2 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 tisp_s_mscaler_mask_block_attr var 2 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 tisp_s_osd_block_attr var 17 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_sdns_param_array_get step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_set_ae1_ag step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_set_ae_freeze step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_sharpen_param_array_get step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tisp_vic_ctrl_ioctl loop 1 unreach
+t23 tisp_vic_ctrl_ioctl off 3 unreach
+t23 tisp_vic_ctrl_ioctl step 4 unreach
+t23 tisp_vic_mmap off 1 unreach
+t23 tisp_ydns_param_array_get step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tiziano_adr_algorithm off 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tiziano_adr_algorithm step 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tiziano_adr_get_data step 2 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 tiziano_ae_para_addr step 9 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tiziano_ae_params_refresh step 4 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tiziano_af_init off 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tiziano_af_set_hardware_param step 8 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 tiziano_ccm_init off 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tiziano_deflicker_expt step 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tiziano_defog_algorithm off 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tiziano_defog_algorithm step 3 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tiziano_defog_algorithm var 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tiziano_defog_get_data loop 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tiziano_defog_get_data step 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tiziano_defog_init off 8 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tiziano_defog_init step 19 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tiziano_defog_interrupt_static step 8 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tiziano_load_parameters loop 3 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tiziano_load_parameters off 5 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tiziano_load_parameters step 11 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tx_isp_csi_activate_subdev off 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 tx_isp_fs_probe off 3 unreach
+t23 tx_isp_fs_probe step 4 unreach
+t23 tx_isp_ivdc_probe off 2 unreach
+t23 tx_isp_release off 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tx_isp_release step 6 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tx_isp_subdev_pipo off 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 tx_isp_unregister_platforms step 1 unreach
+t23 tx_isp_vic_activate_subdev off 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 tx_isp_vic_probe off 1 unreach
+t23 tx_isp_vic_probe step 1 unreach
+t23 tx_isp_vic_start var 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tx_isp_video_link_destroy_isra_9 loop 3 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tx_isp_video_link_destroy_isra_9 step 5 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tx_isp_video_link_destroy_isra_9 var 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+t23 tx_isp_vin_slake_subdev step 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 vic_mdma_enable var 2 unreach
+t23 vic_sensor_ops_ioctl ctr 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 vic_sensor_ops_ioctl loop 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 vic_sensor_ops_ioctl step 4 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
 t30 apical_api_init_idx_array postret 1 shim hand-written tail call / dispatcher in front of the old lifted body (the lifted rest never runs, no delay slot lost at runtime)
+t30 awb_roi tailcall 1 open
 t30 isp_vic_interrupt_service_routine postret 1 shim hand-written tail call / dispatcher in front of the old lifted body (the lifted rest never runs, no delay slot lost at runtime)
 t30 ispcore_interrupt_service_routine postret 1 shim hand-written tail call / dispatcher in front of the old lifted body (the lifted rest never runs, no delay slot lost at runtime)
+t30 ncu_pad_event_handle tailcall 1 open
 t40 Tisp_lce_soft ctr 1 unreach
 t40 Tisp_lce_soft loop 7 unreach
 t40 Tisp_lce_soft off 9 unreach
@@ -25,12 +265,14 @@ t40 Tiziano_wdr_deghost_fpga ctr 12 unreach
 t40 Tiziano_wdr_deghost_fpga loop 16 unreach
 t40 Tiziano_wdr_deghost_fpga off 40 unreach
 t40 Tiziano_wdr_deghost_fpga step 53 unreach
+t40 Tiziano_wdr_deghost_fpga tailcall 1 unreach
 t40 Tiziano_wdr_deghost_fpga var 1 unreach
 t40 Tiziano_wdr_fusion_fpga ctr 52 unreach
 t40 Tiziano_wdr_fusion_fpga loop 55 unreach
 t40 Tiziano_wdr_fusion_fpga off 24 unreach
 t40 Tiziano_wdr_fusion_fpga step 124 unreach
 t40 Tiziano_wdr_fusion_fpga var 46 unreach
+t40 Tzn_Msca_CpuRead tailcall 1 unreach
 t40 csi_phy_start ctr 2 shim #189 confirmed (typed ptr loop bound, never terminates); skipped at runtime by hand-written regtrace_t40_csi_stream_direct; fix before enabling the lifted CSI path
 t40 csi_phy_start loop 3 shim #189 confirmed (typed ptr loop bound, never terminates); skipped at runtime by hand-written regtrace_t40_csi_stream_direct; fix before enabling the lifted CSI path
 t40 csi_phy_start off 8 shim #189 confirmed (typed ptr loop bound, never terminates); skipped at runtime by hand-written regtrace_t40_csi_stream_direct; fix before enabling the lifted CSI path
@@ -40,7 +282,9 @@ t40 defog_count_weight35abc ctr 1 unreach
 t40 defog_count_weight35abc loop 3 unreach
 t40 defog_count_weight35abc off 6 unreach
 t40 defog_count_weight35abc step 18 unreach
+t40 defog_count_weight35abc tailcall 1 unreach
 t40 defog_count_weight35abc var 8 unreach
+t40 dump_csi_reg tailcall 1 unreach
 t40 fix_point_intp off 2 unreach
 t40 frame_chan_event loop 2 open
 t40 frame_chan_event off 8 open
@@ -57,11 +301,15 @@ t40 func_adr_reg_write_5x5 ctr 6 open
 t40 func_adr_reg_write_5x5 loop 6 open
 t40 func_adr_reg_write_5x5 off 7 open
 t40 func_adr_reg_write_5x5 step 6 open
+t40 func_adr_reg_write_5x5 tailcall 1 open
+t40 func_adr_reg_write_every argc 1 open
 t40 func_adr_reg_write_every ctr 7 open
 t40 func_adr_reg_write_every loop 5 open
 t40 func_adr_reg_write_every off 4 open
 t40 func_adr_reg_write_every step 7 open
 t40 func_adr_reg_write_one off 1 open
+t40 func_adr_reg_write_one tailcall 1 open
+t40 func_adr_reg_write_sometimes argc 1 open
 t40 func_adr_reg_write_sometimes ctr 6 open
 t40 func_adr_reg_write_sometimes loop 6 open
 t40 func_adr_reg_write_sometimes off 8 open
@@ -118,6 +366,7 @@ t40 ispcore_pad_event_handle loop 47 shim #189: replaced at runtime by hand-writ
 t40 ispcore_pad_event_handle off 8 shim #189: replaced at runtime by hand-written regtrace_ispcore_pad_event_handle (installed by tx_isp_core_probe); lifted body unreferenced
 t40 ispcore_pad_event_handle step 14 shim #189: replaced at runtime by hand-written regtrace_ispcore_pad_event_handle (installed by tx_isp_core_probe); lifted body unreferenced
 t40 ispcore_pad_event_handle var 19 unreach
+t40 ispcore_s_wdr_en tailcall 1 open
 t40 ispcore_video_s_stream ctr 1 shim OEM 0xd8 channel stride vs lifted x4 stride never meets 1296 (stream-off loop); core skipped by regtrace_slot_is_core
 t40 ispcore_video_s_stream loop 3 shim OEM 0xd8 channel stride vs lifted x4 stride never meets 1296 (stream-off loop); core skipped by regtrace_slot_is_core
 t40 ispcore_video_s_stream off 6 shim OEM 0xd8 channel stride vs lifted x4 stride never meets 1296 (stream-off loop); core skipped by regtrace_slot_is_core
@@ -146,6 +395,7 @@ t40 lce_hist_method var 7 unreach
 t40 lce_light_lock_adjust_hist loop 2 unreach
 t40 lce_light_lock_adjust_hist off 3 unreach
 t40 lce_light_lock_adjust_hist step 6 unreach
+t40 lce_light_lock_adjust_hist tailcall 1 unreach
 t40 lce_light_lock_adjust_hist var 2 unreach
 t40 lce_self_light_correct ctr 1 unreach
 t40 lce_self_light_correct loop 4 unreach
@@ -160,6 +410,9 @@ t40 printf_func_long step 3 unreach
 t40 printf_func_short loop 2 unreach
 t40 printf_func_short off 3 unreach
 t40 printf_func_short step 4 unreach
+t40 private_i2c_new_device tailcall 1 open
+t40 private_i2c_register_driver tailcall 1 unreach
+t40 private_i2c_unregister_device tailcall 1 open
 t40 private_reset_tx_isp_module loop 1 unreach
 t40 private_reset_tx_isp_module off 1 unreach
 t40 private_reset_tx_isp_module step 1 unreach
@@ -167,24 +420,28 @@ t40 regtrace_t40_tuning_copy_ae_stats var 1 open
 t40 sensor_alloc_integration_time var 1 unreach
 t40 sensor_alloc_integration_time_short var 1 unreach
 t40 sensor_set_integration_time var 1 unreach
+t40 system_reg_write_af tailcall 1 open
 t40 table_intp step 1 unreach
 t40 tisp_adr_dn_params_refresh step 1 unreach
+t40 tisp_adr_dn_params_refresh tailcall 1 unreach
 t40 tisp_adr_dn_params_refresh var 2 unreach
 t40 tisp_adr_main_deinit off 1 open
-t40 tisp_adr_main_init loop 1 open
-t40 tisp_adr_main_init step 2 open
+t40 tisp_adr_main_deinit tailcall 1 open
 t40 tisp_adr_main_process step 1 open
 t40 tisp_adr_sec_process step 1 unreach
 t40 tisp_ae_api_get_exp_list step 1 open
 t40 tisp_ae_api_set_exp_list step 1 open
 t40 tisp_ae_dn_params_refresh step 5 unreach
+t40 tisp_ae_dn_params_refresh tailcall 1 unreach
 t40 tisp_ae_ev_start_set step 1 open
 t40 tisp_ae_main_mean_update step 2 open
 t40 tisp_ae_main_s_min step 1 unreach
 t40 tisp_ae_s_comp step 1 open
+t40 tisp_ae_s_comp tailcall 1 open
 t40 tisp_ae_s_comp var 1 open
 t40 tisp_ae_sec_mean_update step 2 open
 t40 tisp_ae_sec_s_min step 1 unreach
+t40 tisp_ae_short_alogrithm tailcall 1 unreach
 t40 tisp_af_alogrithm ctr 1 unreach
 t40 tisp_af_alogrithm loop 1 unreach
 t40 tisp_af_alogrithm step 7 unreach
@@ -201,21 +458,31 @@ t40 tisp_af_sec_interrupt_static step 1 unreach
 t40 tisp_af_set_attr step 2 open
 t40 tisp_af_set_attr_refresh step 2 unreach
 t40 tisp_af_set_hardware_param off 49 open
+t40 tisp_awb_dn_params_refresh tailcall 1 unreach
+t40 tisp_awb_sec_ev_update tailcall 1 open
 t40 tisp_awb_sec_face_pos var 2 unreach
+t40 tisp_awb_tgain_update tailcall 1 open
+t40 tisp_bcsh_Tccm_Comp2Orig tailcall 1 open
 t40 tisp_bcsh_Tccm_RGBYUV ctr 2 open
 t40 tisp_bcsh_Tccm_RGBYUV loop 2 open
 t40 tisp_bcsh_Tccm_RGBYUV off 1 open
 t40 tisp_bcsh_Tccm_RGBYUV step 9 open
 t40 tisp_bcsh_Tccm_RGBYUV var 2 open
 t40 tisp_bcsh_Toffset_RGB2YUV step 3 open
+t40 tisp_bcsh_brightness tailcall 1 unreach
+t40 tisp_bcsh_contrast tailcall 1 unreach
 t40 tisp_bcsh_csc_attr step 1 open
+t40 tisp_bcsh_ct_update tailcall 1 open
+t40 tisp_bcsh_ev_set_parameter tailcall 1 open
 t40 tisp_bcsh_ev_update off 2 open
+t40 tisp_bcsh_ev_update tailcall 1 open
 t40 tisp_bcsh_ev_update var 5 open
 t40 tisp_bcsh_ev_update_TransitParam loop 1 open
 t40 tisp_bcsh_ev_update_TransitParam step 3 open
 t40 tisp_bcsh_ev_update_TransitParam var 1 open
 t40 tisp_bcsh_param_array_set step 1 open
 t40 tisp_bcsh_s_hue step 2 unreach
+t40 tisp_bcsh_saturation tailcall 1 open
 t40 tisp_bcsh_set_attr step 3 open
 t40 tisp_bcsh_set_offset_rgb step 1 unreach
 t40 tisp_blc_ag_interp step 1 open
@@ -242,11 +509,13 @@ t40 tisp_clm_real_write_lut var 1 open
 t40 tisp_clm_wdr_en step 15 unreach
 t40 tisp_csc_get_attr step 1 open
 t40 tisp_csc_set_attr off 1 open
+t40 tisp_csc_set_attr tailcall 1 open
 t40 tisp_day_or_night_s_ctrl loop 3 unreach
 t40 tisp_day_or_night_s_ctrl step 2 unreach
 t40 tisp_day_or_night_s_ctrl var 4 unreach
 t40 tisp_defog_dn_params_refresh off 7 unreach
 t40 tisp_defog_dn_params_refresh step 1 unreach
+t40 tisp_defog_ev_update tailcall 1 open
 t40 tisp_defog_get_data_part_0 loop 1 open
 t40 tisp_defog_get_data_part_0 step 2 open
 t40 tisp_defog_img_filter25 ctr 2 unreach
@@ -255,6 +524,7 @@ t40 tisp_defog_img_filter25 step 8 unreach
 t40 tisp_defog_img_filter9 ctr 2 unreach
 t40 tisp_defog_img_filter9 loop 4 unreach
 t40 tisp_defog_img_filter9 step 7 unreach
+t40 tisp_defog_init argc 1 unreach
 t40 tisp_defog_init off 9 unreach
 t40 tisp_defog_init step 1 unreach
 t40 tisp_defog_init var 4 unreach
@@ -276,17 +546,27 @@ t40 tisp_defog_update_trans_k step 2 open
 t40 tisp_defog_wdr_choose_para off 30 unreach
 t40 tisp_defog_wdr_choose_para step 1 unreach
 t40 tisp_defog_wdr_en off 1 unreach
+t40 tisp_defog_wdr_en tailcall 1 unreach
 t40 tisp_defog_write_reg_para1 off 1 unreach
+t40 tisp_defog_write_reg_para1 tailcall 1 unreach
 t40 tisp_defog_write_reg_para2 off 2 unreach
+t40 tisp_defog_write_reg_para2 tailcall 1 unreach
+t40 tisp_defog_write_reg_para3 argc 1 unreach
 t40 tisp_defog_write_reg_para3 loop 1 unreach
 t40 tisp_defog_write_reg_para3 off 2 unreach
 t40 tisp_defog_write_reg_para3 step 5 unreach
+t40 tisp_defog_write_reg_para3 tailcall 1 unreach
+t40 tisp_dmsc_dn_params_refresh tailcall 1 unreach
+t40 tisp_dmsc_params_refresh tailcall 1 open
 t40 tisp_dmsc_wdr_en off 463 open
 t40 tisp_dmsc_wdr_en step 2 open
+t40 tisp_dpc_all_reg_refresh tailcall 1 unreach
+t40 tisp_dpc_intp_reg_refresh tailcall 1 unreach
 t40 tisp_dpc_ref_reg_cfg unal 5 unreach
 t40 tisp_g_ae_scence_attr ctr 2 open
 t40 tisp_g_ae_scence_attr loop 1 open
 t40 tisp_g_ae_scence_attr step 3 open
+t40 tisp_g_ae_step tailcall 1 unreach
 t40 tisp_g_defog_str_internal step 1 unreach
 t40 tisp_gamma_dn_params_refresh step 1 unreach
 t40 tisp_gamma_ev_update var 1 open
@@ -298,11 +578,13 @@ t40 tisp_gamma_strength_transform loop 1 open
 t40 tisp_gamma_strength_transform off 2 open
 t40 tisp_gamma_strength_transform step 2 open
 t40 tisp_gamma_wdr_en step 5 unreach
+t40 tisp_get_ae_tgain tailcall 1 unreach
 t40 tisp_gib_print_real_para step 4 unreach
 t40 tisp_gib_print_tool_para step 4 unreach
 t40 tisp_gsm_dual_get_hist loop 1 unreach
 t40 tisp_gsm_dual_get_hist off 3 unreach
 t40 tisp_gsm_dual_get_hist step 3 unreach
+t40 tisp_gsm_dual_get_hist tailcall 1 unreach
 t40 tisp_gsm_interrupt_hist step 1 unreach
 t40 tisp_gsm_main_long_process_api loop 1 unreach
 t40 tisp_gsm_main_long_process_api step 4 unreach
@@ -310,28 +592,38 @@ t40 tisp_gsm_main_long_process_api var 2 unreach
 t40 tisp_gsm_single_get_hist loop 1 unreach
 t40 tisp_gsm_single_get_hist off 2 unreach
 t40 tisp_gsm_single_get_hist step 2 unreach
+t40 tisp_gsm_single_get_hist tailcall 1 unreach
+t40 tisp_hldc_dn_params_refresh tailcall 1 unreach
 t40 tisp_lce_awdr_to_used loop 1 unreach
 t40 tisp_lce_awdr_to_used step 1 unreach
+t40 tisp_lce_awdr_to_used tailcall 1 unreach
 t40 tisp_lce_clr_ram0 loop 1 open
 t40 tisp_lce_clr_ram0 step 4 open
+t40 tisp_lce_clr_ram0 tailcall 1 open
 t40 tisp_lce_clr_ram1 step 2 open
 t40 tisp_lce_curve_init_default ctr 1 open
 t40 tisp_lce_curve_init_default loop 2 open
 t40 tisp_lce_curve_init_default off 5 open
 t40 tisp_lce_curve_init_default step 3 open
+t40 tisp_lce_curve_init_default tailcall 1 open
 t40 tisp_lce_get_data loop 3 unreach
 t40 tisp_lce_get_data off 15 unreach
 t40 tisp_lce_get_data step 6 unreach
+t40 tisp_lce_get_data tailcall 1 unreach
 t40 tisp_lce_main_interrupt_static loop 1 unreach
 t40 tisp_lce_main_interrupt_static step 3 unreach
 t40 tisp_lce_main_process step 1 unreach
 t40 tisp_lce_seco_process step 1 unreach
+t40 tisp_lce_tgain_update tailcall 1 open
 t40 tisp_lce_tool_to_awdr off 55 unreach
 t40 tisp_lce_tool_to_awdr step 2 unreach
 t40 tisp_lce_top_change_state off 1 open
+t40 tisp_lce_top_change_state tailcall 1 open
+t40 tisp_lce_wdr_en tailcall 1 unreach
 t40 tisp_lce_write_all_reg loop 1 open
 t40 tisp_lce_write_all_reg off 3 open
 t40 tisp_lce_write_all_reg step 3 open
+t40 tisp_lsc_hvflip tailcall 1 open
 t40 tisp_lsc_init step 1 open
 t40 tisp_lsc_interp_by_gain step 1 open
 t40 tisp_lsc_real_write_lut off 3 open
@@ -339,17 +631,26 @@ t40 tisp_lsc_real_write_lut step 4 open
 t40 tisp_lsc_upside_down_lut var 1 unreach
 t40 tisp_lsc_write_reg off 2 open
 t40 tisp_lsc_write_reg step 2 open
+t40 tisp_main_day_night_mode_ctl tailcall 1 unreach
+t40 tisp_mdns_all_reg_refresh tailcall 1 open
+t40 tisp_mdns_intp_reg_refresh tailcall 1 unreach
 t40 tisp_mdns_par_refresh step 1 open
+t40 tisp_mdns_par_refresh tailcall 1 open
 t40 tisp_mdns_par_refresh var 1 open
+t40 tisp_mdns_reg_cfg argc 15 open
 t40 tisp_mdns_reg_cfg off 15 open
 t40 tisp_mdns_reg_cfg step 5 open
+t40 tisp_mdns_reg_cfg tailcall 1 open
 t40 tisp_mdns_reg_cfg var 3 open
 t40 tisp_mdns_reg_cfg_equation_dif off 1 open
 t40 tisp_mdns_reg_cfg_equation_smp var 4 open
+t40 tisp_mdns_reg_trig tailcall 1 open
+t40 tisp_mdns_start tailcall 1 open
 t40 tisp_mdns_wdr_en off 162 unreach
 t40 tisp_mdns_wdr_en step 3 unreach
 t40 tisp_s_ae_scence_attr loop 2 open
 t40 tisp_s_ae_scence_attr step 5 open
+t40 tisp_s_ae_step tailcall 1 unreach
 t40 tisp_s_autozoom_control loop 1 open
 t40 tisp_s_autozoom_control off 2 open
 t40 tisp_s_autozoom_control step 1 open
@@ -359,21 +660,28 @@ t40 tisp_s_defog_ratio step 3 unreach
 t40 tisp_s_defog_ratio var 1 unreach
 t40 tisp_s_defog_str_internal off 2 unreach
 t40 tisp_s_defog_str_internal step 2 unreach
+t40 tisp_s_defog_str_internal tailcall 1 unreach
 t40 tisp_s_defog_str_internal var 2 unreach
 t40 tisp_s_dpc_ratio ctr 1 unreach
 t40 tisp_s_dpc_ratio loop 1 unreach
 t40 tisp_s_dpc_ratio off 5 unreach
 t40 tisp_s_dpc_ratio step 3 unreach
+t40 tisp_s_dpc_ratio tailcall 1 unreach
 t40 tisp_s_dpc_ratio var 5 unreach
 t40 tisp_s_drc_ratio ctr 1 unreach
 t40 tisp_s_drc_ratio loop 1 unreach
 t40 tisp_s_drc_ratio off 14 unreach
 t40 tisp_s_drc_ratio step 2 unreach
+t40 tisp_s_drc_ratio tailcall 1 unreach
+t40 tisp_s_fixed_contrast_attr tailcall 1 open
+t40 tisp_s_hldc_attr tailcall 1 open
 t40 tisp_s_mdns_ratio ctr 1 unreach
 t40 tisp_s_mdns_ratio loop 1 unreach
 t40 tisp_s_mdns_ratio off 1 unreach
 t40 tisp_s_mdns_ratio step 2 unreach
+t40 tisp_s_mdns_ratio tailcall 1 unreach
 t40 tisp_s_mdns_ratio var 2 unreach
+t40 tisp_s_module_control tailcall 1 open
 t40 tisp_s_statis_config_attr off 1 open
 t40 tisp_sdns_wdr_en off 248 unreach
 t40 tisp_sdns_wdr_en step 2 unreach
@@ -382,6 +690,7 @@ t40 tisp_sec_init step 1 open
 t40 tisp_set_csc_version step 1 open
 t40 tisp_set_fps off 1 open
 t40 tisp_slake_all step 2 open
+t40 tisp_slake_all tailcall 1 open
 t40 tisp_tstp_mark1_func off 2 unreach
 t40 tisp_tstp_mark1_func step 8 unreach
 t40 tisp_wdr_default_reg_refresh step 1 unreach
@@ -390,6 +699,7 @@ t40 tisp_wdr_degweight_ev var 1 unreach
 t40 tisp_wdr_direct_reg_refresh loop 1 open
 t40 tisp_wdr_direct_reg_refresh off 5 open
 t40 tisp_wdr_direct_reg_refresh step 3 open
+t40 tisp_wdr_dn_params_refresh tailcall 1 unreach
 t40 tisp_wdr_getVar step 2 unreach
 t40 tisp_wdr_get_lum_s off 4 unreach
 t40 tisp_wdr_get_lum_s step 2 unreach
@@ -401,6 +711,7 @@ t40 tisp_wdr_log2 off 1 open
 t40 tisp_wdr_log2 step 2 open
 t40 tisp_wdr_main_init off 2 unreach
 t40 tisp_wdr_main_init step 2 unreach
+t40 tisp_wdr_main_init tailcall 1 unreach
 t40 tisp_wdr_main_process loop 1 unreach
 t40 tisp_wdr_main_process step 2 unreach
 t40 tisp_wdr_paixu step 2 unreach
@@ -414,8 +725,13 @@ t40 tisp_wdr_sec_short_ev_update step 1 open
 t40 tisp_wdr_sec_short_tgain_update step 1 open
 t40 tisp_wdr_seco_init off 2 unreach
 t40 tisp_wdr_seco_init step 1 unreach
+t40 tisp_wdr_seco_init tailcall 1 unreach
 t40 tisp_wdr_seco_process step 2 unreach
+t40 tisp_wdr_softout_reg_refresh argc 1 unreach
 t40 tisp_wdr_softout_reg_refresh step 1 unreach
+t40 tisp_ydns_dn_params_refresh tailcall 1 unreach
+t40 tisp_ydns_intp_reg_refresh tailcall 1 unreach
+t40 tisp_ysp_dn_params_refresh tailcall 1 unreach
 t40 tisp_yuv_input_set_csc_version off 4 unreach
 t40 tiziano_adr_5x5_init loop 2 unreach
 t40 tiziano_adr_5x5_init off 2 unreach
@@ -464,7 +780,9 @@ t40 vic_core_ops_ioctl_1 off 1 open
 t40 vic_mdma_enable off 19 unreach
 t40 vic_mdma_enable step 1 unreach
 t40 vic_mdma_enable var 11 unreach
+t40 vic_mdma_irq_function1 tailcall 1 open
 t40 vic_mdma_irq_function1 var 3 open
+t40 vic_mdma_irq_function2 tailcall 1 open
 t40 vic_mdma_irq_function2 var 3 open
 t40 vic_mdma_sec_enable step 1 unreach
 t40 vic_mdma_sec_enable var 2 unreach
@@ -473,9 +791,9 @@ t40 video_input_cmd_set loop 4 unreach
 t40 video_input_cmd_set off 4 unreach
 t40 video_input_cmd_set step 8 unreach
 t40 video_input_cmd_show step 1 unreach
-t41 Tiziano_Awb_Ct_Cal off 2 open
-t41 Tiziano_Awb_Ct_Cal step 3 open
-t41 Tiziano_Awb_Ct_Cal var 1 open
+t41 Tiziano_Awb_Ct_Cal off 2 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 Tiziano_Awb_Ct_Cal step 3 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 Tiziano_Awb_Ct_Cal var 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
 t41 Tiziano_adr_fpga ctr 19 unreach
 t41 Tiziano_adr_fpga loop 25 unreach
 t41 Tiziano_adr_fpga off 10 unreach
@@ -485,20 +803,27 @@ t41 Tiziano_defog_soft ctr 5 unreach
 t41 Tiziano_defog_soft loop 4 unreach
 t41 Tiziano_defog_soft off 8 unreach
 t41 Tiziano_defog_soft step 27 unreach
+t41 Tiziano_defog_soft tailcall 1 unreach
 t41 Tiziano_defog_soft var 18 unreach
-t41 Tiziano_wdr_fusion_fpga ctr 22 open
-t41 Tiziano_wdr_fusion_fpga loop 20 open
-t41 Tiziano_wdr_fusion_fpga off 1 open
-t41 Tiziano_wdr_fusion_fpga step 19 open
-t41 Tiziano_wdr_fusion_fpga var 20 open
-t41 api_ae_get_exprinfo_attr step 1 open
-t41 api_ae_get_weight off 1 open
-t41 api_ae_get_weight step 1 open
-t41 api_ae_set_exprinfo_attr step 1 open
-t41 api_ae_set_weight off 1 open
-t41 api_ae_set_weight step 2 open
+t41 Tiziano_wdr_fusion_fpga ctr 22 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 Tiziano_wdr_fusion_fpga loop 20 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 Tiziano_wdr_fusion_fpga off 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 Tiziano_wdr_fusion_fpga step 19 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 Tiziano_wdr_fusion_fpga var 20 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 api_ae_get_exprinfo_attr step 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 api_ae_get_weight off 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 api_ae_get_weight step 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 api_ae_get_weight tailcall 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 api_ae_set_exprinfo_attr step 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 api_ae_set_weight off 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 api_ae_set_weight step 2 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
 t41 defog_wei_interpcot step 2 unreach
 t41 defog_wei_interpcot var 4 unreach
+t41 dump_aisp_info_open tailcall 1 unreach
+t41 dump_csi_reg tailcall 1 unreach
+t41 dump_isp_csi_open tailcall 1 unreach
+t41 dump_isp_framesource_open tailcall 1 unreach
+t41 dump_isp_vic_frd_open tailcall 1 unreach
 t41 fix_point_intp step 2 unreach
 t41 func_adr_map_curve1 off 1 unreach
 t41 func_adr_pars_display step 2 unreach
@@ -513,9 +838,11 @@ t41 func_map_y_filter_sp var 1 unreach
 t41 func_matrix_check_short step 3 unreach
 t41 func_subsection_light loop 2 unreach
 t41 func_subsection_light step 5 unreach
+t41 func_zone_ct_weight tailcall 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
 t41 get_distance_1dim step 1 unreach
 t41 isp_core_debug_show off 1 unreach
 t41 isp_core_debug_show step 1 unreach
+t41 isp_core_debug_show tailcall 1 unreach
 t41 isp_core_debug_show var 2 unreach
 t41 isp_core_tuning_clear var 1 unreach
 t41 isp_framesource_show step 1 unreach
@@ -529,12 +856,14 @@ t41 isp_vic_cmd_set step 7 unreach
 t41 isp_vic_cmd_set var 1 unreach
 t41 isp_vic_frd_show off 1 unreach
 t41 isp_vic_frd_show step 1 unreach
+t41 ispcore_s_wdr_en tailcall 1 shim #189 T41: confirmed lost tail call to tisp_s_wdr_en; that is why tisp_s_wdr_en is never reached (WDR toggle goes through a hand-written path). Restoring it would run tisp_s_wdr_en -> tisp_bcsh_wdr_en/t41_dfg_wdr_en with the other typed/argc defects: fix those first
 t41 ispint_adr_16 step 3 unreach
 t41 ispint_adr_32 step 2 unreach
-t41 ispint_adr_64 step 5 open
-t41 ispint_adr_64 var 2 open
+t41 ispint_adr_64 step 5 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 ispint_adr_64 var 2 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
 t41 lce_16bit_data_converge step 1 unreach
 t41 lce_compress_data off 1 unreach
+t41 lce_compress_data tailcall 1 unreach
 t41 lce_hist_method ctr 1 unreach
 t41 lce_hist_method loop 2 unreach
 t41 lce_hist_method off 1 unreach
@@ -543,6 +872,7 @@ t41 lce_hist_method var 5 unreach
 t41 lce_light_lock_adjust_hist loop 2 unreach
 t41 lce_light_lock_adjust_hist off 2 unreach
 t41 lce_light_lock_adjust_hist step 6 unreach
+t41 lce_light_lock_adjust_hist tailcall 1 unreach
 t41 lce_light_lock_adjust_hist var 2 unreach
 t41 lce_pdf_to_cdf var 1 unreach
 t41 lce_self_light_correct ctr 1 unreach
@@ -555,11 +885,15 @@ t41 lce_wdr_light_lock loop 4 unreach
 t41 lce_wdr_light_lock off 2 unreach
 t41 lce_wdr_light_lock step 7 unreach
 t41 lce_wdr_light_lock var 4 unreach
+t41 lib_tisp_debug_info tailcall 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 proc_ivdc_open tailcall 1 unreach
 t41 proc_ivdc_writel loop 2 unreach
 t41 proc_ivdc_writel off 3 unreach
 t41 proc_ivdc_writel step 11 unreach
 t41 sub_69320 step 3 unreach
 t41 sub_69320 var 5 unreach
+t41 sub_6ae0c tailcall 1 unreach
+t41 sub_6aef0 tailcall 1 unreach
 t41 sub_740c0 step 1 unreach
 t41 sub_740c0 var 2 unreach
 t41 sub_74114 loop 2 unreach
@@ -570,7 +904,8 @@ t41 subsection_up loop 3 unreach
 t41 subsection_up off 2 unreach
 t41 subsection_up step 11 unreach
 t41 subsection_up var 2 unreach
-t41 t41_tmo_selftest_workfn var 1 open
+t41 system_reg_write_af tailcall 1 unreach
+t41 t41_tmo_selftest_workfn var 1 ok #189 T41 triage: hand-written test worker (TX_ISP_T41_TMO_SELFTEST only), unsigned int pointers indexed in elements on purpose
 t41 table_intp step 1 unreach
 t41 tisp_adr_faceae_curve_adjust loop 1 unreach
 t41 tisp_adr_faceae_curve_adjust off 1 unreach
@@ -580,8 +915,9 @@ t41 tisp_adr_pm_get_regsize step 1 unreach
 t41 tisp_adr_pm_suspend ctr 1 unreach
 t41 tisp_adr_pm_suspend loop 1 unreach
 t41 tisp_adr_pm_suspend step 1 unreach
+t41 tisp_ae_algo_deinit tailcall 1 unreach
 t41 tisp_ae_algo_handle step 1 unreach
-t41 tisp_ae_algo_init step 2 open
+t41 tisp_ae_algo_init step 2 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
 t41 tisp_ae_api_get_antiflick step 1 unreach
 t41 tisp_ae_api_get_exp_list loop 1 unreach
 t41 tisp_ae_api_get_exp_list off 1 unreach
@@ -595,44 +931,44 @@ t41 tisp_ae_api_get_scene_par loop 1 unreach
 t41 tisp_ae_api_get_scene_par step 3 unreach
 t41 tisp_ae_api_get_scene_par var 1 unreach
 t41 tisp_ae_api_set_comp step 2 unreach
-t41 tisp_ae_api_set_exp_list ctr 1 open
-t41 tisp_ae_api_set_exp_list loop 1 open
-t41 tisp_ae_api_set_exp_list off 4 open
-t41 tisp_ae_api_set_exp_list step 2 open
+t41 tisp_ae_api_set_exp_list ctr 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_api_set_exp_list loop 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_api_set_exp_list off 4 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_api_set_exp_list step 2 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
 t41 tisp_ae_api_set_fps var 1 unreach
 t41 tisp_ae_api_set_scene_par loop 3 unreach
 t41 tisp_ae_api_set_scene_par step 5 unreach
-t41 tisp_ae_ev_alloc_calc loop 6 open
-t41 tisp_ae_ev_alloc_calc step 6 open
-t41 tisp_ae_ev_alloc_calc var 3 open
-t41 tisp_ae_ev_list_alloc_calc loop 10 open
-t41 tisp_ae_ev_list_alloc_calc off 6 open
-t41 tisp_ae_ev_list_alloc_calc step 3 open
-t41 tisp_ae_ev_list_alloc_calc var 28 open
-t41 tisp_ae_fliker_detect ctr 7 open
-t41 tisp_ae_fliker_detect loop 8 open
-t41 tisp_ae_fliker_detect off 3 open
-t41 tisp_ae_fliker_detect step 17 open
-t41 tisp_ae_fliker_detect var 6 open
-t41 tisp_ae_get_at_list ctr 1 open
-t41 tisp_ae_get_at_list loop 1 open
-t41 tisp_ae_get_at_list off 1 open
-t41 tisp_ae_get_at_list step 1 open
-t41 tisp_ae_get_at_list var 1 open
+t41 tisp_ae_ev_alloc_calc loop 6 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_ev_alloc_calc step 6 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_ev_alloc_calc var 3 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_ev_list_alloc_calc loop 10 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_ev_list_alloc_calc off 6 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_ev_list_alloc_calc step 3 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_ev_list_alloc_calc var 28 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_fliker_detect ctr 7 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_fliker_detect loop 8 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_fliker_detect off 3 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_fliker_detect step 17 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_fliker_detect var 6 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_get_at_list ctr 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_get_at_list loop 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_get_at_list off 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_get_at_list step 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_get_at_list var 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
 t41 tisp_ae_get_bv off 1 unreach
 t41 tisp_ae_get_bv step 6 unreach
 t41 tisp_ae_get_bv var 2 unreach
-t41 tisp_ae_get_ev_list ctr 1 open
-t41 tisp_ae_get_ev_list loop 1 open
-t41 tisp_ae_get_ev_list off 1 open
-t41 tisp_ae_get_ev_list step 1 open
-t41 tisp_ae_get_ev_list var 1 open
-t41 tisp_ae_get_statistics step 7 open
-t41 tisp_ae_get_statistics var 5 open
-t41 tisp_ae_long_ev_alloc off 1 open
-t41 tisp_ae_long_ev_alloc step 1 open
-t41 tisp_ae_long_ev_alloc var 2 open
-t41 tisp_ae_long_target off 1 open
+t41 tisp_ae_get_ev_list ctr 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_get_ev_list loop 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_get_ev_list off 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_get_ev_list step 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_get_ev_list var 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_long_ev_alloc off 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_long_ev_alloc step 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_long_ev_alloc var 2 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_long_target off 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_max_exp_calc_fps tailcall 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_par_update_trig tailcall 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
 t41 tisp_ae_param_array_get ctr 1 unreach
 t41 tisp_ae_param_array_get loop 1 unreach
 t41 tisp_ae_param_array_get off 4 unreach
@@ -651,23 +987,24 @@ t41 tisp_ae_set_ev_list loop 1 unreach
 t41 tisp_ae_set_ev_list off 1 unreach
 t41 tisp_ae_set_ev_list step 2 unreach
 t41 tisp_ae_set_ev_list var 1 unreach
-t41 tisp_ae_short_ev_alloc off 1 open
-t41 tisp_ae_short_ev_alloc step 1 open
-t41 tisp_ae_short_ev_alloc var 1 open
-t41 tisp_ae_short_expt ctr 1 open
-t41 tisp_ae_short_expt loop 1 open
-t41 tisp_ae_short_expt off 1 open
-t41 tisp_ae_short_expt step 4 open
-t41 tisp_ae_short_expt var 1 open
-t41 tisp_ae_sort_H2L loop 1 open
-t41 tisp_ae_sort_H2L step 4 open
-t41 tisp_ae_tune ctr 4 open
-t41 tisp_ae_tune loop 7 open
-t41 tisp_ae_tune off 1 open
-t41 tisp_ae_tune step 4 open
-t41 tisp_ae_tune var 7 open
-t41 tisp_ae_weight_mean step 2 open
-t41 tisp_ae_weight_mean var 16 open
+t41 tisp_ae_set_fps tailcall 1 unreach
+t41 tisp_ae_short_ev_alloc off 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_short_ev_alloc step 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_short_ev_alloc var 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_short_expt ctr 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_short_expt loop 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_short_expt off 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_short_expt step 4 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_short_expt var 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_sort_H2L loop 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_sort_H2L step 4 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_tune ctr 4 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_tune loop 7 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_tune off 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_tune step 4 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_tune var 7 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_weight_mean step 2 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_ae_weight_mean var 16 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
 t41 tisp_af_alogrithm ctr 5 unreach
 t41 tisp_af_alogrithm loop 6 unreach
 t41 tisp_af_alogrithm off 2 unreach
@@ -675,14 +1012,18 @@ t41 tisp_af_alogrithm step 10 unreach
 t41 tisp_af_alogrithm var 4 unreach
 t41 tisp_af_api_get_attr step 2 unreach
 t41 tisp_af_api_get_metric step 2 unreach
+t41 tisp_af_api_get_statis_info tailcall 1 unreach
+t41 tisp_af_api_get_weight tailcall 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
 t41 tisp_af_api_set_attr step 1 unreach
 t41 tisp_af_get_statistics off 7 unreach
 t41 tisp_af_get_statistics step 3 unreach
+t41 tisp_af_get_statistics tailcall 1 unreach
 t41 tisp_af_get_statistics var 9 unreach
 t41 tisp_af_pm_get_regsize step 1 unreach
 t41 tisp_af_pm_suspend loop 1 unreach
 t41 tisp_af_pm_suspend off 1 unreach
 t41 tisp_af_pm_suspend step 1 unreach
+t41 tisp_awb_algo_deinit tailcall 1 unreach
 t41 tisp_awb_api_get_ct_trend_offset ctr 1 unreach
 t41 tisp_awb_api_get_ct_trend_offset loop 1 unreach
 t41 tisp_awb_api_get_ct_trend_offset off 1 unreach
@@ -691,49 +1032,50 @@ t41 tisp_awb_api_set_ct_trend_offset ctr 1 unreach
 t41 tisp_awb_api_set_ct_trend_offset loop 1 unreach
 t41 tisp_awb_api_set_ct_trend_offset off 1 unreach
 t41 tisp_awb_api_set_ct_trend_offset step 1 unreach
-t41 tisp_awb_ct_detect ctr 17 open
-t41 tisp_awb_ct_detect loop 51 open
-t41 tisp_awb_ct_detect off 25 open
-t41 tisp_awb_ct_detect step 119 open
-t41 tisp_awb_ct_detect var 40 open
+t41 tisp_awb_ct_detect ctr 17 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_awb_ct_detect loop 51 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_awb_ct_detect off 25 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_awb_ct_detect step 119 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_awb_ct_detect var 40 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
 t41 tisp_awb_ev_update_Ywgt off 3 unreach
 t41 tisp_awb_face_pos var 2 unreach
-t41 tisp_awb_get_attr var 2 open
-t41 tisp_awb_get_statistics step 4 open
-t41 tisp_awb_get_statistics var 1 open
+t41 tisp_awb_get_attr var 2 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_awb_get_statistics step 4 dead #189 T41 triage: lifted AWB (tisp_awb_init) is replaced by t41_native_awb (default 1), IRQ handler never installed; QEMU coverage 0
+t41 tisp_awb_get_statistics var 1 dead #189 T41 triage: lifted AWB (tisp_awb_init) is replaced by t41_native_awb (default 1), IRQ handler never installed; QEMU coverage 0
 t41 tisp_awb_get_zone off 1 unreach
-t41 tisp_awb_long_alogrithm ctr 6 open
-t41 tisp_awb_long_alogrithm loop 8 open
-t41 tisp_awb_long_alogrithm off 4 open
-t41 tisp_awb_long_alogrithm step 23 open
-t41 tisp_awb_long_alogrithm var 9 open
-t41 tisp_awb_long_par_update loop 9 open
-t41 tisp_awb_long_par_update off 3 open
-t41 tisp_awb_long_par_update step 5 open
-t41 tisp_awb_long_par_update var 6 open
+t41 tisp_awb_get_zone tailcall 1 unreach
+t41 tisp_awb_long_alogrithm ctr 6 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_awb_long_alogrithm loop 8 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_awb_long_alogrithm off 4 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_awb_long_alogrithm step 23 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_awb_long_alogrithm var 9 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_awb_long_par_update loop 9 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_awb_long_par_update off 3 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_awb_long_par_update step 5 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_awb_long_par_update var 6 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
 t41 tisp_awb_set_ct var 1 unreach
-t41 tisp_awb_set_gain off 1 open
-t41 tisp_awb_set_gain step 1 open
-t41 tisp_awb_set_gain var 1 open
-t41 tisp_awb_set_weight ctr 1 open
-t41 tisp_awb_set_weight loop 1 open
-t41 tisp_awb_set_weight step 1 open
-t41 tisp_bcsh_BCS_adjust ctr 1 open
-t41 tisp_bcsh_BCS_adjust loop 2 open
-t41 tisp_bcsh_BCS_adjust off 1 open
-t41 tisp_bcsh_BCS_adjust step 11 open
-t41 tisp_bcsh_BCS_adjust var 2 open
-t41 tisp_bcsh_H_adjust loop 1 open
-t41 tisp_bcsh_H_adjust off 7 open
-t41 tisp_bcsh_H_adjust step 6 open
-t41 tisp_bcsh_H_adjust var 7 open
+t41 tisp_awb_set_start tailcall 1 unreach
+t41 tisp_awb_set_weight ctr 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_awb_set_weight loop 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_awb_set_weight step 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_awb_spec_calculate argc 5 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_awb_tgain_update tailcall 1 dead #189 T41: lifted AWB path (tisp_long_tgain_update, QEMU coverage 0), native AWB is the default
+t41 tisp_bcsh_BCS_adjust ctr 1 dead #189 T41 triage: only reached via tisp_bcsh_wdr_en (WDR-sensor tisp_init only; now a KERNEL_TREE stub, its lifted body used ivdc_threshold_line as the bcsh_info slot table and stored at address 335) and tisp_bcsh_ct/ev_update (lifted AE/AWB, suppressed); QEMU coverage 0
+t41 tisp_bcsh_BCS_adjust loop 2 dead #189 T41 triage: only reached via tisp_bcsh_wdr_en (WDR-sensor tisp_init only; now a KERNEL_TREE stub, its lifted body used ivdc_threshold_line as the bcsh_info slot table and stored at address 335) and tisp_bcsh_ct/ev_update (lifted AE/AWB, suppressed); QEMU coverage 0
+t41 tisp_bcsh_BCS_adjust off 1 dead #189 T41 triage: only reached via tisp_bcsh_wdr_en (WDR-sensor tisp_init only; now a KERNEL_TREE stub, its lifted body used ivdc_threshold_line as the bcsh_info slot table and stored at address 335) and tisp_bcsh_ct/ev_update (lifted AE/AWB, suppressed); QEMU coverage 0
+t41 tisp_bcsh_BCS_adjust step 11 dead #189 T41 triage: only reached via tisp_bcsh_wdr_en (WDR-sensor tisp_init only; now a KERNEL_TREE stub, its lifted body used ivdc_threshold_line as the bcsh_info slot table and stored at address 335) and tisp_bcsh_ct/ev_update (lifted AE/AWB, suppressed); QEMU coverage 0
+t41 tisp_bcsh_BCS_adjust var 2 dead #189 T41 triage: only reached via tisp_bcsh_wdr_en (WDR-sensor tisp_init only; now a KERNEL_TREE stub, its lifted body used ivdc_threshold_line as the bcsh_info slot table and stored at address 335) and tisp_bcsh_ct/ev_update (lifted AE/AWB, suppressed); QEMU coverage 0
+t41 tisp_bcsh_H_adjust loop 1 dead #189 T41 triage: only reached via tisp_bcsh_wdr_en (WDR-sensor tisp_init only; now a KERNEL_TREE stub, its lifted body used ivdc_threshold_line as the bcsh_info slot table and stored at address 335) and tisp_bcsh_ct/ev_update (lifted AE/AWB, suppressed); QEMU coverage 0
+t41 tisp_bcsh_H_adjust off 7 dead #189 T41 triage: only reached via tisp_bcsh_wdr_en (WDR-sensor tisp_init only; now a KERNEL_TREE stub, its lifted body used ivdc_threshold_line as the bcsh_info slot table and stored at address 335) and tisp_bcsh_ct/ev_update (lifted AE/AWB, suppressed); QEMU coverage 0
+t41 tisp_bcsh_H_adjust step 6 dead #189 T41 triage: only reached via tisp_bcsh_wdr_en (WDR-sensor tisp_init only; now a KERNEL_TREE stub, its lifted body used ivdc_threshold_line as the bcsh_info slot table and stored at address 335) and tisp_bcsh_ct/ev_update (lifted AE/AWB, suppressed); QEMU coverage 0
+t41 tisp_bcsh_H_adjust var 7 dead #189 T41 triage: only reached via tisp_bcsh_wdr_en (WDR-sensor tisp_init only; now a KERNEL_TREE stub, its lifted body used ivdc_threshold_line as the bcsh_info slot table and stored at address 335) and tisp_bcsh_ct/ev_update (lifted AE/AWB, suppressed); QEMU coverage 0
 t41 tisp_bcsh_fra_down_interrupt step 1 unreach
-t41 tisp_bcsh_interp_by_ct ctr 1 open
-t41 tisp_bcsh_interp_by_ct loop 2 open
-t41 tisp_bcsh_interp_by_ct step 3 open
-t41 tisp_bcsh_interp_by_ct var 1 open
-t41 tisp_bcsh_interp_by_ev step 3 open
-t41 tisp_bcsh_itp var 1 open
+t41 tisp_bcsh_interp_by_ct ctr 1 dead #189 T41 triage: only reached via tisp_bcsh_wdr_en (WDR-sensor tisp_init only; now a KERNEL_TREE stub, its lifted body used ivdc_threshold_line as the bcsh_info slot table and stored at address 335) and tisp_bcsh_ct/ev_update (lifted AE/AWB, suppressed); QEMU coverage 0
+t41 tisp_bcsh_interp_by_ct loop 2 dead #189 T41 triage: only reached via tisp_bcsh_wdr_en (WDR-sensor tisp_init only; now a KERNEL_TREE stub, its lifted body used ivdc_threshold_line as the bcsh_info slot table and stored at address 335) and tisp_bcsh_ct/ev_update (lifted AE/AWB, suppressed); QEMU coverage 0
+t41 tisp_bcsh_interp_by_ct step 3 dead #189 T41 triage: only reached via tisp_bcsh_wdr_en (WDR-sensor tisp_init only; now a KERNEL_TREE stub, its lifted body used ivdc_threshold_line as the bcsh_info slot table and stored at address 335) and tisp_bcsh_ct/ev_update (lifted AE/AWB, suppressed); QEMU coverage 0
+t41 tisp_bcsh_interp_by_ct var 1 dead #189 T41 triage: only reached via tisp_bcsh_wdr_en (WDR-sensor tisp_init only; now a KERNEL_TREE stub, its lifted body used ivdc_threshold_line as the bcsh_info slot table and stored at address 335) and tisp_bcsh_ct/ev_update (lifted AE/AWB, suppressed); QEMU coverage 0
+t41 tisp_bcsh_interp_by_ev step 3 dead #189 T41 triage: only reached via tisp_bcsh_wdr_en (WDR-sensor tisp_init only; now a KERNEL_TREE stub, its lifted body used ivdc_threshold_line as the bcsh_info slot table and stored at address 335) and tisp_bcsh_ct/ev_update (lifted AE/AWB, suppressed); QEMU coverage 0
+t41 tisp_bcsh_itp var 1 dead #189 T41 triage: only reached via tisp_bcsh_wdr_en (WDR-sensor tisp_init only; now a KERNEL_TREE stub, its lifted body used ivdc_threshold_line as the bcsh_info slot table and stored at address 335) and tisp_bcsh_ct/ev_update (lifted AE/AWB, suppressed); QEMU coverage 0
 t41 tisp_bcsh_pm_get_regsize step 1 unreach
 t41 tisp_bcsh_pm_suspend loop 1 unreach
 t41 tisp_bcsh_pm_suspend off 2 unreach
@@ -749,19 +1091,18 @@ t41 tisp_ccm_interp_by_ev step 6 unreach
 t41 tisp_ccm_matrix_trans_by_sat loop 2 unreach
 t41 tisp_ccm_matrix_trans_by_sat off 4 unreach
 t41 tisp_ccm_matrix_trans_by_sat step 4 unreach
+t41 tisp_ccm_matrix_trans_by_sat tailcall 1 unreach
 t41 tisp_ccm_matrix_trans_by_sat var 1 unreach
 t41 tisp_ccm_pm_get_regsize step 1 unreach
 t41 tisp_ccm_pm_suspend loop 1 unreach
 t41 tisp_ccm_pm_suspend step 1 unreach
 t41 tisp_ccm_write_reg step 2 unreach
 t41 tisp_ccm_write_reg var 1 unreach
-t41 tisp_cdns_intp step 1 open
-t41 tisp_cdns_par_refresh step 1 open
 t41 tisp_cdns_pm_get_regsize step 1 unreach
 t41 tisp_cdns_pm_suspend loop 1 unreach
 t41 tisp_cdns_pm_suspend off 1 unreach
 t41 tisp_cdns_pm_suspend step 2 unreach
-t41 tisp_cdns_reg_cfg off 1 open
+t41 tisp_cdns_reg_trig tailcall 1 unreach
 t41 tisp_clm_ct_interp loop 1 unreach
 t41 tisp_clm_ct_interp off 3 unreach
 t41 tisp_clm_ct_interp step 6 unreach
@@ -770,8 +1111,11 @@ t41 tisp_clm_pm_get_regsize step 1 unreach
 t41 tisp_clm_pm_suspend loop 1 unreach
 t41 tisp_clm_pm_suspend off 2 unreach
 t41 tisp_clm_pm_suspend step 1 unreach
+t41 tisp_clm_write_csc_para argc 2 unreach
 t41 tisp_clm_write_csc_para off 3 unreach
 t41 tisp_clm_write_csc_para step 1 unreach
+t41 tisp_clm_write_csc_para tailcall 1 unreach
+t41 tisp_clm_write_lut argc 1 unreach
 t41 tisp_clm_write_lut ctr 1 unreach
 t41 tisp_clm_write_lut loop 1 unreach
 t41 tisp_clm_write_lut off 2 unreach
@@ -801,25 +1145,44 @@ t41 tisp_defog_pm_suspend ctr 2 unreach
 t41 tisp_defog_pm_suspend loop 2 unreach
 t41 tisp_defog_pm_suspend step 2 unreach
 t41 tisp_defog_strength_itp step 2 unreach
+t41 tisp_defog_strength_itp tailcall 1 unreach
 t41 tisp_defog_update_trans_k loop 1 unreach
 t41 tisp_defog_update_trans_k off 6 unreach
 t41 tisp_defog_update_trans_k step 2 unreach
 t41 tisp_defog_write_reg_para1 step 1 unreach
+t41 tisp_defog_write_reg_para1 tailcall 1 unreach
+t41 tisp_defog_write_reg_para2 argc 1 unreach
 t41 tisp_defog_write_reg_para2 step 1 unreach
+t41 tisp_defog_write_reg_para2 tailcall 1 unreach
 t41 tisp_defog_write_reg_para3 loop 1 unreach
 t41 tisp_defog_write_reg_para3 off 1 unreach
 t41 tisp_defog_write_reg_para3 step 2 unreach
+t41 tisp_defog_write_reg_para3 tailcall 1 unreach
 t41 tisp_dmsc_param_array_set loop 2 unreach
 t41 tisp_dmsc_param_array_set step 1 unreach
-t41 tisp_g_ae_statis_attr off 1 open
+t41 tisp_dmsc_reg_trig tailcall 1 unreach
+t41 tisp_g_ae_converge_step tailcall 1 unreach
+t41 tisp_g_ae_explist tailcall 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_g_ae_flicker_flag tailcall 1 unreach
+t41 tisp_g_ae_statis_attr off 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_g_at_list tailcall 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
 t41 tisp_g_autozoom_control loop 1 unreach
 t41 tisp_g_autozoom_control step 2 unreach
+t41 tisp_g_awb_converge_step tailcall 1 unreach
+t41 tisp_g_coefft_wb tailcall 1 unreach
+t41 tisp_g_csccr_mode tailcall 1 unreach
+t41 tisp_g_ev_list tailcall 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_g_face_ae_luma tailcall 1 unreach
+t41 tisp_g_face_ae_weiget tailcall 1 unreach
+t41 tisp_g_gib_blc tailcall 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
 t41 tisp_g_hv_flip var 1 unreach
 t41 tisp_g_module_attr step 6 unreach
-t41 tisp_g_module_ratio_attr var 1 open
-t41 tisp_gamma_set_attr var 5 open
-t41 tisp_gib_ae_write_dgain step 1 open
-t41 tisp_gib_calc_self_gain step 1 open
+t41 tisp_g_module_ratio_attr var 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_g_raw_rw_handler tailcall 1 unreach
+t41 tisp_gamma_set_attr var 5 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_get_ae_tgain tailcall 1 unreach
+t41 tisp_get_bin_version tailcall 1 unreach
+t41 tisp_get_csc_attr tailcall 1 unreach
 t41 tisp_hldc_calc_para off 3 unreach
 t41 tisp_hldc_calc_para step 1 unreach
 t41 tisp_hldc_para_validity_judge step 1 unreach
@@ -829,9 +1192,11 @@ t41 tisp_hldc_pm_suspend loop 1 unreach
 t41 tisp_hldc_pm_suspend off 2 unreach
 t41 tisp_hldc_pm_suspend step 1 unreach
 t41 tisp_irsca_write_reg step 1 unreach
+t41 tisp_lce_clr_ram argc 2 unreach
 t41 tisp_lce_clr_ram loop 1 unreach
 t41 tisp_lce_clr_ram off 2 unreach
 t41 tisp_lce_clr_ram step 2 unreach
+t41 tisp_lce_clr_ram tailcall 1 unreach
 t41 tisp_lce_get_show_data ctr 5 unreach
 t41 tisp_lce_get_show_data loop 5 unreach
 t41 tisp_lce_get_show_data off 11 unreach
@@ -841,36 +1206,33 @@ t41 tisp_lce_pm_get_regsize step 1 unreach
 t41 tisp_lce_pm_suspend ctr 1 unreach
 t41 tisp_lce_pm_suspend loop 1 unreach
 t41 tisp_lce_pm_suspend step 1 unreach
+t41 tisp_ldc_param_array_set tailcall 1 unreach
 t41 tisp_lsc_itp var 1 unreach
 t41 tisp_mdns_api_ai_par_push off 2 unreach
 t41 tisp_mdns_api_ai_par_push step 1 unreach
-t41 tisp_mdns_func_en off 2 open
-t41 tisp_mdns_func_en step 1 open
-t41 tisp_mdns_func_en var 1 open
-t41 tisp_mdns_intp step 1 open
-t41 tisp_mdns_par_refresh step 1 open
 t41 tisp_mdns_pm_get_regsize step 1 unreach
 t41 tisp_mdns_pm_suspend ctr 1 unreach
 t41 tisp_mdns_pm_suspend loop 1 unreach
 t41 tisp_mdns_pm_suspend step 1 unreach
-t41 tisp_mdns_reg_cfg off 15 open
-t41 tisp_mdns_reg_cfg step 2 open
-t41 tisp_mdns_reg_cfg var 3 open
-t41 tisp_msca_ch_curve_write ctr 1 open
-t41 tisp_msca_ch_curve_write loop 4 open
-t41 tisp_msca_ch_curve_write off 6 open
-t41 tisp_msca_ch_curve_write step 11 open
+t41 tisp_msca_Shd_ctrl tailcall 1 dead #189 T41: only called with t41_safe_tuning_events=0 (constant 1 in the shipped build); lost tail call to tisp_msca_cfg_shd_ram
+t41 tisp_msca_ch_curve_write ctr 1 dead #189 T41 triage: only via tisp_msca_cfg_shd_ram <- tisp_msca_Shd_ctrl, which ispcore_irq_main_fd_work calls only with t41_safe_tuning_events=0 (constant 1 in the shipped build); t41_msca_reload_live uses the hand-written tisp_msca_chx_cfg_load. Not linked (gc-sections)
+t41 tisp_msca_ch_curve_write loop 4 dead #189 T41 triage: only via tisp_msca_cfg_shd_ram <- tisp_msca_Shd_ctrl, which ispcore_irq_main_fd_work calls only with t41_safe_tuning_events=0 (constant 1 in the shipped build); t41_msca_reload_live uses the hand-written tisp_msca_chx_cfg_load. Not linked (gc-sections)
+t41 tisp_msca_ch_curve_write off 6 dead #189 T41 triage: only via tisp_msca_cfg_shd_ram <- tisp_msca_Shd_ctrl, which ispcore_irq_main_fd_work calls only with t41_safe_tuning_events=0 (constant 1 in the shipped build); t41_msca_reload_live uses the hand-written tisp_msca_chx_cfg_load. Not linked (gc-sections)
+t41 tisp_msca_ch_curve_write step 11 dead #189 T41 triage: only via tisp_msca_cfg_shd_ram <- tisp_msca_Shd_ctrl, which ispcore_irq_main_fd_work calls only with t41_safe_tuning_events=0 (constant 1 in the shipped build); t41_msca_reload_live uses the hand-written tisp_msca_chx_cfg_load. Not linked (gc-sections)
 t41 tisp_msca_crop_api ctr 1 unreach
 t41 tisp_msca_crop_api loop 1 unreach
 t41 tisp_msca_crop_api step 1 unreach
 t41 tisp_msca_curve_calc off 3 unreach
 t41 tisp_msca_curve_calc step 3 unreach
+t41 tisp_msca_init_chx_cfg argc 1 unreach
 t41 tisp_msca_init_chx_cfg off 1 unreach
+t41 tisp_msca_init_chx_cfg tailcall 1 unreach
 t41 tisp_msca_init_chx_cfg var 5 unreach
-t41 tisp_msca_ir_init off 1 open
+t41 tisp_msca_ir_init off 1 fixed #189 T41: lost tail call system_reg_write(0x2001c, a2) restored (OEM tisp_msca_ir_init, Ghidra vendor41); the `off` hit is a dead local. Runs in every tisp_init (IR msca stride); needs camera proof
 t41 tisp_msca_normalized ctr 4 unreach
 t41 tisp_msca_normalized loop 5 unreach
 t41 tisp_msca_normalized step 12 unreach
+t41 tisp_msca_normalized tailcall 1 unreach
 t41 tisp_msca_normalized var 1 unreach
 t41 tisp_msca_para_calc loop 1 unreach
 t41 tisp_msca_para_calc off 1 unreach
@@ -878,114 +1240,133 @@ t41 tisp_msca_para_calc step 1 unreach
 t41 tisp_msca_para_calc var 1 unreach
 t41 tisp_msca_param_array_get step 2 unreach
 t41 tisp_msca_params_update step 1 unreach
+t41 tisp_msca_params_update tailcall 1 unreach
+t41 tisp_msca_ram_write argc 1 unreach
+t41 tisp_msca_ram_write tailcall 1 unreach
+t41 tisp_msca_scaling_algorithm argc 1 unreach
 t41 tisp_msca_scaling_algorithm off 3 unreach
 t41 tisp_msca_scaling_algorithm step 1 unreach
-t41 tisp_msca_set_line loop 1 open
-t41 tisp_msca_set_line off 1 open
-t41 tisp_msca_set_line step 2 open
-t41 tisp_msca_set_mask loop 1 open
-t41 tisp_msca_set_mask step 6 open
-t41 tisp_msca_set_osd loop 1 open
-t41 tisp_msca_set_osd off 1 open
-t41 tisp_msca_set_osd step 4 open
-t41 tisp_raw_rdma_fd_interrupt step 2 open
+t41 tisp_msca_scaling_algorithm tailcall 1 unreach
+t41 tisp_msca_set_line argc 2 dead #189 T41 triage: only via tisp_msca_cfg_shd_ram <- tisp_msca_Shd_ctrl, which ispcore_irq_main_fd_work calls only with t41_safe_tuning_events=0 (constant 1 in the shipped build); t41_msca_reload_live uses the hand-written tisp_msca_chx_cfg_load. Not linked (gc-sections)
+t41 tisp_msca_set_line loop 1 dead #189 T41 triage: only via tisp_msca_cfg_shd_ram <- tisp_msca_Shd_ctrl, which ispcore_irq_main_fd_work calls only with t41_safe_tuning_events=0 (constant 1 in the shipped build); t41_msca_reload_live uses the hand-written tisp_msca_chx_cfg_load. Not linked (gc-sections)
+t41 tisp_msca_set_line off 1 dead #189 T41 triage: only via tisp_msca_cfg_shd_ram <- tisp_msca_Shd_ctrl, which ispcore_irq_main_fd_work calls only with t41_safe_tuning_events=0 (constant 1 in the shipped build); t41_msca_reload_live uses the hand-written tisp_msca_chx_cfg_load. Not linked (gc-sections)
+t41 tisp_msca_set_line step 2 dead #189 T41 triage: only via tisp_msca_cfg_shd_ram <- tisp_msca_Shd_ctrl, which ispcore_irq_main_fd_work calls only with t41_safe_tuning_events=0 (constant 1 in the shipped build); t41_msca_reload_live uses the hand-written tisp_msca_chx_cfg_load. Not linked (gc-sections)
+t41 tisp_msca_set_mask argc 1 dead #189 T41 triage: only via tisp_msca_cfg_shd_ram <- tisp_msca_Shd_ctrl, which ispcore_irq_main_fd_work calls only with t41_safe_tuning_events=0 (constant 1 in the shipped build); t41_msca_reload_live uses the hand-written tisp_msca_chx_cfg_load. Not linked (gc-sections)
+t41 tisp_msca_set_mask loop 1 dead #189 T41 triage: only via tisp_msca_cfg_shd_ram <- tisp_msca_Shd_ctrl, which ispcore_irq_main_fd_work calls only with t41_safe_tuning_events=0 (constant 1 in the shipped build); t41_msca_reload_live uses the hand-written tisp_msca_chx_cfg_load. Not linked (gc-sections)
+t41 tisp_msca_set_mask step 6 dead #189 T41 triage: only via tisp_msca_cfg_shd_ram <- tisp_msca_Shd_ctrl, which ispcore_irq_main_fd_work calls only with t41_safe_tuning_events=0 (constant 1 in the shipped build); t41_msca_reload_live uses the hand-written tisp_msca_chx_cfg_load. Not linked (gc-sections)
+t41 tisp_msca_set_osd loop 1 dead #189 T41 triage: only via tisp_msca_cfg_shd_ram <- tisp_msca_Shd_ctrl, which ispcore_irq_main_fd_work calls only with t41_safe_tuning_events=0 (constant 1 in the shipped build); t41_msca_reload_live uses the hand-written tisp_msca_chx_cfg_load. Not linked (gc-sections)
+t41 tisp_msca_set_osd off 1 dead #189 T41 triage: only via tisp_msca_cfg_shd_ram <- tisp_msca_Shd_ctrl, which ispcore_irq_main_fd_work calls only with t41_safe_tuning_events=0 (constant 1 in the shipped build); t41_msca_reload_live uses the hand-written tisp_msca_chx_cfg_load. Not linked (gc-sections)
+t41 tisp_msca_set_osd step 4 dead #189 T41 triage: only via tisp_msca_cfg_shd_ram <- tisp_msca_Shd_ctrl, which ispcore_irq_main_fd_work calls only with t41_safe_tuning_events=0 (constant 1 in the shipped build); t41_msca_reload_live uses the hand-written tisp_msca_chx_cfg_load. Not linked (gc-sections)
+t41 tisp_params_copy tailcall 1 ok #189 T41 triage: the lost tail is memcpy(dst, src, 0) in the OEM (size 0, Ghidra vendor41): no effect
+t41 tisp_raw_set_row_control argc 1 unreach
+t41 tisp_raw_set_rw_control argc 3 unreach
 t41 tisp_raw_set_rw_control loop 1 unreach
 t41 tisp_raw_set_rw_control off 2 unreach
 t41 tisp_raw_set_rw_control step 2 unreach
 t41 tisp_reg_map_get var 1 unreach
-t41 tisp_resume_all loop 1 open
-t41 tisp_resume_all step 1 open
+t41 tisp_reg_map_set argc 2 unreach
+t41 tisp_resume_all loop 1 open #189 T41: PM path only (no PM on the cameras), compile/host only; not triaged against the OEM
+t41 tisp_resume_all step 1 open #189 T41: PM path only (no PM on the cameras), compile/host only; not triaged against the OEM
+t41 tisp_s_ae_converge_step tailcall 1 unreach
+t41 tisp_s_ae_explist tailcall 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
 t41 tisp_s_autozoom_control step 1 unreach
+t41 tisp_s_awb_converge_step tailcall 1 unreach
+t41 tisp_s_coefft_wb tailcall 1 unreach
+t41 tisp_s_csccr_mode tailcall 1 unreach
 t41 tisp_s_defog_ratio loop 1 unreach
 t41 tisp_s_defog_ratio off 7 unreach
 t41 tisp_s_defog_ratio step 3 unreach
-t41 tisp_s_dpc_ratio loop 1 open
-t41 tisp_s_dpc_ratio off 1 open
-t41 tisp_s_dpc_ratio step 2 open
-t41 tisp_s_dpc_ratio var 6 open
-t41 tisp_s_drc_ratio loop 1 open
-t41 tisp_s_drc_ratio off 2 open
-t41 tisp_s_drc_ratio step 2 open
-t41 tisp_s_drc_ratio var 2 open
-t41 tisp_s_mdns_ratio loop 1 open
-t41 tisp_s_mdns_ratio step 3 open
-t41 tisp_s_mdns_ratio var 2 open
+t41 tisp_s_dpc_ratio loop 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_s_dpc_ratio off 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_s_dpc_ratio step 2 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_s_dpc_ratio tailcall 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_s_dpc_ratio var 6 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_s_drc_ratio loop 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_s_drc_ratio off 2 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_s_drc_ratio step 2 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_s_drc_ratio tailcall 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_s_drc_ratio var 2 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_s_face_ae_weiget tailcall 1 unreach
+t41 tisp_s_gib_blc tailcall 1 unreach
 t41 tisp_s_module_attr step 6 unreach
+t41 tisp_s_module_control tailcall 1 unreach
 t41 tisp_s_module_control var 1 unreach
-t41 tisp_s_module_ratio_attr ctr 1 open
-t41 tisp_s_module_ratio_attr loop 1 open
-t41 tisp_s_module_ratio_attr step 2 open
+t41 tisp_s_module_ratio_attr ctr 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_s_module_ratio_attr loop 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_s_module_ratio_attr step 2 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
 t41 tisp_s_mscaler_mask_block_attr step 6 unreach
 t41 tisp_s_mscaler_mask_block_attr var 7 unreach
 t41 tisp_s_osd_block_attr step 7 unreach
 t41 tisp_s_osd_block_attr var 9 unreach
 t41 tisp_s_raw_rw_control off 1 unreach
 t41 tisp_s_raw_rw_control_internal step 1 unreach
-t41 tisp_s_sdns_ratio step 1 open
+t41 tisp_s_raw_rw_handler tailcall 1 unreach
 t41 tisp_s_statis_config_attr off 1 unreach
-t41 tisp_sdns_intp step 1 open
-t41 tisp_sdns_noref_reg_cfg off 1 open
-t41 tisp_sdns_par_refresh step 1 open
+t41 tisp_s_wdr_en argc 2 dead #189 T41: never called (ispcore_s_wdr_en lost its tail call); typed bcsh/adr WDR chain would need the layout fixes first
 t41 tisp_sdns_pm_get_regsize step 1 unreach
 t41 tisp_sdns_pm_suspend loop 2 unreach
 t41 tisp_sdns_pm_suspend off 2 unreach
 t41 tisp_sdns_pm_suspend step 4 unreach
-t41 tisp_sdns_ref_reg_cfg off 1 open
-t41 tisp_sdns_ref_reg_cfg step 1 open
-t41 tisp_set_ae_long_ag step 1 open
-t41 tisp_set_ae_short_ag step 1 open
+t41 tisp_sdns_reg_trig tailcall 1 unreach
+t41 tisp_set_ae_long_ag step 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_set_ae_short_ag step 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_set_scaler_level tailcall 1 unreach
+t41 tisp_set_scaler_level_control_set argc 2 unreach
 t41 tisp_set_scaler_level_control_set var 2 unreach
-t41 tisp_suspend_all ctr 3 open
-t41 tisp_suspend_all loop 3 open
-t41 tisp_suspend_all off 3 open
-t41 tisp_suspend_all step 6 open
+t41 tisp_slake_all tailcall 1 shim #189 T41: lost tail call tisp_wdr_process_deinit (frees the WDR sum/rate buffers, which only the WDR-sensor path allocates): linear sensors unaffected, WDR sensors would leak on unload
+t41 tisp_suspend_all ctr 3 open #189 T41: PM path only (no PM on the cameras), compile/host only; not triaged against the OEM
+t41 tisp_suspend_all loop 3 open #189 T41: PM path only (no PM on the cameras), compile/host only; not triaged against the OEM
+t41 tisp_suspend_all off 3 open #189 T41: PM path only (no PM on the cameras), compile/host only; not triaged against the OEM
+t41 tisp_suspend_all step 6 open #189 T41: PM path only (no PM on the cameras), compile/host only; not triaged against the OEM
+t41 tisp_tmo_faceae_reg_refresh tailcall 1 unreach
 t41 tisp_tmo_get_data ctr 1 unreach
 t41 tisp_tmo_get_data loop 1 unreach
 t41 tisp_tmo_get_data step 1 unreach
-t41 tisp_top_dn_params_refresh var 2 open
+t41 tisp_top_dn_params_refresh tailcall 1 shim #189 T41: confirmed (typed st_top_cfg + 33*a0 stepped x4, lost tail memcpy(&st_top_cfg[a0], tparamsP[a0]+4, 32)); only via tisp_day_or_night_event (QEMU coverage 0; event 18 suppressed, the hand-written dn bank worker applies the bank); fix before enabling the lifted DN event
+t41 tisp_top_dn_params_refresh var 2 shim #189 T41: confirmed (typed st_top_cfg + 33*a0 stepped x4, lost tail memcpy(&st_top_cfg[a0], tparamsP[a0]+4, 32)); only via tisp_day_or_night_event (QEMU coverage 0; event 18 suppressed, the hand-written dn bank worker applies the bank); fix before enabling the lifted DN event
+t41 tisp_top_par_reg_cfg tailcall 1 unreach
+t41 tisp_top_param_array_set tailcall 1 unreach
+t41 tisp_top_write_bypass argc 1 unreach
 t41 tisp_top_write_bypass loop 2 unreach
 t41 tisp_top_write_bypass off 2 unreach
 t41 tisp_top_write_bypass step 2 unreach
+t41 tisp_top_write_bypass tailcall 1 unreach
 t41 tisp_top_write_bypass var 1 unreach
 t41 tisp_tstp_mark1_func off 2 unreach
 t41 tisp_tstp_mark1_func step 4 unreach
 t41 tisp_tstp_mark1_func var 2 unreach
+t41 tisp_tstp_mark2_func argc 1 unreach
 t41 tisp_vic_ctrl_ioctl loop 2 unreach
 t41 tisp_vic_ctrl_ioctl step 1 unreach
 t41 tisp_vic_ctrl_release off 1 unreach
 t41 tisp_vic_mmap off 1 unreach
 t41 tisp_wdr_degweight_ev off 1 unreach
 t41 tisp_wdr_degweight_ev var 1 unreach
+t41 tisp_wdr_dn_params_refresh tailcall 1 unreach
 t41 tisp_wdr_getVar loop 1 unreach
 t41 tisp_wdr_getVar step 3 unreach
-t41 tisp_wdr_get_lum_s off 1 open
-t41 tisp_wdr_paixu step 1 open
-t41 tisp_wdr_paixu_part_1 step 2 open
+t41 tisp_wdr_get_data tailcall 1 dead #189 T41 triage: WDR-sensor path only, QEMU coverage 0
+t41 tisp_wdr_get_lum_s off 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_wdr_paixu step 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_wdr_paixu tailcall 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tisp_wdr_paixu_part_1 step 2 dead #189 T41 triage: WDR-sensor path only (tisp_wdr_init/process; no WDR T41 camera), QEMU coverage 0
 t41 tisp_wdr_quicksort off 2 unreach
 t41 tisp_wdr_quicksort step 3 unreach
-t41 tisp_wdr_softout_reg_refresh loop 10 open
-t41 tisp_wdr_softout_reg_refresh off 25 open
-t41 tisp_wdr_softout_reg_refresh step 11 open
-t41 tisp_ydns_intp step 1 open
+t41 tisp_wdr_softout_reg_refresh argc 4 dead #189 T41 triage: WDR-sensor path only (tisp_wdr_init/process; no WDR T41 camera), QEMU coverage 0
+t41 tisp_wdr_softout_reg_refresh loop 10 dead #189 T41 triage: WDR-sensor path only (tisp_wdr_init/process; no WDR T41 camera), QEMU coverage 0
+t41 tisp_wdr_softout_reg_refresh off 25 dead #189 T41 triage: WDR-sensor path only (tisp_wdr_init/process; no WDR T41 camera), QEMU coverage 0
+t41 tisp_wdr_softout_reg_refresh step 11 dead #189 T41 triage: WDR-sensor path only (tisp_wdr_init/process; no WDR T41 camera), QEMU coverage 0
 t41 tisp_ydns_pm_get_regsize step 1 unreach
 t41 tisp_ydns_pm_suspend loop 1 unreach
 t41 tisp_ydns_pm_suspend off 1 unreach
 t41 tisp_ydns_pm_suspend step 1 unreach
-t41 tisp_ydns_reg_cfg off 1 open
-t41 tisp_ysp_noref_reg_cfg off 2 open
-t41 tisp_ysp_par_refresh step 1 open
+t41 tisp_ydns_reg_trig tailcall 1 unreach
 t41 tisp_ysp_pm_get_regsize step 1 unreach
 t41 tisp_ysp_pm_suspend loop 2 unreach
 t41 tisp_ysp_pm_suspend off 2 unreach
 t41 tisp_ysp_pm_suspend step 4 unreach
-t41 tisp_ysp_ref_reg_cfg loop 1 open
-t41 tisp_ysp_ref_reg_cfg off 14 open
-t41 tisp_ysp_ref_reg_cfg step 7 open
 t41 tisp_ysp_reg_trig step 1 unreach
-t41 tisp_ysp_sharpness_set loop 1 unreach
-t41 tisp_ysp_sharpness_set off 1 unreach
-t41 tisp_ysp_sharpness_set step 5 unreach
-t41 tisp_ysp_sharpness_set var 31 unreach
+t41 tisp_ysp_reg_trig tailcall 1 unreach
 t41 tiziano_adr_5x5_init loop 2 unreach
 t41 tiziano_adr_5x5_init off 2 unreach
 t41 tiziano_adr_5x5_init step 3 unreach
@@ -996,11 +1377,11 @@ t41 tiziano_adr_algorithm loop 1 unreach
 t41 tiziano_adr_algorithm off 2 unreach
 t41 tiziano_adr_algorithm step 2 unreach
 t41 tiziano_adr_base_pars step 3 unreach
-t41 tiziano_adr_ev_func ctr 1 open
-t41 tiziano_adr_ev_func loop 1 open
-t41 tiziano_adr_ev_func off 6 open
-t41 tiziano_adr_ev_func step 6 open
-t41 tiziano_adr_ev_func var 1 open
+t41 tiziano_adr_ev_func ctr 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tiziano_adr_ev_func loop 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tiziano_adr_ev_func off 6 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tiziano_adr_ev_func step 6 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
+t41 tiziano_adr_ev_func var 1 dead #189 T41 triage: reached only through callbacks that t41_safe_tuning_events=1 suppresses (tisp_event_set_cb events 12/13/15/16/17/18; event 1 is rebound to the vendor-AE/safe controller) or through lifted tuning ioctl handlers that the hand-written typed dispatchers never reach; QEMU T41 TB coverage 0 / not linked (gc-sections)
 t41 tiziano_adr_read_data ctr 1 unreach
 t41 tiziano_adr_read_data loop 3 unreach
 t41 tiziano_adr_read_data step 9 unreach
@@ -1020,6 +1401,8 @@ t41 vic_mdma_enable var 4 unreach
 t41 vic_mdma_irq_function loop 5 unreach
 t41 vic_mdma_irq_function off 7 unreach
 t41 vic_mdma_irq_function step 7 unreach
+t41 vic_mdma_irq_function tailcall 1 unreach
 t41 vic_mdma_irq_function var 5 unreach
+t41 video_input_cmd_open tailcall 1 open #189 T41: debug proc open lost its tail call private_single_open_size(file, show, data, 512): cat of the proc file would run with NULL private_data; not reachable by the streamer, show function anchor (.text+offset) unresolved, not fixed
 t41 video_input_cmd_set loop 4 unreach
 t41 video_input_cmd_set step 7 unreach
