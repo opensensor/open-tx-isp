@@ -58962,6 +58962,20 @@ tx_isp_driver_version_isra_150x80:
 #endif
 }
 
+/* #65: the sensor attribute the custom-AE ioctls read (OEM: *(core + 0x114 + ch*0x60 + 0x5c), the attr pointer of the core's copy of the
+ * sensor video block).  This driver fills that copy only when the stream starts (t40_core_sync_sensor_video), but libimp registers the
+ * algorithm libraries in IMP_ISP_EnableSensor, before the first stream: a freshly loaded module has NULL there and the open ioctl failed
+ * (EPERM; the get-handle read attr + 180 from address 0).  The attribute is the bound sensor's own (sd + 0x304), the very block that is
+ * copied later, so use it while the core copy is empty. */
+static uintptr_t t40_ae_algo_attr(uintptr_t core, uint32_t ch)
+{
+    uintptr_t attr = regtrace_get_u32(core, 368 + ch * 96);
+
+    if (!regtrace_is_kernel_ptr((void *)attr) && ch == 0 && regtrace_is_kernel_ptr((void *)regtrace_sensor_subdev))
+        attr = regtrace_get_u32((uintptr_t)regtrace_sensor_subdev, 0x304);
+    return regtrace_is_kernel_ptr((void *)attr) ? attr : 0;
+}
+
 /* #agg51: tx_isp_get_ae_algo_handle{,_sec}.isra.25/26 re-translated from OEM 0x112bc / 0x11458.
  * The lift dropped the copy_to_user source and length (a1 = ae_info_mine[idx], a2 = 2002), passed the
  * 4-byte &local_18 as the exposure-info buffer (OEM: 224 bytes at sp+24 -> kernel stack overwrite),
@@ -58970,7 +58984,7 @@ tx_isp_driver_version_isra_150x80:
  * statistics at info+8, then the exposure words at info+1946..2001 and copy 2002 bytes to user. */
 static int32_t t40_get_ae_algo_handle(uintptr_t a0, uint32_t user, uint32_t idx)
 {
-    static const uint16_t cur_off[2] = { 732, 736 }, attr_off[2] = { 368, 464 };
+    static const uint16_t cur_off[2] = { 732, 736 };
     static const uint16_t win_off[2] = { 384, 480 };
     uint32_t ei[56];            /* OEM sp+24..sp+247 */
     uint32_t w[14];
@@ -58987,12 +59001,12 @@ static int32_t t40_get_ae_algo_handle(uintptr_t a0, uint32_t user, uint32_t idx)
     tisp_g_ae_statis_attr(idx, (uintptr_t)(info + 8));
     memset(ei, 0, sizeof(ei));
     tisp_g_ae_exprinfo_attr(idx, (uintptr_t)ei);
-    attr = (char *)(uintptr_t)*(uint32_t *)(core + attr_off[idx]);
+    attr = (char *)t40_ae_algo_attr((uintptr_t)core, idx);
     w[0] = ei[6]; w[1] = ei[7]; w[2] = ei[8]; w[3] = ei[9];          /* sp+48..60 */
     w[4] = ei[31]; w[5] = ei[32]; w[6] = ei[33]; w[7] = ei[34];      /* sp+148..160 */
     w[8] = *(uint32_t *)(core + cur_off[idx]);
-    w[9] = *(uint16_t *)(attr + 180);
-    w[10] = *(uint16_t *)(attr + 182);
+    w[9] = attr ? *(uint16_t *)(attr + 180) : 0;
+    w[10] = attr ? *(uint16_t *)(attr + 182) : 0;
     w[11] = *(uint32_t *)(core + win_off[idx]);
     w[12] = *(uint32_t *)(core + win_off[idx] - 8);
     w[13] = *(uint32_t *)(core + win_off[idx] - 4);
@@ -59056,8 +59070,8 @@ int32_t tx_isp_set_ae_algo_open_isra_28(void* arg1, int32_t arg2)
     if (!regtrace_is_kernel_ptr((void *)core))
         return -1;
     slot = core + ch * 96;
-    attr = *(uint32_t *)(slot + 368);
-    if (!regtrace_is_kernel_ptr((void *)attr))
+    attr = t40_ae_algo_attr(core, ch);
+    if (!attr)
         return -1;
     tisp_ae_algo_init(ch, 1, u);
     u[27] = *(uint32_t *)(slot + 384);                  /* sp+132 */

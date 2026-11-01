@@ -12,5 +12,6 @@ fail=0
 grep -q '^#define vawb_tawb_custom_en ((u32 \*)awb_algo_enable)' "$v" || { echo "check_t40_custom_algo_wake: vawb_tawb_custom_en must alias awb_algo_enable"; fail=1; }
 grep -q 'READ_ONCE(ta_custom_en\[0\]) == 1' "$f" && grep -q 'private_complete((uintptr_t)&ae_algo_comp\[0\])' "$f" || { echo "check_t40_custom_algo_wake: AE hist IRQ must complete ae_algo_comp[0] when ta_custom_en[0] == 1"; fail=1; }
 grep -q 'regtrace_enable_ae_sensor_apply && READ_ONCE(ta_custom_en\[0\]) != 1' "$f" || { echo "check_t40_custom_algo_wake: the own exposure loop must be skipped while a custom AE is registered"; fail=1; }
+grep -q 'attr = t40_ae_algo_attr(core, ch);' "$f" && grep -q 'attr = (char \*)t40_ae_algo_attr' "$f" || { echo "check_t40_custom_algo_wake: AE open / get-handle must resolve the sensor attribute through t40_ae_algo_attr (NULL core copy before the first stream)"; fail=1; }
 [ $fail = 0 ] && echo "check_t40_custom_algo_wake: ok"
 exit $fail
