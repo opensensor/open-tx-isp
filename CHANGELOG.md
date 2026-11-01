@@ -4,6 +4,10 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-01, T40 WDR-enable / LCE-tgain readers and writers (`claude/issue-182`)
+
+- **T40 dn_params_refresh x3 + LCE tgain (#182):** `tisp_dmsc/ydns/ysp_dn_params_refresh` read the per-channel WDR enable and `tisp_lce_tgain_interp_strength` read the LCE tgain word through `&isp_memopt` (the module parameter), and the tail call of each refresh passed the isp_memopt value as the gain. The writers used other stand-ins (`&dmsc_wdr_en + 17176` words, `&lce_tgain + 17280` words, i.e. stray stores 68 KB past a 4-byte object). Now one OEM array per block with reader and writer on the same object: `t40_dmsc_wdr_en[2]`, `regtrace_ydns_wdr_flag[2]`, `regtrace_ysp_wdr_flags[2]`, `t40_lce_tgain_oem[2]`; the refresh tails pass the per-channel gain slot like the OEM. Host check `t40_hardcoded_anchor_check.py` extended (fails on the old code).
+
 ## 2026-11-01, T40 custom AWB algorithm close (`claude/issue-173`)
 
 - **T40 tisp_awb_algo_deinit_internal (#173, QEMU + device reload):** the lift dereferenced the bare address 16712 (kernel oops when a custom AWB algorithm is unregistered at `DisableSensor`); it now clears `tawb_custom_en[ch]`, the per-sensor array `tisp_awb_algo_init` fills, like the OEM. The AWB main process read a separate stand-in for that array and now reads the same one. New host check `tests/t40_hardcoded_anchor_check.py` (no local pointer initialised from a bare literal). QEMU T40: `customalgo_t40` ends with 0 oops (before: oops in the AWB close). Eufy T40 (agg65a): apitest 285 PASS / 0 FAIL, 6 reload cycles clean. The custom algorithm path itself stays off by default in OpenIMP (`OPENIMP_ISP_ALGO_FUNC=1`, #65).
