@@ -4,6 +4,12 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-01, T40 pipeline-top block cleared at ISP init (`claude/issue-150`)
+
+- **T40 ISP top block "main" not zero after the ISP open (#150):** the kernel-build `tisp_main_init` shim never ran the OEM `tisp_tstp_main_init` (fresh zeroed 154-byte block + `tisp_tstp_reg_cfg(0)`), so the 31 registers at ISP + 0x60000 kept their hardware defaults (0x28=0x200, 0x40=0x22, 0x90=2, 0xa8=2) while the vendor reads 0. The shim now frees the block of an earlier stream start and runs the OEM init right after the block inits; the sec block keeps its defaults like the vendor. Host check `tests/check_t40_tstp_init.sh` (`make -C tests check`, 120 passed, 0 failed).
+
+  Device proof (Eufy T40, image agg65f = next 32f4ccfe + this fix, full OTA, avpu.ko md5 unchanged): register dump 0x13360000..0xc4 before (agg65e) 0x28=0x200, 0x40=0x22, 0x90=2, 0xa8=2, after all 31 registers 0 (0xb0..0xc4 are status counters on both stacks); snapshot 200, 0 oopses; apitest all areas with `OPENIMP_ISP_ALGO_FUNC=1` PASS 398 / FAIL 0; 6 reload cycles of `tx_isp_t40` clean (0 oopses, no leak beyond +16 kB slab) and the main block still 0 afterwards.
+
 ## 2026-11-01, T40 ISP draw state getter (`claude/t40-draw-get`)
 
 - **T40 IMP_ISP_GetDrawAttr oops (#183):** the lifted `tisp_g_draw_attr` read the draw state of the first ISP output through a NULL pointer (the `&mscaler_s0` relocation was lost) and fell from the end of its loop back into the type dispatch, so every `IMP_ISP_GetDrawAttr` oopsed (BadVA 0x64), killed the calling thread and left the `tx_isp_t40` module reference held (the apitest area `t40dev` could not be unloaded afterwards). Rewritten from the OEM function (tx-isp-t40.ko `tisp_g_draw_attr`): state `mscaler_s0` for output 0 and `mscaler_s1` otherwise, 2 channels x 16 units, type 1 also copies the half word at +26.
