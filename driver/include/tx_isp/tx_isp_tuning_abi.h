@@ -80,6 +80,16 @@ typedef uint64_t u64;
 /* ISP-drawn OSD (T41 libimp 1.2.x): IMPISPOSDAttr (12 bytes), IMPISPOSDBlockAttr (20 bytes). */
 #define TX_ISP_TUNING_CMD_T41_OSD_ATTR		0x080000a1U
 #define TX_ISP_TUNING_CMD_T41_OSD_BLOCK		0x080000a2U
+/* T41 issue #171 (OEM tx-isp-t41.ko 1.2.5 tx_isp_core_ops_s/g_ctrl):
+ * IMPISPDrawBlockAttr (32 bytes), IMPISPCsccrModeAttr (12 bytes),
+ * IMPISPFaceAeWeiget (12, get/set), IMPISPFaceAeLuma (8, get),
+ * AE flicker flag (4, get) and AE BV (4, get; libimp 1.2.6). */
+#define TX_ISP_TUNING_CMD_T41_DRAW_BLOCK	0x080000a0U
+#define TX_ISP_TUNING_CMD_T41_CSCCR		0x08000097U
+#define TX_ISP_TUNING_CMD_T41_FACE_AE_WEIGHT	0x08000036U
+#define TX_ISP_TUNING_CMD_T41_FACE_AE_LUMA	0x08000037U
+#define TX_ISP_TUNING_CMD_T41_AE_FLICKER_FLAG	0x0800003aU
+#define TX_ISP_TUNING_CMD_T41_AE_BV		0x080000b3U
 #define TX_ISP_TUNING_T41_SWITCH_BIN_BYTES	132U
 /* T41 libimp: AF weight table (15x15 bytes); other SoCs use this ID for AE_IT_MAX. */
 #define TX_ISP_TUNING_CMD_T41_AF_WEIGHT		0x08000032U

@@ -36,6 +36,7 @@ bool t41_dfg_ready(void);
 #include "tx_isp_t41_msca_shadow.h"
 #include "tx_isp_t41_msca_ctl.h"
 #include "tx_isp_t41_osd.h"
+#include "tx_isp_t41_isp_extra.h"
 #include "tx_isp_t41_switchbin.h"
 #include "tx_isp_t41_gib.h"
 #include "../include/tx_isp/tx_isp_top.h"
@@ -1295,6 +1296,14 @@ static struct t41_msca_mask_state t41_msca_mask
 static struct t41_osd_state t41_osd __attribute__((section(".data")));
 static unsigned int t41_osd_commits __attribute__((section(".data")));
 module_param_named(osd_commits, t41_osd_commits, uint, 0444);
+/* ISP draw units (tx_isp_t41_isp_extra.h), written by the same commit */
+static struct t41_draw_state t41_draw __attribute__((section(".data")));
+static unsigned int t41_draw_commits __attribute__((section(".data")));
+module_param_named(draw_commits, t41_draw_commits, uint, 0444);
+/* CSC colour range record (stock CSCCR_API_INFO initial value) */
+static struct t41_csccr_state t41_csccr __attribute__((section(".data"))) = {
+    { 0, 0, 0, 0, 0x00, 0xff, 0x00, 0xff, 0x00, 0xff, 0x00, 0xff },
+};
 static struct t41_msca_scaler_lv t41_msca_lv[3]
     __attribute__((section(".data")));
 static int t41_msca_mask_flush(unsigned int chan_mask, int restart);
@@ -22717,6 +22726,104 @@ static int t41_tuning_face_ae(unsigned int channel, unsigned int is_get,
 }
 
 /*
+ * Issue #171, vendor-AE values of ae_cache[ch] and the AE state (OEM
+ * 1.2.5 tx_isp_core_ops_s/g_ctrl):
+ *  0x08000036 IMPISPFaceAeWeiget {global, roi, smooth} (12 bytes, get/set):
+ *             tisp_s/g_face_ae_weiget -> tisp_ae_api_set/get_face_ae_tune_
+ *             params, cache +0x5f8/+0x5fc/+0x600 (the vendor AE reads them
+ *             when it meters a face window);
+ *  0x08000037 IMPISPFaceAeLuma {global, roi} (8 bytes, get):
+ *             tisp_g_face_ae_luma -> tisp_ae_api_get_gobal_roi_luma, cache
+ *             +0x5f0/+0x5f4 (written by the vendor AE every frame);
+ *  0x0800003a flicker flag (4 bytes, get): tisp_g_ae_flicker_flag ->
+ *             tisp_ae_api_get_flicker_flag, cache +0x67c (vendor AE);
+ *  0x080000b3 BV (4 bytes, get; libimp 1.2.6 only, no handler in the 1.2.5
+ *             module): the brightness value tisp_ae_get_bv stores at AE
+ *             state +0x2614 every frame (inferred mapping).
+ * Stock answers these without checks; here they need the running vendor
+ * AE (t41_vendor_ae, its first frame for the reads) and take the
+ * histogram lock the vendor AE updates them under.
+ */
+#define T41_AE_CACHE_FACE_LUMA		0x5f0U
+#define T41_AE_CACHE_FACE_WEIGHT	0x5f8U
+#define T41_AE_CACHE_FLICKER_FLAG	0x67cU
+#define T41_AE_STATE_BV			0x2614U
+
+static int t41_tuning_ae_extra(unsigned int channel, uint32_t id,
+                               unsigned int is_get, uintptr_t user_ptr)
+{
+    uint32_t v[3];
+    unsigned int bytes;
+    unsigned char *cache, *state = NULL;
+    uint32_t *info;
+    spinlock_t *lock;
+    unsigned long flags;
+
+    BUILD_BUG_ON(T41_AE_CACHE_FLICKER_FLAG + 4U > T41_AE_CACHE_BYTES);
+    BUILD_BUG_ON(T41_AE_STATE_BV + 4U > T41_AE_STATE_BYTES);
+    if (channel >= ARRAY_SIZE(ae_info) || channel >= 2 || is_get > 1 ||
+        !user_ptr)
+        return -EINVAL;
+    if (t41_vendor_ae <= 0)
+        return -EOPNOTSUPP;
+    if (!smp_load_acquire(&t41_ae_ready[channel]))
+        return -EAGAIN;
+    if (is_get && id != TX_ISP_TUNING_CMD_T41_FACE_AE_WEIGHT &&
+        !READ_ONCE(t41_vae_hist_frames[channel]))
+        return -EAGAIN;
+    cache = t41_ae_cache_ptr(channel);
+    if (!cache)
+        return -ENODEV;
+    if (id == TX_ISP_TUNING_CMD_T41_AE_BV) {
+        info = (uint32_t *)(uintptr_t)ae_info[channel];
+        if (!t41_kernel_data_ptr(info))
+            return -ENODEV;
+        state = (unsigned char *)(uintptr_t)info[1];
+        if (!t41_kernel_data_ptr(state))
+            return -ENODEV;
+    }
+    switch (id) {
+    case TX_ISP_TUNING_CMD_T41_FACE_AE_WEIGHT:
+        bytes = 12;
+        break;
+    case TX_ISP_TUNING_CMD_T41_FACE_AE_LUMA:
+        bytes = 8;
+        break;
+    default:
+        bytes = 4;
+        break;
+    }
+    if (!is_get &&
+        private_copy_from_user(v, (void __user *)user_ptr, bytes))
+        return -EFAULT;
+    lock = (spinlock_t *)(void *)(slock_hist_storage +
+                                  channel * sizeof(uint32_t));
+    spin_lock_irqsave(lock, flags);
+    switch (id) {
+    case TX_ISP_TUNING_CMD_T41_FACE_AE_WEIGHT:
+        if (is_get)
+            memcpy(v, cache + T41_AE_CACHE_FACE_WEIGHT, 12);
+        else
+            memcpy(cache + T41_AE_CACHE_FACE_WEIGHT, v, 12);
+        break;
+    case TX_ISP_TUNING_CMD_T41_FACE_AE_LUMA:
+        memcpy(v, cache + T41_AE_CACHE_FACE_LUMA, 8);
+        break;
+    case TX_ISP_TUNING_CMD_T41_AE_FLICKER_FLAG:
+        memcpy(v, cache + T41_AE_CACHE_FLICKER_FLAG, 4);
+        break;
+    default:
+        memcpy(v, state + T41_AE_STATE_BV, 4);
+        break;
+    }
+    spin_unlock_irqrestore(lock, flags);
+    if (is_get)
+        return private_copy_to_user((void __user *)user_ptr, v, bytes) ?
+            -EFAULT : 0;
+    return 0;
+}
+
+/*
  * IMPISPAeExpListAttr (stock 0x08000027, 324 bytes;
  * tisp_ae_api_set/get_exp_list): see t41_ae_explist_set/get.
  */
@@ -22928,6 +23035,10 @@ static int t41_tuning_osd_attr(unsigned int vinum, unsigned int is_get,
                                uintptr_t user_ptr);
 static int t41_tuning_osd_block(unsigned int vinum, unsigned int is_get,
                                 uintptr_t user_ptr);
+static int t41_tuning_draw_block(unsigned int vinum, unsigned int is_get,
+                                 uintptr_t user_ptr);
+static int t41_tuning_csccr(unsigned int vinum, unsigned int is_get,
+                            uintptr_t user_ptr);
 
 int64_t isp_core_tunning_unlocked_ioctl(uintptr_t a0, uint32_t a1, uint32_t a2)
 {
@@ -23036,6 +23147,21 @@ static int64_t isp_core_tunning_unlocked_ioctl_body(uintptr_t a0, uint32_t a1, u
             { TX_ISP_TUNING_CMD_T41_OSD_BLOCK, T41_OSD_BLOCK_BYTES,
               TX_ISP_TUNING_DIR_GET | TX_ISP_TUNING_DIR_SET,
               TX_ISP_TUNING_PAYLOAD_USER_PTR },
+            { TX_ISP_TUNING_CMD_T41_DRAW_BLOCK, T41_DRAW_BYTES,
+              TX_ISP_TUNING_DIR_GET | TX_ISP_TUNING_DIR_SET,
+              TX_ISP_TUNING_PAYLOAD_USER_PTR },
+            { TX_ISP_TUNING_CMD_T41_CSCCR, T41_CSCCR_BYTES,
+              TX_ISP_TUNING_DIR_GET | TX_ISP_TUNING_DIR_SET,
+              TX_ISP_TUNING_PAYLOAD_USER_PTR },
+            { TX_ISP_TUNING_CMD_T41_FACE_AE_WEIGHT, 12,
+              TX_ISP_TUNING_DIR_GET | TX_ISP_TUNING_DIR_SET,
+              TX_ISP_TUNING_PAYLOAD_USER_PTR },
+            { TX_ISP_TUNING_CMD_T41_FACE_AE_LUMA, 8,
+              TX_ISP_TUNING_DIR_GET, TX_ISP_TUNING_PAYLOAD_USER_PTR },
+            { TX_ISP_TUNING_CMD_T41_AE_FLICKER_FLAG, 4,
+              TX_ISP_TUNING_DIR_GET, TX_ISP_TUNING_PAYLOAD_USER_PTR },
+            { TX_ISP_TUNING_CMD_T41_AE_BV, 4,
+              TX_ISP_TUNING_DIR_GET, TX_ISP_TUNING_PAYLOAD_USER_PTR },
             { TX_ISP_TUNING_CMD_T41_SWITCH_BIN,
               TX_ISP_TUNING_T41_SWITCH_BIN_BYTES,
               TX_ISP_TUNING_DIR_SET, TX_ISP_TUNING_PAYLOAD_USER_PTR },
@@ -23346,6 +23472,20 @@ static int64_t isp_core_tunning_unlocked_ioctl_body(uintptr_t a0, uint32_t a1, u
         if (route && route->id == TX_ISP_TUNING_CMD_T41_OSD_BLOCK)
             return t41_tuning_osd_block(request.channel, request.is_get,
                                         request.value_or_ptr);
+        /* Issue #171 groups (tx_isp_t41_isp_extra.h, README "Issue 171
+         * controls"). */
+        if (route && route->id == TX_ISP_TUNING_CMD_T41_DRAW_BLOCK)
+            return t41_tuning_draw_block(request.channel, request.is_get,
+                                         request.value_or_ptr);
+        if (route && route->id == TX_ISP_TUNING_CMD_T41_CSCCR)
+            return t41_tuning_csccr(request.channel, request.is_get,
+                                    request.value_or_ptr);
+        if (route && (route->id == TX_ISP_TUNING_CMD_T41_FACE_AE_WEIGHT ||
+                      route->id == TX_ISP_TUNING_CMD_T41_FACE_AE_LUMA ||
+                      route->id == TX_ISP_TUNING_CMD_T41_AE_FLICKER_FLAG ||
+                      route->id == TX_ISP_TUNING_CMD_T41_AE_BV))
+            return t41_tuning_ae_extra(request.channel, route->id,
+                                       request.is_get, request.value_or_ptr);
         /*
          * Public tuning IDs with no open implementation yet: report it
          * instead of acknowledging the request unchanged.
@@ -163152,6 +163292,8 @@ static int t41_osd_pair(void *ctx, unsigned int value, unsigned int reg)
 static int t41_msca_commit_frame_shadow(void)
 {
 	unsigned long flags = 0;
+	unsigned int draw_skipped = 0;
+	int osd_pairs;
 	uint32_t status;
 	unsigned int trace;
 	int pairs;
@@ -163170,14 +163312,31 @@ static int t41_msca_commit_frame_shadow(void)
 	pairs = ret ? 0 : t41_osd_emit(&t41_osd, t41_osd_pair, NULL);
 	if (pairs < 0)
 		ret = pairs;
+	osd_pairs = pairs;
+	/* stock tisp_msca_cfg_shd_ram -> tisp_msca_set_line (draw units) */
+	if (!ret) {
+		int lines = t41_draw_emit(&t41_draw, t41_osd_pair, NULL,
+					  &draw_skipped);
+
+		if (lines < 0)
+			ret = lines;
+		else if (lines > 0) {
+			pairs += lines;
+			t41_draw_commits++;
+		}
+	}
 	subret = system_reg_write(0x0f8000U, 0x01010102U);
 	if (!ret)
 		ret = subret;
 	if (!ret && pairs >= 2)
 		ret = system_reg_write(0x0f8100U, ((pairs - 1) << 4) | 1U);
-	if (!ret && pairs > 0)
+	if (!ret && osd_pairs > 0)
 		t41_osd_commits++;
 	private_spin_unlock_irqrestore((void *)(uintptr_t)&msca_slock, flags);
+	if (draw_skipped)
+		printk_ratelimited(KERN_INFO
+			"t41: ISP draw units %#x: sloped lines only on units 0..7 (stock skips them)\n",
+			draw_skipped);
 
 	trace = t41_msca_frame_shadow_trace++ & 0x7fffffffU;
 	if (trace < 8U || ret)
@@ -165036,6 +165195,66 @@ static int t41_tuning_osd_block(unsigned int vinum, unsigned int is_get,
     if (is_get)
         return private_copy_to_user((void __user *)user_ptr, req,
                                     sizeof(req)) ? -EFAULT : 0;
+    return 0;
+}
+
+/*
+ * 0x080000a0, IMPISPDrawBlockAttr (32 bytes); stock tisp_s/g_draw_block_attr
+ * (tx_isp_t41_isp_extra.h).  A set unit is drawn by the next frame's MSCA
+ * shadow commit, like stock tisp_msca_Shd_ctrl -> tisp_msca_set_line.
+ */
+static int t41_tuning_draw_block(unsigned int vinum, unsigned int is_get,
+                                 uintptr_t user_ptr)
+{
+    unsigned char req[T41_DRAW_BYTES];
+    unsigned long flags = 0;
+    int ret;
+
+    if (vinum != 0 || is_get > 1 || !user_ptr)
+        return -EINVAL;
+    if (private_copy_from_user(req, (void __user *)user_ptr, sizeof(req)))
+        return -EFAULT;
+    __private_spin_lock_irqsave((uint32_t)(uintptr_t)&msca_slock,
+                                (uintptr_t)&flags);
+    ret = is_get ? t41_draw_get(&t41_draw, req) : t41_draw_set(&t41_draw, req);
+    private_spin_unlock_irqrestore((void *)(uintptr_t)&msca_slock, flags);
+    if (ret)
+        return -EINVAL;
+    if (is_get)
+        return private_copy_to_user((void __user *)user_ptr, req,
+                                    sizeof(req)) ? -EFAULT : 0;
+    return 0;
+}
+
+/*
+ * 0x08000097, IMPISPCsccrModeAttr (12 bytes); stock tisp_s/g_csccr_mode ->
+ * tisp_csccr_api_set/get (tx_isp_t41_isp_extra.h): the three presets or a
+ * custom input/output Y and UV range written to 0xf08e0..0xf08ec at once.
+ * GET returns the last custom record, like stock.
+ */
+static int t41_tuning_csccr(unsigned int vinum, unsigned int is_get,
+                            uintptr_t user_ptr)
+{
+    unsigned char req[T41_CSCCR_BYTES];
+    unsigned int reg[T41_CSCCR_WRITES], value[T41_CSCCR_WRITES];
+    int store, n, i;
+
+    if (vinum != 0 || is_get > 1 || !user_ptr)
+        return -EINVAL;
+    if (is_get)
+        return private_copy_to_user((void __user *)user_ptr, t41_csccr.info,
+                                    sizeof(t41_csccr.info)) ? -EFAULT : 0;
+    if (private_copy_from_user(req, (void __user *)user_ptr, sizeof(req)))
+        return -EFAULT;
+    n = t41_csccr_plan(req, reg, value, &store);
+    if (n < 0) {
+        printk(KERN_INFO "t41: CSCCR custom range refused (min > max or empty input range)\n");
+        return -EINVAL;
+    }
+    if (store)
+        memcpy(t41_csccr.info, req, sizeof(req));
+    for (i = 0; i < n; ++i)
+        system_reg_write(reg[i], value[i]);
     return 0;
 }
 

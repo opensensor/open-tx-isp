@@ -31,8 +31,12 @@ TESTS += tx_isp_t41_msca_shadow_test
 TESTS += tx_isp_t41_msca_start_test
 TESTS += tx_isp_t41_msca_ctl_test
 TESTS += tx_isp_t41_osd_test
+TESTS += tx_isp_t41_isp_extra_test
 
 tx_isp_t41_osd_test: tx_isp_t41_osd_test.c ../driver/t41/tx_isp_t41_osd.h
+	$(CC) $(CFLAGS) -o $@ $<
+
+tx_isp_t41_isp_extra_test: tx_isp_t41_isp_extra_test.c ../driver/t41/tx_isp_t41_isp_extra.h
 	$(CC) $(CFLAGS) -o $@ $<
 
 tx_isp_t41_msca_ctl_test: tx_isp_t41_msca_ctl_test.c ../driver/t41/tx_isp_t41_msca_ctl.h
