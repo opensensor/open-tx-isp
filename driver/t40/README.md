@@ -782,6 +782,7 @@ ISP digital gain is 1x there. `SetModule_Ratio` defog -> literal `tisp_s_defog_r
 - **GetGamma.** Answers `{mode 0, 129 nodes}` from the last programmed LUT (production uses the soft-gamma writer, not the lifted gamma context).
 - **Probe parameters.** `t40_ev_follow=0` switches the AE EV fan-out off (A/B), `t40_adr_ev_shift` scales the EV fed to the ADR chain (diagnosis only, 0 = OEM unit).
 - **Reload.** `t40_rmmod_skip_slake=1` stays the default (the slake step is skipped; the core remove passed every time); the unload order is frame source first, then core.
+- **Clock teardown at rmmod (#152).** `private_clk_prepare_enable` counts every successful enable per clock name, `private_clk_disable_unprepare` takes it back; `tx_isp_t40_core_exit` gates what is still counted (`gate_isp`, `div_isp`, `gate_csi`, `gate_ahb0`, a sensor MCLK that was left on) after the last child remove. OEM: `tx_isp_subdev_deinit -> isp_subdev_release_clks` does `clk_disable_unprepare` + `devm_clk_put` inside the core remove (core first); the open driver defers the gate because the CSI remove still writes registers behind the ISP clocks and the slake variant of this (early gating) is what hung the Eufy. The sensor modules stop their own MCLK in their remove (CIM CDR stop bit 27), as on stock. Check: `/proc/jz/clock/clocks` counts of `gate_isp`/`div_isp`/`gate_csi` are back to the value before the load, CLKGR (0x10000020) bits 23/24 set after the rmmod; loop script `tests/t40_qemu/clk_reload_cycle.sh`.
 
 ## Lifted OEM AE removed (2026-10-26, `claude/t40-drop-oem-ae`)
 

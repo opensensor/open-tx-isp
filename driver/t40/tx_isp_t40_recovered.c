@@ -44,6 +44,8 @@
 #include <linux/inetdevice.h>
 #include <linux/gpio.h>
 #include <linux/clk.h>
+extern const char *__clk_get_name(const struct clk *clk);
+static void t40_clk_own_add(struct clk *clk, int delta);
 #include <linux/delay.h>
 #include <linux/i2c.h>
 #include <linux/proc_fs.h>
@@ -32887,6 +32889,7 @@ void private_clk_disable(struct clk *clk)
 /* WHOLE_DRIVER_CANDIDATE fn_00000000000000d4 origin=fragment_seed original=private_clk_disable_unprepare */
 int32_t private_clk_disable_unprepare(uint32_t a0)
 {
+    t40_clk_own_add((struct clk *)a0, -1);
     clk_disable((struct clk *)a0);
     clk_unprepare((struct clk *)a0);
     return 0;
@@ -32979,6 +32982,84 @@ bool private_capable(int cap)
     return capable(cap);
 }
 
+/* #152: clock ownership.  Every prepare_enable that went through this module (the ISP/CSI
+ * activation and, via the exported private_clk_*, the sensor modules' MCLK) is counted per clock
+ * NAME (the struct clk handles die with the devm release after each child remove, the clock
+ * core does not).  Whatever is still counted when the module exits is released by
+ * t40_clk_release_all(): the OEM gates it in tx_isp_subdev_deinit -> isp_subdev_release_clks
+ * (clk_disable_unprepare before devm_clk_put), the open driver does it after the last child
+ * remove because the CSI remove still writes registers behind the ISP clocks. */
+#define T40_CLK_OWN_MAX 16
+static struct {
+    char name[24];
+    int cnt;
+} t40_clk_own[T40_CLK_OWN_MAX];
+static DEFINE_SPINLOCK(t40_clk_own_lock);
+
+static void t40_clk_own_add(struct clk *clk, int delta)
+{
+    const char *nm;
+    unsigned long fl;
+    int i, free_i = -1;
+
+    if (!clk || IS_ERR(clk))
+        return;
+    nm = __clk_get_name(clk);
+    if (!nm)
+        return;
+    spin_lock_irqsave(&t40_clk_own_lock, fl);
+    for (i = 0; i < T40_CLK_OWN_MAX; i++) {
+        if (t40_clk_own[i].name[0] && !strncmp(t40_clk_own[i].name, nm, sizeof(t40_clk_own[i].name) - 1)) {
+            t40_clk_own[i].cnt += delta;
+            if (t40_clk_own[i].cnt < 0)
+                t40_clk_own[i].cnt = 0;
+            spin_unlock_irqrestore(&t40_clk_own_lock, fl);
+            return;
+        }
+        if (free_i < 0 && !t40_clk_own[i].name[0])
+            free_i = i;
+    }
+    if (delta > 0 && free_i >= 0) {
+        strlcpy(t40_clk_own[free_i].name, nm, sizeof(t40_clk_own[free_i].name));
+        t40_clk_own[free_i].cnt = delta;
+    }
+    spin_unlock_irqrestore(&t40_clk_own_lock, fl);
+}
+
+/* gate every clock this module still holds enabled (module exit, after the last child remove) */
+static void t40_clk_release_all(void)
+{
+    int i;
+
+    for (i = 0; i < T40_CLK_OWN_MAX; i++) {
+        char nm[24];
+        int cnt;
+        unsigned long fl;
+        struct clk *clk;
+
+        spin_lock_irqsave(&t40_clk_own_lock, fl);
+        strlcpy(nm, t40_clk_own[i].name, sizeof(nm));
+        cnt = t40_clk_own[i].cnt;
+        t40_clk_own[i].cnt = 0;
+        t40_clk_own[i].name[0] = 0;
+        spin_unlock_irqrestore(&t40_clk_own_lock, fl);
+        if (!nm[0] || cnt <= 0)
+            continue;
+        clk = clk_get(NULL, nm);
+        if (IS_ERR(clk)) {
+            printk(KERN_WARNING "tx_isp_t40_recovered: clock %s still enabled x%d, clk_get failed %ld\n",
+                   nm, cnt, PTR_ERR(clk));
+            continue;
+        }
+        printk(KERN_INFO "tx_isp_t40_recovered: gating clock %s (enabled x%d at exit)\n", nm, cnt);
+        while (cnt-- > 0) {
+            clk_disable(clk);
+            clk_unprepare(clk);
+        }
+        clk_put(clk);
+    }
+}
+
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000000200 origin=model_output original=private_clk_prepare_enable */
 int32_t private_clk_prepare_enable(int32_t arg1)
 {
@@ -32991,6 +33072,7 @@ int32_t private_clk_prepare_enable(int32_t arg1)
 
     result = clk_enable((struct clk *)arg1);
     if (result == 0) {
+        t40_clk_own_add((struct clk *)arg1, 1);
         return result;
     }
 
@@ -169975,6 +170057,8 @@ void tx_isp_t40_core_exit(void)
         regtrace_sensor_client = NULL;
     }
     t40_vtrack_free_all();
+    /* #152: gate the ISP/CSI clocks (and any MCLK a sensor left on) like the OEM subdev_deinit */
+    t40_clk_release_all();
     return;
 #endif
     tx_isp_exit();
