@@ -6422,6 +6422,11 @@ static struct file_operations tx_isp_fops = {
 static struct file_operations video_input_cmd_fops = {
     .owner = THIS_MODULE,
     .open = (int (*)(struct inode *, struct file *))video_input_cmd_open,
+    /* #189 pass 4: open now allocates a single_open_size() seq_file, so the stock seq trio is needed (without .release every open leaked it; without .read a
+     * read of the proc file returned -EIO) */
+    .llseek = (loff_t (*)(struct file *, loff_t, int))seq_lseek,
+    .read = (ssize_t (*)(struct file *, char __user *, size_t, loff_t *))seq_read,
+    .release = (int (*)(struct inode *, struct file *))single_release,
 };
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000000000 origin=fragment_seed original=private_math_exp2 */
 uint32_t private_math_exp2(uint32_t arg1, uint32_t arg2, uint32_t arg3)
