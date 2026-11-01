@@ -19,7 +19,7 @@ end, and stores land behind the object (#186: tisp_g/s_mscaler_mask_attr).  Clas
 Baseline file (tests/lifted_ptr_scale_baseline.txt): `<tag> <function> <class> <count> <status> [note]`, one line
 per (function, class).  status: `open` (not yet compared with the OEM), `unreach` (no static path from hand-written code, see live_set),
 `shim` (confirmed against the OEM, but the call is skipped by a
-hand-written path: needs a fix before that path is enabled), `dead` (reviewed, never runs), `ok` (reviewed against the OEM, correct), `fixed`.  The check
+hand-written path: needs a fix before that path is enabled), `layout` (confirmed, but the typed access hits a stray OEM .bss anchor such as `&isp_memopt + K`: a type fix alone moves the stray write, needs a real object first), `dead` (reviewed, never runs), `ok` (reviewed against the OEM, correct), `fixed`.  The check
 fails when a function/class is missing from the baseline or its count grew; shrinking counts are reported so
 the baseline can be tightened.  A function that gets a hand-written replacement just disappears from the scan.
 
@@ -80,6 +80,42 @@ def mask_inactive(lines):
     return out
 
 
+def cut_stub_tails(lines):
+    """A lifted function whose body starts with `#ifdef REGTRACE_KERNEL_TREE_BUILD { ...; return X; } #endif` (no #else)
+    is a hand-written kernel-tree replacement: in the Kbuild build the lifted tail behind it never runs.  Blank it."""
+    out = list(lines)
+    i = 0
+    while i < len(out):
+        if FUNC.match(out[i]) and i + 1 < len(out) and out[i + 1] == "{":
+            j = i + 1
+            while j < len(out) and out[j] != "}":
+                j += 1
+            k = i + 2
+            while k < j:
+                if re.match(r"\s*#\s*ifdef\s+REGTRACE_KERNEL_TREE_BUILD\b", out[k]):
+                    d, e, has_else = 1, k + 1, False
+                    while e < j and d:
+                        if re.match(r"\s*#\s*(if|ifdef|ifndef)\b", out[e]):
+                            d += 1
+                        elif re.match(r"\s*#\s*(else|elif)\b", out[e]) and d == 1:
+                            has_else = True
+                        elif re.match(r"\s*#\s*endif\b", out[e]):
+                            d -= 1
+                        e += 1
+                    blk = [l for l in out[k + 1:e - 1] if l.strip()]
+                    if (not has_else and len(blk) >= 3 and ((blk[0] == "    {" and blk[-1] == "    }"
+                            and re.match(r"^\s{8}return\b.*;", blk[-2])) or re.match(r"^\s{4}return\b.*;", blk[-1]))):
+                        for q in range(e, j):
+                            out[q] = ""
+                        break
+                    k = e
+                else:
+                    k += 1
+            i = j
+        i += 1
+    return out
+
+
 def functions(lines):
     i = 0
     while i < len(lines):
@@ -97,7 +133,7 @@ def live_set(rec, others):
     """Static over-approximation of the functions that can run: hand-written functions, anything named in other
     files / EXPORT_SYMBOL / ops tables is a root, edges are identifier references (an `if (1) { ... return }` stub
     cuts the rest of its body).  Functions outside it are marked `unreach` in the baseline (not device-proven)."""
-    lines=mask_inactive(open(rec,errors='replace').read().split("\n"))
+    lines=mask_inactive(cut_stub_tails(open(rec,errors='replace').read().split("\n")))
     funcs={};i=0;span=[]
     while i<len(lines):
         m=re.match(r'^[A-Za-z_][\w \*]*?[ \*](\w+)\(([^;]*)\)\s*$',lines[i])
@@ -133,7 +169,7 @@ def live_set(rec, others):
 
 def scan(path):
     """-> {(func, class): [(line, text)]}"""
-    lines = mask_inactive(open(path, encoding="utf-8", errors="replace").read().split("\n"))
+    lines = mask_inactive(cut_stub_tails(open(path, encoding="utf-8", errors="replace").read().split("\n")))
     res = collections.defaultdict(list)
     for name, first, body in functions(lines):
         tv = {}
@@ -191,14 +227,78 @@ def scan(path):
     return res
 
 
+SELFTEST_SRC = """
+int64_t bad_fn(uintptr_t a0)
+{
+    uintptr_t a1 = 0;
+    uintptr_t *v0 = 0;
+    uintptr_t *s0 = 0;
+    v0 = 0;
+    a1 = 12;
+bad_fn0x10:
+    v0 = v0 + 4;
+    s0 = v0 + 24;
+    if (v0 != a1) { goto bad_fn0x10; }
+    return 0;
+}
+
+int64_t fixed_fn(uintptr_t a0)
+{
+    uintptr_t a1 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t s0 = 0;
+    v0 = 0;
+    a1 = 12;
+fixed_fn0x10:
+    v0 = v0 + 4;
+    s0 = v0 + 24;
+    if (v0 != a1) { goto fixed_fn0x10; }
+    return 0;
+}
+
+int64_t stub_fn(uintptr_t a0)
+{
+    uintptr_t *v0 = 0;
+#ifdef REGTRACE_KERNEL_TREE_BUILD
+    if (a0) {
+        return 1;
+    }
+    return 0;
+#endif
+    v0 = v0 + 4;
+    return 0;
+}
+"""
+
+
+def selftest():
+    import tempfile
+    with tempfile.NamedTemporaryFile("w", suffix=".c", delete=False) as f:
+        f.write(SELFTEST_SRC)
+    try:
+        r = scan(f.name)
+    finally:
+        os.unlink(f.name)
+    got = {k: len(v) for k, v in r.items()}
+    want = {("bad_fn", "step"): 1, ("bad_fn", "off"): 1, ("bad_fn", "loop"): 1, ("bad_fn", "ctr"): 1}
+    if got != want:
+        print("selftest FAIL: got %s want %s" % (got, want))
+        return 1
+    print("lifted_ptr_scale_check selftest: ok (typed pointer flagged, uintptr_t byte arithmetic and KERNEL_TREE stub tail not)")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--selftest", action="store_true")
     ap.add_argument("--baseline")
     ap.add_argument("--write-baseline")
     ap.add_argument("--list")
     ap.add_argument("--func")
     ap.add_argument("files", nargs="*")
     a = ap.parse_args()
+    if a.selftest:
+        return selftest()
     allres = {}
     for tag, rel in FILES:
         p = os.path.join(HERE, rel)
@@ -259,4 +359,5 @@ def main():
     return 0
 
 
-sys.exit(main())
+if __name__ == "__main__":
+    sys.exit(main())

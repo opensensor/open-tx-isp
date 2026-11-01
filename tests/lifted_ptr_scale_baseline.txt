@@ -1,5 +1,6 @@
 # lifted_ptr_scale_check.py baseline: <tag> <function> <class> <count> <status> [note]
 # status open = not yet compared with the OEM, dead/ok/fixed = reviewed (see the script header)
+# #189 triage (T40, byte arithmetic restored by making the stepped register variables uintptr_t, OEM-compared): fixed = csi_core_ops_init ispcore_slake_module ispcore_activate_module tx_isp_vin_slake_subdev isp_core_tunning_open fs_core_ops_ioctl subdev_sensor_ops_ioctl tx_isp_subdev_pipo vic_mdma_irq_function1 vic_mdma_irq_function2 tx_isp_vic_start (DVP leg); dead (KERNEL_TREE stub replaces the lifted body) = tx_isp_vic_index_cal tx_isp_subdev_init; status layout = confirmed but tied to stray OEM .bss anchors
 t40 Tisp_lce_soft ctr 1 open
 t40 Tisp_lce_soft loop 7 open
 t40 Tisp_lce_soft off 9 open
@@ -16,13 +17,10 @@ t40 Tiziano_wdr_fusion_fpga ctr 52 unreach
 t40 Tiziano_wdr_fusion_fpga loop 55 unreach
 t40 Tiziano_wdr_fusion_fpga off 24 unreach
 t40 Tiziano_wdr_fusion_fpga step 124 unreach
-t40 csi_core_ops_init ctr 1 open
-t40 csi_core_ops_init loop 2 open
-t40 csi_core_ops_init step 3 open
-t40 csi_phy_start ctr 2 open
-t40 csi_phy_start loop 3 open
-t40 csi_phy_start off 8 open
-t40 csi_phy_start step 5 open
+t40 csi_phy_start ctr 2 shim #189 confirmed (typed ptr loop bound, never terminates); skipped at runtime by hand-written regtrace_t40_csi_stream_direct; fix before enabling the lifted CSI path
+t40 csi_phy_start loop 3 shim #189 confirmed (typed ptr loop bound, never terminates); skipped at runtime by hand-written regtrace_t40_csi_stream_direct; fix before enabling the lifted CSI path
+t40 csi_phy_start off 8 shim #189 confirmed (typed ptr loop bound, never terminates); skipped at runtime by hand-written regtrace_t40_csi_stream_direct; fix before enabling the lifted CSI path
+t40 csi_phy_start step 5 shim #189 confirmed (typed ptr loop bound, never terminates); skipped at runtime by hand-written regtrace_t40_csi_stream_direct; fix before enabling the lifted CSI path
 t40 defog_count_weight35abc ctr 1 open
 t40 defog_count_weight35abc loop 3 open
 t40 defog_count_weight35abc off 6 open
@@ -35,9 +33,6 @@ t40 frame_channel_reqbufs loop 1 unreach
 t40 frame_channel_reqbufs off 3 unreach
 t40 frame_channel_reqbufs step 5 unreach
 t40 frame_channel_vidioc_get_fmt step 2 unreach
-t40 fs_core_ops_ioctl ctr 2 open
-t40 fs_core_ops_ioctl loop 3 open
-t40 fs_core_ops_ioctl step 5 open
 t40 fs_slake_module step 3 open
 t40 func_adr_map_curve1 step 1 open
 t40 func_adr_pars_display step 2 unreach
@@ -66,10 +61,6 @@ t40 func_matrix_check_short step 3 unreach
 t40 func_subsection_light loop 2 unreach
 t40 func_subsection_light step 6 unreach
 t40 get_distance_1dim step 2 open
-t40 isp_core_tunning_open ctr 1 open
-t40 isp_core_tunning_open loop 2 open
-t40 isp_core_tunning_open off 3 open
-t40 isp_core_tunning_open step 3 open
 t40 isp_csi_cmd_set loop 1 unreach
 t40 isp_csi_cmd_set step 3 unreach
 t40 isp_framesource_show ctr 1 unreach
@@ -87,45 +78,34 @@ t40 isp_mbus_to_bayer_isra_0 step 19 open
 t40 isp_mem_init off 1 unreach
 t40 isp_save_cmd_set off 2 unreach
 t40 isp_save_cmd_set step 6 unreach
-t40 isp_subdev_init_clks loop 2 open
-t40 isp_subdev_init_clks step 4 open
-t40 isp_subdev_release_clks step 1 open
-t40 isp_vic_cmd_set ctr 2 unreach
-t40 isp_vic_cmd_set loop 4 unreach
-t40 isp_vic_cmd_set off 3 unreach
-t40 isp_vic_cmd_set step 9 unreach
-t40 isp_vic_interrupt_service_routine loop 6 open
-t40 isp_vic_interrupt_service_routine step 157 open
-t40 ispcore_activate_module ctr 1 open
-t40 ispcore_activate_module loop 4 open
-t40 ispcore_activate_module off 2 open
-t40 ispcore_activate_module step 8 open
-t40 ispcore_core_ops_init loop 4 open
-t40 ispcore_core_ops_init off 5 open
-t40 ispcore_core_ops_init step 10 open
+t40 isp_vic_cmd_set ctr 2 unreach #189: no caller; vic cmd path is hand-written
+t40 isp_vic_cmd_set loop 4 unreach #189: no caller; vic cmd path is hand-written
+t40 isp_vic_cmd_set off 3 unreach #189: no caller; vic cmd path is hand-written
+t40 isp_vic_cmd_set step 9 unreach #189: no caller; vic cmd path is hand-written
+t40 isp_vic_interrupt_service_routine loop 6 layout #189 confirmed: error/stat counters live at stray &isp_memopt+K (x4 scaled); a pure type fix only moves the stray write, needs the OEM .bss counter map (T40-LAYOUT), not changed
+t40 isp_vic_interrupt_service_routine step 157 layout #189 confirmed: error/stat counters live at stray &isp_memopt+K (x4 scaled); a pure type fix only moves the stray write, needs the OEM .bss counter map (T40-LAYOUT), not changed
+t40 ispcore_core_ops_init loop 4 layout #189 confirmed: per-channel format table read at stray &sclk_name-7384 (x4 scaled); needs the OEM 44-byte format table as own object, not changed
+t40 ispcore_core_ops_init off 5 layout #189 confirmed: per-channel format table read at stray &sclk_name-7384 (x4 scaled); needs the OEM 44-byte format table as own object, not changed
+t40 ispcore_core_ops_init step 10 layout #189 confirmed: per-channel format table read at stray &sclk_name-7384 (x4 scaled); needs the OEM 44-byte format table as own object, not changed
 t40 ispcore_core_ops_ioctl ctr 1 open
 t40 ispcore_core_ops_ioctl loop 5 open
 t40 ispcore_core_ops_ioctl off 4 open
 t40 ispcore_core_ops_ioctl step 3 open
 t40 ispcore_frame_channel_streamoff off 1 open
-t40 ispcore_pad_event_handle ctr 25 unreach
-t40 ispcore_pad_event_handle loop 47 unreach
-t40 ispcore_pad_event_handle off 8 unreach
-t40 ispcore_pad_event_handle step 14 unreach
-t40 ispcore_slake_module ctr 2 open
-t40 ispcore_slake_module loop 4 open
-t40 ispcore_slake_module off 5 open
-t40 ispcore_slake_module step 11 open
+t40 ispcore_pad_event_handle ctr 25 shim #189: replaced at runtime by hand-written regtrace_ispcore_pad_event_handle (installed by tx_isp_core_probe); lifted body unreferenced
+t40 ispcore_pad_event_handle loop 47 shim #189: replaced at runtime by hand-written regtrace_ispcore_pad_event_handle (installed by tx_isp_core_probe); lifted body unreferenced
+t40 ispcore_pad_event_handle off 8 shim #189: replaced at runtime by hand-written regtrace_ispcore_pad_event_handle (installed by tx_isp_core_probe); lifted body unreferenced
+t40 ispcore_pad_event_handle step 14 shim #189: replaced at runtime by hand-written regtrace_ispcore_pad_event_handle (installed by tx_isp_core_probe); lifted body unreferenced
 t40 ispcore_video_s_stream ctr 1 shim OEM 0xd8 channel stride vs lifted x4 stride never meets 1296 (stream-off loop); core skipped by regtrace_slot_is_core
 t40 ispcore_video_s_stream loop 3 shim OEM 0xd8 channel stride vs lifted x4 stride never meets 1296 (stream-off loop); core skipped by regtrace_slot_is_core
 t40 ispcore_video_s_stream off 6 shim OEM 0xd8 channel stride vs lifted x4 stride never meets 1296 (stream-off loop); core skipped by regtrace_slot_is_core
 t40 ispcore_video_s_stream step 2 shim OEM 0xd8 channel stride vs lifted x4 stride never meets 1296 (stream-off loop); core skipped by regtrace_slot_is_core
 t40 ispint_adr_16 step 3 open
 t40 ispvic_frame_channel_clearbuf off 2 open
-t40 ispvic_frame_channel_s_stream ctr 2 open
-t40 ispvic_frame_channel_s_stream loop 5 open
-t40 ispvic_frame_channel_s_stream off 5 open
-t40 ispvic_frame_channel_s_stream step 5 open
+t40 ispvic_frame_channel_s_stream ctr 2 shim #189 confirmed (x4 register offsets 0xc00 for 0x300, endless channel loop); skipped at runtime by hand-written regtrace_vic_frame_mdma_stream
+t40 ispvic_frame_channel_s_stream loop 5 shim #189 confirmed (x4 register offsets 0xc00 for 0x300, endless channel loop); skipped at runtime by hand-written regtrace_vic_frame_mdma_stream
+t40 ispvic_frame_channel_s_stream off 5 shim #189 confirmed (x4 register offsets 0xc00 for 0x300, endless channel loop); skipped at runtime by hand-written regtrace_vic_frame_mdma_stream
+t40 ispvic_frame_channel_s_stream step 5 shim #189 confirmed (x4 register offsets 0xc00 for 0x300, endless channel loop); skipped at runtime by hand-written regtrace_vic_frame_mdma_stream
 t40 ispvic_frame_get_raw loop 1 open
 t40 ispvic_frame_get_raw off 5 open
 t40 ispvic_frame_get_raw step 1 open
@@ -155,10 +135,6 @@ t40 printf_func_short step 4 unreach
 t40 private_reset_tx_isp_module loop 1 unreach
 t40 private_reset_tx_isp_module off 1 unreach
 t40 private_reset_tx_isp_module step 1 unreach
-t40 subdev_sensor_ops_ioctl ctr 2 open
-t40 subdev_sensor_ops_ioctl loop 17 open
-t40 subdev_sensor_ops_ioctl off 11 open
-t40 subdev_sensor_ops_ioctl step 9 open
 t40 table_intp step 1 unreach
 t40 tisp_adr_dn_params_refresh step 1 open
 t40 tisp_adr_main_deinit off 1 open
@@ -415,50 +391,23 @@ t40 tx_isp_csi_activate_subdev off 1 open
 t40 tx_isp_csi_activate_subdev step 2 open
 t40 tx_isp_csi_slake_subdev step 2 open
 t40 tx_isp_fs_probe unal 3 open
-t40 tx_isp_module_init step 2 open
 t40 tx_isp_probe loop 1 unreach
 t40 tx_isp_probe off 3 unreach
 t40 tx_isp_probe step 3 unreach
 t40 tx_isp_reg_set step 1 unreach
 t40 tx_isp_sensor_release_sensor step 1 open
-t40 tx_isp_subdev_deinit off 1 open
-t40 tx_isp_subdev_init loop 3 open
-t40 tx_isp_subdev_init off 1 open
-t40 tx_isp_subdev_init step 5 open
-t40 tx_isp_subdev_pipo ctr 1 open
-t40 tx_isp_subdev_pipo loop 1 open
-t40 tx_isp_subdev_pipo off 5 open
-t40 tx_isp_subdev_pipo step 4 open
-t40 tx_isp_t40_core_init step 2 open
-t40 tx_isp_vic_index_cal ctr 1 open
-t40 tx_isp_vic_index_cal loop 1 open
-t40 tx_isp_vic_index_cal step 2 open
 t40 tx_isp_vic_slake_subdev step 1 open
-t40 tx_isp_vic_start ctr 1 open
-t40 tx_isp_vic_start loop 3 open
-t40 tx_isp_vic_start off 58 open
-t40 tx_isp_vic_start step 10 open
 t40 tx_isp_video_s_stream step 1 open
 t40 tx_isp_vin_init ctr 1 open
 t40 tx_isp_vin_init loop 2 open
 t40 tx_isp_vin_init step 1 open
 t40 tx_isp_vin_reset loop 2 open
 t40 tx_isp_vin_reset step 1 open
-t40 tx_isp_vin_slake_subdev ctr 1 open
-t40 tx_isp_vin_slake_subdev loop 1 open
-t40 tx_isp_vin_slake_subdev off 3 open
-t40 tx_isp_vin_slake_subdev step 5 open
 t40 u3bw step 1 unreach
 t40 vic_core_ops_ioctl off 1 open
 t40 vic_core_ops_ioctl_1 off 1 open
 t40 vic_mdma_enable off 19 unreach
 t40 vic_mdma_enable step 1 unreach
-t40 vic_mdma_irq_function1 loop 5 open
-t40 vic_mdma_irq_function1 off 7 open
-t40 vic_mdma_irq_function1 step 6 open
-t40 vic_mdma_irq_function2 loop 5 open
-t40 vic_mdma_irq_function2 off 3 open
-t40 vic_mdma_irq_function2 step 4 open
 t40 vic_mdma_sec_enable step 1 unreach
 t40 vic_sensor_ops_ioctl off 1 open
 t40 video_input_cmd_set loop 4 unreach
@@ -528,9 +477,6 @@ t41 isp_vic_cmd_set off 4 unreach
 t41 isp_vic_cmd_set step 7 unreach
 t41 isp_vic_frd_show off 1 unreach
 t41 isp_vic_frd_show step 1 unreach
-t41 isp_vic_interrupt_service_routine loop 1 open
-t41 isp_vic_interrupt_service_routine off 1 open
-t41 isp_vic_interrupt_service_routine step 6 open
 t41 ispcore_suspend_module loop 1 open
 t41 ispcore_suspend_module step 1 open
 t41 ispint_adr_16 step 3 unreach
@@ -737,7 +683,6 @@ t41 tisp_clm_write_lut loop 1 open
 t41 tisp_clm_write_lut off 2 open
 t41 tisp_clm_write_lut step 2 open
 t41 tisp_code_tuning_ioctl off 1 unreach
-t41 tisp_csc_api_get step 1 open
 t41 tisp_csccr_api_set step 1 open
 t41 tisp_defog_get_data loop 1 open
 t41 tisp_defog_get_data step 1 open

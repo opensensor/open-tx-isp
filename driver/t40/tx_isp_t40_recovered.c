@@ -35278,17 +35278,17 @@ int64_t tx_isp_vic_start(uintptr_t a0, uint32_t a1)
     uint32_t *a3 = 0;
     uint32_t ra = 0;
     uintptr_t *s0 = 0;
-    uintptr_t *s1 = 0;
+    uintptr_t s1 = 0;
     uint32_t *s2 = 0;
     uintptr_t *s3 = 0;
-    uint32_t *s4 = 0;
+    uintptr_t s4 = 0;
     uintptr_t s5 = 0;
     uintptr_t s6 = 0;
     uintptr_t s7 = 0;
     uint32_t s8 = 0;
     uint32_t t0 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -38723,8 +38723,8 @@ void* vic_mdma_irq_function1(uintptr_t a0, uint32_t a1, uint32_t a2)
     uint32_t local_5c = 0;
     uintptr_t *a3 = 0;
     uint32_t ra = 0;
-    uintptr_t *s0 = 0;
-    uint32_t *s1 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
     uintptr_t *s2 = 0;
     uintptr_t *s3 = 0;
     uint32_t *s4 = 0;
@@ -38737,7 +38737,7 @@ void* vic_mdma_irq_function1(uintptr_t a0, uint32_t a1, uint32_t a2)
     uintptr_t *t2 = 0;
     uint32_t *t3 = 0;
     uint32_t t9 = 0;
-    uintptr_t *v0 = 0;
+    uintptr_t v0 = 0;
     uint32_t *v1 = 0;
 
     /* fragment 0: Arithmetic */
@@ -39282,8 +39282,8 @@ void* vic_mdma_irq_function2(uintptr_t a0, uint32_t a1, uint32_t a2)
     uint32_t local_5c = 0;
     uintptr_t *a3 = 0;
     uint32_t ra = 0;
-    uintptr_t *s0 = 0;
-    uint32_t *s1 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
     uintptr_t *s2 = 0;
     uintptr_t *s3 = 0;
     uint32_t *s4 = 0;
@@ -39297,7 +39297,7 @@ void* vic_mdma_irq_function2(uintptr_t a0, uint32_t a1, uint32_t a2)
     uintptr_t *t3 = 0;
     uintptr_t *t4 = 0;
     uint32_t t9 = 0;
-    uintptr_t *v0 = 0;
+    uintptr_t v0 = 0;
     uint32_t *v1 = 0;
 
     /* fragment 0: Arithmetic */
@@ -41984,7 +41984,7 @@ int64_t tx_isp_subdev_pipo(uintptr_t a0, uintptr_t a1)
     uint32_t *local_24 = 0;
     uint32_t local_28 = 0;
     uint32_t local_2c = 0;
-    uint32_t *a2 = 0;
+    uintptr_t a2 = 0;
     uint32_t *a3 = 0;
     uint32_t ra = 0;
     uintptr_t *s0 = 0;
@@ -41993,8 +41993,8 @@ int64_t tx_isp_subdev_pipo(uintptr_t a0, uintptr_t a1)
     uint32_t *s3 = 0;
     uint32_t *s4 = 0;
     uint32_t s5 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -43495,13 +43495,13 @@ int32_t tx_isp_vin_slake_subdev(uintptr_t a0)
     uint32_t local_34 = 0;
     uint32_t *a1 = 0;
     uint32_t ra = 0;
-    uintptr_t *s0 = 0;
-    uint32_t *s1 = 0;
-    uintptr_t *s2 = 0;
-    uint32_t *s3 = 0;
-    uint32_t *s4 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t s2 = 0;
+    uintptr_t s3 = 0;
+    uintptr_t s4 = 0;
     uint32_t s5 = 0;
-    uintptr_t *v0 = 0;
+    uintptr_t v0 = 0;
     uint32_t *v1 = 0;
 
     /* fragment 0: Prologue */
@@ -43870,16 +43870,16 @@ int64_t subdev_sensor_ops_ioctl(uintptr_t a0, uint32_t a1, uintptr_t a2)
     uint32_t *a3 = 0;
     uint32_t at = 0;
     uint32_t ra = 0;
-    uintptr_t *s0 = 0;
-    uintptr_t *s1 = 0;
-    uintptr_t *s2 = 0;
-    uintptr_t *s3 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t s2 = 0;
+    uintptr_t s3 = 0;
     uint32_t *s4 = 0;
     uint32_t s5 = 0;
     uint32_t s6 = 0;
     uint32_t t0 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Arithmetic */
     v0 = 4261412864;
@@ -44932,7 +44932,7 @@ int64_t csi_core_ops_init(uintptr_t a0, uintptr_t a1)
     uintptr_t *s0 = 0;
     uintptr_t *s1 = 0;
     uint32_t *s2 = 0;
-    uintptr_t *v0 = 0;
+    uintptr_t v0 = 0;
     uint32_t *v1 = 0;
 
     /* fragment 0: Prologue */
@@ -46426,10 +46426,10 @@ int32_t isp_core_tunning_open(uint32_t a0, uintptr_t a1)
     uint32_t *a2 = 0;
     uint32_t *a3 = 0;
     uint32_t ra = 0;
-    uintptr_t *s0 = 0;
-    uintptr_t *s1 = 0;
-    uintptr_t *v0 = 0;
-    uint32_t *v1 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -56112,9 +56112,9 @@ int32_t fs_core_ops_ioctl(uintptr_t a0, uint32_t a1, uint32_t a2, uintptr_t a3)
     uint32_t local_28 = 0;
     uint32_t local_2c = 0;
     uint32_t ra = 0;
-    uintptr_t *s0 = 0;
+    uintptr_t s0 = 0;
     uint32_t *s1 = 0;
-    uint32_t *s2 = 0;
+    uintptr_t s2 = 0;
     uint32_t *s3 = 0;
     uint32_t *s4 = 0;
     uintptr_t *v0 = 0;
@@ -163732,16 +163732,16 @@ int32_t ispcore_activate_module(uintptr_t a0)
     uint32_t *a3 = 0;
     uint32_t at = 0;
     uint32_t ra = 0;
-    uintptr_t *s0 = 0;
+    uintptr_t s0 = 0;
     uintptr_t *s1 = 0;
-    uintptr_t *s2 = 0;
-    uintptr_t *s3 = 0;
+    uintptr_t s2 = 0;
+    uintptr_t s3 = 0;
     uint32_t *s4 = 0;
     uint32_t s5 = 0;
     uint32_t s6 = 0;
     uint32_t s7 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Branch */
     v0 = -22;
@@ -166028,14 +166028,14 @@ int32_t ispcore_slake_module(uintptr_t a0)
     uint32_t *a2 = 0;
     uint32_t *a3 = 0;
     uint32_t ra = 0;
-    uintptr_t *s0 = 0;
-    uintptr_t *s1 = 0;
-    uintptr_t *s2 = 0;
-    uintptr_t *s3 = 0;
-    uint32_t *s4 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t s2 = 0;
+    uintptr_t s3 = 0;
+    uintptr_t s4 = 0;
     uint32_t s5 = 0;
     uint32_t s6 = 0;
-    uintptr_t *v0 = 0;
+    uintptr_t v0 = 0;
     uintptr_t *v1 = 0;
 
     /* fragment 0: Branch */

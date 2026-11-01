@@ -604,6 +604,7 @@ t40_hardcoded_anchor_check:
 
 # Typed-pointer scaling in the lifted T40/T41 drivers (#186/#187 bug class): new findings fail, reviewed ones live in the baseline
 lifted_ptr_scale_check:
+	python3 ./lifted_ptr_scale_check.py --selftest
 	python3 ./lifted_ptr_scale_check.py --baseline lifted_ptr_scale_baseline.txt
 
 # T40 module exit gates the ISP/CSI clocks it enabled (#152)
