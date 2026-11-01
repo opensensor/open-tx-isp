@@ -82,6 +82,46 @@ buffers `vic_err`, `vic_cmd_buf`, `csi_cmd_buf`, `tparamsN`) and the 60 KB
 picture chains (RAM only, no file size). Already `-Os`, `--gc-sections`,
 section anchors on.
 
+2026-11-01 (Lu-Fi/openimp#85, steps A to C of the remaining-chains plan):
+- `TX_ISP_T40_VCT=y` builds the translated OEM CT/EV colour chains
+  (`t40_ct_chains=1`, `tx_isp_t40_vct.h`, opt-in, never device-tested); default
+  off: `t40_ct_chains`, `t40_ct_fnum_tick`, `t40_ct_calls`, `t40_ct_lut_writes`,
+  `t40_ct_skips` and `t40_ct_diag` do not exist and the literal/C CT and EV
+  follow-ups run as with `t40_ct_chains=0`. `tests/t40_vct_host.sh` still tests
+  the chain on the host.
+- 49 more parameters behind `TX_ISP_T40_BRINGUP_PARAMS` (same rule as above,
+  searched 2026-11-01 in this repository's docs/tests/tools, OpenIMP, timps, the
+  firmware tree and the image's /etc; session audit scripts still in use kept
+  `ae_soft_updates`, `t40_adr_cyc`, `t40_adr_lowmem`, `t40_defog_sum_*`,
+  `t40_exit_stats_off`, `t40_release_reset_count`, `t40_vawb_faults`,
+  `t40_vawb_loop_trips` and the load statistics): adr_forced_blocked,
+  cdns_dbg_init_ret, cdns_gain_now, cdns_init_count, cdns_refresh_count,
+  cdns_skip_count, cdns_thresh, lsc_lit_ct_max, lsc_lit_ct_min,
+  oem_isr_lit_count, sensor_fps_packed, t40_ae_diag, t40_ae_par_calc,
+  t40_awb_stats_ped, t40_ct_update, t40_dn_event_last_ret, t40_dn_event_runs,
+  t40_exit_vic_reset, t40_fr_big, t40_fr_regs, t40_gates_awb,
+  t40_gates_keep_blc, t40_gates_reg6c, t40_gib_again_calls, t40_gib_blc_delta,
+  t40_gib_init_ret, t40_gib_real, t40_isr_ch1_irq, t40_isr_ch1_pop,
+  t40_loopguard, t40_ls_reg_cyc, t40_ls_reg_r, t40_ls_reg_w,
+  t40_module_ctx_inits, t40_msca_fifo_ctrl_on_set_fmt, t40_msca_late_work_en,
+  t40_msca_oem_1602c, t40_msca_oem_stop, t40_msca_oem_stop_count,
+  t40_release_reset, t40_release_reset_last_ack, t40_vawb_ct, t40_vawb_debug,
+  t40_vawb_dump_req, t40_vawb_ev, t40_vawb_loop_pc, t40_vawb_lsc_step,
+  t40_vawb_run, t40_vawb_trace. With `t40_module_ctx_inits` fixed at 0 the
+  lifted gamma/LSC/CCM/BCSH/CLM main inits behind it (not executed in the QEMU
+  workload or apitest coverage runs) leave the default build too.
+- Module (`TX_ISP_LOAD_STATS=y` image build, stripped): 1,221,560 -> 1,075,212
+  bytes, xz 339,580 -> 302,692; `.text` 765,612 -> 638,372, `.rodata` +
+  strings 106,552 -> 104,356, `.modinfo` 14,272 -> 11,928, `.bss` -80 and
+  `.data` -48 bytes (removed parameter variables; the remaining objects moved
+  by up to 84 bytes, `.t40c2` unchanged).
+- Not removed: the other lifted twins that the plan listed (BCSH/CCM/gamma/LSC
+  event and API bodies). They are still referenced at run time: the OEM event
+  callbacks are registered unconditionally in `tisp_stream_on`, the CCM/CSC
+  API keeps the documented `t40_csc_unsafe` path, gamma Set/Get runs the
+  lifted bodies (hit by apitest), and the old ADR/AWB fallbacks sit behind
+  documented switches. They go with the C rewrite of their chains.
+
 ## Log prefixes (T23, T41)
 
 The kernel log lines start with `t23: ` and `t41: ` (`pr_fmt` for the
