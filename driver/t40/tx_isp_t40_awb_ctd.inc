@@ -593,7 +593,7 @@ int64_t tisp_awb_ct_detect(uintptr_t a0, uintptr_t a1, uint32_t a2)
         t40_awb_ctd_clusters(out, rows, cols, f, round);
     for (i = 0; i < 225; i++) st[3] += wt[i];
     for (i = 0; i < 60; i++)
-        clusters += ((const uint32_t *)(uintptr_t)out[27])[120 + i] >= 5;
+        clusters += ((const uint32_t *)(uintptr_t)out[28])[120 + i] >= 5;	/* OEM: the cluster counts (out[28]), not the candidates */
     few = clusters < 2;
     /* 0x1a094: special light centres */
     for (i = 0; i < 10; i++) {
