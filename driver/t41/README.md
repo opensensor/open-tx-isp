@@ -961,15 +961,37 @@ uninitialised stack buffer) and returns the YUV colour in its three bytes
 (stock writes v over u); a custom CSCCR range with an empty input range is
 refused (stock divides by zero); the AE reads check the AE is running.
 
+### Issues 180 and 181 (branch `claude/t41-isp-routes2`, 2026-11-01)
+
+| control | call | OEM path | open |
+|---|---|---|---|
+| `0x08000062` 56 B set | SetTmoFaceae | tisp_s_tmo_faceae -> tisp_tmo_faceae_refresh: request into the TMO runtime block (+0x00..0x2f, +0x2f8..0x2fe), registers 0x1e040..0x1e07c | same; the register words are written again from that block by `tisp_tmo_default_reg_refresh` on each EV/gain change, so the weighting stays. Under the TMO map lock, -EAGAIN until the TMO object exists. Helpers + host test in `tx_isp_t41_isp_extra.h` |
+| `0xc0045430` 24 B get | GetInternalChnAttr | tx_isp_get_internal_channel_attr: scan core+0x234+0x1c*n for the descriptor each frame channel points at | same; the flag of types < 4 is 0 (uninitialised on stock) |
+| `0xc004542f` 24 B set | SetInternalChnAttr | duplicate check, core events 0x01000004/05: repoints channel+0xd4 for types > 2, VIC internal input for types >= 4 | types 0..2 (no effect on stock either) are accepted, duplicates and types >= 6 give -EINVAL (stock: -EFAULT / uninitialised entry), types 3..5 give -EOPNOTSUPP: they need the VIC internal inputs that the open VIC frame-channel path does not provide (same limit as the ISP bypass) |
+
+Device proof (T41 sc5336, flashed image, runtime register readback with a
+diagnostic ko): SetTmoFaceae writes 0x1e040..0x1e07c and reads them back equal
+(e.g. 0x1e064 = 0x10, 0x1e070 = 0x80, 0x1e07c = 1 for one region), zero region
+restores all sixteen to 0; no visible brightness change with the apitest
+request (the TMO weighting acts on face regions only). Set round trip of
+SetInternalChnAttr runs only with `APITEST_RISKY=1` (QEMU: PASS).
+
 Not served (still EPERM/ENOTTY, reasons): GetAFMetricesInfo `0x08000034` and
-GetAfStatistics `0x08000031` (the AF statistics path is not ported, the
-buffers would only hold zeros); SetTmoFaceae `0x08000062` (writes the TMO
-runtime block and 0x1e040..0x1e07c, which the open TMO profile also owns);
-ISP-device ioctls StartNightMode 0xc004542e, Set/GetInternalChnAttr
-0xc004542f/30 (rebinds frame channels through the core ioctl), WDR_OPEN
-0xc004548d (start-mode flags read at sensor add), LDC 0xc0045479..7b and
-GPIO 0xc004548e/f (no handler at all in the 1.2.5 module: it returns 0 for
-them without doing anything; a newer OEM module is needed to derive them).
+GetAfStatistics `0x08000031` (issue 179). The OEM handlers copy the AF
+statistics workspace (`af_info[ch]+4`, 0x1518 bytes) and the metrics that the
+AF IRQ path fills per frame (`tisp_af_interrupt_static` ->
+`tisp_af_get_statistics`: unpack 15x15 zones x 5 values from the 4 KB DMA
+buffers at 0x1a0cc..0x1a0d8, then `tisp_af_alogrithm`). The open build keeps
+the AF block off (`tisp_af_init` writes 0x1a000 = 0, no IRQ, "safe disabled"
+for stability), so the buffers would only hold zeros. Serving them means
+re-translating `tisp_af_set_hardware_param` (about 70 register words from the
+AF parameter block at tparamsP+0x17be8), the IRQ handler, `tisp_af_get_statistics`
+and `tisp_af_alogrithm` from the 1.2.5 module and then re-arming the AF IRQ and
+DMA, which is a separate stability item (soak with AF on), not a route.
+ISP-device ioctls StartNightMode 0xc004542e, WDR_OPEN 0xc004548d (start-mode
+flags read at sensor add), LDC 0xc0045479..7b and GPIO 0xc004548e/f (no
+handler at all in the 1.2.5 module: it returns 0 for them without doing
+anything; a newer OEM module is needed to derive them) are unchanged.
 
 ## Known issues (2026-10-10)
 

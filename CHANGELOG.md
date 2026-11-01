@@ -4,6 +4,12 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-01, T41 ISP routes (`claude/t41-isp-routes2`)
+
+- **T41 SetTmoFaceae (#180, device):** control 0x08000062 stores the face-AE TMO weighting in the TMO runtime block and writes 0x1e040..0x1e07c like the OEM `tisp_s_tmo_faceae`; read back equal on the camera, apitest case `tmofaceae` PASS.
+- **T41 Get/SetInternalChnAttr (#181, device Get, QEMU Set):** ioctls 0xc004542f/30; types 0..2 as on stock, types 3..5 refused (-EOPNOTSUPP, VIC internal inputs not provided by the open path).
+- **T41 AF statistics (#179, not done):** GetAFMetricesInfo/GetAfStatistics need the AF IRQ/DMA path that is disabled in the open build; see `driver/t41/README.md`.
+
 ## 2026-11-01, state of `next`
 
 - **Closed with camera proof:** driver hardening #158 #160 #161 #164 #165 #166 (the `/dev/tisp` parameter node exists only with `TX_ISP_T40_TISP_PAR=y`); T40 image agg63 (includes #161): apitest all areas PASS 279, 6 of 6 reload cycles of our module clean, dark IR scene stable. T23 backlog (Jooan T23 camera PASS 68), T41 (PASS 44 / FAIL 0, 17 N/A), T10/T20/T21 (127/0, 127/0, 133/0), T31 (14 + 4 cells on the T31L cameras). #104: the T31L boots Linux 7.2.11 with the IRQ balance fix. #2 (AE limit cycle) closed.
