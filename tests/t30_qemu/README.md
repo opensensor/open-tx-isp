@@ -7,6 +7,7 @@ is device evidence.
 | --- | --- | --- |
 | `sensor_register.c` | Lu-Fi/openimp#174 | `IMP_ISP_GetSensorRegister` (ioctl 0xc0385650) returns the sensor register (sc4236 chip id 0x3107/0x3108 = 0x32/0x35) and does not oops |
 | `isp_init_cycles.c` | Lu-Fi/openimp#176 | N x (System_Init, ISP_Open, AddSensor, EnableSensor, teardown) with a module built with `TX_ISP_T30_TEST_FW_INIT_DELAY_MS=400` (holds the firmware init window open so a frame IRQ lands before the event queue exists): no "Fatal exception in interrupt" |
+| `fs_two_channels.c` | Lu-Fi/openimp#175 (open) | N x (ISP init, FrameSource ch0 2304x1536 + ch1 640x360, EnableChn 0 then 1, teardown). Currently still fatal in about 1 of 7 cycles (LIST_POISON2 in `tx_isp_t30_mscaler_configure_dma` from the mscaler ISR), so it is a repro, not a passing test |
 
 ## Build and run
 
