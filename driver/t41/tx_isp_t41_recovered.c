@@ -59299,6 +59299,8 @@ int32_t system_reg_set_ae_trig(void)
     /* fragment 2: Arithmetic */
     a0 = (uintptr_t)a0 | 36864;
 
+    /* stock tail call: system_reg_write(0x19000, 1); the lift dropped the `jr t9` and the AE trigger was never set (#189) */
+    system_reg_write(65536 | 36864, 1);
     return 0;
 }
 
@@ -85842,7 +85844,7 @@ tisp_gib_write_reg0x334:
 
     /* fragment 38: CallSetup */
     s1 = 2031616;
-    v0 = (unsigned int *)((uintptr_t (*)(uintptr_t))(uintptr_t)system_reg_write)(a0); /* jalr target resolved by relocation */
+    v0 = (unsigned int *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)system_reg_write)(a0, (uintptr_t)s1 | 258); /* 0x50140 = 0x1f0102: the lift lost the value argument (#189) */
 
     /* fragment 39: CallSetup */
     v0 = (uintptr_t)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)system_reg_write)((uintptr_t)s2 + 336, (uintptr_t)s1 | 258); /* jalr target resolved by relocation */
@@ -105383,7 +105385,7 @@ int32_t tisp_lce_clr_ram_part_0(void)
 tisp_lce_clr_ram_part_00x38:
     /* fragment 3: CallSetup */
     s2 = s2 - 1;
-    s0 = (unsigned int *)((uintptr_t (*)(uintptr_t))(uintptr_t)system_reg_write)(s1); /* jalr target resolved by relocation */
+    s0 = (unsigned int *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)system_reg_write)(s1, 0); /* delay slot `move a1, zero` ran before the call (#189) */
 
     /* fragment 4: Branch */
     a1 = 0;
@@ -105410,6 +105412,8 @@ tisp_lce_clr_ram_part_00x38:
     /* fragment 10: Arithmetic */
     a0 = a0 + 448;
 
+    /* stock tail call: system_reg_write(0x501c0, 0x59f0102); the lift dropped the `jr t9` that closes the LCE RAM clear (#189) */
+    system_reg_write(327680 + 448, 94306304 + 258);
     return 0;
 }
 
@@ -139771,6 +139775,15 @@ tisp_bcsh_ct_update0x88:
 /* WHOLE_DRIVER_CANDIDATE fn_000000000005dfcc origin=fragment_seed original=tisp_bcsh_wdr_en */
 int32_t tisp_bcsh_wdr_en(uint32_t a0, uint32_t a1)
 {
+#ifdef REGTRACE_KERNEL_TREE_BUILD
+    /* #189: the lifted body indexed `ivdc_threshold_line` as if it were the bcsh_info slot table (bcsh_info is one scalar here)
+     * and stored `1` at (*slot + 335) = address 335 (kernel oops), and called the BCSH interpolators without their
+     * (ev/ct, flag) arguments.  Only a WDR-sensor tisp_init reaches it; keep the neutral BCSH state like
+     * tisp_bcsh_dn_params_refresh does until the bcsh_info slot table exists as a real object. */
+    (void)a0;
+    (void)a1;
+    return 0;
+#endif
     uint32_t *local_10 = 0;
     uint32_t *local_18 = 0;
     uint32_t local_1c = 0;
@@ -146339,6 +146352,9 @@ int32_t tisp_msca_ir_init(uint32_t a0, uint32_t a1, uint32_t a2)
     /* unmatched fragment 8 (Arithmetic): arithmetic fragment did not contain supported register operations */
     /* asm: 63174:	27bd0020 	addiu	sp,sp,32 */
 
+    /* stock tail call: *(regbase + 0x2001c) = a2 (system_reg_write(0x2001c, a2)); the lift dropped the `jr t9`, the
+     * IR channel stride register was never written (#189) */
+    system_reg_write(131072 + 28, a2);
     return 0;
 }
 
@@ -146388,6 +146404,8 @@ int32_t tisp_msca_addr_ir_fifo_write(uint32_t a0)
     /* fragment 2: Arithmetic */
     a0 = a0 + 24;
 
+    /* stock tail call: system_reg_write(0x20018, a0); the lift kept only `a1 = a0` and dropped the `jr t9` (#189) */
+    system_reg_write(131072 + 24, a1);
     return 0;
 }
 
@@ -147514,7 +147532,7 @@ int32_t tisp_tstp_reg_cfg(void)
     a1 = a1 << 24;
 
     /* fragment 3: CallSetup */
-    v0 = (unsigned int *)((uintptr_t (*)(uintptr_t))(uintptr_t)system_reg_write)(a0); /* jalr target resolved by relocation */
+    v0 = (unsigned int *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)system_reg_write)(a0, (uintptr_t)v0 | (a1 & (uintptr_t)v1)); /* jalr target resolved by relocation; value = v0 | (a1 & 0x1000000): the lift lost the delay-slot `and a1, a1, v1` and the argument (#189) */
 
     /* fragment 4: CallSetup */
     v0 = (uintptr_t)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)system_reg_write)((uintptr_t)s2 + 8, (*(uint8_t *)((char *)(*(uint32_t *)((char *)(uintptr_t)&main_tstp)) + 18)) | ((*(uint16_t *)((char *)(*(uint32_t *)((char *)(uintptr_t)&main_tstp)) + 24)) << 24) | ((*(uint16_t *)((char *)(*(uint32_t *)((char *)(uintptr_t)&main_tstp)) + 20)) << 8 & 65535) | (((*(uint16_t *)((char *)(*(uint32_t *)((char *)(uintptr_t)&main_tstp)) + 22)) << 16) & s5)); /* jalr target resolved by relocation */
@@ -147622,6 +147640,9 @@ int32_t tisp_tstp_reg_cfg(void)
     /* unmatched fragment 34 (Arithmetic): arithmetic fragment did not contain supported register operations */
     /* asm: 6410c:	27bd0030 	addiu	sp,sp,48 */
 
+    /* stock tail call: *(regbase + 0x600a8) = main_tstp[0x26 words].u16 & 3 (system_reg_write(0x600a8, ...)); the lift dropped
+     * the `jr t9` (#189) */
+    system_reg_write(393216 + 168, (*(uint16_t *)((char *)(uintptr_t)main_tstp + 152)) & 3);
     return 0;
 }
 
@@ -152317,6 +152338,8 @@ int32_t tisp_csc_yuv_dmo(void)
     /* unmatched fragment 12 (Arithmetic): arithmetic fragment did not contain supported register operations */
     /* asm: 67210:	27bd0018 	addiu	sp,sp,24 */
 
+    /* stock tail call: system_reg_write(0xd000, -1); the lift dropped the `jr t9` (#189; YUV sensors only) */
+    system_reg_write(53248, -1);
     return 0;
 }
 
@@ -156672,8 +156695,8 @@ int32_t tisp_raw_rdma_fd_interrupt(void)
     uint32_t ra = 0;
     uintptr_t *s0 = 0;
     uint32_t *s1 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    uintptr_t v0 = 0;   /* #189: plain integers, byte arithmetic as the OEM (typed pointers stepped the frame counters by 4) */
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -156702,7 +156725,7 @@ int32_t tisp_raw_rdma_fd_interrupt(void)
     if (_bc_v0_4) { goto tisp_raw_rdma_fd_interrupt0x58; }
 
     /* fragment 5: CallSetup */
-    v0 = (unsigned int *)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t, uintptr_t))(uintptr_t)isp_printf)(2, &LC0, &__pow2_lut, 40); /* jalr target resolved by relocation */
+    v0 = (uintptr_t)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t, uintptr_t))(uintptr_t)isp_printf)(2, &LC0, &__pow2_lut, 40); /* jalr target resolved by relocation */
 
     /* fragment 6: MemoryAccess */
     v0 = *(uint32_t *)((char *)((char *)&rpars));
@@ -156723,7 +156746,7 @@ tisp_raw_rdma_fd_interrupt0x58:
     v0 = (uintptr_t)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)system_reg_write)(s1 + 24, v0); /* jalr target resolved by relocation */
 
     /* fragment 11: CallSetup */
-    v0 = (unsigned int *)&tisp_raw_info;
+    v0 = (uintptr_t)&tisp_raw_info;
     v0 = v0;
     v1 = *(uint32_t *)((char *)v0 + 12);
     v1 = v1 + 1;

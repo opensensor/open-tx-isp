@@ -21,6 +21,13 @@ end, and stores land behind the object (#186: tisp_g/s_mscaler_mask_attr).  Clas
          instruction (#189: vic_core_ops_init lost its `state = 2` store).  Hand-written early-return dispatchers
          (cut_hard_returns) and `#if 0` / non-Kbuild text are not scanned.  Also run on the extra lifted files
          (EXTRA_FILES: t21 / t30 recovered, t23 core)
+  tailcall  an unmatched `jr[.hb] t9` fragment (`asm: ... jr.hb t9`) with no `tail call` note after it: the lift dropped the MIPS tail call
+         (`jr t9` + delay slot), so the callee (usually `system_reg_write(reg, val)`, or a deinit/refresh function) never runs
+         (#189: tisp_msca_ir_init lost its stride register write).  Only the tail call is gone, so every hit needs the OEM
+         compared (a tail `memcpy(..., 0)` is harmless, a register write is not); fixed functions carry a `stock tail call: ...`
+         comment and call it explicitly
+  argc   `system_reg_write` called with ONE argument (`...(uintptr_t)system_reg_write)(X)`): the delay-slot instruction that loaded the
+         value register was lost, the write stores whatever the register variable held (#189: tisp_tstp_reg_cfg reg 0x60004)
   unal   `*(uint32_t *)((char *)X + k)` with k not a multiple of 4 (u16: odd k): unaligned access, usually a
          u16 field read as a word
 
@@ -36,9 +43,10 @@ usage: lifted_ptr_scale_check.py [--baseline FILE] [--write-baseline FILE] [--li
 import os, re, sys, argparse, collections
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-FILES = (("t40", "../driver/t40/tx_isp_t40_recovered.c"), ("t41", "../driver/t41/tx_isp_t41_recovered.c"))
-EXTRA_FILES = (("t21", "../driver/t21/tx_isp_t21_recovered.c"), ("t23", "../driver/t23/tx_isp_t23_core.c"),
-               ("t30", "../driver/t30/tx_isp_t30_recovered.c"))   # only the postret class is scanned here
+FILES = (("t40", "../driver/t40/tx_isp_t40_recovered.c"), ("t41", "../driver/t41/tx_isp_t41_recovered.c"),
+         ("t23", "../driver/t23/tx_isp_t23_core.c"))
+EXTRA_FILES = (("t21", "../driver/t21/tx_isp_t21_recovered.c"),
+               ("t30", "../driver/t30/tx_isp_t30_recovered.c"))   # only the postret / tailcall / argc classes are scanned here
 SZ = {"uintptr_t": 4, "uint32_t": 4, "int32_t": 4, "int": 4, "uint16_t": 2, "int16_t": 2,
       "int64_t": 8, "uint64_t": 8, "long": 4, "unsigned": 4}
 DECL = re.compile(r"\b(uintptr_t|uint32_t|int32_t|int|uint16_t|int16_t|int64_t|uint64_t|long|unsigned)\s*\*\s*(\w+)")
@@ -61,7 +69,7 @@ def mask_inactive(lines):
     for ln in lines:
         m = re.match(r"\s*#\s*(ifdef|ifndef|if|elif|else|endif)\b\s*(.*)", ln)
         if m:
-            d, arg = m.group(1), m.group(2).strip()
+            d, arg = m.group(1), re.sub(r"/\*.*?\*/|//.*$", "", m.group(2)).strip()
             if d in ("ifdef", "ifndef", "if"):
                 br = True
                 if d == "ifdef" and arg.startswith("REGTRACE_KERNEL_TREE_BUILD"):
@@ -114,8 +122,12 @@ def cut_stub_tails(lines):
                             d -= 1
                         e += 1
                     blk = [l for l in out[k + 1:e - 1] if l.strip()]
+                    ind = lambda x: len(x) - len(x.lstrip())
                     if (not has_else and len(blk) >= 3 and ((blk[0] == "    {" and blk[-1] == "    }"
-                            and re.match(r"^\s{8}return\b.*;", blk[-2])) or re.match(r"^\s{4}return\b.*;", blk[-1]))):
+                            and (re.match(r"^\s{8}return\b.*;", blk[-2])
+                                 or (re.match(r"^\s+return\b.*;", blk[-2]) and ind(blk[-2]) == ind(blk[1])
+                                     and not blk[1].lstrip().startswith("#"))))
+                            or re.match(r"^\s{4}return\b.*;", blk[-1]))):
                         for q in range(e, j):
                             out[q] = ""
                         break
@@ -190,6 +202,39 @@ def postret_hits(body):
     return out
 
 
+def tailcall_hits(body):
+    """-> [(offset, text)] class tailcall: an unmatched `jr t9` asm fragment without a later `tail call` note in the function."""
+    out = []
+    for k, l in enumerate(body):
+        if re.search(r"asm: .*\bjr(\.hb)?\s+t9\b", l):
+            if not re.search(r"tail call|tail-call|stock tail", "\n".join(body[k:]), re.I):
+                out.append((k, l.strip()))
+            break
+    return out
+
+
+_ARITY = {"system_reg_write": 2}
+
+
+def argc_hits(body):
+    """-> [(offset, text)] class argc: a cast call of a known 2-argument register writer with a single argument."""
+    out = []
+    for k, l in enumerate(body):
+        if l.lstrip().startswith(("/*", "*", "//", "#")):
+            continue
+        for fn, n in _ARITY.items():
+            for m in re.finditer(r"\(uintptr_t\)" + fn + r"\)\(", l):
+                i, depth, commas = m.end(), 1, 0
+                while i < len(l) and depth:
+                    c = l[i]
+                    depth += (c == "(") - (c == ")")
+                    commas += (c == "," and depth == 1)
+                    i += 1
+                if not depth and commas + 1 < n:
+                    out.append((k, l.strip()[:160]))
+    return out
+
+
 def functions(lines):
     i = 0
     while i < len(lines):
@@ -207,7 +252,7 @@ def live_set(rec, others):
     """Static over-approximation of the functions that can run: hand-written functions, anything named in other
     files / EXPORT_SYMBOL / ops tables is a root, edges are identifier references (an `if (1) { ... return }` stub
     cuts the rest of its body).  Functions outside it are marked `unreach` in the baseline (not device-proven)."""
-    lines=mask_inactive(cut_hard_returns(cut_stub_tails(open(rec,errors='replace').read().split("\n"))))
+    lines=cut_hard_returns(mask_inactive(cut_hard_returns(cut_stub_tails(open(rec,errors='replace').read().split("\n")))))
     funcs={};i=0;span=[]
     while i<len(lines):
         m=re.match(r'^[A-Za-z_][\w \*]*?[ \*](\w+)\(([^;]*)\)\s*$',lines[i])
@@ -245,7 +290,7 @@ def live_set(rec, others):
 
 def scan(path, only_postret=False):
     """-> {(func, class): [(line, text)]}"""
-    lines = mask_inactive(cut_hard_returns(cut_stub_tails(open(path, encoding="utf-8", errors="replace").read().split("\n"))))
+    lines = cut_hard_returns(mask_inactive(cut_hard_returns(cut_stub_tails(open(path, encoding="utf-8", errors="replace").read().split("\n")))))
     res = collections.defaultdict(list)
     # postret runs on the text the Kbuild build compiles, with the hand-written early-return dispatchers cut *after* the
     # conditionals are resolved (a `#ifdef REGTRACE_KERNEL_TREE_BUILD return X; #endif` one-liner is such a dispatcher)
@@ -253,6 +298,10 @@ def scan(path, only_postret=False):
     for name, first, body in functions(pl):
         for k, t in postret_hits(body):
             res[(name, "postret")].append((first + k, t))
+        for k, t in tailcall_hits(body):
+            res[(name, "tailcall")].append((first + k, t))
+        for k, t in argc_hits(body):
+            res[(name, "argc")].append((first + k, t))
     if only_postret:
         return res
     for name, first, body in functions(lines):
@@ -393,6 +442,33 @@ int64_t postret_fn(uintptr_t a0)
 postret_fn0x20:
     return 0;
 }
+
+int32_t tail_lost_fn(uint32_t a0)
+{
+    uint32_t *t9 = 0;
+    /* fragment 0: Arithmetic */
+    t9 = (uint32_t *)&system_reg_write;
+    /* unmatched fragment 1 (Unknown): no deterministic matcher for Unknown */
+    /* asm: 5dd8:	03200408 	jr.hb	t9 */
+    return 0;
+}
+
+int32_t tail_fixed_fn(uint32_t a0)
+{
+    uint32_t *t9 = 0;
+    /* asm: 5dd8:	03200408 	jr.hb	t9 */
+    /* stock tail call: system_reg_write(0x1000, 1) */
+    system_reg_write(4096, 1);
+    return 0;
+}
+
+int32_t argc_fn(uintptr_t a0)
+{
+    uintptr_t v0 = 0;
+    v0 = (uintptr_t)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)system_reg_write)(a0, 1);
+    v0 = (uintptr_t)((uintptr_t (*)(uintptr_t))(uintptr_t)system_reg_write)(a0 + (v0 & 3));
+    return 0;
+}
 """
 
 
@@ -405,11 +481,12 @@ def selftest():
     finally:
         os.unlink(f.name)
     got = {k: len(v) for k, v in r.items()}
-    want = {("bad_fn", "step"): 1, ("bad_fn", "off"): 1, ("bad_fn", "loop"): 1, ("bad_fn", "ctr"): 1, ("var_fn", "var"): 1, ("postret_fn", "postret"): 1}
+    want = {("bad_fn", "step"): 1, ("bad_fn", "off"): 1, ("bad_fn", "loop"): 1, ("bad_fn", "ctr"): 1, ("var_fn", "var"): 1, ("postret_fn", "postret"): 1,
+            ("tail_lost_fn", "tailcall"): 1, ("argc_fn", "argc"): 1}
     if got != want:
         print("selftest FAIL: got %s want %s" % (got, want))
         return 1
-    print("lifted_ptr_scale_check selftest: ok (typed pointer flagged, uintptr_t byte arithmetic and KERNEL_TREE stub tail not, lost delay slot behind return flagged)")
+    print("lifted_ptr_scale_check selftest: ok (typed pointer flagged, uintptr_t byte arithmetic and KERNEL_TREE stub tail not, lost delay slot behind return, lost tail call and one-argument register write flagged)")
     return 0
 
 
@@ -442,14 +519,14 @@ def main():
             tag, fn = item.split(":", 1)
             only = None
             if ":" in fn:
-                fn, only = fn.split(":", 1)   # TAG:FUNC:CLASS restricts the check to one class (postret: the delay-slot fixes)
+                fn, only = fn.split(":", 1)   # TAG:FUNC:CLASS restricts the check to one class (postret: the delay-slot fixes; tailcall / argc are checked only when named)
             rel = dict(FILES)[tag]
             src = open(os.path.join(HERE, rel), errors="replace").read()
             if not re.search(r"^[A-Za-z_][\w \*]*?[ \*]" + re.escape(fn) + r"\([^;]*\)\s*\n\{", src, re.M):
                 print("FAIL: %s %s is not defined (renamed or removed: update the --expect-clean list)" % (tag, fn))
                 bad += 1
                 continue
-            hits = [(cl, v[0]) for (t_, f_, cl), v in allres_for(tag).items() if f_ == fn and (only is None or cl == only)]
+            hits = [(cl, v[0]) for (t_, f_, cl), v in allres_for(tag).items() if f_ == fn and ((only is None and cl not in ("tailcall", "argc")) or cl == only)]
             for cl, (ln, t) in hits:
                 print("FAIL: %s %s still has a %s finding (typed-pointer byte arithmetic came back): line %d: %s" % (tag, fn, cl, ln, t))
                 bad += 1
