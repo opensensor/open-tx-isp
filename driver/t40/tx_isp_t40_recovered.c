@@ -71816,6 +71816,20 @@ int64_t tisp_main_init(uintptr_t a0, uint32_t a1)
     if (subret && subret != -ENOENT && !ret)
         ret = subret;
 
+    /*
+     * #150: OEM tisp_main_init runs tisp_tstp_main_init (fresh zeroed 154-byte block + tisp_tstp_reg_cfg(0), i.e.
+     * the 31 pipeline-top registers at ISP + 0x60000 cleared) right after tisp_gsm_main_init.  This shim never
+     * called it, so the block kept its hardware defaults (0x28=0x200, 0x40=0x22, 0x90=2, 0xa8=2) while the
+     * vendor reads 0.  The deinit first frees the block of an earlier stream start.
+     */
+    tisp_tstp_main_deinit();
+    subret = tisp_tstp_main_init();
+    if (subret && !ret)
+        ret = subret;
+    printk(KERN_INFO "tx_isp_t40_recovered: tisp_main_init tstp main ret=%d top28=0x%x top40=0x%x top90=0x%x topa8=0x%x\n",
+           subret, (uint32_t)((uintptr_t (*)(uintptr_t))(uintptr_t)system_reg_read)(0x60028), (uint32_t)((uintptr_t (*)(uintptr_t))(uintptr_t)system_reg_read)(0x60040),
+           (uint32_t)((uintptr_t (*)(uintptr_t))(uintptr_t)system_reg_read)(0x60090), (uint32_t)((uintptr_t (*)(uintptr_t))(uintptr_t)system_reg_read)(0x600a8));
+
     if (regtrace_enable_tisp_main_init_event_init) {
         subret = tisp_event_init(0);
         regtrace_tisp_main_init_event_init_count++;
