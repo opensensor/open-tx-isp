@@ -22917,6 +22917,43 @@ out:
 }
 
 /*
+ * IMPISPTmoFaceae (stock 0x08000062, 56 bytes, set only): tisp_s_tmo_faceae
+ * stores the request in the TMO runtime block and writes 0x1e040..0x1e07c
+ * (tx_isp_t41_isp_extra.h).  The open per-frame TMO map never touches that
+ * block or those registers; tisp_tmo_default_reg_refresh rewrites the same
+ * words from the block on every EV/gain change, so the weighting persists.
+ * Taken under the TMO map lock (object lifetime) and refused until the TMO
+ * object exists.
+ */
+static int t41_tuning_tmo_faceae(unsigned int channel, unsigned int is_get,
+                                 uintptr_t user_ptr)
+{
+    unsigned char req[T41_TMO_FACE_BYTES];
+    unsigned char *info, *rt;
+    unsigned int i;
+    int ret = 0;
+
+    if (channel != 0 || is_get || !user_ptr)
+        return is_get ? -EOPNOTSUPP : -EINVAL;
+    if (private_copy_from_user(req, (void __user *)user_ptr, sizeof(req)))
+        return -EFAULT;
+    mutex_lock(&t41_tmo_map_lock);
+    info = (unsigned char *)(uintptr_t)tmo_info[channel];
+    rt = t41_kernel_data_ptr(info) ?
+        (unsigned char *)(uintptr_t)*(uint32_t *)(void *)(info + 8) : NULL;
+    if (READ_ONCE(t41_tmo_state.ready) != 1 || !t41_kernel_data_ptr(rt)) {
+        ret = -EAGAIN;
+    } else {
+        t41_tmo_face_store(rt, req);
+        for (i = 0; i < T41_TMO_FACE_REGS; i++)
+            system_reg_write(T41_TMO_FACE_REG_BASE + 4U * i,
+                             t41_tmo_face_reg(rt, i));
+    }
+    mutex_unlock(&t41_tmo_map_lock);
+    return ret;
+}
+
+/*
  * IMPISPStatisConfig (stock 0x08000000, 72 bytes, tisp_s/g_statis_config_attr
  * on tisp_tattr+568).  GET returns the stored record.  SET: an enabled AWB
  * part moves the AWB zone grid (native AWB T41_AWB_LOCATION, refused with
@@ -23224,6 +23261,8 @@ static int64_t isp_core_tunning_unlocked_ioctl_body(uintptr_t a0, uint32_t a1, u
             { TX_ISP_TUNING_CMD_T41_TMO_CURVE, T41_TMO_CURVE_BYTES,
               TX_ISP_TUNING_DIR_GET | TX_ISP_TUNING_DIR_SET,
               TX_ISP_TUNING_PAYLOAD_USER_PTR },
+            { TX_ISP_TUNING_CMD_T41_TMO_FACEAE, T41_TMO_FACE_BYTES,
+              TX_ISP_TUNING_DIR_SET, TX_ISP_TUNING_PAYLOAD_USER_PTR },
             { TX_ISP_TUNING_CMD_T41_STATIS_CONFIG,
               T41_STATIS_CONFIG_BYTES,
               TX_ISP_TUNING_DIR_GET | TX_ISP_TUNING_DIR_SET,
@@ -23449,6 +23488,9 @@ static int64_t isp_core_tunning_unlocked_ioctl_body(uintptr_t a0, uint32_t a1, u
         if (route && route->id == TX_ISP_TUNING_CMD_T41_TMO_CURVE)
             return t41_tuning_tmo_curve(request.channel, request.is_get,
                                         request.value_or_ptr);
+        if (route && route->id == TX_ISP_TUNING_CMD_T41_TMO_FACEAE)
+            return t41_tuning_tmo_faceae(request.channel, request.is_get,
+                                         request.value_or_ptr);
         if (route && route->id == TX_ISP_TUNING_CMD_T41_STATIS_CONFIG)
             return t41_tuning_statis_config(request.channel, request.is_get,
                                             request.value_or_ptr);

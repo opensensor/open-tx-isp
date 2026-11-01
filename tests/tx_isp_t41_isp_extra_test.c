@@ -224,10 +224,39 @@ static void test_draw(void)
 	assert(t41_draw_emit(&s, rec, &l, &skipped) == 4 && !s.dirty);
 }
 
+static void test_tmo_face(void)
+{
+	unsigned char req[T41_TMO_FACE_BYTES], rt[T41_TMO_FACE_RUNTIME];
+	unsigned int i;
+
+	memset(rt, 0xee, sizeof(rt));
+	for (i = 0; i < sizeof(req); i++)
+		req[i] = (unsigned char)(i + 1);
+	req[0] = 0x55;
+	t41_tmo_face_store(rt, req);
+	/* destinations */
+	assert(rt[0x2fe] == 0x55 && rt[0x2ff] == 0xee);
+	assert(!memcmp(rt + 0x00, req + 2, 12) && !memcmp(rt + 0x0c, req + 14, 12));
+	assert(!memcmp(rt + 0x18, req + 26, 12) && !memcmp(rt + 0x24, req + 38, 12));
+	assert(!memcmp(rt + 0x2f8, req + 50, 6));
+	assert(rt[0x30] == 0xee && rt[0x2f7] == 0xee);
+	/* registers: req[2..5] = 03 04 05 06 -> 12-bit masks */
+	assert(t41_tmo_face_reg(rt, 0) == ((0x0605U & 0xfffU) << 16 | (0x0403U & 0xfffU)));
+	/* i=6: +0x18 = req[26..29] = 27,28,29,30 -> 0x1c1b, 0x1e1d, 10-bit */
+	assert(t41_tmo_face_reg(rt, 6) == ((0x1e1dU & 0x3ffU) << 16 | (0x1c1bU & 0x3ffU)));
+	/* i=9: bytes 0x2f8=req[50]=51, 0x2f9=52 */
+	assert(t41_tmo_face_reg(rt, 9) == ((52U & 0x7fU) << 16 | (51U & 0x7fU)));
+	assert(t41_tmo_face_reg(rt, 11) == ((56U & 0x7fU) << 16 | (55U & 0x7fU)));
+	/* i=12: +0x24 = req[38..41] = 39,40,41,42 */
+	assert(t41_tmo_face_reg(rt, 12) == ((0x2a29U & 0x3ffU) << 16 | (0x2827U & 0x3ffU)));
+	assert(t41_tmo_face_reg(rt, 15) == (0x55U & 7U));
+}
+
 int main(void)
 {
 	test_csccr();
 	test_draw();
+	test_tmo_face();
 	printf("tx_isp_t41_isp_extra_test: ok\n");
 	return 0;
 }

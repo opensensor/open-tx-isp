@@ -358,4 +358,66 @@ static inline int t41_draw_emit(struct t41_draw_state *s,
 	return pairs;
 }
 
+/* ---- TMO face-AE weighting ----------------------------------------------- */
+
+/*
+ * SetTmoFaceae (control 0x08000062, 56 bytes), OEM tx_isp_core_ops_s_ctrl ->
+ * tisp_s_tmo_faceae -> tisp_tmo_faceae_refresh (tx-isp-t41.ko 1.2.5).
+ * Request bytes: [0] flag, [2..13] [14..25] [26..37] [38..49] four 12-byte
+ * u16[6] tables, [50..55] six bytes.  Stock stores them into the TMO runtime
+ * block (790 bytes, tmo_info[ch] + 8):
+ *   req[0] -> +0x2fe, req[2] -> +0x00, req[14] -> +0x0c, req[26] -> +0x18,
+ *   req[38] -> +0x24, req[50] (6 bytes) -> +0x2f8
+ * and writes the sixteen registers 0x1e040..0x1e07c from it (the same words
+ * tisp_tmo_default_reg_refresh writes on every EV/gain change, so the values
+ * stay in place afterwards).  No range check in stock; the register fields
+ * are masked as in t41_tmo_face_reg().
+ */
+#define T41_TMO_FACE_BYTES	56U
+#define T41_TMO_FACE_RUNTIME	790U
+#define T41_TMO_FACE_REGS	16U
+#define T41_TMO_FACE_REG_BASE	0x1e040U
+
+static inline void t41_tmo_face_store(unsigned char *rt, const unsigned char *req)
+{
+	rt[0x2fe] = req[0];
+	memcpy(rt + 0x00, req + 2, 12);
+	memcpy(rt + 0x0c, req + 14, 12);
+	memcpy(rt + 0x18, req + 26, 12);
+	memcpy(rt + 0x2f8, req + 50, 6);
+	memcpy(rt + 0x24, req + 38, 12);
+}
+
+static inline unsigned int t41_tmo_face_le16(const unsigned char *rt,
+					     unsigned int off)
+{
+	return (unsigned int)rt[off] | ((unsigned int)rt[off + 1] << 8);
+}
+
+/* Value of register 0x1e040 + 4 * i (i = 0..15) from the runtime block. */
+static inline unsigned int t41_tmo_face_reg(const unsigned char *rt, unsigned int i)
+{
+	unsigned int lo, hi;
+
+	if (i < 6U) {			/* 12-bit pairs, runtime +0x00..+0x17 */
+		lo = t41_tmo_face_le16(rt, 4U * i);
+		hi = t41_tmo_face_le16(rt, 4U * i + 2U);
+		return (hi & 0xfffU) << 16 | (lo & 0xfffU);
+	}
+	if (i < 9U) {			/* 10-bit pairs, +0x18..+0x23 */
+		lo = t41_tmo_face_le16(rt, 4U * i);
+		hi = t41_tmo_face_le16(rt, 4U * i + 2U);
+		return (hi & 0x3ffU) << 16 | (lo & 0x3ffU);
+	}
+	if (i < 12U)			/* 7-bit byte pairs, +0x2f8..+0x2fd */
+		return ((unsigned int)rt[0x2f9U + 2U * (i - 9U)] & 0x7fU) << 16 |
+		       ((unsigned int)rt[0x2f8U + 2U * (i - 9U)] & 0x7fU);
+	if (i < 15U) {			/* 10-bit pairs, +0x24..+0x2f */
+		lo = t41_tmo_face_le16(rt, 0x24U + 4U * (i - 12U));
+		hi = t41_tmo_face_le16(rt, 0x26U + 4U * (i - 12U));
+		return (hi & 0x3ffU) << 16 | (lo & 0x3ffU);
+	}
+	return (unsigned int)rt[0x2feU] & 7U;
+}
+
 #endif /* TX_ISP_T41_ISP_EXTRA_H */

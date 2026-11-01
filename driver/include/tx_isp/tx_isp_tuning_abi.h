@@ -109,6 +109,9 @@ typedef uint64_t u64;
 #define TX_ISP_TUNING_T41_AE_LIST_BYTES		128U
 #define TX_ISP_TUNING_CMD_T41_TMO_CURVE		0x08000063U
 #define TX_ISP_TUNING_T41_TMO_CURVE_BYTES	404U
+/* T41 SetTmoFaceae (56 bytes, set only); other SoCs use this ID for DPC. */
+#define TX_ISP_TUNING_CMD_T41_TMO_FACEAE	0x08000062U
+#define TX_ISP_TUNING_T41_TMO_FACEAE_BYTES	56U
 /* IMPISPWaitFrameAttr {u32 timeout; u64 cnt; u32 irqtype} (24 bytes), get only. */
 #define TX_ISP_TUNING_CMD_T41_WAIT_FRAME_DONE	0x08000091U
 #define TX_ISP_TUNING_T41_WAIT_FRAME_BYTES	24U
