@@ -1494,7 +1494,7 @@ static uint32_t ta_custom_tgain[2];
 static uint32_t ta_custom_tgain_short[2];
 static const uint32_t ta_custom_again_short[2];   /* OEM .rodata (never written by the vendor code) */
 static uint32_t ae_wdr_en[2];              /* OEM .bss 0x3a94 */
-static uintptr_t tawb_custom_en;
+static uintptr_t tawb_custom_en __attribute__((unused));   /* #173: stand-in, readers now use awb_algo_enable (kept for .bss layout) */
 static uintptr_t tgain_wdr_s;
 static uintptr_t thr_maxvalue_tmp;
 static uintptr_t tisp_awb_data;
@@ -87304,7 +87304,7 @@ int64_t tisp_awb_main_process(void)
     v0 = (uintptr_t *)&isp_memopt;
 
     /* fragment 4: MemoryAccess */
-    v1 = *(uint32_t *)((char *)((char *)&tawb_custom_en));
+    v1 = awb_algo_enable[0]; /* #173: OEM tawb_custom_en[0], the array tisp_awb_algo_init writes */
     v0 = 1;
 
     /* fragment 5: Branch */
@@ -87402,7 +87402,7 @@ int32_t tisp_awb_sec_process(void)
     v0 = (uintptr_t *)&isp_memopt;
 
     /* fragment 4: MemoryAccess */
-    v1 = *(uint32_t *)((char *)((char *)&tawb_custom_en + 0x4));
+    v1 = awb_algo_enable[1]; /* #173: OEM tawb_custom_en[1] */
     v0 = 1;
 
     /* fragment 5: Branch */
@@ -88845,12 +88845,14 @@ tisp_awb_algo_handle0x5c:
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000034ed4 origin=model_output original=tisp_awb_algo_deinit_internal */
 int32_t tisp_awb_algo_deinit_internal(int32_t arg1)
 {
-    int32_t *base = (int32_t *)(16712);
-    
-    if (base[arg1] == 1) {
-        ((void **)base)[arg1] = 0;
-    }
-    
+    /* #173: OEM tisp_awb_algo_deinit_internal (0x458f4): if (tawb_custom_en[ch] == 1) tawb_custom_en[ch] = 0.
+     * The lift dereferenced the bare address 16712, an oops on every unregister of a custom AWB algorithm.
+     * tawb_custom_en is the per-sensor array tisp_awb_algo_init fills (awb_algo_enable). */
+    int32_t *addr = &awb_algo_enable[arg1 ? 1 : 0];
+
+    if (*addr == 1)
+        *addr = 0;
+
     return 1;
 }
 
