@@ -29184,7 +29184,7 @@ static void tx_isp_t30_mscaler_configure_dma(
 			break;
 		buffer = list_first_entry(&chan->fifo,
 					  struct tx_isp_t30_frame_buffer, entry);
-		list_del(&buffer->entry);
+		list_del_init(&buffer->entry);
 		if (chan->fmt.pix.pixelformat == V4L2_PIX_FMT_NV12 ||
 		    chan->fmt.pix.pixelformat == V4L2_PIX_FMT_NV21) {
 			uv_offset = chan->fmt.pix.width *
@@ -29194,6 +29194,35 @@ static void tx_isp_t30_mscaler_configure_dma(
 		}
 		tx_isp_t30_mscaler_write(mscaler, base + 0x16c,
 					     buffer->addr);
+	}
+}
+
+/*
+ * Drop every buffer the channel still holds, in software and in the
+ * hardware.  OEM mscaler_frame_channel_streamoff (0x1677c) unlinks each
+ * software FIFO entry and then writes 1 to the channel's Y and UV push-FIFO
+ * clear registers (+0x9c, +0xa0).  Without the hardware clear, the addresses
+ * pushed in this session stay in the push FIFO: the next stream-on DMAs into
+ * them and reports them done.  The next session's buffers sit at the same
+ * addresses, so the frame layer completes a buffer that is still linked in
+ * chan->fifo, user space re-queues it and the list is corrupted
+ * (Lu-Fi/openimp#175, LIST_POISON2 in configure_dma).  Entries are unlinked
+ * with list_del_init so a re-queued buffer is never seen as linked.
+ * Called with chan->slock held.
+ */
+static void tx_isp_t30_mscaler_flush_fifo(
+	struct tx_isp_t30_mscaler_output *chan)
+{
+	struct tx_isp_t30_frame_buffer *buffer;
+	struct tx_isp_t30_frame_buffer *tmp;
+
+	list_for_each_entry_safe(buffer, tmp, &chan->fifo, entry)
+		list_del_init(&buffer->entry);
+	if (!IS_ERR_OR_NULL(chan->mscaler) && chan->mscaler->sd.base) {
+		tx_isp_t30_mscaler_write(chan->mscaler,
+			tx_isp_t30_mscaler_channel_reg(chan, 0x19c), 1);
+		tx_isp_t30_mscaler_write(chan->mscaler,
+			tx_isp_t30_mscaler_channel_reg(chan, 0x1a0), 1);
 	}
 }
 
@@ -29374,7 +29403,7 @@ static int tx_isp_t30_mscaler_stream_off(
 	if (chan->fmt.pix.pixelformat == V4L2_PIX_FMT_RGB565 ||
 	    chan->fmt.pix.pixelformat == V4L2_PIX_FMT_BGR32)
 		mscaler->rgb_channel_active = 0;
-	INIT_LIST_HEAD(&chan->fifo);
+	tx_isp_t30_mscaler_flush_fifo(chan);
 	pad->state = TX_ISP_ABI_PADSTATE_LINKED;
 	spin_unlock_irqrestore(&chan->slock, flags);
 	return 0;
@@ -29425,8 +29454,14 @@ int32_t mscaler_pad_event_handle(void *pad_pointer, int32_t event,
 	case TX_ISP_T30_FRAME_EVENT_FREE_BUFFER:
 		if (pad->type != TX_ISP_ABI_PADTYPE_OUTPUT || !chan)
 			return -EINVAL;
+		/* OEM 0x1733c: unlink every queued entry (no hardware clear) */
 		spin_lock_irqsave(&chan->slock, flags);
-		INIT_LIST_HEAD(&chan->fifo);
+		{
+			struct tx_isp_t30_frame_buffer *buffer, *tmp;
+
+			list_for_each_entry_safe(buffer, tmp, &chan->fifo, entry)
+				list_del_init(&buffer->entry);
+		}
 		spin_unlock_irqrestore(&chan->slock, flags);
 		return 0;
 	default:
