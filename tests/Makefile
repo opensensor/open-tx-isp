@@ -611,6 +611,12 @@ lifted_ptr_scale_check:
 		t41:isp_mbus_to_bayer_isra_1 t41:ivdc_core_ops_init t41:tisp_lce_clr_ram_part_0 t41:tx_isp_set_ae_algo_open_isra_23 t41:tx_isp_vin_suspend_module \
 		t41:tx_isp_vin_resume_module t41:fs_resume_module t41:ispcore_suspend_module t41:vic_core_ops_init t41:tx_isp_switch_bin_isra_78 t41:tisp_switch_bin \
 		t41:frame_channel_unlocked_ioctl t41:tx_isp_unlocked_ioctl t41:__fill_tisp_buffer
+	@# #189 postret: OEM `jr ra` delay-slot statements restored in front of the return (class postret only)
+	python3 ./lifted_ptr_scale_check.py --expect-clean t40:pop_buffer_fifo:postret t40:tisp_ae_get_state:postret t40:tisp_ae_main_mean_update:postret \
+		t40:tisp_ae_params_transmit:postret t40:tisp_ae_sec_mean_update:postret t40:tisp_awb_set_statis_localtion:postret t40:tisp_dmsc_wdr_en:postret \
+		t41:api_ae_set_exprinfo_attr:postret t41:tisp_msca_ch_curve_write:postret t41:tisp_wdr_get_lum_s:postret t41:vic_core_ops_init:postret \
+		t40:tisp_ae_ir_en_update:postret t40:tisp_af_set_attr_refresh:postret t40:tisp_awb_get_frz:postret t40:tisp_defog_wdr_choose_para:postret \
+		t40:tisp_mdns_wdr_en:postret t40:tisp_sdns_wdr_en:postret t40:tisp_wdr_get_lum_s:postret t41:tisp_ae_api_get_antiflick:postret t41:tisp_awb_ev_update_Ywgt:postret
 
 # T40 module exit gates the ISP/CSI clocks it enabled (#152)
 t40_clk_teardown_check:

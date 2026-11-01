@@ -15,6 +15,12 @@ end, and stores land behind the object (#186: tisp_g/s_mscaler_mask_attr).  Clas
          only ends through another exit (#190-class: streamoff wait loop ran without its 21 * 100 ms limit)
   var    `X = P + Y`, `X = P + (uintptr_t)Y` with a typed P (element size > 1) and a variable byte offset Y: the index is
          scaled by sizeof(*P) (vic_frame_channel_streamon: a flag byte array read at 4 * index)
+  postret  a statement behind an unconditional `return` in a lifted function (`/* fragment` body; the next code line is
+         neither `}`, a label, `#`, case/default nor another return, and the return is not the body of a brace-less
+         if/else/for/while): the lift put the MIPS `jr ra` in front of its branch delay slot and lost that
+         instruction (#189: vic_core_ops_init lost its `state = 2` store).  Hand-written early-return dispatchers
+         (cut_hard_returns) and `#if 0` / non-Kbuild text are not scanned.  Also run on the extra lifted files
+         (EXTRA_FILES: t21 / t30 recovered, t23 core)
   unal   `*(uint32_t *)((char *)X + k)` with k not a multiple of 4 (u16: odd k): unaligned access, usually a
          u16 field read as a word
 
@@ -31,6 +37,8 @@ import os, re, sys, argparse, collections
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FILES = (("t40", "../driver/t40/tx_isp_t40_recovered.c"), ("t41", "../driver/t41/tx_isp_t41_recovered.c"))
+EXTRA_FILES = (("t21", "../driver/t21/tx_isp_t21_recovered.c"), ("t23", "../driver/t23/tx_isp_t23_core.c"),
+               ("t30", "../driver/t30/tx_isp_t30_recovered.c"))   # only the postret class is scanned here
 SZ = {"uintptr_t": 4, "uint32_t": 4, "int32_t": 4, "int": 4, "uint16_t": 2, "int16_t": 2,
       "int64_t": 8, "uint64_t": 8, "long": 4, "unsigned": 4}
 DECL = re.compile(r"\b(uintptr_t|uint32_t|int32_t|int|uint16_t|int16_t|int64_t|uint64_t|long|unsigned)\s*\*\s*(\w+)")
@@ -146,6 +154,42 @@ def cut_hard_returns(lines):
     return out
 
 
+def _is_comment(l):
+    return not l.strip() or re.match(r"\s*(/\*|\*(\s|/|$)|//)", l) is not None   # `*(uint32_t *)p = v;` is a statement
+
+
+def postret_hits(body):
+    """-> [(offset in body, text)] statements that follow an unconditional `return` (class postret)."""
+    out = []
+    if not any("/* fragment" in x for x in body):
+        return out
+    for k, l in enumerate(body):
+        if not re.match(r"^\s+return\b.*;\s*$", l):
+            continue
+        j = k + 1
+        while j < len(body) and _is_comment(body[j]):
+            j += 1
+        if j >= len(body) or re.match(r"^\s*(\}|\w+:|#|case\b|default\b|return\b)", body[j]):
+            continue
+        # brace-less guard: walk back to the start of the statement the return belongs to
+        p = k - 1
+        while p >= 0 and _is_comment(body[p]):
+            p -= 1
+        if p >= 0:
+            q = p
+            while q > 0 and not re.search(r"[;{}:]\s*(/\*.*\*/)?\s*$", body[q - 1]) and not _is_comment(body[q - 1]) \
+                    and not body[q - 1].lstrip().startswith("#"):
+                q -= 1
+            head = re.sub(r"/\*.*?\*/", "", body[q]).strip()
+            last = re.sub(r"/\*.*?\*/", "", body[p]).rstrip()
+            if re.match(r"(if|else|for|while)\b", head) and not last.endswith(("{", ";")):
+                continue
+        if re.match(r"^\s*(const )?(u?int\w+|uintptr_t|unsigned|char|void|bool)\b[ \*]*\w+\s*=\s*(0|NULL);", body[j]):
+            continue   # a zero-initialised declaration behind a hand-written dispatcher's return: no instruction
+        out.append((k, l.strip() + "  ->  " + body[j].strip()))
+    return out
+
+
 def functions(lines):
     i = 0
     while i < len(lines):
@@ -199,10 +243,18 @@ def live_set(rec, others):
     return F,live,roots,funcs
 
 
-def scan(path):
+def scan(path, only_postret=False):
     """-> {(func, class): [(line, text)]}"""
     lines = mask_inactive(cut_hard_returns(cut_stub_tails(open(path, encoding="utf-8", errors="replace").read().split("\n"))))
     res = collections.defaultdict(list)
+    # postret runs on the text the Kbuild build compiles, with the hand-written early-return dispatchers cut *after* the
+    # conditionals are resolved (a `#ifdef REGTRACE_KERNEL_TREE_BUILD return X; #endif` one-liner is such a dispatcher)
+    pl = cut_hard_returns(mask_inactive(cut_stub_tails(open(path, encoding="utf-8", errors="replace").read().split("\n"))))
+    for name, first, body in functions(pl):
+        for k, t in postret_hits(body):
+            res[(name, "postret")].append((first + k, t))
+    if only_postret:
+        return res
     for name, first, body in functions(lines):
         tv = {}
         for ln in body:
@@ -324,6 +376,23 @@ int64_t early_return_fn(uintptr_t a0)
     v0 = v0 + 4;
     return 0;
 }
+
+int64_t postret_fn(uintptr_t a0)
+{
+    uintptr_t v0 = 0;
+    /* fragment 0: Branch */
+    if (a0 == 1) { goto postret_fn0x20; }
+    if (a0 == 2)
+        return -EINVAL;
+    if (a0 == 3 &&
+        a0 == 4)
+        return -EFAULT;
+    /* fragment 1: Epilogue */
+    return (int32_t)v0;
+    *(uint32_t *)((char *)a0 + 388) = v0;
+postret_fn0x20:
+    return 0;
+}
 """
 
 
@@ -336,11 +405,11 @@ def selftest():
     finally:
         os.unlink(f.name)
     got = {k: len(v) for k, v in r.items()}
-    want = {("bad_fn", "step"): 1, ("bad_fn", "off"): 1, ("bad_fn", "loop"): 1, ("bad_fn", "ctr"): 1, ("var_fn", "var"): 1}
+    want = {("bad_fn", "step"): 1, ("bad_fn", "off"): 1, ("bad_fn", "loop"): 1, ("bad_fn", "ctr"): 1, ("var_fn", "var"): 1, ("postret_fn", "postret"): 1}
     if got != want:
         print("selftest FAIL: got %s want %s" % (got, want))
         return 1
-    print("lifted_ptr_scale_check selftest: ok (typed pointer flagged, uintptr_t byte arithmetic and KERNEL_TREE stub tail not)")
+    print("lifted_ptr_scale_check selftest: ok (typed pointer flagged, uintptr_t byte arithmetic and KERNEL_TREE stub tail not, lost delay slot behind return flagged)")
     return 0
 
 
@@ -362,7 +431,7 @@ def main():
     ap.add_argument("--list")
     ap.add_argument("--func")
     ap.add_argument("--expect-clean", nargs="+", metavar="TAG:FUNC",
-                    help="host regression test: these reviewed/fixed functions must be defined and have no finding in any class")
+                    help="host regression test: these reviewed/fixed functions must be defined and have no finding in any class (TAG:FUNC:CLASS: in that class)")
     ap.add_argument("files", nargs="*")
     a = ap.parse_args()
     if a.selftest:
@@ -371,23 +440,26 @@ def main():
         bad = 0
         for item in a.expect_clean:
             tag, fn = item.split(":", 1)
+            only = None
+            if ":" in fn:
+                fn, only = fn.split(":", 1)   # TAG:FUNC:CLASS restricts the check to one class (postret: the delay-slot fixes)
             rel = dict(FILES)[tag]
             src = open(os.path.join(HERE, rel), errors="replace").read()
             if not re.search(r"^[A-Za-z_][\w \*]*?[ \*]" + re.escape(fn) + r"\([^;]*\)\s*\n\{", src, re.M):
                 print("FAIL: %s %s is not defined (renamed or removed: update the --expect-clean list)" % (tag, fn))
                 bad += 1
                 continue
-            hits = [(cl, v[0]) for (t_, f_, cl), v in allres_for(tag).items() if f_ == fn]
+            hits = [(cl, v[0]) for (t_, f_, cl), v in allres_for(tag).items() if f_ == fn and (only is None or cl == only)]
             for cl, (ln, t) in hits:
                 print("FAIL: %s %s still has a %s finding (typed-pointer byte arithmetic came back): line %d: %s" % (tag, fn, cl, ln, t))
                 bad += 1
         print("lifted_ptr_scale_check --expect-clean: %s (%d functions)" % ("FAIL" if bad else "ok", len(a.expect_clean)))
         return 1 if bad else 0
     allres = {}
-    for tag, rel in FILES:
+    for tag, rel in FILES + EXTRA_FILES:
         p = os.path.join(HERE, rel)
         if os.path.exists(p):
-            for (fn, cl), v in scan(p).items():
+            for (fn, cl), v in scan(p, (tag, rel) in EXTRA_FILES).items():
                 allres[(tag, fn, cl)] = v
     if a.list or a.func:
         for (tag, fn, cl), v in sorted(allres.items()):
@@ -397,10 +469,11 @@ def main():
         return 0
     if a.write_baseline:
         live = {}
-        for tag, rel in FILES:
+        for tag, rel in FILES + EXTRA_FILES:
             p = os.path.join(HERE, rel)
             d = os.path.dirname(p)
-            oth = [os.path.join(d, f) for f in os.listdir(d) if f.rsplit(".", 1)[-1] in ("c", "h", "inc") and not f.endswith("recovered.c")]
+            oth = [os.path.join(d, f) for f in os.listdir(d) if f.rsplit(".", 1)[-1] in ("c", "h", "inc") and not f.endswith("recovered.c")
+                   and os.path.join(d, f) != p]
             oth += [os.path.join(HERE, "../driver/common", f) for f in os.listdir(os.path.join(HERE, "../driver/common")) if f.endswith((".c", ".h"))]
             live[tag] = live_set(p, oth)[1]
         old = {}

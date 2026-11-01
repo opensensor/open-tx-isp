@@ -34122,11 +34122,12 @@ int32_t* pop_buffer_fifo(uintptr_t a0)
     v1 = 512;
 
     /* fragment 3: Epilogue */
+    /* #189: delay slot of the OEM `jr ra`; the lift put the return in front of it and lost this statement */
+    *(uint32_t *)((char *)v0 + 4) = v1;
     /* function epilogue: restore registers and return */
     return (int32_t*)v0;
 
     /* fragment 4: MemoryAccess */
-    *(uint32_t *)((char *)v0 + 4) = v1;
 
 pop_buffer_fifo0x30:
     /* fragment 5: Epilogue */
@@ -75542,11 +75543,12 @@ tisp_ae_params_transmit0x70:
 
 tisp_ae_params_transmit0x2d0:
     /* fragment 12: Epilogue */
+    /* #189: delay slot of the OEM `jr ra`; the lift put the return in front of it and lost this statement */
+    *(uint32_t *)((char *)a0 + 344) = v1;
     /* function epilogue: restore registers and return */
     return (int64_t)v0;
 
     /* fragment 13: MemoryAccess */
-    *(uint32_t *)((char *)a0 + 344) = v1;
 
 tisp_ae_params_transmit0x2d8:
     /* fragment 14: MemoryAccess */
@@ -80253,11 +80255,12 @@ tisp_ae_ir_en_update0x10:
     v0 = *(uint32_t *)((char *)v0 + 280);
 
     /* fragment 3: Epilogue */
+    /* #189: delay slot of the OEM `jr ra`; the lift put the return in front of it and lost this statement */
+    *(uint32_t *)((char *)v0 + 0) = a1;
     /* function epilogue: restore registers and return */
     return (int32_t*)v0;
 
     /* fragment 4: MemoryAccess */
-    *(uint32_t *)((char *)v0 + 0) = a1;
 
 tisp_ae_ir_en_update0x1c:
     /* fragment 5: Branch */
@@ -80368,11 +80371,12 @@ tisp_ae_main_mean_update0x20:
     v0 = *(uint32_t *)((char *)v0 + 8);
 
     /* fragment 9: Epilogue */
+    /* #189: delay slot of the OEM `jr ra`; the lift put the return in front of it and lost this statement */
+    *(uint32_t *)((char *)a1 + 0) = v0;
     /* function epilogue: restore registers and return */
     return (int64_t)v0;
 
     /* fragment 10: MemoryAccess */
-    *(uint32_t *)((char *)a1 + 0) = v0;
 
 tisp_ae_main_mean_update0x68:
     /* fragment 11: Arithmetic */
@@ -81405,11 +81409,12 @@ tisp_ae_sec_mean_update0x20:
     v0 = *(uint32_t *)((char *)v0 + 8);
 
     /* fragment 9: Epilogue */
+    /* #189: delay slot of the OEM `jr ra`; the lift put the return in front of it and lost this statement */
+    *(uint32_t *)((char *)a1 + 0) = v0;
     /* function epilogue: restore registers and return */
     return (int64_t)v0;
 
     /* fragment 10: MemoryAccess */
-    *(uint32_t *)((char *)a1 + 0) = v0;
 
 tisp_ae_sec_mean_update0x68:
     /* fragment 11: Arithmetic */
@@ -82482,11 +82487,12 @@ tisp_ae_get_state0x10:
     v0 = *(uint16_t *)((char *)v0 + 300);
 
     /* fragment 4: Epilogue */
+    /* #189: delay slot of the OEM `jr ra`; the lift put the return in front of it and lost this statement */
+    *(uint32_t *)((char *)a3 + 0) = v0;
     /* function epilogue: restore registers and return */
     return (uint32_t)v0;
 
     /* fragment 5: MemoryAccess */
-    *(uint32_t *)((char *)a3 + 0) = v0;
 
 tisp_ae_get_state0x30:
     /* fragment 6: Branch */
@@ -84599,11 +84605,12 @@ tisp_af_set_attr_refresh0x18:
     v0 = *(uint8_t *)((char *)v0 + 74);
 
     /* fragment 7: Epilogue */
+    /* #189: delay slot of the OEM `jr ra`; the lift put the return in front of it and lost this statement */
+    *(uint16_t *)((char *)v1 + 14) = v0;
     /* function epilogue: restore registers and return */
     return (int64_t)v0;
 
     /* fragment 8: MemoryAccess */
-    *(uint16_t *)((char *)v1 + 14) = v0;
 
 tisp_af_set_attr_refresh0x238:
     /* fragment 9: Arithmetic */
@@ -88278,11 +88285,12 @@ tisp_awb_get_frz0x10:
     v0 = *(uint8_t *)((char *)v0 + 0);
 
     /* fragment 3: Epilogue */
+    /* #189: delay slot of the OEM `jr ra`; the lift put the return in front of it and lost this statement */
+    *(uint8_t *)((char *)a1 + 0) = v0;
     /* function epilogue: restore registers and return */
     return (int32_t)v0;
 
     /* fragment 4: MemoryAccess */
-    *(uint8_t *)((char *)a1 + 0) = v0;
 
 tisp_awb_get_frz0x20:
     /* fragment 5: Branch */
@@ -88339,11 +88347,12 @@ tisp_awb_set_statis_localtion0x10:
     v0 = *(uint32_t *)((char *)v0 + 400);
 
     /* fragment 3: Epilogue */
+    /* #189: delay slot of the OEM `jr ra`; the lift put the return in front of it and lost this statement */
+    *(uint8_t *)((char *)v0 + 0) = 0;
     /* function epilogue: restore registers and return */
     return (char*)v0;
 
     /* fragment 4: MemoryAccess */
-    *(uint8_t *)((char *)v0 + 0) = 0;
 
 tisp_awb_set_statis_localtion0x4c:
     /* fragment 5: Branch */
@@ -93980,11 +93989,12 @@ tisp_wdr_get_lum_s0xc0:
     /* asm: 3a700:	00001012 	mflo	v0 */
 
     /* fragment 25: Epilogue */
+    /* #189: delay slot of the OEM `jr ra`; the lift put the return in front of it and lost this statement */
+    *(uint16_t *)((char *)a2 + 6) = v0;
     /* function epilogue: restore registers and return */
     return (int64_t)v0;
 
     /* fragment 26: MemoryAccess */
-    *(uint16_t *)((char *)a2 + 6) = v0;
 
 tisp_wdr_get_lum_s0x100:
     /* fragment 27: Arithmetic */
@@ -105619,11 +105629,12 @@ tisp_dmsc_wdr_en0x18:
 
 tisp_dmsc_wdr_en0x770:
     /* fragment 23: Epilogue */
+    /* #189: delay slot of the OEM `jr ra`; the lift put the return in front of it and lost this statement */
+    *(uint32_t *)((char *)v1 + 928) = v0;
     /* function epilogue: restore registers and return */
     return (int64_t)v0;
 
     /* fragment 24: MemoryAccess */
-    *(uint32_t *)((char *)v1 + 928) = v0;
 
 tisp_dmsc_wdr_en0x778:
     /* fragment 25: MemoryAccess */
@@ -117518,11 +117529,12 @@ tisp_defog_wdr_choose_para0x64:
     *(uint32_t *)((char *)v1 + 128) = a0;
 
     /* fragment 11: Epilogue */
+    /* #189: delay slot of the OEM `jr ra`; the lift put the return in front of it and lost this statement */
+    *(uint32_t *)((char *)v1 + 132) = v0;
     /* function epilogue: restore registers and return */
     return (int64_t)v0;
 
     /* fragment 12: MemoryAccess */
-    *(uint32_t *)((char *)v1 + 132) = v0;
 
 tisp_defog_wdr_choose_para0x18c:
     /* fragment 13: MemoryAccess */
@@ -136275,11 +136287,12 @@ tisp_mdns_wdr_en0x18:
 
 tisp_mdns_wdr_en0x2cc:
     /* fragment 13: Epilogue */
+    /* #189: delay slot of the OEM `jr ra`; the lift put the return in front of it and lost this statement */
+    *(uint32_t *)((char *)v1 + 332) = v0;
     /* function epilogue: restore registers and return */
     return (int64_t)v0;
 
     /* fragment 14: MemoryAccess */
-    *(uint32_t *)((char *)v1 + 332) = v0;
 
 tisp_mdns_wdr_en0x2d4:
     /* fragment 15: MemoryAccess */
@@ -138698,11 +138711,12 @@ tisp_sdns_wdr_en0x18:
 
 tisp_sdns_wdr_en0x414:
     /* fragment 15: Epilogue */
+    /* #189: delay slot of the OEM `jr ra`; the lift put the return in front of it and lost this statement */
+    *(uint32_t *)((char *)v1 + 496) = v0;
     /* function epilogue: restore registers and return */
     return (int64_t)v0;
 
     /* fragment 16: MemoryAccess */
-    *(uint32_t *)((char *)v1 + 496) = v0;
 
 tisp_sdns_wdr_en0x41c:
     /* fragment 17: MemoryAccess */

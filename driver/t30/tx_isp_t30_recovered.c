@@ -51392,11 +51392,12 @@ mem_write_u320x28:
     a1 = a1 >> 16;
 
     /* fragment 7: Epilogue */
+    /* #189: delay slot of the OEM `jr ra`; the lift put the return in front of it and lost this statement */
+    *(uint16_t *)((char *)a0 + 2) = a1;
     /* function epilogue: restore registers and return */
     return (void*)v0;
 
     /* fragment 8: MemoryAccess */
-    *(uint16_t *)((char *)a0 + 2) = a1;
 
 mem_write_u320x38:
     /* fragment 9: Arithmetic */
