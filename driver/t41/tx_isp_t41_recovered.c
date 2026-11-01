@@ -38221,6 +38221,75 @@ static int t41_ioctl_isp_bypass(uintptr_t file, uint32_t user_arg)
                                   (uintptr_t)inputs);
 }
 
+/*
+ * Internal channel attributes (0xc004542f set / 0xc0045430 get,
+ * IMP_ISP_Set/GetInternalChnAttr; stock tx_isp_unlocked_ioctl,
+ * tx_isp_set_internal_channel_attr / tx_isp_get_internal_channel_attr, T41
+ * 1.2.5 tx-isp-t41.ko).  The request is 24 bytes: for each of the three
+ * frame channels {type, flag}.  Type n names the core input descriptor
+ * core+0x234+0x1c*n (0..5; 0..2 are the channels' own, 4 and 5 the VIC
+ * internal inputs).
+ * GET: stock scans the six descriptors for the one channel+0xd4 points at
+ * (6 when none) and asks the VIC for the flag of types >= 4 through core
+ * event 0x01000006; the flag of the other types is left uninitialised on
+ * stock, here 0.
+ * SET: stock refuses duplicate types, then sends core events 0x01000004 and
+ * 0x01000005: the core repoints channel+0xd4 for types > 2 only and the VIC
+ * programs its internal input entry for types >= 4.  So types 0..2 change
+ * nothing on stock, as here; types 3..5 need the VIC internal inputs that
+ * the open VIC frame-channel path does not provide (same reason as
+ * t41_ioctl_isp_bypass) and are refused with -EOPNOTSUPP.  Stock answers a
+ * duplicate with -EFAULT and runs on after a type >= 6 with an
+ * uninitialised entry; both are -EINVAL here.
+ */
+#define T41_INTERNAL_CHN_NUM	3U
+#define T41_INTERNAL_CHN_TYPES	6U
+#define T41_INTERNAL_DESC_BASE	0x234U
+#define T41_INTERNAL_DESC_SIZE	0x1cU
+
+static int t41_ioctl_internal_chn(uintptr_t file, bool set, uint32_t user_arg)
+{
+    uint32_t req[T41_INTERNAL_CHN_NUM * 2];
+    unsigned char *core = (unsigned char *)(uintptr_t)ispcore_sd;
+    unsigned char *channels;
+    unsigned int i, k;
+
+    if (!file || !user_arg || !t41_load_ptr(file, 136))
+        return -EINVAL;
+    if (!t41_kernel_data_ptr(core))
+        return -ENODEV;
+    if (set) {
+        if (private_copy_from_user(req, (const void __user *)(uintptr_t)user_arg,
+                                   sizeof(req)))
+            return -EFAULT;
+        for (i = 0; i < T41_INTERNAL_CHN_NUM; i++)
+            if (req[i * 2] >= T41_INTERNAL_CHN_TYPES)
+                return -EINVAL;
+        if (req[0] == req[2] || req[0] == req[4] || req[2] == req[4])
+            return -EINVAL;
+        for (i = 0; i < T41_INTERNAL_CHN_NUM; i++)
+            if (req[i * 2] > 2U)
+                return -EOPNOTSUPP;
+        return 0;
+    }
+    channels = *(unsigned char **)(core + 0x1ac);
+    if (!t41_kernel_data_ptr(channels))
+        return -ENODEV;
+    for (i = 0; i < T41_INTERNAL_CHN_NUM; i++) {
+        unsigned char *want = *(unsigned char **)(channels +
+                                                  i * T41_CHANNEL_STRIDE + 0xd4);
+
+        for (k = 0; k < T41_INTERNAL_CHN_TYPES; k++)
+            if (want == core + T41_INTERNAL_DESC_BASE +
+                        k * T41_INTERNAL_DESC_SIZE)
+                break;
+        req[i * 2] = k;
+        req[i * 2 + 1] = 0;
+    }
+    return private_copy_to_user((void __user *)(uintptr_t)user_arg, req,
+                                sizeof(req)) ? -EFAULT : 0;
+}
+
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000014474 origin=fragment_seed original=tx_isp_unlocked_ioctl */
 int64_t tx_isp_unlocked_ioctl(uintptr_t a0, uint32_t a1, uint32_t a2)
 {
@@ -38384,6 +38453,14 @@ int64_t tx_isp_unlocked_ioctl(uintptr_t a0, uint32_t a1, uint32_t a2)
     }
     if (a1 == 0x80085418U) {
         regtrace_ret = t41_ioctl_isp_bypass(a0, a2);
+        if (t41_runtime_trace)
+            printk(KERN_WARNING
+               "t41: tx-isp ioctl exit cmd=0x%x ret=%d\n",
+               a1, regtrace_ret);
+        return regtrace_ret;
+    }
+    if (a1 == 0xc004542fU || a1 == 0xc0045430U) {
+        regtrace_ret = t41_ioctl_internal_chn(a0, a1 == 0xc004542fU, a2);
         if (t41_runtime_trace)
             printk(KERN_WARNING
                "t41: tx-isp ioctl exit cmd=0x%x ret=%d\n",
