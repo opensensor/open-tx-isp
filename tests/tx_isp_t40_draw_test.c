@@ -174,6 +174,28 @@ int main(void)
 		assert(t40_mask_en_word(gs) == 7u);
 		assert(gs[616 + 0 * 16 + 36] == 1 && gs[616 + 1 * 16 + 36] == 0 && gs[1232 + 1 * 16 + 36] == 1);
 	}
+	/* t40_msca_init_state vs the OEM Tzn_Msca_init_cfg (u16 pointer arithmetic exactly as the decompile: param_4 + 5, +0x134 per
+	 * channel, end param_4 + 0x3a1; the lock at u16 index 0x3a0 = byte 1856) */
+	{
+		static u16 oem[1860 / 2 + 8];
+		static u8 got[1860 + 16];
+		u16 *p;
+		unsigned i2;
+
+		memset(got, 0xee, sizeof got);
+		memset(oem, 0xee, sizeof oem);
+		memset(oem, 0, 1860);
+		oem[1] = 1080; oem[0] = 1920;
+		for (p = oem + 5; p != oem + 0x3a1; p += 0x134) {
+			p[7] = 1920; p[8] = 1080; p[1] = 1920; p[0] = 1080; p[0xb] = 1920; p[0xc] = 1080;
+		}
+		t40_msca_init_state(got, 1920, 1080);
+		assert(!memcmp(got, oem, 1860));
+		for (i2 = 1860; i2 < sizeof got; i2++)
+			assert(got[i2] == 0xee);                        /* nothing behind the state */
+		assert(t40_dr_u16(got + 0) == 1920 && t40_dr_u16(got + 2) == 1080);
+		assert(t40_dr_u16(got + 10 + 616 + 16) == 1080 && t40_dr_u16(got + 10 + 2 * 616 + 22) == 1920);
+	}
 	puts("tx_isp_t40_draw_test: ok");
 	return 0;
 }

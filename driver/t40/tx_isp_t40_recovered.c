@@ -55863,7 +55863,7 @@ int32_t __frame_channel_vb2_streamoff(uintptr_t a0, uint32_t a1)
     uint32_t *a3 = 0;
     uint32_t ra = 0;
     uintptr_t *s0 = 0;
-    uint32_t *s1 = 0;
+    uintptr_t s1 = 0;   /* wait counter: as a uint32_t * it counted in words (0,4,..20,24) and never met the OEM bound 21 */
     uint32_t *s2 = 0;
     uint32_t *s3 = 0;
     uint32_t *s4 = 0;
@@ -70967,20 +70967,8 @@ static void regtrace_t40_msca_state_seed(void *state, uint32_t width,
                                          uint32_t height)
 {
     unsigned char *base = state;
-    unsigned int off;
 
-    memset(base, 0, REGTRACE_MSCA_STATE_BYTES);
-    *(uint16_t *)(base + 0) = (uint16_t)width;
-    *(uint16_t *)(base + 2) = (uint16_t)height;
-
-    for (off = 10; off < 1858; off += 616) {
-        *(uint16_t *)(base + off + 0) = (uint16_t)height;
-        *(uint16_t *)(base + off + 2) = (uint16_t)width;
-        *(uint16_t *)(base + off + 14) = (uint16_t)width;
-        *(uint16_t *)(base + off + 16) = (uint16_t)height;
-        *(uint16_t *)(base + off + 22) = (uint16_t)width;
-        *(uint16_t *)(base + off + 24) = (uint16_t)height;
-    }
+    t40_msca_init_state(base, width, height);
 
     private_spin_lock_init((uintptr_t)base + 1856);
 }
@@ -148549,6 +148537,18 @@ int32_t Tzn_Msca_Shd_CpuWrite(int32_t arg1, int32_t arg2, int32_t arg3)
 /* WHOLE_DRIVER_CANDIDATE fn_000000000006be64 origin=fragment_seed original=Tzn_Msca_init_cfg */
 int32_t Tzn_Msca_init_cfg(uint32_t a0, uint32_t a1, uint32_t a2, uintptr_t a3)
 {
+#ifdef REGTRACE_KERNEL_TREE_BUILD
+    /* OEM (Eufy tx-isp-t40.ko): state per t40_msca_init_state, private_spin_lock_init(state + 1856), registers
+     * 0x16080 + vin * 0x1000 = 0, 0x16084 = width << 16 | height, 0x1600c = 1.  The lift stepped its uintptr_t pointers
+     * in words (state + 40 instead of +10, +2464 instead of +616, the lock at +7424 behind the 1860 byte state) and
+     * lost the final store.  Needs camera proof (only the second sensor path calls it; tisp_main_init seeds the state). */
+    t40_msca_init_state((unsigned char *)a3, a1 & 0xffff, a2);
+    private_spin_lock_init(a3 + 1856);
+    system_reg_write((a0 << 12) + 0x16080, 0);
+    system_reg_write((a0 << 12) + 0x16084, (a1 & 0xffff) << 16 | a2);
+    system_reg_write((a0 << 12) + 0x1600c, 1);
+    return 0;
+#else
     uint32_t *local_10 = 0;
     uint32_t local_14 = 0;
     uint32_t *local_18 = 0;
@@ -148630,6 +148630,7 @@ Tzn_Msca_init_cfg0x54:
     /* asm: 6bf48:	27bd0028 	addiu	sp,sp,40 */
 
     return 0;
+#endif
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_000000000006bf4c origin=fragment_seed original=Tzn_Msca_Shd_Sta */

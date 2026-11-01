@@ -247,4 +247,24 @@ emit_tail:
 	return bad;
 }
 
+/* OEM Tzn_Msca_init_cfg (state part): memset 1860, u16 [0] = width, [1] = height, then per output channel (3 x 616 bytes
+ * from +10) u16 +0 = height, +2 = width, +14 = width, +16 = height, +22 = width, +24 = height; the spin lock follows at +1856
+ * (the caller inits it).  The lift stepped `uintptr_t *` pointers (+10 became +40, +616 became +2464, the lock +7424). */
+static inline void t40_msca_init_state(u8 *state, u32 width, u32 height)
+{
+	unsigned off;
+
+	memset(state, 0, 1860);
+	t40_dr_w16(state + 0, (u16)width);
+	t40_dr_w16(state + 2, (u16)height);
+	for (off = 10; off != 1858; off += 616) {
+		t40_dr_w16(state + off + 0, (u16)height);
+		t40_dr_w16(state + off + 2, (u16)width);
+		t40_dr_w16(state + off + 14, (u16)width);
+		t40_dr_w16(state + off + 16, (u16)height);
+		t40_dr_w16(state + off + 22, (u16)width);
+		t40_dr_w16(state + off + 24, (u16)height);
+	}
+}
+
 #endif
