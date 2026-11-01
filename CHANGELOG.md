@@ -4,6 +4,11 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-01, T40 custom AWB algorithm close (`claude/issue-173`)
+
+- **T40 tisp_awb_algo_deinit_internal (#173, QEMU + device reload):** the lift dereferenced the bare address 16712 (kernel oops when a custom AWB algorithm is unregistered at `DisableSensor`); it now clears `tawb_custom_en[ch]`, the per-sensor array `tisp_awb_algo_init` fills, like the OEM. The AWB main process read a separate stand-in for that array and now reads the same one. New host check `tests/t40_hardcoded_anchor_check.py` (no local pointer initialised from a bare literal). QEMU T40: `customalgo_t40` ends with 0 oops (before: oops in the AWB close). Eufy T40 (agg65a): apitest 285 PASS / 0 FAIL, 6 reload cycles clean. The custom algorithm path itself stays off by default in OpenIMP (`OPENIMP_ISP_ALGO_FUNC=1`, #65).
+- **Found, not changed:** `tisp_{dmsc,ydns,ysp}_dn_params_refresh` and `tisp_lce_tgain_interp_strength` read the per-channel WDR/tgain words through `&isp_memopt`; the OEM reads `dmsc_wdr_en`/`ydns_wdr_en`/`ysp_wdr_en`/`lce_tgain` (the writers use another stand-in offset), so writer and reader need one common fix (follow-up issue).
+
 ## 2026-11-01, T41 ISP routes (`claude/t41-isp-routes2`)
 
 - **T41 SetTmoFaceae (#180, device):** control 0x08000062 stores the face-AE TMO weighting in the TMO runtime block and writes 0x1e040..0x1e07c like the OEM `tisp_s_tmo_faceae`; read back equal on the camera, apitest case `tmofaceae` PASS.
