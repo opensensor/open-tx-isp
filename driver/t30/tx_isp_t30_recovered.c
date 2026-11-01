@@ -19037,10 +19037,24 @@ static void tx_isp_t30_ispcore_enable_lfb_channel(
 	}
 }
 
+/*
+ * 1 while the firmware instance (event queue, FSM state) is initialised.  The
+ * OEM driver reaches the same guarantee by keeping the ISP interrupt masked
+ * until apical_fw_init() has finished; this driver's IRQ line can fire inside
+ * that window (frame IRQ between the handler table and the event-queue setup:
+ * apical_loop_buffer_write_u8 on a NULL buffer, fatal exception in interrupt,
+ * Lu-Fi/openimp#176).  Events that arrive before the init completes are
+ * acknowledged by the caller and dropped here.
+ */
+static int tx_isp_t30_fw_ready;
+
 static void tx_isp_t30_dispatch_firmware_irqs(u32 status)
 {
 	const u32 recovered_sources = BIT(0) | BIT(3) | BIT(4);
 	unsigned int source;
+
+	if (!ACCESS_ONCE(tx_isp_t30_fw_ready))
+		return;
 
 	/*
 	 * APICAL interrupt status bits are the firmware source indices installed
@@ -34070,6 +34084,72 @@ static int tx_isp_t30_sensor_ioctl_walk(struct tx_isp_t30_device *ispdev,
 	return 0;
 }
 
+/*
+ * IMP_ISP_Get/SetSensorRegister (ioctls 0xc0385650 / 0x8038564f).  The stock
+ * handler copies the 0x38-byte wire object {match_type, name[32], size,
+ * reg(u64), val(u64)} and hands the sensor a translated struct whose name
+ * points at the kernel copy (same layout as the other Ingenic ISP drivers).
+ * The lifted fragments copied the 0x38 bytes over 4-byte locals (stack
+ * overrun) and then walked the sub-device table through garbage pointers:
+ * GetSensorRegister oopsed (Lu-Fi/openimp#174).  Events: S_REGISTER
+ * 0x200000f, G_REGISTER 0x2000010 (isp-m0 forwards them to the active
+ * sensor's core ops s_register/g_register).
+ */
+struct tx_isp_t30_dbg_register {
+	char *name;
+	unsigned int size;
+	unsigned long long reg;
+	unsigned long long val;
+};
+
+struct tx_isp_t30_dbg_register_wire {
+	u32 match_type;
+	char name[32];
+	u32 size;
+	u64 reg;
+	u64 val;
+};
+
+static long tx_isp_t30_sensor_register_ioctl(struct file *file,
+					      unsigned int cmd,
+					      unsigned long arg)
+{
+	struct miscdevice *miscdev = file->private_data;
+	struct tx_isp_t30_module *module;
+	struct tx_isp_t30_device *ispdev;
+	struct tx_isp_t30_dbg_register_wire wire;
+	struct tx_isp_t30_dbg_register dbg;
+	bool get = cmd == 0xc0385650;
+	int ret;
+
+	BUILD_BUG_ON(sizeof(wire) != 0x38);
+	if (!miscdev)
+		return -EINVAL;
+	module = container_of(miscdev, struct tx_isp_t30_module, miscdev);
+	ispdev = container_of(module, struct tx_isp_t30_device, module);
+	if (copy_from_user(&wire, (void __user *)arg, sizeof(wire)))
+		return -EFAULT;
+	wire.name[sizeof(wire.name) - 1] = '\0';
+
+	memset(&dbg, 0, sizeof(dbg));
+	dbg.name = wire.name;
+	dbg.size = wire.size;
+	dbg.reg = wire.reg;
+	dbg.val = wire.val;
+	ret = tx_isp_t30_sensor_ioctl_walk(ispdev,
+					   get ? 0x02000010 : 0x0200000f,
+					   &dbg);
+	if (ret)
+		return ret;
+	if (get) {
+		wire.size = dbg.size;
+		wire.val = dbg.val;
+		if (copy_to_user((void __user *)arg, &wire, sizeof(wire)))
+			return -EFAULT;
+	}
+	return 0;
+}
+
 static long tx_isp_t30_sensor_ioctl(struct file *file, unsigned int cmd,
 				    unsigned long arg, bool *handled)
 {
@@ -34084,6 +34164,8 @@ static long tx_isp_t30_sensor_ioctl(struct file *file, unsigned int cmd,
 	int ret;
 
 	*handled = true;
+	if (cmd == 0x8038564f || cmd == 0xc0385650)
+		return tx_isp_t30_sensor_register_ioctl(file, cmd, arg);
 	switch (cmd) {
 	case 0x805056c1: /* TX_ISP_EVENT_SENSOR_REGISTER */
 		event = 0x02000000;
@@ -37577,6 +37659,8 @@ int32_t apical_fw_interrupts_init(void *arg1)
 /* WHOLE_DRIVER_CANDIDATE fn_000000000001cea8 origin=model_output original=apical_fw_init */
 int32_t apical_fw_init(int32_t *arg1)
 {
+    ACCESS_ONCE(tx_isp_t30_fw_ready) = 0;
+    smp_wmb();
     memset(arg1, 0, 0x2fd0);
     pr_err("tx-isp-t30 fw-init: state cleared\n");
     init_semaphore((int32_t *)(arg1 + 3));
@@ -37588,10 +37672,17 @@ int32_t apical_fw_init(int32_t *arg1)
     ((void **)arg1)[6] = 0;
     ((void **)arg1)[7] = (int32_t)arg1;
     pr_err("tx-isp-t30 fw-init: ISP state begin\n");
+#ifdef TX_ISP_T30_TEST_FW_INIT_DELAY_MS
+    /* test builds only (tests/t30/qemu): hold the init window open so that a
+     * frame IRQ lands before the event queue exists */
+    mdelay(TX_ISP_T30_TEST_FW_INIT_DELAY_MS);
+#endif
     apical_isp_init((int32_t *)(arg1 + 6));
     pr_err("tx-isp-t30 fw-init: ISP state initialized\n");
     *(uint8_t *)((char *)arg1 + 0x115) = 0x1e;
     ((void **)arg1)[1] = 0;
+    smp_wmb();
+    ACCESS_ONCE(tx_isp_t30_fw_ready) = 1;
     system_hw_interrupts_enable();
     pr_err("tx-isp-t30 fw-init: hardware interrupts enabled\n");
     *(uint8_t *)((char *)arg1 + 0x10) = 1;
