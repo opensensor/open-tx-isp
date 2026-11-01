@@ -157703,8 +157703,12 @@ int32_t tisp_s_fixed_contrast_attr(uintptr_t a0, uintptr_t a1)
     /* fragment 2: MemoryAccess */
     a1 = *(uint8_t *)((char *)a1 + 0);
 
-    /* stock tail call: tisp_bcsh_set_mjpeg_contrast(a0, a1[0], a1[1], a1[2]) (the lift dropped the `jr t9`; SetMjpegContrast never reached the BCSH state) (#189) */
-    return tisp_bcsh_set_mjpeg_contrast(a0, (uint32_t)a1, (uint32_t)(uintptr_t)a2, (uint32_t)(uintptr_t)a3);
+    /* #189 pass 4: stock tail call is tisp_bcsh_set_mjpeg_contrast(a0, a1[0], a1[1], a1[2]) (the lift dropped the `jr t9`), but that callee runs the
+     * dead lifted tisp_bcsh_ev_update on pstMainBcshOri (the live BCSH chain is the hand-written t40_bcsh code, the lifted EV state is never set up):
+     * restoring the tail oopsed on the camera (NULL deref in tisp_bcsh_ev_update, apitest SetFixedContraster). Left as a shim until the hand t40_bcsh
+     * code consumes the MJPEG range; the three range bytes are not stored. */
+    (void)a0; (void)a2; (void)a3;
+    return 0;
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_00000000000759a0 origin=fragment_seed original=tisp_lsc_hvflip */
