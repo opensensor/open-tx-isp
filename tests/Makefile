@@ -3,7 +3,7 @@ CC ?= cc
 CFLAGS ?= -O2
 CFLAGS += -std=c99 -Wall -Wextra -Werror
 
-.PHONY: all check clean t40_hardcoded_anchor_check t30_storage_audit t30_fw_irq_gate t40_vct_host t40_af_stats_host t40_bcsh_dn_host t40_tstp_host t40_bitexact_host t40_callarg_check t41_sensor_barrier_check t40_hardcoded_anchor_check t40_clk_teardown_check t40_tstp_init_check
+.PHONY: all check clean t40_hardcoded_anchor_check t30_storage_audit t30_fw_irq_gate t40_vct_host t40_af_stats_host t40_bcsh_dn_host t40_tstp_host t40_bitexact_host t40_callarg_check t41_sensor_barrier_check t40_hardcoded_anchor_check t40_clk_teardown_check t40_tstp_init_check t41_af_gate_check
 
 # Every host test binary.  A new test is registered with "TESTS += name"
 # (plus its build rule); `check` builds and runs all of them, keeps going
@@ -12,7 +12,7 @@ CFLAGS += -std=c99 -Wall -Wextra -Werror
 # so a test cannot be added and then silently never run.
 TESTS :=
 # Further check steps, run as "$(MAKE) <target>" after the binaries.
-CHECK_TARGETS := t30_storage_audit t30_fw_irq_gate t41_dfg_host t40_vct_host t40_af_stats_host t40_bcsh_dn_host t40_tstp_host t40_bitexact_host t40_callarg_check t41_sensor_barrier_check t40_hardcoded_anchor_check t40_clk_teardown_check t40_tstp_init_check
+CHECK_TARGETS := t30_storage_audit t30_fw_irq_gate t41_dfg_host t40_vct_host t40_af_stats_host t40_bcsh_dn_host t40_tstp_host t40_bitexact_host t40_callarg_check t41_sensor_barrier_check t40_hardcoded_anchor_check t40_clk_teardown_check t40_tstp_init_check t41_af_gate_check
 # Sources that only run on the camera (not built on the host).
 TARGET_TESTS := $(basename $(wildcard t41_v4l2_*_test.c)) t41_antiflicker_ioctl_test
 TEST_TIMEOUT ?= 600
@@ -225,6 +225,11 @@ tx_isp_t41_awb_gain_test: tx_isp_t41_awb_gain_test.c ../driver/t41/tx_isp_t41_aw
 	$(CC) $(CFLAGS) -o $@ $<
 
 tx_isp_t41_gib_test: tx_isp_t41_gib_test.c ../driver/t41/tx_isp_t41_gib.h
+	$(CC) $(CFLAGS) -o $@ $<
+
+# T41 AF block (#179): header vs OEM decompile oracle
+TESTS += tx_isp_t41_af_test
+tx_isp_t41_af_test: tx_isp_t41_af_test.c ../driver/t41/tx_isp_t41_af.h
 	$(CC) $(CFLAGS) -o $@ $<
 
 tx_isp_t41_color_route_test: tx_isp_t41_color_route_test.c ../driver/t41/tx_isp_t41_exposure.c ../driver/t41/tx_isp_t41_exposure.h ../driver/include/tx_isp/tx_isp_top.h
@@ -604,6 +609,10 @@ t40_clk_teardown_check:
 # T40 tisp_main_init shim runs the OEM tstp init: pipeline-top block cleared (#150)
 t40_tstp_init_check:
 	sh ./check_t40_tstp_init.sh
+
+# T41 AF block stays off unless t41_af=1 (#179)
+t41_af_gate_check:
+	sh ./check_t41_af_gate.sh
 
 clean:
 	$(RM) $(TESTS)

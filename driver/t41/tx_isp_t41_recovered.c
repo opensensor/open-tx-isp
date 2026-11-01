@@ -21851,6 +21851,8 @@ static int t41_tuning_module_ratio(unsigned int channel, unsigned int is_get,
     return 0;
 }
 
+#include "tx_isp_t41_af_runtime.inc"
+
 /*
  * AF weight table (control 0x8000032, stock tx_isp_af_weight_s/g_attr ->
  * tisp_af_api_set/get_weight): 225 bytes (15x15) copied to/from the AF
@@ -23170,6 +23172,10 @@ static int64_t isp_core_tunning_unlocked_ioctl_body(uintptr_t a0, uint32_t a1, u
             { TX_ISP_TUNING_CMD_T41_AF_WEIGHT, T41_AF_WEIGHT_BYTES,
               TX_ISP_TUNING_DIR_GET | TX_ISP_TUNING_DIR_SET,
               TX_ISP_TUNING_PAYLOAD_USER_PTR },
+            { TX_ISP_TUNING_CMD_T41_AF_STATIS, T41_AF_STATIS_BYTES,
+              TX_ISP_TUNING_DIR_GET, TX_ISP_TUNING_PAYLOAD_USER_PTR },
+            { TX_ISP_TUNING_CMD_T41_AF_METRICS, 12,
+              TX_ISP_TUNING_DIR_GET, TX_ISP_TUNING_PAYLOAD_USER_PTR },
             { TX_ISP_TUNING_CMD_T41_AUTOZOOM, T41_MSCA_ZOOM_BYTES,
               TX_ISP_TUNING_DIR_GET | TX_ISP_TUNING_DIR_SET,
               TX_ISP_TUNING_PAYLOAD_USER_PTR },
@@ -23473,6 +23479,14 @@ static int64_t isp_core_tunning_unlocked_ioctl_body(uintptr_t a0, uint32_t a1, u
                                            request.value_or_ptr);
         if (route && route->id == TX_ISP_TUNING_CMD_T41_AF_WEIGHT)
             return t41_tuning_af_weight(request.channel, request.is_get,
+                                        request.value_or_ptr);
+        /* AF statistics (#179): served only while t41_af=1 armed the block,
+         * otherwise -EPERM as before. */
+        if (route && route->id == TX_ISP_TUNING_CMD_T41_AF_STATIS)
+            return t41_tuning_af_statis(request.channel,
+                                        request.value_or_ptr);
+        if (route && route->id == TX_ISP_TUNING_CMD_T41_AF_METRICS)
+            return t41_tuning_af_metric(request.channel,
                                         request.value_or_ptr);
         if (route && (route->id == TX_ISP_TUNING_CMD_T41_AE_CONVERGE ||
                       route->id == TX_ISP_TUNING_CMD_T41_AE_EV_LIST ||
@@ -55594,6 +55608,7 @@ int tisp_deinit(int channel)
      * one buffer, not off), so clearing it does not stop the DMA; the ISP
      * clock gate and reset in the core close path do.
      */
+    t41_af_stop();
     system_reg_write(0x1a0dc, 0);
     system_reg_write(24624, 0);
     system_reg_write(0x1e020, 0);
@@ -78961,10 +78976,12 @@ int32_t tisp_af_init(uint32_t a0, uintptr_t a1)
 
 #ifdef REGTRACE_KERNEL_TREE_BUILD
     /*
-     * The stock T41 AF writer has lost register values in reconstruction.
-     * Keep its exact state/DMA ownership, but do not arm AF IRQ processing on
-     * this fixed-focus camera until that 79.7%-sized function is restored.
+     * AF statistics block (issue #179): armed only with t41_af=1, through the
+     * re-translated tisp_af_set_hardware_param / IRQ / algorithm in
+     * tx_isp_t41_af.h.  Default: keep the block off and its IRQ masked.
      */
+    if (!t41_af_start(a0, info))
+        return 0;
     system_reg_write(0x1a000, 0);
     printk(KERN_WARNING
            "t41: af-init safe disabled channel=%u %ux%u\n",
@@ -78994,6 +79011,7 @@ int32_t tisp_af_deinit(uint32_t a0)
 
     if (a0 >= 2)
         return -EINVAL;
+    t41_af_stop();	/* #179: disarm before the ring/workspace are freed */
 
     buf_cfg = (uint32_t *)(uintptr_t)af_buf_info[a0];
     if (buf_cfg) {
@@ -169225,6 +169243,8 @@ static inline unsigned int t41_isr_enable_word(unsigned int i)
 
 	if (READ_ONCE(t41_isr_dispatch) && (i == 0 || i == 2))
 		v = 0xffffffffU;
+	if (i == 0 && READ_ONCE(t41_af_live))
+		v |= BIT(6);	/* AF statistics armed (t41_af=1, #179) */
 	return v;
 }
 static const unsigned int t41_isr_enable_reg[4] = {
@@ -169232,6 +169252,13 @@ static const unsigned int t41_isr_enable_reg[4] = {
 };
 static unsigned int t41_isr_enable_num __attribute__((section(".data"))) = 4;
 static int t41_isr_enable_live __attribute__((section(".data"))) = -1;
+
+/* AF arm/disarm (#179): apply the bit-6 change at once if IRQs are live. */
+static void t41_af_irq_mask_sync(void)
+{
+	if (READ_ONCE(t41_isr_enable_live) == 1)
+		system_reg_write(t41_isr_enable_reg[0], t41_isr_enable_word(0));
+}
 
 static int t41_isr_enable_set(const char *value, const struct kernel_param *kp)
 {
@@ -172433,6 +172460,10 @@ int64_t ispcore_interrupt_service_routine(uintptr_t a0)
              * is one-shot, so the worker rearms capture after it finishes. */
             schedule_work(&t41_safe_awb_work);
         }
+
+        /* AF statistics done (OEM irq slot 6), only when t41_af=1 armed it. */
+        if ((status0 & BIT(6)) && READ_ONCE(t41_af_live))
+            t41_af_irq();
 
         if (status0 & BIT(4))
             WRITE_ONCE(t41_ae_zones[0].sequence,

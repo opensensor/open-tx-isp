@@ -4,12 +4,13 @@
 #   tests/t40_vawb_host.sh replay <device dump> [trace]     (REPS=n [CONSEC=1]: time per process)
 # CTD_REF=<git ref>: tisp_awb_ct_detect C (tx_isp_t40_awb_ctd.inc) vs the translated OEM code of that
 # ref (the last one that generated it, e.g. f2c180f7) on every call; FUZZ=seed / FUZZM=seed vary
-# the statistics / tuning switches (issue 133).
+# the statistics / tuning switches; FUZZT=seed generates valid zone geometry plus synthetic ct_detect tables (no vendor
+# data), FUZZG=seed only the geometry (issue 133, #163). T40_DRV_DIR=<dir>: use that copy of driver/t40 (mutation check).
 # LA_REF=<git ref>: tisp_awb_long_alogrithm C (tx_isp_t40_awb_long.inc) vs the translated OEM code of
 # that ref (the last one that generated it, e.g. 316259cb) on every call; FUZZL=seed varies its state.
 # (Not together with FUZZ: that one re-randomises the ct_detect inputs on each of the two calls.)
 set -e
-HERE=$(cd "$(dirname "$0")" && pwd); D=$HERE/../driver/t40; W=$(mktemp -d); trap 'rm -rf $W' EXIT
+HERE=$(cd "$(dirname "$0")" && pwd); D=${T40_DRV_DIR:-$HERE/../driver/t40}; W=$(mktemp -d); trap 'rm -rf $W' EXIT
 sed -n '/^#include "tx_isp_t40_vawb_gen.inc"/q;p' $D/tx_isp_t40_vawb.h > $W/top.h
 sed -i -e 's/a >= 0x80000000U \&\& a < 0xfffff000U \&\& !(a \& align)/harness_ok(a, align)/' \
        -e 's/tg < 0x80000000U || (tg \& 3)/tg < 0x1000U || (tg \& 3)/' \

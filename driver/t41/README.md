@@ -976,18 +976,27 @@ restores all sixteen to 0; no visible brightness change with the apitest
 request (the TMO weighting acts on face regions only). Set round trip of
 SetInternalChnAttr runs only with `APITEST_RISKY=1` (QEMU: PASS).
 
-Not served (still EPERM/ENOTTY, reasons): GetAFMetricesInfo `0x08000034` and
-GetAfStatistics `0x08000031` (issue 179). The OEM handlers copy the AF
-statistics workspace (`af_info[ch]+4`, 0x1518 bytes) and the metrics that the
-AF IRQ path fills per frame (`tisp_af_interrupt_static` ->
-`tisp_af_get_statistics`: unpack 15x15 zones x 5 values from the 4 KB DMA
-buffers at 0x1a0cc..0x1a0d8, then `tisp_af_alogrithm`). The open build keeps
-the AF block off (`tisp_af_init` writes 0x1a000 = 0, no IRQ, "safe disabled"
-for stability), so the buffers would only hold zeros. Serving them means
-re-translating `tisp_af_set_hardware_param` (about 70 register words from the
-AF parameter block at tparamsP+0x17be8), the IRQ handler, `tisp_af_get_statistics`
-and `tisp_af_alogrithm` from the 1.2.5 module and then re-arming the AF IRQ and
-DMA, which is a separate stability item (soak with AF on), not a route.
+AF statistics (issue 179): GetAfStatistics `0x08000031` (6 x u32[15][15],
+5400 bytes) and GetAFMetricesInfo `0x08000034` ({u32 metric, u32 metric_alt,
+u8 frame tag}, 12 bytes) are served from the re-translated OEM AF path, but
+only when the module is loaded with `t41_af=1`. Default `t41_af=0`: the block
+stays off as before (`tisp_af_init` writes 0x1a000 = 0, interrupt bit 6
+masked) and both calls answer EPERM. With `t41_af=1`, `tisp_af_init` checks the
+zone grid of the AF parameter block (tparamsP+0x17be8: 1..15 zones each way,
+at least 2 pixels per zone), writes the OEM `tisp_af_set_hardware_param`
+sequence (0x1a004..0x1a034 zone grid once, 0x1a000 = 1, 0x1a038..0x1a0c8),
+unmasks status bit 6 (0x40020) and arms the handler. Per AF-done interrupt the
+finished 4 KB ring buffer (index 0x1a0e0, masked to 0..3) is unpacked into the
+workspace (OEM `tisp_af_get_statistics`, 136-bit zones, row length from the
+OEM CSWTCH.12 table), the frame tag 0x1a120 stored, the buffer cleared and
+written back; `tisp_af_alogrithm` (weighted IIR/FIR blend, metric history)
+runs on the ordered tuning workqueue. `tisp_deinit` / `tisp_af_deinit`
+disarm (bit 6 masked, 0x1a000 = 0, work cancelled) before anything is freed.
+All arithmetic is in `tx_isp_t41_af.h`; `tests/tx_isp_t41_af_test.c`
+compares it with a literal transcription of the Ghidra decompile of the 1.2.5
+module (registers, workspace and parameter bytes, 20000 random cases);
+`tests/check_t41_af_gate.sh` guards the default-off gate. Read-only
+counters: `af_live`, `af_irqs`, `af_runs`, `af_bad_index`.
 ISP-device ioctls StartNightMode 0xc004542e, WDR_OPEN 0xc004548d (start-mode
 flags read at sensor add), LDC 0xc0045479..7b and GPIO 0xc004548e/f (no
 handler at all in the 1.2.5 module: it returns 0 for them without doing

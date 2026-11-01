@@ -93,6 +93,11 @@ typedef uint64_t u64;
 #define TX_ISP_TUNING_T41_SWITCH_BIN_BYTES	132U
 /* T41 libimp: AF weight table (15x15 bytes); other SoCs use this ID for AE_IT_MAX. */
 #define TX_ISP_TUNING_CMD_T41_AF_WEIGHT		0x08000032U
+/* T41 AF statistics (#179): GetAfStatistics 6 x u32[15][15] (5400 bytes),
+ * GetAFMetricesInfo {u32, u32, u8} (12 bytes); both get only, other SoCs use
+ * these IDs for AE_HIST_ORIGIN / AE freeze. */
+#define TX_ISP_TUNING_CMD_T41_AF_STATIS		0x08000031U
+#define TX_ISP_TUNING_CMD_T41_AF_METRICS	0x08000034U
 /* T41 libimp 1.2.6 (libimp + libt41-firmware 1.2.6 disassembly). */
 #define TX_ISP_TUNING_CMD_T41_STATIS_CONFIG	0x08000000U
 #define TX_ISP_TUNING_T41_STATIS_CONFIG_BYTES	72U

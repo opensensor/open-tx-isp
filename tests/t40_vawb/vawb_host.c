@@ -95,6 +95,16 @@ static int regtrace_is_kernel_ptr_any(const void *p) { return p != 0; }
 static bool regtrace_enable_isp_3a_diag;
 #include CFIX_INC
 #include CTD_INC
+#ifdef CTD_REF_INC
+/* the C long_alogrithm calls tisp_awb_ct_detect directly: route that call through the both-versions comparison */
+static int64_t (*const ctd_real)(uintptr_t, uintptr_t, uint32_t) = tisp_awb_ct_detect;
+static u64 vawb_s_tisp_awb_ct_detect(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
+static noinline int64_t harness_ctd_call(uintptr_t a0, uintptr_t a1, uint32_t a2)
+{
+	return (int64_t)vawb_s_tisp_awb_ct_detect((u32)a0, (u32)a1, (u32)a2, 0, 0);
+}
+#define tisp_awb_ct_detect harness_ctd_call
+#endif
 #ifdef LA_REF_INC
 #define vawb_s_tisp_awb_long_alogrithm vawb_s_la_c
 #endif
@@ -107,15 +117,13 @@ static u64 vawb_s_tisp_awb_long_alogrithm(u32 a0, u32 a1, u32 a2, u32 a3, u32 cs
 static u64 vawb_x___private_spin_lock_irqsave(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp) { return 0; }
 static u64 vawb_x_private_spin_unlock_irqrestore(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp) { return 0; }
 static u64 vawb_s_tisp_clm_ct_update(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp) { return 0; }
-#ifdef CTD_REF_INC
-static u64 vawb_s_tisp_awb_ct_detect(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
-#endif
 #include VAWB_INC
 #ifdef CTD_REF_INC
 #include CTD_REF_INC
 static unsigned long ctd_n, ctd_bad;
 static u8 ctd_si[60328], ctd_so[4752], ctd_ti[60328], ctd_to[4752];
 static u32 fz_x, fz_y;
+static u8 ctd_stk[0x4000] __aligned(16) VD;	/* frame area of the translated OEM ct_detect when the caller is C */
 #define FZ(v) (v ^= v << 13, v ^= v >> 17, v ^= v << 5, v)
 static void ctd_fuzz(u32 *o)
 {
@@ -131,6 +139,40 @@ static void ctd_fuzz(u32 *o)
 			cnt[z] = (k == 3 && FZ(fz_x) % 8) ? 0 : FZ(fz_x) % 1000;
 			sat[z] = FZ(fz_x) % 1024;
 		}
+	}
+	if (getenv("FUZZG") || getenv("FUZZT")) {	/* valid zone geometry and precision (the harness never runs the hardware setup that sets them) */
+		static u32 fg_x;
+		u16 *pf = (u16 *)(uintptr_t)o[13], *o5 = (u16 *)(uintptr_t)o[5];
+
+		if (!fg_x) fg_x = atoi(getenv("FUZZG") ? getenv("FUZZG") : getenv("FUZZT")) * 7 + 1;
+		pf[0] = 8 + FZ(fg_x) % 5; pf[1] = 8;	/* precision, fraction bits */
+		o5[1] = o5[3] = 15; o5[4] = 1 + FZ(fg_x) % 64; o5[19] = 1 + FZ(fg_x) % 64;	/* rows, cols, zone width/height */
+	}
+	if (getenv("FUZZT")) {	/* synthetic ct_detect tables (generated, not vendor data): centres, knots, prior, weights, mired, LUT, radii */
+		static u32 ft_x;
+		u32 p = *(u16 *)(uintptr_t)o[13], i, z;
+		u8 *cnt = (u8 *)(uintptr_t)o[1], *spw = (u8 *)(uintptr_t)o[9];
+		u16 *inc = (u16 *)(uintptr_t)o[0], *exc = (u16 *)(uintptr_t)o[17], *lut = (u16 *)(uintptr_t)o[12];
+		u16 *sr = (u16 *)(uintptr_t)o[20], *sb = (u16 *)(uintptr_t)o[21];
+		u32 *kn = (u32 *)(uintptr_t)o[2], *pr = (u32 *)(uintptr_t)o[3], *wt = (u32 *)(uintptr_t)o[4], *xk = (u32 *)(uintptr_t)o[6];
+		u32 *yk = (u32 *)(uintptr_t)o[7], *mi = (u32 *)(uintptr_t)o[8], *rf = (u32 *)(uintptr_t)o[10], *cp = (u32 *)(uintptr_t)o[16], *rad = (u32 *)(uintptr_t)o[19];
+
+		if (!ft_x) ft_x = atoi(getenv("FUZZT")) | 1;
+		u16 *pf = (u16 *)(uintptr_t)o[13], *o5 = (u16 *)(uintptr_t)o[5];
+
+		p = 8 + FZ(ft_x) % 5; pf[0] = p; pf[1] = 8;	/* precision, fraction bits */
+		o5[1] = o5[3] = 15; o5[4] = 1 + FZ(ft_x) % 64; o5[19] = 1 + FZ(ft_x) % 64;	/* rows, cols, zone width/height */
+		cnt[0] = FZ(ft_x) % 5; cnt[1] = FZ(ft_x) % 5;
+		for (i = 0; i < 8; i++) { inc[i] = 100 + FZ(ft_x) % 500; exc[i] = 100 + FZ(ft_x) % 500; }
+		kn[0] = 2000 + FZ(ft_x) % 1500; kn[1] = kn[0] - FZ(ft_x) % 1500; kn[2] = kn[0] + FZ(ft_x) % 2500; kn[3] = kn[2] + FZ(ft_x) % 2500;
+		pr[0] = FZ(ft_x) & 1; pr[1] = FZ(ft_x) % (1U << p);
+		for (z = 0; z < 225; z++) { wt[z] = FZ(ft_x) % ((1U << p) + 1); mi[z] = 1500 + FZ(ft_x) % 9000; spw[z] = FZ(ft_x) % 17; }
+		for (i = 0; i < 15; i++) { xk[i] = 60 + i * 40 + FZ(ft_x) % 30; yk[i] = 60 + i * 38 + FZ(ft_x) % 30; }
+		for (i = 0; i < 514; i++) lut[i] = 256 - (256 * i / 513) + (FZ(ft_x) % 4 == 0 ? FZ(ft_x) % 3 : 0) > 256 ? 256 : 256 - (256 * i / 513);	/* weight 256..0 over the distance */
+		for (i = 0; i < 10; i++) { sr[i] = 100 + FZ(ft_x) % 500; sb[i] = 100 + FZ(ft_x) % 500; rad[i] = FZ(ft_x) % 40; }
+		rf[1] = FZ(ft_x) % 600; rf[2] = FZ(ft_x) % 600;
+		cp[1] = FZ(ft_x) % 6000; cp[2] = FZ(ft_x) % 6000; cp[3] = FZ(ft_x) % 6000; cp[4] = 1 + FZ(ft_x) % 40; cp[5] = 1 + FZ(ft_x) % 20;
+		*(u16 *)((uintptr_t)o[0] + 38) = FZ(ft_x) % 257;
 	}
 	if (getenv("FUZZM")) {	/* gray-world modes, saturation weight, cluster mode, prior, refine, special lights */
 		static u16 m14[4], m15; static u32 m16[6], m3[2], m10; static u8 m18[10]; static int saved;
@@ -151,24 +193,27 @@ static void ctd_fuzz(u32 *o)
 /* both ct_detect versions on the same state: inter/outer images, gains and flags must match */
 static u64 vawb_s_tisp_awb_ct_detect(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
 {
-	u32 g[4], f[4], tg[4], tf[4], di = 0, dout = 0, i;
+	u32 g[4], f[4], tg[4], tf[4], di = 0, dout = 0, i, f0, fr;
 	u64 rv;
 
+	if (!csp) csp = (u32)(uintptr_t)(ctd_stk + sizeof(ctd_stk) - 64);
 	ctd_fuzz((u32 *)(uintptr_t)a0);
 	memcpy(ctd_si, inter, sizeof(ctd_si)); memcpy(ctd_so, outer, sizeof(ctd_so));
 	memcpy(g, (void *)(uintptr_t)a1, 16); memcpy(f, (void *)(uintptr_t)a2, 16);
+	f0 = vawb_faults;
 	rv = vref_tisp_awb_ct_detect(a0, a1, a2, a3, csp);
+	fr = vawb_faults - f0;
 	memcpy(ctd_ti, inter, sizeof(ctd_ti)); memcpy(ctd_to, outer, sizeof(ctd_to));
 	memcpy(tg, (void *)(uintptr_t)a1, 16); memcpy(tf, (void *)(uintptr_t)a2, 16);
 	memcpy(inter, ctd_si, sizeof(ctd_si)); memcpy(outer, ctd_so, sizeof(ctd_so));
 	memcpy((void *)(uintptr_t)a1, g, 16); memcpy((void *)(uintptr_t)a2, f, 16);
-	(void)vawb_s_ctd_c(a0, a1, a2, a3, csp);
+	(void)ctd_real(a0, a1, a2);
 	ctd_n++;
 	for (i = 0; i < sizeof(ctd_ti); i++) di += inter[i] != ctd_ti[i];
 	for (i = 0; i < sizeof(ctd_to); i++) dout += outer[i] != ctd_to[i];
 	if (di || dout || memcmp(tg, (void *)(uintptr_t)a1, 8) || memcmp(tf, (void *)(uintptr_t)a2, 8))
 		if (ctd_bad++ < 10)
-			printf("CTD DIFF call %lu: inter %u B outer %u B gains OEM %u/%u C %u/%u flags OEM %u/%u C %u/%u\n", ctd_n, di, dout,
+			printf("CTD DIFF call %lu (OEM faults %u): inter %u B outer %u B gains OEM %u/%u C %u/%u flags OEM %u/%u C %u/%u\n", ctd_n, fr, di, dout,
 			       tg[0], tg[1], ((u32 *)(uintptr_t)a1)[0], ((u32 *)(uintptr_t)a1)[1], tf[0], tf[1], ((u32 *)(uintptr_t)a2)[0], ((u32 *)(uintptr_t)a2)[1]);
 	return rv;
 }
@@ -290,6 +335,12 @@ static void run(void)
 			       *(u32 *)(uintptr_t)c[7], ((u32 *)(uintptr_t)c[9])[0], ((u32 *)(uintptr_t)c[9])[1], reg4004, reg4008);
 	}
 	if (g_trace) { printf("trace:"); for (i = 0; i < vawb_tn; i++) printf(" %x", vawb_tbuf[i]); printf("\n"); }
+#ifdef CTD_REF_INC
+	printf("ct_detect C vs OEM: %lu calls, %lu differ\n", ctd_n, ctd_bad);
+#endif
+#ifdef LA_REF_INC
+	printf("long_alogrithm C vs OEM: %lu calls, %lu differ\n", la_n, la_bad);
+#endif
 }
 
 #define VAWB_ONE (64 + 60328 + 4752 + 512 + 136 + 356)
