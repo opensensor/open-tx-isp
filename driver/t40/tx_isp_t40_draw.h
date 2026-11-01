@@ -86,6 +86,39 @@ static inline u32 t40_mask_en_word(const u8 *state)
 	return w;
 }
 
+/* OEM tisp_g_mscaler_mask_attr: 3 output channels x 4 units; state unit = 16 bytes at +36 (enable), +38 top... */
+static inline void t40_mask_get_state(const u8 *state, u8 *user)
+{
+	unsigned ch, unit;
+
+	for (ch = 0; ch < 3; ch++, state += T40_DRAW_CH_BYTES, user += 96) {
+		for (unit = 0; unit < 4; unit++) {
+			const u8 *s = state + unit * 16;
+			u8 *d = user + unit * 24;
+
+			if (s[36] == 1) {
+				u32 c = t40_dr_u32(s + 48);
+
+				d[0] = 1;
+				t40_dr_w16(d + 2, t40_dr_u16(s + 40));
+				t40_dr_w16(d + 4, t40_dr_u16(s + 38));
+				t40_dr_w16(d + 6, t40_dr_u16(s + 42));
+				t40_dr_w16(d + 8, t40_dr_u16(s + 44));
+				d[0x13] = (u8)(c >> 16);
+				d[0x14] = (u8)(c >> 8);
+				d[0x15] = (u8)c;
+			} else {
+				d[0] = 0;
+				t40_dr_w16(d + 2, 0);
+				t40_dr_w16(d + 4, 0);
+				t40_dr_w16(d + 6, 0);
+				t40_dr_w16(d + 8, 0);
+				d[0x13] = d[0x14] = d[0x15] = 0;
+			}
+		}
+	}
+}
+
 typedef void (*t40_draw_sink)(void *ctx, u32 value, u32 addr);
 
 static inline s32 t40_dr_abs16(s32 v)

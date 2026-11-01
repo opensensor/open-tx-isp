@@ -114,6 +114,32 @@ int main(void)
 		st[i] = 0;
 	put16(st + 0x26, 0xffff);                      /* position bits of a disabled unit */
 	assert(t40_mask_en_word(st) == 0);
+
+	/* tisp_g_mscaler_mask_attr: the set copy of output channel 1 / unit 2 comes back as it was set, nothing leaks */
+	{
+		u8 mu[288], mo[288];
+
+		memset(st, 0, sizeof st);
+		memset(mu, 0, sizeof mu);
+		memset(mo, 0xa5, sizeof mo);
+		st[616 + 2 * 16 + 36] = 1;
+		put16(st + 616 + 2 * 16 + 40, 11); put16(st + 616 + 2 * 16 + 38, 22);
+		put16(st + 616 + 2 * 16 + 42, 33); put16(st + 616 + 2 * 16 + 44, 44);
+		put32(st + 616 + 2 * 16 + 48, 0x112233);
+		t40_mask_get_state(st, mo);
+		memset(mu, 0, sizeof mu);
+		mu[96 + 2 * 24] = 1;
+		put16(mu + 96 + 2 * 24 + 2, 11); put16(mu + 96 + 2 * 24 + 4, 22);
+		put16(mu + 96 + 2 * 24 + 6, 33); put16(mu + 96 + 2 * 24 + 8, 44);
+		mu[96 + 2 * 24 + 0x13] = 0x11; mu[96 + 2 * 24 + 0x14] = 0x22; mu[96 + 2 * 24 + 0x15] = 0x33;
+		/* every field the OEM fills: compare those bytes only */
+		for (i = 0; i < 12; i++) {
+			const u8 *a = mo + i * 24, *b = mu + i * 24;
+
+			assert(a[0] == b[0] && !memcmp(a + 2, b + 2, 8) && !memcmp(a + 0x13, b + 0x13, 3));
+		}
+		assert(mo[1] == 0xa5 && mo[287] == 0xa5);      /* bytes the OEM does not write stay as they were */
+	}
 	puts("tx_isp_t40_draw_test: ok");
 	return 0;
 }

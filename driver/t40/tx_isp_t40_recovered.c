@@ -156022,61 +156022,10 @@ tisp_s_mscaler_mask_attr0xf4:
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000073324 origin=model_output original=tisp_g_mscaler_mask_attr */
 int32_t tisp_g_mscaler_mask_attr(int32_t arg1, char *arg2)
 {
-    int16_t *i;
-    int16_t *i_1;
-    char *v0_1;
-    int32_t j;
-    int32_t t0 = 1;
-    int32_t *t2 = 4;
-    int16_t *limit;
-
-    if (arg1 == 0) {
-        i = mscaler_s0;
-    } else {
-        i = mscaler_s1;
-    }
-    limit = i + 924;  /* 0x39c bytes = 462 int16_t elements... wait, let me recalculate */
-
-    /* Actually, looking at assembly: t1 = v1 + 1848, and v1 is the pointer */
-    /* 1848 bytes = 924 int16_t elements if we're counting bytes */
-    /* But the loop increments i by 0x134/2 = 154 int16_t elements each iteration */
-    /* Let me use the byte offset directly */
-    limit = (int16_t *)((char *)i + 1848);
-
-    while ((char *)i != (char *)limit) {
-        v0_1 = arg2;
-        i_1 = i;
-
-        for (j = 0; j != t2; ) {
-            if (i_1[0x12] != t0) {
-                ((void **)v0_1)[0] = 0;
-                ((int16_t *)v0_1)[1] = 0;
-                ((int16_t *)v0_1)[2] = 0;
-                ((int16_t *)v0_1)[3] = 0;
-                ((int16_t *)v0_1)[4] = 0;
-                ((void **)v0_1)[0x13] = 0;
-                ((void **)v0_1)[0x14] = 0;
-                ((void **)v0_1)[0x15] = 0;
-            } else {
-                ((void **)v0_1)[0] = t0;
-                ((int16_t *)v0_1)[1] = i_1[0x14];
-                ((int16_t *)v0_1)[2] = i_1[0x13];
-                ((int16_t *)v0_1)[3] = i_1[0x15];
-                ((int16_t *)v0_1)[4] = i_1[0x16];
-                ((void **)v0_1)[0x13] = (uint8_t)i_1[0x19];
-                ((void **)(uintptr_t)v0_1)[0x14] = (uint8_t)((uint32_t)i_1[0x30] >> 8);
-                ((void **)v0_1)[0x15] = (uint8_t)i_1[0x30];
-            }
-
-            j += 1;
-            i_1 = &i_1[8];
-            v0_1 = &v0_1[0x18];
-        }
-
-        i = &i[0x134 / 2];
-        arg2 = &arg2[0x60];
-    }
-
+    /* Rewritten from the OEM (Eufy tx-isp-t40.ko tisp_g_mscaler_mask_attr @0x83d44), #186: the lift stored 4-byte words at
+     * x4 offsets (a store past the 288-byte buffer on the last units) and read the colour from the wrong state offset;
+     * GetMask of output channel 1 came back empty. */
+    t40_mask_get_state((const u8 *)(arg1 ? (void *)mscaler_s1 : (void *)mscaler_s0), (u8 *)arg2);
     return 0;
 }
 
