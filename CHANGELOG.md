@@ -4,6 +4,12 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+
+## 2026-11-03, T41 ISP-device ioctls: LDC/GPIO vendor no-op, StartNightMode and WDR_OPEN as the stock module (Lu-Fi/openimp#75 #171)
+
+- LDC (0xc0045479..7b, `ISP_LDC_INIT`, `ISP_LDC_Get/SetAttr`) and GPIO (0xc004548e/f, `ISP_SET_GPIO_INIT_OR_FREE`, `ISP_SET_GPIO_STA`) now return 0 without any effect like the OEM 1.2.5 module, which has no handler for them (was -ENOTTY). This is a vendor no-op, not a working LDC or GPIO function.
+- `ISP_StartNightMode` (0xc004542e) stores the night-start word (10 at core + 0x1d4 + 4 * vinum, vinum 0..2 checked) that the next first ISP tuning open consumes; `ISP_WDR_OPEN` (0xc004548d) stores the non-zero WDR mode byte and refuses mode 0 with -EFAULT as stock. Host test `tx_isp_t41_devioctl_test`; QEMU T41 `t41isp` with `APITEST_RISKY=1`: PASS, 0 oopses.
+
 ## 2026-11-03, T40 GIB DEIR LUT base fixed, Unicorn checks for the GIB and LSC C (Lu-Fi/openimp#85, host only)
 
 - **Real bug found by the new GIB check:** `tisp_gib_write_reg` wrote the DEIR LUT (RGB-IR matrix, only when the sensor's IR mode is on) of the main channel to 0x50170 and of the second channel to 0x50140. The OEM does it the other way round (main 0x50140, second 0x50170). Not visible on the Eufy (GIB runs only with `t40_gates_oem_offset=1`, and the sc830ai is no IR sensor), fixed.
