@@ -4,11 +4,19 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
-
 ## 2026-11-03, T41 ISP-device ioctls: LDC/GPIO vendor no-op, StartNightMode and WDR_OPEN as the stock module (Lu-Fi/openimp#75 #171)
 
 - LDC (0xc0045479..7b, `ISP_LDC_INIT`, `ISP_LDC_Get/SetAttr`) and GPIO (0xc004548e/f, `ISP_SET_GPIO_INIT_OR_FREE`, `ISP_SET_GPIO_STA`) now return 0 without any effect like the OEM 1.2.5 module, which has no handler for them (was -ENOTTY). This is a vendor no-op, not a working LDC or GPIO function.
 - `ISP_StartNightMode` (0xc004542e) stores the night-start word (10 at core + 0x1d4 + 4 * vinum, vinum 0..2 checked) that the next first ISP tuning open consumes; `ISP_WDR_OPEN` (0xc004548d) stores the non-zero WDR mode byte and refuses mode 0 with -EFAULT as stock. Host test `tx_isp_t41_devioctl_test`; QEMU T41 `t41isp` with `APITEST_RISKY=1`: PASS, 0 oopses.
+
+## 2026-11-03, review follow-up: Unicorn oracle SKIP made visible, stale probe parameters removed, #189 retyping cross-checked (host only)
+
+- **Oracle SKIP is loud:** `make -C tests check` ends with `!!!! N oracles SKIPPED (...)` naming every host check that printed `SKIP` (it still counts as passed, so the default flow works without vendor files). New `make -C tests check-oracles` runs the eight Unicorn / vendor-data checks with `T40_ORACLE_STRICT=1`: a SKIP is a failure. Inputs and how to set them: `tests/README.oracles.md`.
+- `t40_vct_host` could not build any more (the AWB C helpers it pulls in need `likely()` and the fix-point functions; `-I` for the driver directory was missing). Fixed; it needs the `.data` of the exact vendor module it was written for (0x2e640 bytes) and says so when the file is too short.
+- `t40_tstp_host` no longer carries a local path default for the vendor firmware archive; without `T40_OEM_FW` it prints a NOTE instead of silently skipping the disassembly comparison.
+- `tools/t40_safe_qbuf_dump_probe.sh`, `t40_stats_boot_diff.sh`, `t40_forensic_capture.sh`: removed the module parameters that no longer exist (`enable_clm`, `clm_ct`, `clm_stage_limit`, `clm_defer_trig`, `enable_oem_isr_lit`, `oem_isr_lit_cut`, and the read-backs `clm_*` / `isp_block_init_clm_ret`), so the probe no longer passes values the kernel ignores.
+- #189 retyping (72dcca5a, 71 functions): old and new `tx_isp_t40_recovered.c` compiled with the T40 kernel flags and compared function by function (155 functions differ in code): against the vendor module, 54 move closer (offsets and strides now equal the vendor's, e.g. `ispcore_core_ops_ioctl` +60/+124/+4, `tisp_ae_api_set_exp_list` stride 16, `tiziano_adr_algorithm` 35 -> 166 instructions, vendor 185), 70 are identical in effect, 3 are lower-scoring on this metric for known reasons (`tisp_csc_get_attr` reads the driver state by design; `tisp_ae_api_set_exp_list` is the corrected stride; `tisp_wdr_direct_reg_refresh` loses its `tisp_wdr_log2` calls because that lifted function ends in `return 0` instead of the log2 in `v0` (vendor 0x39e74), so the compiler now folds it: pre-existing lift defect, WDR path only, open).
+- Public docs: streamer names and the vendor SDK package name removed from this changelog and the T23 sources.
 
 ## 2026-11-03, T40 GIB DEIR LUT base fixed, Unicorn checks for the GIB and LSC C (Lu-Fi/openimp#85, host only)
 
@@ -82,7 +90,7 @@ marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned 
 
 ## 2026-11-02, T23 lifted-code triage against the vendor T23 module (Lu-Fi/openimp#189 pass 5, host and compile, camera-tested on T23 for the default path only)
 
-- Compared with the vendor ISVP-T23-1.3.0 `tx-isp-t23.ko` (local Ghidra project, nothing vendor copied): `ispcore_core_ops_ioctl` is now a hand-written event walk (`tx_isp_t23_core_ioctl.h`, host test `tx_isp_t23_core_ioctl_test`; the lifted version had no third argument and walked the sub-device table with typed-pointer strides), `jz_isp_ccm` (lost `movz` and skip branch, index/offset registers retyped) and `tisp_ae_mean_update` (offset registers retyped). The latter two run only with the module parameters `source_core_start=0`.
+- Compared with the vendor T23 module 1.3.0 `tx-isp-t23.ko` (local analysis, nothing vendor copied): `ispcore_core_ops_ioctl` is now a hand-written event walk (`tx_isp_t23_core_ioctl.h`, host test `tx_isp_t23_core_ioctl_test`; the lifted version had no third argument and walked the sub-device table with typed-pointer strides), `jz_isp_ccm` (lost `movz` and skip branch, index/offset registers retyped) and `tisp_ae_mean_update` (offset registers retyped). The latter two run only with the module parameters `source_core_start=0`.
 - Scanner: the indented closing brace of `printf` made every prototype below it a reachability root; fixed, so `open` now means reachable. The 22 reachable T23 entries were triaged (3 fixed, 19 dead because the hand-written layer replaces them or nothing dispatches them), unlinked entries are `dead`. Camera (T23, default image, full OTA): apitest all areas PASS 420 / FAIL 11 (previous image, same session: 399 / 32; no function worse), 6/6 module reload cycles, RTSP, stream and day/night cycles clean, oops 0. `jz_isp_ccm` / `tisp_ae_mean_update` are reached only with the bring-up parameter `source_core_start=0`; that mode resets the camera within seconds on this tree and on its parent alike, so those two fixes have no camera-verified effect.
 
 ## 2026-11-02 (night), T40 custom AE/AWB results reach the sensor and the white balance (Lu-Fi/openimp#65, camera-tested on T40: exposure and colour follow the library)
@@ -111,7 +119,7 @@ marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned 
 ## 2026-11-01, T40 module size: opt-in colour chains and bring-up parameters out of the default build (Lu-Fi/openimp#85, camera-tested on T40)
 
 - `TX_ISP_T40_VCT=y` (Kbuild, default off) builds the translated OEM CT/EV colour chains (`t40_ct_chains=1`, opt-in, never device-tested, 0 hits in QEMU coverage); without it `t40_ct_chains` is the constant 0 and the literal/C follow-ups run as before. `t40_ct_top` / `t40_ct_top_apply` stay. `tests/t40_vct_host.sh` keeps testing the chain on the host.
-- 49 parameters that no doc, test, tool, OpenIMP, timps or firmware file uses moved behind `TX_ISP_T40_BRINGUP_PARAMS` (variables keep their defaults; list in `docs/SIZE.md`). One of them, `t40_module_ctx_inits` (default 0), was the only way into the lifted gamma/LSC/CCM/BCSH/CLM main inits, which leave the default build with it.
+- 49 parameters that no doc, test, tool, OpenIMP or firmware file uses moved behind `TX_ISP_T40_BRINGUP_PARAMS` (variables keep their defaults; list in `docs/SIZE.md`). One of them, `t40_module_ctx_inits` (default 0), was the only way into the lifted gamma/LSC/CCM/BCSH/CLM main inits, which leave the default build with it.
 - Module (stripped, `TX_ISP_LOAD_STATS=y` image build): 1,221,560 -> 1,075,212 bytes (-146 KB), xz 339,580 -> 302,692 (-37 KB), `.text` 765,612 -> 638,372, `.modinfo` 14,272 -> 11,928, loaded size 1,836,704 -> 1,706,048; `.bss` -80 and `.data` -48 bytes (removed parameter variables), `.t40c2` unchanged.
 - Coverage leg (QEMU T40, translated-block log): apitest areas sys/fs/osd/ivs/isp/su/cases plus t40dev on top of the earlier stream/day-night/image-control workload reach 101 more functions (33 KB); 542 functions (329 KB of the old build, including the 118 KB chain above) stay unexecuted. The other lifted twins the plan listed (BCSH/CCM/gamma/LSC event and API bodies) are still referenced at run time (event callbacks registered in `tisp_stream_on`, gamma Set/Get, the documented `t40_csc_unsafe` and fallback switches) and stay until their chains are rewritten in C.
 - Proof: host `make -C tests check` 124 passed / 0 failed; QEMU (debug kernel, slub_debug, one CPU) 5 load/stream/unload cycles, same result as the unchanged module (only the known core-mm slab noise, no driver cache hit), plus 5 reload cycles with snapshot 200 and 0 oopses. Camera (Eufy T40XP, image agg65n = agg65m with only this module changed): apitest all areas PASS 398 / FAIL 0 and t40dev 82 / 0 (as agg65m), 6 planned reload cycles clean, 0 oopses; night picture A/B in the same scene with module swaps agg65n -> agg65m -> agg65n: after the same reload both modules settle at the same AE step (again 2864, ISP dgain 1024, EV 5034) with luma 118.4 / 118.4, p1/p50/p99 16/103/255 and frame noise 1.02 identical, edge 3.43 / 3.41; the first agg65n sample (taken after the reload cycles) sat on a lower AE step (again 2416, ISP dgain 1109: luma 120.4, edge 3.83), the same module later reached the 2864 step, so that difference is the AE starting point, not the change. Day picture not compared (light off).
@@ -183,7 +191,7 @@ marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned 
 
 ## 2026-11-01, T40 clock teardown at module exit (`claude/issue-152`)
 
-- **T40 ISP/CSI clocks gated at rmmod (#152, QEMU + device):** the open driver enabled `gate_isp`, `div_isp`, `gate_csi` and `gate_ahb0` at ISP/CSI activation but never released them (the default `t40_rmmod_skip_slake=1` skips `ispcore_slake_module`, and the tree-build `isp_subdev_release_clks` only dropped the handles), so every load added one enable and the ISP clock (CLKGR bit 23) stayed on after rmmod. The OEM gates them in `tx_isp_subdev_deinit` -> `isp_subdev_release_clks` (`clk_disable_unprepare` + `devm_clk_put`, core remove first). The open driver counts each successful `private_clk_prepare_enable` per clock name (the sensor modules' MCLK enable goes through the same exported function) and `tx_isp_t40_core_exit` releases what is still counted after the last child remove: the CSI remove still writes registers behind the ISP clocks, which is why gating inside the core remove (the OEM order, and what hung the camera with the slake) is avoided. The sensor modules stop their own MCLK in their remove, as on stock. QEMU (ingenic-t40): 22+ load/unload cycles with `timpsd` running, clock counts back to `gate_isp=0 div_isp=0 gate_csi=0` and CLKGR bits 23/24 set after every rmmod (stock driver: counts stayed raised and grew by one per load), 0 oopses. Guard: `tests/check_t40_clk_teardown.sh`, loop script `tests/t40_qemu/clk_reload_cycle.sh`.
+- **T40 ISP/CSI clocks gated at rmmod (#152, QEMU + device):** the open driver enabled `gate_isp`, `div_isp`, `gate_csi` and `gate_ahb0` at ISP/CSI activation but never released them (the default `t40_rmmod_skip_slake=1` skips `ispcore_slake_module`, and the tree-build `isp_subdev_release_clks` only dropped the handles), so every load added one enable and the ISP clock (CLKGR bit 23) stayed on after rmmod. The OEM gates them in `tx_isp_subdev_deinit` -> `isp_subdev_release_clks` (`clk_disable_unprepare` + `devm_clk_put`, core remove first). The open driver counts each successful `private_clk_prepare_enable` per clock name (the sensor modules' MCLK enable goes through the same exported function) and `tx_isp_t40_core_exit` releases what is still counted after the last child remove: the CSI remove still writes registers behind the ISP clocks, which is why gating inside the core remove (the OEM order, and what hung the camera with the slake) is avoided. The sensor modules stop their own MCLK in their remove, as on stock. QEMU (ingenic-t40): 22+ load/unload cycles with the streaming application running, clock counts back to `gate_isp=0 div_isp=0 gate_csi=0` and CLKGR bits 23/24 set after every rmmod (stock driver: counts stayed raised and grew by one per load), 0 oopses. Guard: `tests/check_t40_clk_teardown.sh`, loop script `tests/t40_qemu/clk_reload_cycle.sh`.
 
   Device proof (Eufy T40, image agg65d = next + this change, full OTA): snapshot 200, 0 oopses; apitest all areas plus t40dev PASS 398 / FAIL 0; 6 planned reload cycles of `tx_isp_t40` + sensors on a fresh boot: after every ISP rmmod `div_isp=0 gate_isp=0 gate_csi=0` in `/proc/jz/clock/clocks` and CLKGR 0x1F9F37C5 (ISP/CSI gates set), the sensor MCLK stopped by the sensor remove (CIM1 stop bit 27), counts back up on the reload, 0 oopses, streamer and snapshot 200 afterwards. Before the change the same camera showed `gate_isp=7 gate_csi=2 div_isp=8` after the earlier reload cycles (one leaked enable per load).
 
@@ -380,7 +388,7 @@ Issue numbers refer to https://github.com/Lu-Fi/openimp/issues. Device proof: T4
   place (`tools/t40_vawb/gen.sh`: VAE_STOP, adapter `vawb_s_tisp_awb_ct_detect`). Bit-exact: `tests/t40_vawb_host.sh`
   with `CTD_REF=f2c180f7` runs both on every call (2 device dumps, 30 x 1000 calls with random zone statistics and
   tuning switches: 0 differences); the replay of both device dumps stays identical to the device result.
-  Host: 660 -> 270 us per AWB process. QEMU T40 (Eufy image, timpsd, model AWB statistics): tisp-event-0 27.3 -> 8.0 ms
+  Host: 660 -> 270 us per AWB process. QEMU T40 (Eufy image, streaming application running, model AWB statistics): tisp-event-0 27.3 -> 8.0 ms
   CPU per AWB frame (-71 %), same CT (4996), no fault, no oops. Module text -65 KB. The periodic AWBCTD diag lines now
   need `enable_isp_3a_diag`.
 - tests: `t40_vawb_host.sh` and `t40_vct_host.sh` build again (BCSH symbols since the C BCSH chain); `REPS`/`CONSEC`
@@ -447,7 +455,7 @@ Issue numbers refer to https://github.com/Lu-Fi/openimp/issues. Device proof: T4
   (uninterruptible, the thread sat in D state and counted into the load average) and the loop retried an empty
   list after `msleep(1)`. The channel now has a wait queue: `tisp_event_push` wakes it after queueing the node
   (also from the ISR), the thread waits interruptibly for "list not empty or kthread_should_stop()" with a 1 s
-  safety timeout, and the 1 ms retry is gone. QEMU T40 (Eufy image, timpsd running, no ISP frames in the model):
+  safety timeout, and the 1 ms retry is gone. QEMU T40 (Eufy image, streaming application running, no ISP frames in the model):
   50 -> 1 wake-ups per second of tisp-event-0, state D -> S, no oops. The dispatch path with frames (event wake-up
   latency, AE/AWB per frame) still needs the .184.
 
@@ -513,7 +521,7 @@ Issue numbers refer to https://github.com/Lu-Fi/openimp/issues. Device proof: T4
 
 ## 2026-10-27 (5): T23 ISP-drawn OSD pictures appear in the picture (`claude/issue-127`; QEMU T23, .30)
 
-- **IMP_ISP_Tuning_SetOsdRgnAttr / ShowOsdRgn** (ISP OSD, raptor/prudynt) drew nothing on the T23 (issue #127):
+- **IMP_ISP_Tuning_SetOsdRgnAttr / ShowOsdRgn** (ISP OSD, applications using the IMP API) drew nothing on the T23 (issue #127):
   SetOSDAttr / SetOSDBlock (0x08000181/182) were stored in the mscaler object, but nothing wrote them into the
   MSCA. The core frame-done interrupt now does what stock `ispcore_irq_thread_handle -> tisp_msca_Shd_ctrl ->
   tisp_msca_set_omi_api -> tisp_msca_api_set_osd` does: (value, register) pairs on the MSCA shadow port 0xe004
@@ -662,7 +670,7 @@ Issue numbers refer to https://github.com/Lu-Fi/openimp/issues. Device proof: T4
   read-back (GetSensorFPS reports the sensor's own rate again).
 - AF buffer pick: newest buffer whose 15 row trailers all carry the same counter (the hardware writes rows in order;
   picking by the first row hit the buffer in progress and returned zeros 40 % of the time on the first device run).
-- Device (.184 sc830ai, test ko next to timps, 2026-10-26 16:2x): GetRgbCoefft x100 1024/1024/1024, Set 1040/1024/1032
+- Device (.184 sc830ai, test ko next to the streaming application, 2026-10-26 16:2x): GetRgbCoefft x100 1024/1024/1024, Set 1040/1024/1032
   read back equal and restored; GetAfStatistics x100 all non-zero (Fir0 mean ~3000, YSum mean ~50000), GetAFMetricesInfo
   x100 metric 448425..1674000, frame counter advancing; SetSensorFPS(20/1 current) x100 ret 0; apitest sys,fs,enc,isp
   PASS 187 FAIL 0; 0 oops.
@@ -680,7 +688,7 @@ Issue numbers refer to https://github.com/Lu-Fi/openimp/issues. Device proof: T4
   (hardware OSD on output 0 only, as the vendor's one ISPOSD channel). A B,G,R,A byte bitmap needs component order
   ARGB (0); BGRA (13) takes byte 0 as the alpha. README "ISP OSD".
 
-## 2026-10-26 (7): T40 AE tuning API on the frame-3A AE (`claude/t40-ae-api`; host test, .184 under timps)
+## 2026-10-26 (7): T40 AE tuning API on the frame-3A AE (`claude/t40-ae-api`; host test, .184 under the streaming application)
 
 - **GetAeStatistics** returns the hardware AE statistics with the OEM arithmetic (`tisp_ae_main_long_process_api`):
   256-bin histogram = hardware bins x4 with bin 0 the rest of width x height (sum 8294400 at 3840x2160), 5-bin
@@ -702,20 +710,20 @@ Issue numbers refer to https://github.com/Lu-Fi/openimp/issues. Device proof: T4
   reaches one (2250 lines x 20 fps: 450 @ 50 Hz, 375 @ 60 Hz), NORMAL never below one period. Only the
   application's own SetAntiFlickerAttr (50/60 Hz) counts: the Eufy tuning bin's default (AUTO 60 Hz) does not, and
   the streamer's early request (cached before the AE context exists) is recorded at the ioctl, so it is no longer
-  lost - on next GetAntiFlickerAttr read back the bin's AUTO/60 although timps sets NORMAL/50. .184 with timps
+  lost - on next GetAntiFlickerAttr read back the bin's AUTO/60 although the application sets NORMAL/50. .184 with the streaming application
   (image.anti_flicker = 1): readback NORMAL/50, IT 1800 = 4 x 450. Picture A/B under the 50 Hz LED cellar light
   (8 snapshots each): no banding difference (row-mean residual 6.20 next, 6.31 50 Hz, 6.29 60 Hz, 6.28 off),
   noise 5.6/5.5/5.5/5.5. `t40_ae_af_enable=0` switches it off.
 - All new state in `.t40c2` (a first build with ~5 KB new `.bss` delivered no frames). Diagnostic parameter
   `t40_ae_api`. Host test `tests/tx_isp_t40_ae_api_test` (5-bin histogram against an instruction transcription of
   the OEM loop, 2000 random cases; comp factor for all 256 values; layouts).
-- .184 (timps streaming, `t40_aetune` beside it): stats sum 8294400 / 255 bins / 5-bin sum 65535 / zones 3..159;
+- .184 (streaming application running, `t40_aetune` beside it): stats sum 8294400 / 255 bins / 5-bin sum 65535 / zones 3..159;
   histThresh 32/64/96/128 moves bin 4 to the value computed from the 256 bins; ExprInfo canary intact, EV = IT x AG x
   ISPDG; comp 60 -> target 57, AE lowers gain and IT; comp 200 raises; BLC 10 metered 98 vs mean 129 (AE brightens),
   HLC 10 metered 147 vs 119 (AE darkens); manual IT 937 held; freeze holds IT/AG through a comp change; min AG 8x ->
   gain index 13; top/bottom weights meter 129/111; speed 16 vs 1024: luma change 1 s after comp 60 2 vs 51; antiflicker
   50 Hz IT 1800 (4 x 450), 60 Hz IT 1500 (4 x 375); 0 oops. Not device-proved: the devtest's own pipeline delivered no
-  frames today (also with next), and the frame-3A AE samples only ~0.4/s under timps (stock too), so convergence
+  frames today (also with next), and the frame-3A AE samples only ~0.4/s under the streaming application (stock too), so convergence
   takes far longer than the vendor's 2-3 s (separate item).
 
 ## 2026-10-26 (6): T32 S3: VIC/CSI from the sensor attributes, sensor frame rate, channels 1 and 2, stream-on register list (`claude/t32-s3`; QEMU-tested only, not on a camera)
@@ -751,7 +759,7 @@ Issue numbers refer to https://github.com/Lu-Fi/openimp/issues. Device proof: T4
 
 ## 2026-10-26 (5): T41 night AE vs vendor, analysis only (`claude/t41-night-ae`; no code change, .32 run open32n1026k0)
 
-- Same translated vendor AE on both stacks; undisturbed night state open 2092 lines / AGain 1536 / ISP dgain ~1.0 (1.50x) vs vendor 2092 / 1312 / 1176 (1.47x): +0.03 EV, luma 102 vs 99. The vendor reference's 1x AGain samples and its low-gain MDNS/SDNS/YSP registers come from the vendor image's timps running with `fs_keepalive` off: every FrameSource enable restarts the vendor AE at 1x, and its dumps were taken with the pipeline idle. With `fs_keepalive=0` the open stack keeps AGain 1536 across every cycle (no restart from 1x). The night edge gap is therefore not an AE target/allocation difference; a valid A/B needs the vendor run with keepalive on.
+- Same translated vendor AE on both stacks; undisturbed night state open 2092 lines / AGain 1536 / ISP dgain ~1.0 (1.50x) vs vendor 2092 / 1312 / 1176 (1.47x): +0.03 EV, luma 102 vs 99. The vendor reference's 1x AGain samples and its low-gain MDNS/SDNS/YSP registers come from the vendor image's streaming application running with `fs_keepalive` off: every FrameSource enable restarts the vendor AE at 1x, and its dumps were taken with the pipeline idle. With `fs_keepalive=0` the open stack keeps AGain 1536 across every cycle (no restart from 1x). The night edge gap is therefore not an AE target/allocation difference; a valid A/B needs the vendor run with keepalive on.
 
 ## 2026-10-26 (4): T40 BCSH in plain C instead of the literal mips2c chain (`claude/t40-bcsh-c`; host bit-exact, QEMU reload x5, .184 registers and picture equal to next)
 
@@ -826,7 +834,7 @@ Ported from the 7.2 bring-up (`k72-warn`), only the parts that are valid on 3.10
 
 - **`tx_isp_sinfo`**: the vendor proc files are removed (`remove_proc_subtree`, silent when absent) before `proc_create_data`, so a second publish no longer triggers "proc_dir_entry already registered".
 - **`tx_isp_v4l2_sensor` (T31 bridge, kernel >= 5.0 only; not compiled on 3.10/4.4)**: the sensor's `s_stream` is tracked and kept paired (a stop without a start, or a double start, no longer reaches the sensor driver; 7.x warns about it).
-- Device test (T31L .26, agg46, 3.10): test ko reloaded 2x, 5x timps restart, 2x day/night, 5 min stream (10 snapshots): every snapshot 200, 0 oops/WARNING, no "already registered", stock ko restored. The s_stream pairing is >=5.0 only: device test on 7.2 pending.
+- Device test (T31L .26, agg46, 3.10): test ko reloaded 2x, 5x application restart, 2x day/night, 5 min stream (10 snapshots): every snapshot 200, 0 oops/WARNING, no "already registered", stock ko restored. The s_stream pairing is >=5.0 only: device test on 7.2 pending.
 - **Not ported**: the IRQ-depth change in `tx_isp_enable_irq` (it was reverted on the 7.2 branch because it kept the ISP IRQ masked, no frames).
 - Compiler warnings: unchanged on T21/T23/T30/T31/T40/T41 (3.10/4.4 builds) and on the 7.2 T31 objects touched; T10/T20 cannot be built here (external/ingenic-sdk not populated).
 
@@ -853,7 +861,7 @@ First run of the recovered T30 driver on the QEMU `ingenic-t30` machine with the
 - **T23: `mdns_ref_hold` (0644, default 0 = unchanged behaviour, no cost).** The MDNS reference weight words (`0x799c` luma, `0x7a6c` chroma) are recomputed on every gain step; a user of the reference plane (OpenIMP test pattern mode 5 writes a picture into it) lost 3 % of its frames to the rewrite between its own register writes. With bit 0 set the writers emit `0x00FFFFFF` (reference weight 1.0) instead of the computed word, and setting the parameter rewrites the words at once (clearing it restores the computed values). Bits 1 and 2 additionally hold the fake/mv words (`0x7998`, `0x7a68`) and the r_max/r_min words (`0x79a0`, `0x7a70`); on the device they did not help (chroma slightly worse), so they are experiments only. Device (.30, test ko by rmmod/insmod, OpenIMP mode 5): luma SSIM vs the ideal picture mean 0.967 / min 0.9666 / p1 0.9666 over 100 frames, no dips (without the hold: mean 0.943, 3 % of frames ~0.4); 5 on/off cycles clean, registers back to the computed words, 0 new oops, stock ko restored afterwards. Chroma SSIM only +0.04 over the live picture (U 0.816 / V 0.843 vs 0.778 / 0.805); the C-block median limits, BGM, SAD thresholds and corner words (`0x7a74`, `0x7a80`, `0x7a64`, `0x7a04`) were tried by register and did not purify it. Host test `tests/tx_isp_t23_mdns_hold_test`.
 ## 2026-10-25 (5): T40 colour after night->day fixed; DMSC follows the bank in day by default (`claude/t40-sharp1025`; .184)
 
-- **T40: grey/green-magenta day picture after a night->day switch fixed (`t40_dn_keep_awb1`, default 1).** The sc830ai night bank bypasses AWB1 (TOP 0x40 bit 6), the day bank enables it. Re-enabling AWB1 on the running pipe left the day picture nearly grey with green/magenta hues in about half of the switches (HSV S 11 instead of 40, chart chroma 0.39 instead of 1.07), on stock as well and on the CLI `daynight` and the timps `running_mode` path alike, until a later TOP change happened to heal it. On .184 a bare devmem toggle of bit 6 reproduced it 5 of 10 times, toggles of other bits never; ISP register contents were not the cause (identical colour registers, no single block restored it), a TOP write at a frame end did not help (7/15). The driver now keeps AWB1 at its day-bank state through the night: 0 of 32 night->day switches bad (before 15 of 27), night stays monochrome, lit night luma unchanged (122.1 / 122.2). `t40_dn_keep_awb1=0` follows the night bank again.
+- **T40: grey/green-magenta day picture after a night->day switch fixed (`t40_dn_keep_awb1`, default 1).** The sc830ai night bank bypasses AWB1 (TOP 0x40 bit 6), the day bank enables it. Re-enabling AWB1 on the running pipe left the day picture nearly grey with green/magenta hues in about half of the switches (HSV S 11 instead of 40, chart chroma 0.39 instead of 1.07), on stock as well and on the CLI `daynight` and the application's `running_mode` path alike, until a later TOP change happened to heal it. On .184 a bare devmem toggle of bit 6 reproduced it 5 of 10 times, toggles of other bits never; ISP register contents were not the cause (identical colour registers, no single block restored it), a TOP write at a frame end did not help (7/15). The driver now keeps AWB1 at its day-bank state through the night: 0 of 32 night->day switches bad (before 15 of 27), night stays monochrome, lit night luma unchanged (122.1 / 122.2). `t40_dn_keep_awb1=0` follows the night bank again.
 - **T40: `t40_dmsc_day_follow` now defaults to 1.** The literal DMSC chain runs in day mode as on the vendor stack. .184 light 255/3649K, fresh load: day edge energy 4.22 -> 4.95 (+17 %), chart chroma 1.06 -> 1.05, dE00 5.7 -> 5.4; in the later scene stock 3.41-3.68 vs 4.59 (vendor/open stock ratio on 10-24 was 1.22). The 10-24 "chroma 0.38" against it was the AWB1 bug above. Both new parameters live in the `.t40c2` section.
 
 ## 2026-10-25 (4): T40 8-bit table interpolation rounds like the OEM; DMSC day follow option (`claude/t40-sharp1025`; host-tested, not yet on the device)
@@ -868,7 +876,7 @@ First run of the recovered T30 driver on the QEMU `ingenic-t30` machine with the
 
 ## 2026-10-25 (3): T40 SetISPRunningMode no longer reports a false error (`claude/t40-lit1025`; Eufy T40 device-tested on a test ko)
 
-- **T40: the running-mode ioctl returned the day/night refresh status (1) after a successful switch**, so libimp/timps logged `SetISPRunningMode(day) failed (rc=1)` on every day/night change although the mode was applied (isp-m0 and the kernel log showed the new mode). The ioctl now returns 0 unless the status is negative. Device (.184): running_mode 1 then 0 through the streamer, no `failed` line in the log, mode follows, 0 oops.
+- **T40: the running-mode ioctl returned the day/night refresh status (1) after a successful switch**, so libimp and the application logged `SetISPRunningMode(day) failed (rc=1)` on every day/night change although the mode was applied (isp-m0 and the kernel log showed the new mode). The ioctl now returns 0 unless the status is negative. Device (.184): running_mode 1 then 0 through the streamer, no `failed` line in the log, mode follows, 0 oops.
 
 ## 2026-10-25 (b): `t31_mxu2_cpm` parameter text reworded
 
@@ -892,7 +900,7 @@ Release note with the full per-SoC text: [OpenIMP docs/RELEASE_NOTES_RC2.md](htt
 
 ## 2026-10-25: T21 IRQ quiesce also parks the VIC (QEMU-tested, not yet on a camera)
 
-- **T21: reload after streaming no longer livelocks.** The first quiesce version (VIC mask 0xffffffff left in place, core mask restored) was not enough on QEMU: the VIC kept latching a frame-done status every frame after the previous load (the VIC command register +0x0 is never written on rmmod), the half-initialised handler never acked it, and the level IRQ still livelocked `request_irq` (soft lockup in `__do_softirq`, reload cycle 1..4). Now `isp-w02` is reset first (+0x0 = 2, the same value `tx_isp_vic_start` writes before 1), the status is acked, and the mask register is restored to its old value instead of being left at 0xffffffff (a permanently masked VIC delivers no frame IRQs). The core int enable (+0x80) stays 0 after the quiesce; the stream on/off path owns it (0x283f03ff / 0). QEMU T21 (PC420 image, jxf23): 10 reload cycles after timpsd had streamed, no lockup, no "nobody cared", ISP frame IRQ counter keeps rising after timpsd restart and a snapshot is served. T23 (Cinnado D1, sc2336) with the unchanged 5879744d quiesce: 10 cycles, no "nobody cared", counter rising.
+- **T21: reload after streaming no longer livelocks.** The first quiesce version (VIC mask 0xffffffff left in place, core mask restored) was not enough on QEMU: the VIC kept latching a frame-done status every frame after the previous load (the VIC command register +0x0 is never written on rmmod), the half-initialised handler never acked it, and the level IRQ still livelocked `request_irq` (soft lockup in `__do_softirq`, reload cycle 1..4). Now `isp-w02` is reset first (+0x0 = 2, the same value `tx_isp_vic_start` writes before 1), the status is acked, and the mask register is restored to its old value instead of being left at 0xffffffff (a permanently masked VIC delivers no frame IRQs). The core int enable (+0x80) stays 0 after the quiesce; the stream on/off path owns it (0x283f03ff / 0). QEMU T21 (PC420 image, jxf23): 10 reload cycles after the streaming application had streamed, no lockup, no "nobody cared", ISP frame IRQ counter keeps rising after the streaming application restarts and a snapshot is served. T23 (Cinnado D1, sc2336) with the unchanged 5879744d quiesce: 10 cycles, no "nobody cared", counter rising.
 
 ## 2026-10-24 (11): T40 night picture: DMSC follows the night bank and gain (`claude/t40-night-lift`; Eufy T40 device-tested on a test ko)
 
@@ -901,7 +909,7 @@ Release note with the full per-SoC text: [OpenIMP docs/RELEASE_NOTES_RC2.md](htt
 
 ## 2026-10-24 (11): QEMU findings: T40 ISR slot index, ISP IRQ quiesce on reload (`claude/qemu-fixes`; QEMU-tested, not yet on a camera)
 
-- **T40: the ISR frame-drain leg no longer reads a wild address.** `tx_isp_core_probe` fills each 216-byte frame slot with `+116 = idx % 3`, `+120 = idx / 3` (vendor `div` at 0x7a5d8); the lift dropped the division and stored the stale register (`&isp_core_tuning_init`, a module pointer) in both words. The ISR (`lw 0x17c(core + slot[+120]*96)`, vendor 0x7b550) then used the pointer as pipeline index and loaded from a wrapped address. QEMU delivers frame IRQs and bus-errors on the unmapped read (every run, ~57 s after timpsd start); real silicon returns junk for it, the value only fed a diagnostic word, which is why the Eufy never faulted. The index is now correct and clamped to 0..2 at the read. (The probe loop's `uint32_t *` counters still step in 4-byte units; only slot 0 is initialised for the Eufy, unchanged and noted for a later cleanup.)
+- **T40: the ISR frame-drain leg no longer reads a wild address.** `tx_isp_core_probe` fills each 216-byte frame slot with `+116 = idx % 3`, `+120 = idx / 3` (vendor `div` at 0x7a5d8); the lift dropped the division and stored the stale register (`&isp_core_tuning_init`, a module pointer) in both words. The ISR (`lw 0x17c(core + slot[+120]*96)`, vendor 0x7b550) then used the pointer as pipeline index and loaded from a wrapped address. QEMU delivers frame IRQs and bus-errors on the unmapped read (every run, ~57 s after the streaming application start); real silicon returns junk for it, the value only fed a diagnostic word, which is why the Eufy never faulted. The index is now correct and clamped to 0..2 at the read. (The probe loop's `uint32_t *` counters still step in 4-byte units; only slot 0 is initialised for the Eufy, unchanged and noted for a later cleanup.)
 - **T31/T23/T21: pending ISP interrupt at reload.** A VIC/ISP status bit latched by the previous stream fired into the freshly registered isp-w02 handler (T31/T23: "irq 38: nobody cared / Disabling IRQ #38", ISP IRQs dead until reboot; T21 in QEMU: soft lockup in `__do_softirq`). Mask + ack of the interrupt registers now runs before `request_irq` (T31/T23 VIC 0x1e8..0x1f4, T21 VIC 0x104/0x108 and core 0x80/0x88) and, on T31/T23, before the IRQ is freed.
 
 ## 2026-10-24 (10): T40 Temper ratio works, CSC follows the vendor flow (`claude/t40-csc-temper`; Eufy T40 device-tested on a test ko)
@@ -956,7 +964,7 @@ Release note with the full per-SoC text: [OpenIMP docs/RELEASE_NOTES_RC2.md](htt
 ## 2026-10-24 (8): T40 framechan freed when its client dies (`claude/t40-stability`; Eufy T40 device-tested on a test ko)
 
 - **No more "no video until reboot" after a crashed client on T40:** the framechan release only dropped the file pointer; the OEM release streams off and frees the queue. A client killed while streaming (kill -9, SIGSEGV inside libimp) left the channel flagged as streaming and every later STREAMON (`0xc0045457`) returned -EBUSY. The release now streams off and frees the buffers when the closing file is the one that started the stream / allocated the buffers (another opener closing its fd leaves a live stream alone); a failed streamoff still clears the stale flag.
-- Device proof (.184, test ko = wip-cells + next d1606e95 + this fix): stock agg43d after `kill -9 timpsd` + restart: snapshot 503, 8x STREAMON -16 in 20 s; test ko: kill -9, SIGSEGV, kill -9 again: timps back with snapshot 200 each time, 0x -16, 0 oops.
+- Device proof (.184, test ko = wip-cells + next d1606e95 + this fix): stock agg43d after `kill -9` of the streaming application + restart: snapshot 503, 8x STREAMON -16 in 20 s; test ko: kill -9, SIGSEGV, kill -9 again: application back with snapshot 200 each time, 0x -16, 0 oops.
 
 ## 2026-10-24 (7): T40 lifted-body crashes in the tuning controls (`claude/t40-wip-cells`; Eufy T40 device-tested on a test ko)
 
@@ -969,7 +977,7 @@ Release note with the full per-SoC text: [OpenIMP docs/RELEASE_NOTES_RC2.md](htt
 
 ## 2026-10-24 (8): T40 module size (`claude/t40-size2`; Eufy T40 device-tested)
 
-- **T40 module size:** bring-up parameters (340 experiment switches and diagnostic counters that no tool, script, document, OpenIMP, timps or thingino file uses; 288 parameters remain) and the legacy `/proc/tx_isp_t40_recovered` debug file (register dump, `exit N`, `dumplog`) are built in only on request: `TX_ISP_T40_BRINGUP_PARAMS=y`, `TX_ISP_T40_DEBUG_PROC=y` (Kbuild, default `n`). Stripped module 1557 -> 1445 KB, xz 431 -> 404 KB (.text 1023 -> 987, .rodata+strings 135 -> 103, .modinfo+__param 37 -> 16 KB). Variables keep their defaults, so behaviour is unchanged; passing a removed parameter to `insmod` only logs "unknown parameter ignored". Device (.184, test ko via the autostart swap, restored to stock agg43d afterwards): insmod OK, sc830ai probe, timps up, snapshot and 2 MB of stream, 0 oops/warn. Host: `make -C tests check` 95 passed.
+- **T40 module size:** bring-up parameters (340 experiment switches and diagnostic counters that no tool, script, document, OpenIMP or thingino file uses; 288 parameters remain) and the legacy `/proc/tx_isp_t40_recovered` debug file (register dump, `exit N`, `dumplog`) are built in only on request: `TX_ISP_T40_BRINGUP_PARAMS=y`, `TX_ISP_T40_DEBUG_PROC=y` (Kbuild, default `n`). Stripped module 1557 -> 1445 KB, xz 431 -> 404 KB (.text 1023 -> 987, .rodata+strings 135 -> 103, .modinfo+__param 37 -> 16 KB). Variables keep their defaults, so behaviour is unchanged; passing a removed parameter to `insmod` only logs "unknown parameter ignored". Device (.184, test ko via the autostart swap, restored to stock agg43d afterwards): insmod OK, sc830ai probe, application up, snapshot and 2 MB of stream, 0 oops/warn. Host: `make -C tests check` 95 passed.
 
 ## 2026-10-24 (7): T40 defog / LCE / DPC chains, GIB gain follow (`claude/t40-quality2`; Eufy T40 device A/B)
 
@@ -1012,7 +1020,7 @@ Release note with the full per-SoC text: [OpenIMP docs/RELEASE_NOTES_RC2.md](htt
 
 ## 2026-10-24 (2): T41 day/night switch without a stream consumer (`claude/t41-ab-fixes2`; device re-test pending)
 
-- **Day/night switch applied from the per-frame AE statistics interrupt:** the transition state machine (CSC fill, night/day parameter bank, TOP bypass) was stepped only from the frame-completion interrupt (status0 bit 0), which arrives while a consumer (stream, snapshot) is attached. On an idle camera a running-mode request flipped the readback at once but the bank switch waited 30..100 s for the next viewer (.32: dn-bank applies only at the snapshots; forced day left AWB at 5000 K and a red cast, timps logged "ISP did not follow the switch"). The AE statistics interrupt (bit 4) comes every frame without a consumer; `t41_dn_apply_ae_irq=0` restores the old trigger.
+- **Day/night switch applied from the per-frame AE statistics interrupt:** the transition state machine (CSC fill, night/day parameter bank, TOP bypass) was stepped only from the frame-completion interrupt (status0 bit 0), which arrives while a consumer (stream, snapshot) is attached. On an idle camera a running-mode request flipped the readback at once but the bank switch waited 30..100 s for the next viewer (.32: dn-bank applies only at the snapshots; forced day left AWB at 5000 K and a red cast, the application logged "ISP did not follow the switch"). The AE statistics interrupt (bit 4) comes every frame without a consumer; `t41_dn_apply_ae_irq=0` restores the old trigger.
 
 ## 2026-10-24: T41 A/B fixes against the vendor stack (`claude/t41-ab-fixes`; .32 gc5603 A/B, device re-test pending)
 
@@ -1059,7 +1067,7 @@ Commits by Paul Philippov from Lu-Fi/open-tx-isp#2, author kept; the AK Sharma c
 
 Commits by AK Sharma (fork AKoo7/open-tx-isp, `t31-6.12-port-v2`), author kept.
 
-- **T31 IRQ leak and double free after a failed core probe fixed (device-tested, T31L .29 sc2336, kernel 3.10.14):** `tx_isp_core_probe` freed the global `ourISPdev` on failure (then freed again by `tx_isp_exit`, IRQ never released); `tx_isp_subdev_init` returned straight out of the clock/pad failure paths and freed the IRQ with the wrong `dev_id`. Test: the shipped load order already fails the core probe benignly (`/dev/framechan0: -17`, pre-existing), i.e. the error path runs on every load; load, `rmmod`, reload, timps streaming, 0 oops/WARN, no ISP IRQ left after `rmmod`.
+- **T31 IRQ leak and double free after a failed core probe fixed (device-tested, T31L .29 sc2336, kernel 3.10.14):** `tx_isp_core_probe` freed the global `ourISPdev` on failure (then freed again by `tx_isp_exit`, IRQ never released); `tx_isp_subdev_init` returned straight out of the clock/pad failure paths and freed the IRQ with the wrong `dev_id`. Test: the shipped load order already fails the core probe benignly (`/dev/framechan0: -17`, pre-existing), i.e. the error path runs on every load; load, `rmmod`, reload, application streaming, 0 oops/WARN, no ISP IRQ left after `rmmod`.
 - **GC4653 sensor for T31 (`sensor-src/t31/gc4653.c`): builds on 3.10.14, untested on hardware** (no T31 camera with GC4653). The mainline mbus aliases in `sensor-common.h` are now behind `LINUX_VERSION_CODE >= 5.0` (they broke the 3.10 sensor build).
 - **Mainline 7.1/7.2 kernel-API adaptation merged with the k7-compat patch into one path** (`READ_ONCE/WRITE_ONCE`, `swait_active`, `.remove` void, `strlcpy`/`strncpy` shims, vendor clock-name aliases `cgu_isp->isp`, `csi->mipi_csi`, `cgu_cim->cim`, vendor-sized stand-in for the embedded `miscdevice` and no `spinlock_t` inside the OEM ABI window, no `__module_address`/`set_fs`/`__ioremap` in guard/trace). All behind `LINUX_VERSION_CODE`; the mainline path was **not build-tested** here (no 5.15+/7.x tree). 3.10.14 / 4.4.94 modules unchanged: `tx-isp-t31.ko` and `tx-isp-t23.ko` byte-identical, `tx-isp-t41.ko` identical apart from the git-describe string, `tx_isp_trace.ko` identical code (only srcversion).
 - Not taken: `5ebcfb14` (flat first-sensor symlinks; our vendor `/proc/jz/sensor` layout already provides the flat files) and the T41 AWB scene sampling `50f529f9`.

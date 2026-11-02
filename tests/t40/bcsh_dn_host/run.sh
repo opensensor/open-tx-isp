@@ -6,7 +6,7 @@ set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 if [ $# -eq 0 ]; then
 	BIN=${T40_TUNING_BIN:-$HERE/../../../external/ingenic-sdk/sensor-iq/t40/gc2053.bin}
-	[ -r "$BIN" ] || { echo "t40_bcsh_dn_host: SKIP (no T40 tuning bin: set T40_TUNING_BIN or init external/ingenic-sdk)"; exit 0; }
+	[ -r "$BIN" ] || { echo "t40_bcsh_dn_host: SKIP (no T40 tuning bin: set T40_TUNING_BIN or init external/ingenic-sdk)"; [ -z "$T40_ORACLE_STRICT" ] || exit 1; exit 0; }
 	set -- "$BIN"
 fi
 OUT=${TMPDIR:-/tmp}/t40_bcsh_dn_host.$$

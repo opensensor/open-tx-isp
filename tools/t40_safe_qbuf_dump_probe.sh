@@ -122,10 +122,6 @@ DMSC_STOCK_CURRENT_OVERLAY="${DMSC_STOCK_CURRENT_OVERLAY:-0}"
 DMSC_STOCK_HIGH_GAIN_OVERLAY="${DMSC_STOCK_HIGH_GAIN_OVERLAY:-0}"
 DMSC_STOCK_OVERLAY_MASK="${DMSC_STOCK_OVERLAY_MASK:-15}"
 BCSH_MODE="${BCSH_MODE:-2}"
-ENABLE_CLM="${ENABLE_CLM:-0}"
-CLM_STAGE_LIMIT="${CLM_STAGE_LIMIT:-0}"
-CLM_DEFER_TRIG="${CLM_DEFER_TRIG:-0}"
-CLM_CT="${CLM_CT:-5000}"
 ENABLE_MDNS="${ENABLE_MDNS:-1}"
 ENABLE_SDNS="${ENABLE_SDNS:-0}"
 # MDNS temporal-reference buffer. The old driver default (0x8000000) sits
@@ -179,8 +175,6 @@ AE_SENSOR_APPLY_FORCE_PACKED="${AE_SENSOR_APPLY_FORCE_PACKED:-0}"
 AE_SENSOR_APPLY_CLEAR_DIRTY="${AE_SENSOR_APPLY_CLEAR_DIRTY:-1}"
 AE_SENSOR_APPLY_MAX_AGAIN_INDEX="${AE_SENSOR_APPLY_MAX_AGAIN_INDEX:-25}"
 AE_SENSOR_APPLY_LOG_SKIPS="${AE_SENSOR_APPLY_LOG_SKIPS:-0}"
-ENABLE_OEM_ISR_LIT="${ENABLE_OEM_ISR_LIT:-0}"
-OEM_ISR_LIT_CUT="${OEM_ISR_LIT_CUT:-0}"
 LOG="${1:-logs/$(date +%Y%m%d-%H%M%S)-t40-safe-qbuf-dump-242}"
 
 if [[ "$IP" != "192.0.2.242" ]]; then
@@ -221,7 +215,7 @@ for numeric in TISP_MAIN_INIT_TOP40_VALUE TISP_MAIN_INIT_CSC_VERSION_VALUE \
 	ENABLE_AWB_REG_WRITES ENABLE_AWB_SET_GAIN ENABLE_AWB_GRAYWORLD ENABLE_AE_SOFT ENABLE_FRAME_3A \
 	ENABLE_SOFT_GAMMA ENABLE_YDNS ENABLE_GIB_BLC \
 	ENABLE_BLC_LIT BLC_LIT_GAIN ENABLE_GIB_LIT GIB_LIT_GAIN GIB_LIT_FINAL_GAIN \
-	ENABLE_YSP ENABLE_CCM CCM_CT_TRACK CCM_CT CCM_EV ENABLE_BCSH BCSH_SATURATION BCSH_EV BCSH_CT ENABLE_DMSC_STATIC ENABLE_DMSC_LIT DMSC_LIT_GAIN DMSC_STOCK_CURRENT_OVERLAY DMSC_STOCK_HIGH_GAIN_OVERLAY DMSC_STOCK_OVERLAY_MASK BCSH_MODE ENABLE_CLM CLM_STAGE_LIMIT CLM_DEFER_TRIG CLM_CT ENABLE_MDNS ENABLE_SDNS \
+	ENABLE_YSP ENABLE_CCM CCM_CT_TRACK CCM_CT CCM_EV ENABLE_BCSH BCSH_SATURATION BCSH_EV BCSH_CT ENABLE_DMSC_STATIC ENABLE_DMSC_LIT DMSC_LIT_GAIN DMSC_STOCK_CURRENT_OVERLAY DMSC_STOCK_HIGH_GAIN_OVERLAY DMSC_STOCK_OVERLAY_MASK BCSH_MODE ENABLE_MDNS ENABLE_SDNS \
 	ENABLE_LSC_LIT LSC_LIT_CT LSC_LIT_GAIN \
 	LSC_LIT_CT_TRACK LSC_LIT_CT_WARM_X LSC_LIT_CT_WARM_CT \
 	LSC_LIT_CT_COOL_X LSC_LIT_CT_COOL_CT \
@@ -235,7 +229,7 @@ for numeric in TISP_MAIN_INIT_TOP40_VALUE TISP_MAIN_INIT_CSC_VERSION_VALUE \
 	ENABLE_AE_SENSOR_APPLY \
 	AE_SENSOR_APPLY_FORCE_PACKED \
 	AE_SENSOR_APPLY_CLEAR_DIRTY AE_SENSOR_APPLY_MAX_AGAIN_INDEX \
-	AE_SENSOR_APPLY_LOG_SKIPS ENABLE_OEM_ISR_LIT OEM_ISR_LIT_CUT; do
+	AE_SENSOR_APPLY_LOG_SKIPS; do
 	if [[ ! "${!numeric}" =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]]; then
 		echo "$numeric must be decimal or hex" >&2
 		exit 2
@@ -365,10 +359,6 @@ timeout "$REMOTE_PROBE_TIMEOUT_SECS" "${SSH[@]}" \
 	"DMSC_STOCK_HIGH_GAIN_OVERLAY=$DMSC_STOCK_HIGH_GAIN_OVERLAY" \
 	"DMSC_STOCK_OVERLAY_MASK=$DMSC_STOCK_OVERLAY_MASK" \
 	"BCSH_MODE=$BCSH_MODE" \
-	"ENABLE_CLM=$ENABLE_CLM" \
-	"CLM_STAGE_LIMIT=$CLM_STAGE_LIMIT" \
-	"CLM_DEFER_TRIG=$CLM_DEFER_TRIG" \
-	"CLM_CT=$CLM_CT" \
 	"ENABLE_MDNS=$ENABLE_MDNS" \
 	"ENABLE_SDNS=$ENABLE_SDNS" \
 	"MDNS_BUF_PHYS=$MDNS_BUF_PHYS" \
@@ -392,8 +382,6 @@ timeout "$REMOTE_PROBE_TIMEOUT_SECS" "${SSH[@]}" \
 	"AE_SENSOR_APPLY_CLEAR_DIRTY=$AE_SENSOR_APPLY_CLEAR_DIRTY" \
 	"AE_SENSOR_APPLY_MAX_AGAIN_INDEX=$AE_SENSOR_APPLY_MAX_AGAIN_INDEX" \
 	"AE_SENSOR_APPLY_LOG_SKIPS=$AE_SENSOR_APPLY_LOG_SKIPS" \
-	"ENABLE_OEM_ISR_LIT=$ENABLE_OEM_ISR_LIT" \
-	"OEM_ISR_LIT_CUT=$OEM_ISR_LIT_CUT" \
 	sh -s >"$LOG/load-safe.log" 2>&1 <<'EOS'
 set -x
 : "${FRAMECHAN_NEUTRAL_UV_ON_DONE:=0}"
@@ -463,10 +451,6 @@ set -x
 : "${BCSH_CT:=6000}"
 : "${ENABLE_DMSC_STATIC:=0}"
 : "${BCSH_MODE:=2}"
-: "${ENABLE_CLM:=0}"
-: "${CLM_STAGE_LIMIT:=0}"
-: "${CLM_DEFER_TRIG:=0}"
-: "${CLM_CT:=5000}"
 : "${ENABLE_MDNS:=1}"
 : "${ENABLE_SDNS:=0}"
 : "${MDNS_BUF_PHYS:=0xc000000}"
@@ -490,8 +474,6 @@ set -x
 : "${AE_SENSOR_APPLY_CLEAR_DIRTY:=1}"
 : "${AE_SENSOR_APPLY_MAX_AGAIN_INDEX:=25}"
 : "${AE_SENSOR_APPLY_LOG_SKIPS:=0}"
-: "${ENABLE_OEM_ISR_LIT:=0}"
-: "${OEM_ISR_LIT_CUT:=0}"
 raptor_stop_pid=
 # The stream-stop crash is specific to a stream served by the recovered
 # module; stopping the stock-driver stream on a fresh boot is routine.
@@ -596,8 +578,6 @@ insmod /tmp/tx_isp_t40_recovered.ko \
 	dmsc_stock_high_gain_overlay="$DMSC_STOCK_HIGH_GAIN_OVERLAY" \
 	dmsc_stock_overlay_mask="$DMSC_STOCK_OVERLAY_MASK" \
 	bcsh_mode="$BCSH_MODE" \
-	enable_clm="$ENABLE_CLM" \
-	clm_ct="$CLM_CT" \
 	enable_mdns="$ENABLE_MDNS" \
 	enable_sdns="$ENABLE_SDNS" \
 	mdns_buf_phys="$MDNS_BUF_PHYS" \
@@ -756,19 +736,19 @@ if [ "$FAST_RTSP_ONLY" = "1" ]; then
 	fi
 	exit 0
 fi
-dmesg | grep -E 'isp-block-init|lsc-lit|awb|AWB|clm|CLM|bcsh|BCSH|ccm|CCM|mdns|MDNS|ydns|YDNS|ysp|YSP|gib|GIB|3a-diag|ADR|adr|irq_func_cb|stats fanout|OEM event pre-CSI|CSI direct stage-limit|CSI direct start|direct VIC streamon|OEM event streamon|core-event streamon|CSI direct|settle|phy complete|vic_start_diag' > /tmp/t40-start-immediate-lines.txt 2>/dev/null || true
+dmesg | grep -E 'isp-block-init|lsc-lit|awb|AWB|bcsh|BCSH|ccm|CCM|mdns|MDNS|ydns|YDNS|ysp|YSP|gib|GIB|3a-diag|ADR|adr|irq_func_cb|stats fanout|OEM event pre-CSI|CSI direct stage-limit|CSI direct start|direct VIC streamon|OEM event streamon|core-event streamon|CSI direct|settle|phy complete|vic_start_diag' > /tmp/t40-start-immediate-lines.txt 2>/dev/null || true
 dmesg | tail -260 > /tmp/t40-dmesg-start-immediate.txt
 hold_secs=$((SMOKE_SLEEP_SECS))
 if [ "$hold_secs" -gt 4 ]; then
 	sleep 4
 	cat /proc/interrupts > /tmp/t40-interrupts-start.txt
-	dmesg | grep -E 'isp-block-init|lsc-lit|awb|AWB|clm|CLM|bcsh|BCSH|ccm|CCM|mdns|MDNS|ydns|YDNS|ysp|YSP|gib|GIB|3a-diag|ADR|adr|irq_func_cb|stats fanout|OEM event pre-CSI|CSI direct stage-limit|CSI direct start|direct VIC streamon|OEM event streamon|core-event streamon|CSI direct|settle|phy complete|vic_start_diag' > /tmp/t40-start-lines.txt 2>/dev/null || true
+	dmesg | grep -E 'isp-block-init|lsc-lit|awb|AWB|bcsh|BCSH|ccm|CCM|mdns|MDNS|ydns|YDNS|ysp|YSP|gib|GIB|3a-diag|ADR|adr|irq_func_cb|stats fanout|OEM event pre-CSI|CSI direct stage-limit|CSI direct start|direct VIC streamon|OEM event streamon|core-event streamon|CSI direct|settle|phy complete|vic_start_diag' > /tmp/t40-start-lines.txt 2>/dev/null || true
 	dmesg | tail -220 > /tmp/t40-dmesg-start.txt
 	sleep $((hold_secs - 4))
 else
 	sleep "$hold_secs"
 	cat /proc/interrupts > /tmp/t40-interrupts-start.txt
-	dmesg | grep -E 'isp-block-init|lsc-lit|awb|AWB|clm|CLM|bcsh|BCSH|ccm|CCM|mdns|MDNS|ydns|YDNS|ysp|YSP|gib|GIB|3a-diag|ADR|adr|irq_func_cb|stats fanout|OEM event pre-CSI|CSI direct stage-limit|CSI direct start|direct VIC streamon|OEM event streamon|core-event streamon|CSI direct|settle|phy complete|vic_start_diag' > /tmp/t40-start-lines.txt 2>/dev/null || true
+	dmesg | grep -E 'isp-block-init|lsc-lit|awb|AWB|bcsh|BCSH|ccm|CCM|mdns|MDNS|ydns|YDNS|ysp|YSP|gib|GIB|3a-diag|ADR|adr|irq_func_cb|stats fanout|OEM event pre-CSI|CSI direct stage-limit|CSI direct start|direct VIC streamon|OEM event streamon|core-event streamon|CSI direct|settle|phy complete|vic_start_diag' > /tmp/t40-start-lines.txt 2>/dev/null || true
 	dmesg | tail -220 > /tmp/t40-dmesg-start.txt
 fi
 chmod +x /tmp/phys_memdump
@@ -866,7 +846,7 @@ else
 fi
 fi
 set -x
-dmesg | grep -E 'framechan0 (repaired )?qbuf|lsc-lit|VIC frame MDMA qbuf ring|irq frame-done|frame.?done|msca|MSCA|fifo|FIFO|addr_fifo|bring-up profile|stock-host override|OEM event pre-CSI|isp-block-init|awb|AWB|clm|CLM|bcsh|BCSH|ccm|CCM|mdns|MDNS|ydns|YDNS|ysp|YSP|gib|GIB|ADR|adr|3a-diag|stats fanout|irq_func_cb|TISP stream event|rearm-guard|AE sensor apply|tgain|again|event setup|sensor_ioctl|CSI direct|csi_|settle|phy complete|vic_start_diag' | tail -380 > /tmp/t40-qbuf-lines.txt
+dmesg | grep -E 'framechan0 (repaired )?qbuf|lsc-lit|VIC frame MDMA qbuf ring|irq frame-done|frame.?done|msca|MSCA|fifo|FIFO|addr_fifo|bring-up profile|stock-host override|OEM event pre-CSI|isp-block-init|awb|AWB|bcsh|BCSH|ccm|CCM|mdns|MDNS|ydns|YDNS|ysp|YSP|gib|GIB|ADR|adr|3a-diag|stats fanout|irq_func_cb|TISP stream event|rearm-guard|AE sensor apply|tgain|again|event setup|sensor_ioctl|CSI direct|csi_|settle|phy complete|vic_start_diag' | tail -380 > /tmp/t40-qbuf-lines.txt
 dmesg | tail -260 > /tmp/t40-dmesg-tail.txt
 dmesg > /tmp/t40-dmesg-full.txt
 EOS
@@ -1024,7 +1004,7 @@ fi
 "${SSH[@]}" 'P=/sys/module/tx_isp_t40_recovered/parameters; \
 	echo "# 3A process"; ps | grep "[3]a.sh" || true; \
 	echo "# 3A params"; \
-	for p in ae_sensor_apply_force_packed dns_gain_ev ysp_gain_ev ysp_gain_ev_now dmsc_lit_gain dmsc_lit_gain_now awb_manual_rgain awb_manual_bgain awb_grayworld_last_rgain awb_grayworld_last_bgain lsc_lit_ct lsc_lit_ct_now isp_block_init_ran isp_block_init_count isp_block_init_skip_no_blob isp_block_init_adr_ret isp_block_init_clm_ret clm_stage_limit clm_defer_trig clm_ct clm_ct_now clm_ct_region clm_stage_reached clm_last_ret; do \
+	for p in ae_sensor_apply_force_packed dns_gain_ev ysp_gain_ev ysp_gain_ev_now dmsc_lit_gain dmsc_lit_gain_now awb_manual_rgain awb_manual_bgain awb_grayworld_last_rgain awb_grayworld_last_bgain lsc_lit_ct lsc_lit_ct_now isp_block_init_ran isp_block_init_count isp_block_init_skip_no_blob isp_block_init_adr_ret; do \
 		printf "%s=" "$p"; cat "$P/$p" 2>/dev/null || echo NA; \
 	done; \
 	echo "# 3A log tail"; tail -80 /tmp/3a.log 2>/dev/null || true' \

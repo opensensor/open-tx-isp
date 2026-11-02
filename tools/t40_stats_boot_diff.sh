@@ -168,9 +168,6 @@ run_attempt() {
 		ENABLE_BCSH="${ENABLE_BCSH:-1}" \
 		BCSH_MODE="${BCSH_MODE:-2}" \
 		ENABLE_DMSC_STATIC="${ENABLE_DMSC_STATIC:-1}" \
-		ENABLE_CLM="${ENABLE_CLM:-1}" \
-		CLM_STAGE_LIMIT="${CLM_STAGE_LIMIT:-13}" \
-		CLM_DEFER_TRIG="${CLM_DEFER_TRIG:-1}" \
 		ENABLE_MDNS="${ENABLE_MDNS:-1}" \
 		ENABLE_SDNS="${ENABLE_SDNS:-1}" \
 		ENABLE_YDNS="${ENABLE_YDNS:-1}" \
@@ -179,8 +176,6 @@ run_attempt() {
 		ENABLE_GIB_BLC="${ENABLE_GIB_BLC:-1}" \
 		ENABLE_LSC_LIT="${ENABLE_LSC_LIT:-1}" \
 		LSC_LIT_CT="${LSC_LIT_CT:-3300}" \
-		ENABLE_OEM_ISR_LIT="${ENABLE_OEM_ISR_LIT:-0}" \
-		OEM_ISR_LIT_CUT="${OEM_ISR_LIT_CUT:-0}" \
 		./tools/t40_safe_qbuf_dump_probe.sh "$log" >"$log/wrapper.out" 2>"$log/wrapper.err" || true
 
 	local status

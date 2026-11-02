@@ -3,7 +3,7 @@ CC ?= cc
 CFLAGS ?= -O2
 CFLAGS += -std=c99 -Wall -Wextra -Werror
 
-.PHONY: all check clean t40_vic_layout_check t40_lost_tail_host lifted_ptr_scale_check t40_hardcoded_anchor_check t30_storage_audit t30_fw_irq_gate t40_vct_host t40_af_stats_host t40_bcsh_dn_host t40_tstp_host t40_ccm_conv_host t40_ccm_chain_host t40_dmsc_chain_host t40_mdns_chain_host t40_gib_host t40_lsc_host t40_bitexact_host t40_callarg_check t41_sensor_barrier_check t40_hardcoded_anchor_check t40_clk_teardown_check t40_tstp_init_check t40_custom_algo_wake_check t41_custom_ae_check t41_af_gate_check lifted_ptr_scale_check
+.PHONY: all check check-oracles clean t40_vic_layout_check t40_lost_tail_host lifted_ptr_scale_check t40_hardcoded_anchor_check t30_storage_audit t30_fw_irq_gate t40_vct_host t40_af_stats_host t40_bcsh_dn_host t40_tstp_host t40_ccm_conv_host t40_ccm_chain_host t40_dmsc_chain_host t40_mdns_chain_host t40_gib_host t40_lsc_host t40_bitexact_host t40_callarg_check t41_sensor_barrier_check t40_hardcoded_anchor_check t40_clk_teardown_check t40_tstp_init_check t40_custom_algo_wake_check t41_custom_ae_check t41_af_gate_check lifted_ptr_scale_check
 
 # Every host test binary.  A new test is registered with "TESTS += name"
 # (plus its build rule); `check` builds and runs all of them, keeps going
@@ -551,11 +551,13 @@ check:
 		if [ $$rc -eq 0 ]; then pass="$$pass $$t"; \
 		else echo "=== $$t: FAILED rc=$$rc"; fail="$$fail $$t(rc=$$rc)"; fi; \
 	done; \
+	skip=; so=$$(mktemp); \
 	for c in $(CHECK_TARGETS); do \
 		echo "=== $$c"; \
-		if $(MAKE) --no-print-directory $$c; then pass="$$pass $$c"; \
-		else echo "=== $$c: FAILED"; fail="$$fail $$c"; fi; \
-	done; \
+		if $(MAKE) --no-print-directory $$c >$$so 2>&1; then pass="$$pass $$c"; cat $$so; \
+		else cat $$so; echo "=== $$c: FAILED"; fail="$$fail $$c"; fi; \
+		if grep -q ': SKIP (' $$so; then skip="$$skip $$c"; fi; \
+	done; rm -f $$so; \
 	for f in *_test.c; do \
 		b=$${f%.c}; \
 		case " $(CHECK_TESTS) $(TARGET_TESTS) " in *" $$b "*) ;; \
@@ -565,7 +567,26 @@ check:
 	np=$$(echo $$pass | wc -w); nf=$$(echo $$fail | wc -w); \
 	echo; echo "==== check summary: $$np passed, $$nf failed"; \
 	echo "passed:$$pass" | fold -s -w 100; \
+	ns=$$(echo $$skip | wc -w); \
+	if [ $$ns -ne 0 ]; then \
+		echo; echo "!!!! $$ns oracles SKIPPED (set T40_OEM_KO/T40_CC, T40_TUNING_BIN/T40_OEM_DATA; they count as passed above but did NOT run):"; \
+		echo "skipped:$$skip" | fold -s -w 100; \
+		echo "!!!! run them with: make -C tests check-oracles (see tests/README.oracles.md)"; \
+	fi; \
 	if [ $$nf -ne 0 ]; then echo "FAILED:$$fail" | fold -s -w 100; exit 1; fi
+
+# The Unicorn / vendor-data oracles.  They SKIP (exit 0) in a plain `make check` when the vendor inputs are not
+# configured; here a SKIP is a failure, so a green `check-oracles` means every oracle really ran.
+# Inputs (see README.oracles.md): T40_OEM_KO, T40_CC, T40_TUNING_BIN, T40_OEM_DATA.
+ORACLES := t40_vct_host t40_bcsh_dn_host t40_ccm_conv_host t40_ccm_chain_host t40_dmsc_chain_host t40_mdns_chain_host t40_gib_host t40_lsc_host
+check-oracles:
+	@fail=; for c in $(ORACLES); do \
+		echo "=== $$c"; \
+		if T40_ORACLE_STRICT=1 $(MAKE) --no-print-directory $$c; then :; else echo "=== $$c: FAILED or SKIPPED (strict)"; fail="$$fail $$c"; fi; \
+	done; \
+	n=$$(echo $(ORACLES) | wc -w); nf=$$(echo $$fail | wc -w); \
+	echo; echo "==== oracle summary: $$((n-nf)) of $$n ran and passed, $$nf failed/skipped"; \
+	if [ $$nf -ne 0 ]; then echo "FAILED/SKIPPED:$$fail"; exit 1; fi
 
 t30_storage_audit:
 	../driver/t30/check_storage.sh
