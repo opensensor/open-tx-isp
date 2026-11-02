@@ -18,6 +18,9 @@ u64 vae_sensor_alloc_integration_time_short(u32 a0, u32 a1, u32 a2, u32 a3, u32 
 u64 vae_tisp_clm_write_csc_para(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 u64 vae_tisp_clm_ct_interp(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 u64 vae_tisp_clm_write_lut(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
+u64 vae_tisp_ae_algo_init(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
+u64 vae_tisp_ae_algo_handle(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
+u64 vae_tisp_ae_algo_deinit_internal(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 u64 vae_api_ae_long_process(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 u64 vae_tisp_ae_algorithm(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 u64 vae_tisp_ae_long_ev_alloc(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
@@ -25,27 +28,31 @@ u64 vae_tisp_ae_par_update_trig(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 u64 vae_tisp_ae_short_ev_alloc(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 u64 vae_tisp_round_int64(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 u64 vae_tisp_clm_itp(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
+u64 vae_fix_point_div_32(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
+u64 vae_fix_point_mult2_32(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
+u64 vae_fix_point_mult3_32(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
+u64 vae_system_reg_set_ae_trig(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
+u64 vae_tisp_blc_ae_write_dgain(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
+u64 vae_tisp_gib_ae_write_dgain(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
+u64 vae_tisp_log2_fixed_to_fixed(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
+u64 vae_tisp_math_exp2(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 u64 vae_fix_point_div(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 u64 vae_fix_point_mult2(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 u64 vae_tisp_ae_tune(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 u64 vae_tisp_ae_weight_mean(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
-u64 vae_fix_point_mult2_32(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 u64 vae_fix_point_mult3_64(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 u64 vae_tisp_ae_long_set_sensor_integration_time(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
-u64 vae_tisp_blc_ae_write_dgain(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
-u64 vae_tisp_gib_ae_write_dgain(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
-u64 vae_tisp_log2_fixed_to_fixed(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 u64 vae_tisp_set_ae_long_ag(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 u64 vae_tisp_ae_clac_deflicker_cfg(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 u64 vae_tisp_ae_par_calc(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 u64 vae_tisp_ae_sensor_par_ctrls_update(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 u64 vae_tisp_ae_short_sensor_par_ctrls_update(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 u64 vae_tisp_set_ae_sensor_fps(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
-u64 vae_fix_point_div_32(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
-u64 vae_fix_point_mult3_32(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 u64 vae_tisp_ae_short_expt(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 u64 vae_tisp_ae_short_set_sensor_integration_time(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 u64 vae_tisp_set_ae_short_ag(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
+u64 vae_tisp_max(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
+u64 vae_tisp_log2_int_to_fixed(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 u64 vae_fix_point_div_64(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 u64 vae_fix_point_mult2_64(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 u64 vae_tisp_ae_calc_convergence_speed(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
@@ -54,11 +61,8 @@ u64 vae_tisp_ae_ev_list_alloc_calc(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 u64 vae_tisp_ae_long_target(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 u64 vae_tisp_ae_fliker_detect(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 u64 vae_tisp_ae_get_bv(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
-u64 vae_tisp_max(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
-u64 vae_tisp_log2_int_to_fixed(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 u64 vae_tisp_set_sensor_analog_gain(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 u64 vae_tisp_ae_fps_calc_max_exp(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
-u64 vae_tisp_math_exp2(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 u64 vae_tisp_ae_lib_bilinear_intp(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 u64 vae_tisp_ae_short_ev_alloc_calc(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 u64 vae_tisp_set_sensor_short_analog_gain(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
@@ -1173,6 +1177,617 @@ L_bc:
 	return ((u64)v1 << 32) | v0;
 }
 
+/* OEM tisp_ae_algo_init (.text+0x2bf20, 117 insns, frame 56) */
+u64 noinline vae_tisp_ae_algo_init(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
+{
+	u32 at = 0, v0 = 0, v1 = 0, t0 = 0, t1 = 0, t2 = 0, t3 = 0, t4 = 0, t5 = 0, t6 = 0, t7 = 0, s0 = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0, s5 = 0, s6 = 0, s7 = 0, t8 = 0, t9 = 0, k0 = 0, k1 = 0, gp = 0, s8 = 0, ra = 0;
+	u32 tg = 0, c = 0; u64 acc = 0;
+	u32 vframe[15] __aligned(8);
+	u32 sp = (u32)(uintptr_t)vframe;
+	(void)tg; (void)c; (void)acc; (void)sp; (void)csp; (void)at; (void)k0; (void)k1; (void)gp; (void)ra;
+	vae_fn_enter();
+	v0 = 0;
+	v1 = a0 << 2;
+	v0 = v0 + ((u32)(uintptr_t)(vae_ta_custom_en) + 0U);
+	v0 = v1 + v0;
+	vae_sw((v0 + (u32)0), a1, 180016U);
+	v0 = (u32)1;
+	c = (a1 != v0); v0 = 0; if (c) goto L_1cc;
+	v0 = v0 + ((u32)(uintptr_t)(ae_info) + 0U);
+	v1 = v1 + v0;
+	vf_sw((sp + 52U), ra);
+	vf_sw((sp + 48U), s1);
+	vf_sw((sp + 44U), s0);
+	v0 = vae_lw((v1 + (u32)0), 180056U);
+	vae_sw((a2 + (u32)8), 0U, 180060U);
+	s1 = 0;
+	v1 = vae_lw((v0 + (u32)4), 180068U);
+	s0 = a2;
+	s1 = s1 + ((u32)(uintptr_t)vae_x_memcpy + 0U);
+	v1 = vae_lw((v1 + (u32)8608), 180080U);
+	vae_sw((a2 + (u32)12), v1, 180084U);
+	v1 = vae_lw((v0 + (u32)4), 180088U);
+	v1 = vae_lw((v1 + (u32)8612), 180092U);
+	vae_sw((a2 + (u32)16), v1, 180096U);
+	v1 = vae_lw((v0 + (u32)4), 180100U);
+	v1 = vae_lw((v1 + (u32)8616), 180104U);
+	vae_sw((a2 + (u32)20), v1, 180108U);
+	v1 = vae_lw((v0 + (u32)4), 180112U);
+	v1 = vae_lw((v1 + (u32)8620), 180116U);
+	vae_sw((a2 + (u32)24), v1, 180120U);
+	v1 = vae_lw((v0 + (u32)4), 180124U);
+	v1 = vae_lw((v1 + (u32)8624), 180128U);
+	vae_sw((a2 + (u32)60), v1, 180132U);
+	v1 = vae_lw((v0 + (u32)4), 180136U);
+	v1 = vae_lw((v1 + (u32)8628), 180140U);
+	vae_sw((a2 + (u32)64), v1, 180144U);
+	v1 = vae_lw((v0 + (u32)4), 180148U);
+	v1 = vae_lw((v1 + (u32)8632), 180152U);
+	vae_sw((a2 + (u32)68), v1, 180156U);
+	v1 = vae_lw((v0 + (u32)4), 180160U);
+	v1 = vae_lw((v1 + (u32)8636), 180164U);
+	vae_sw((a2 + (u32)72), v1, 180168U);
+	v1 = vae_lw((v0 + (u32)0), 180172U);
+	v1 = vae_lw((v1 + (u32)440), 180176U);
+	vae_sw((a2 + (u32)28), v1, 180180U);
+	v1 = vae_lw((v0 + (u32)0), 180184U);
+	v1 = vae_lw((v1 + (u32)444), 180188U);
+	vae_sw((a2 + (u32)32), v1, 180192U);
+	v1 = vae_lw((v0 + (u32)0), 180196U);
+	v1 = vae_lw((v1 + (u32)448), 180200U);
+	vae_sw((a2 + (u32)36), v1, 180204U);
+	v1 = vae_lw((v0 + (u32)0), 180208U);
+	v1 = vae_lw((v1 + (u32)452), 180212U);
+	vae_sw((a2 + (u32)40), v1, 180216U);
+	v1 = vae_lw((v0 + (u32)0), 180220U);
+	v1 = vae_lw((v1 + (u32)456), 180224U);
+	vae_sw((a2 + (u32)44), v1, 180228U);
+	v1 = vae_lw((v0 + (u32)0), 180232U);
+	v1 = vae_lw((v1 + (u32)460), 180236U);
+	vae_sw((a2 + (u32)48), v1, 180240U);
+	v1 = vae_lw((v0 + (u32)0), 180244U);
+	v1 = vae_lw((v1 + (u32)464), 180248U);
+	vae_sw((a2 + (u32)52), v1, 180252U);
+	v1 = vae_lw((v0 + (u32)0), 180256U);
+	v1 = vae_lw((v1 + (u32)468), 180260U);
+	vae_sw((a2 + (u32)56), v1, 180264U);
+	v1 = vae_lw((v0 + (u32)0), 180268U);
+	v1 = vae_lw((v1 + (u32)472), 180272U);
+	vae_sw((a2 + (u32)76), v1, 180276U);
+	v1 = vae_lw((v0 + (u32)0), 180280U);
+	v1 = vae_lw((v1 + (u32)476), 180284U);
+	vae_sw((a2 + (u32)80), v1, 180288U);
+	v1 = vae_lw((v0 + (u32)0), 180292U);
+	v1 = vae_lw((v1 + (u32)480), 180296U);
+	vae_sw((a2 + (u32)84), v1, 180300U);
+	v1 = vae_lw((v0 + (u32)0), 180304U);
+	v1 = vae_lw((v1 + (u32)484), 180308U);
+	vae_sw((a2 + (u32)88), v1, 180312U);
+	v1 = vae_lw((v0 + (u32)0), 180316U);
+	v1 = vae_lw((v1 + (u32)488), 180320U);
+	vae_sw((a2 + (u32)92), v1, 180324U);
+	v1 = vae_lw((v0 + (u32)0), 180328U);
+	v1 = vae_lw((v1 + (u32)492), 180332U);
+	vae_sw((a2 + (u32)96), v1, 180336U);
+	v1 = vae_lw((v0 + (u32)0), 180340U);
+	v1 = vae_lw((v1 + (u32)496), 180344U);
+	vae_sw((a2 + (u32)100), v1, 180348U);
+	v0 = vae_lw((v0 + (u32)0), 180352U);
+	vf_sw((sp + 16U), a1);
+	vf_sw((sp + 20U), a1);
+	vf_sw((sp + 24U), a1);
+	a1 = (u32)1052;
+	a0 = (u32)((s32)a0 * (s32)a1);
+	v0 = vae_lw((v0 + (u32)500), 180376U);
+	a1 = 0;
+	a1 = a1 + ((u32)(uintptr_t)(tisp_ae_hist_last) + 0U);
+	vae_sw((a2 + (u32)104), v0, 180388U);
+	v0 = (u32)3855;
+	a2 = (u32)4;
+	vf_sh((sp + 28U), v0);
+	vf_sw((sp + 32U), 0U);
+	a0 = a0 + (u32)1044;
+	a1 = a1 + a0;
+	tg = s1; a0 = sp + 36U; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 180416U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a1 = sp + 16U;
+	a0 = s0 + (u32)112;
+	tg = s1; a2 = (u32)24; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 180432U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	ra = vf_lw((sp + 52U));
+	s1 = vf_lw((sp + 48U));
+	s0 = vf_lw((sp + 44U));
+	 return ((u64)v1 << 32) | v0;
+L_1cc:
+	 return ((u64)v1 << 32) | v0;
+	return ((u64)v1 << 32) | v0;
+}
+
+/* OEM tisp_ae_algo_handle (.text+0x2c0f4, 504 insns, frame 568) */
+u64 noinline vae_tisp_ae_algo_handle(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
+{
+	u32 at = 0, v0 = 0, v1 = 0, t0 = 0, t1 = 0, t2 = 0, t3 = 0, t4 = 0, t5 = 0, t6 = 0, t7 = 0, s0 = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0, s5 = 0, s6 = 0, s7 = 0, t8 = 0, t9 = 0, k0 = 0, k1 = 0, gp = 0, s8 = 0, ra = 0;
+	u32 tg = 0, c = 0; u64 acc = 0;
+	u32 vframe[143] __aligned(8);
+	u32 sp = (u32)(uintptr_t)vframe;
+	(void)tg; (void)c; (void)acc; (void)sp; (void)csp; (void)at; (void)k0; (void)k1; (void)gp; (void)ra;
+	vae_fn_enter();
+	v0 = 0;
+	v0 = v0 + ((u32)(uintptr_t)(sensor_ctrl_main_storage) + 0U);
+	vf_sw((sp + 564U), ra);
+	vf_sw((sp + 560U), s8);
+	vf_sw((sp + 556U), s7);
+	vf_sw((sp + 552U), s6);
+	vf_sw((sp + 548U), s5);
+	vf_sw((sp + 544U), s4);
+	vf_sw((sp + 540U), s3);
+	vf_sw((sp + 536U), s2);
+	vf_sw((sp + 532U), s1);
+	vf_sw((sp + 528U), s0);
+	v1 = vae_lw((v0 + (u32)332), 180520U);
+	s1 = a0;
+	a0 = vae_lw((v0 + (u32)352), 180528U);
+	vf_sw((sp + 456U), v1);
+	v1 = vae_lw((v0 + (u32)336), 180536U);
+	vf_sw((sp + 484U), a0);
+	a0 = vae_lw((v0 + (u32)360), 180544U);
+	vf_sw((sp + 496U), v1);
+	v1 = vae_lw((v0 + (u32)340), 180552U);
+	vf_sw((sp + 512U), a0);
+	a0 = vae_lw((v0 + (u32)372), 180560U);
+	vf_sw((sp + 472U), v1);
+	v1 = vae_lw((v0 + (u32)344), 180568U);
+	vf_sw((sp + 480U), a0);
+	a0 = vae_lw((v0 + (u32)376), 180576U);
+	vf_sw((sp + 500U), v1);
+	s0 = vae_lw((v0 + (u32)356), 180584U);
+	v1 = vae_lw((v0 + (u32)348), 180588U);
+	vf_sw((sp + 488U), a0);
+	a0 = vae_lw((v0 + (u32)380), 180596U);
+	v0 = vae_lw((v0 + (u32)384), 180600U);
+	s5 = a1;
+	vf_sw((sp + 460U), a0);
+	vf_sw((sp + 492U), v0);
+	v0 = vae_lw((a1 + (u32)24), 180616U);
+	s2 = vae_lw((a1 + (u32)16), 180620U);
+	s4 = vae_lw((a1 + (u32)20), 180624U);
+	vf_sw((sp + 468U), v0);
+	v0 = vae_lw((a1 + (u32)32), 180632U);
+	s6 = vae_lw((a1 + (u32)28), 180636U);
+	s3 = vae_lw((a1 + (u32)36), 180640U);
+	vf_sw((sp + 464U), v0);
+	v0 = vae_lw((a1 + (u32)40), 180648U);
+	vf_sw((sp + 36U), s1);
+	a0 = s2;
+	vf_sw((sp + 504U), v0);
+	v0 = vae_lw((a1 + (u32)44), 180664U);
+	a1 = sp + 36U;
+	s7 = 0;
+	tg = v1; vf_sw((sp + 508U), v0); { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 180676U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	s8 = v0;
+	v0 = v0 << 10;
+	s7 = s7 + ((u32)(uintptr_t)vae_fix_point_mult2_32 + 0U);
+	c = (s2 == s8); vf_sw((sp + 516U), v0); if (c) goto L_118;
+	a1 = s4;
+	a2 = s2 << 10;
+	tg = s7; a0 = (u32)10; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 180712U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a1 = v0;
+	v0 = 0;
+	a2 = s8 << 10;
+	v0 = v0 + ((u32)(uintptr_t)vae_fix_point_div_32 + 0U);
+	tg = v0; a0 = (u32)10; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 180736U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	s4 = v0;
+L_118:
+	a0 = vf_lhu((sp + 56U));
+	a1 = sp + 24U;
+	tg = s0; s2 = 0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 180756U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	s2 = s2 + ((u32)(uintptr_t)(ae_info) + 0U);
+	s0 = s1 << 2;
+	v1 = s0 + s2;
+	v0 = vae_lw((v1 + (u32)0), 180776U);
+	a0 = s4 << 6;
+	s4 = 0;
+	v0 = vae_lw((v0 + (u32)4), 180788U);
+	a2 = (u32)16;
+	a1 = (u32)16;
+	vae_sw((v0 + (u32)8608), s8, 180800U);
+	s4 = s4 + ((u32)(uintptr_t)vae_tisp_log2_fixed_to_fixed + 0U);
+	vf_sw((sp + 520U), v1);
+	tg = s4; vf_sw((sp + 424U), s1); { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 180812U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a0 = v0;
+	v0 = vf_lw((sp + 456U));
+	tg = v0; a1 = sp + 424U; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 180828U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a0 = v0;
+	v0 = 0;
+	a2 = (u32)16;
+	a1 = (u32)16;
+	v0 = v0 + ((u32)(uintptr_t)vae_tisp_math_exp2 + 0U);
+	tg = v0; vf_sw((sp + 456U), v0); { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 180856U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	vf_sw((sp + 476U), v0);
+	s8 = v0 >> 6;
+	a0 = vf_lhu((sp + 428U));
+	v0 = vf_lw((sp + 480U));
+	tg = v0; a1 = sp + 424U; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 180880U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	v1 = vf_lw((sp + 520U));
+	a2 = (u32)16;
+	a1 = (u32)16;
+	v0 = vae_lw((v1 + (u32)0), 180900U);
+	vf_sw((sp + 480U), v1);
+	vf_sw((sp + 424U), s1);
+	v0 = vae_lw((v0 + (u32)4), 180912U);
+	vae_sw((v0 + (u32)8612), s8, 180916U);
+	v0 = vf_lw((sp + 468U));
+	tg = s4; a0 = v0 << 6; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 180924U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a0 = v0;
+	v0 = vf_lw((sp + 472U));
+	tg = v0; a1 = sp + 424U; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 180940U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a0 = v0;
+	v0 = vf_lw((sp + 456U));
+	a2 = (u32)16;
+	tg = v0; a1 = (u32)16; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 180960U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	v0 = v0 >> 6;
+	vf_sw((sp + 468U), v0);
+	a0 = vf_lhu((sp + 430U));
+	v0 = vf_lw((sp + 460U));
+	tg = v0; a1 = sp + 424U; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 180984U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	v1 = vf_lw((sp + 480U));
+	a0 = vf_lw((sp + 468U));
+	a3 = s6;
+	v0 = vae_lw((v1 + (u32)0), 181004U);
+	a2 = s6;
+	v1 = vae_lw((v0 + (u32)4), 181012U);
+	vae_sw((v1 + (u32)8616), a0, 181016U);
+	v0 = vae_lw((v0 + (u32)12), 181020U);
+	c = (v0 != 0); vf_sw((sp + 16U), s6); if (c) goto L_7b8;
+	v0 = 0;
+	a1 = s6;
+	v0 = v0 + ((u32)(uintptr_t)vae_tisp_gib_ae_write_dgain + 0U);
+	tg = v0; a0 = s1; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 181044U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	v0 = s1 & 255U;
+L_24c:
+	a0 = v0;
+	vf_sw((sp + 460U), v0);
+	v0 = 0;
+	v0 = v0 + ((u32)(uintptr_t)vae_system_reg_set_ae_trig + 0U);
+	tg = v0; vf_sw((sp + 480U), v0); { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 181072U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	v1 = s2 + s0;
+	v0 = vae_lw((v1 + (u32)0), 181084U);
+	a3 = vf_lw((sp + 468U));
+	a1 = vf_lw((sp + 516U));
+	v0 = vae_lw((v0 + (u32)4), 181096U);
+	a2 = s8;
+	a0 = (u32)10;
+	vae_sw((v0 + (u32)8620), s6, 181108U);
+	v0 = 0;
+	v0 = v0 + ((u32)(uintptr_t)vae_fix_point_mult3_32 + 0U);
+	vf_sw((sp + 520U), v1);
+	tg = v0; vf_sw((sp + 460U), v0); { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 181124U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a1 = v0;
+	a2 = s6;
+	tg = s7; a0 = (u32)10; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 181140U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	vf_sw((sp + 472U), v0);
+	a2 = vf_lw((sp + 468U));
+	v0 = vf_lw((sp + 460U));
+	a3 = s6;
+	a1 = s8;
+	tg = v0; a0 = (u32)10; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 181168U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	v1 = vf_lw((sp + 520U));
+	vf_sw((sp + 468U), v0);
+	v0 = vae_lw((v1 + (u32)0), 181184U);
+	v1 = vae_lw((v0 + (u32)12), 181188U);
+	v0 = (u32)1;
+	c = (v1 != v0); v0 = vf_lw((sp + 484U)); if (c) goto L_7d4;
+	a0 = vf_lw((sp + 464U));
+	vf_sw((sp + 36U), s1);
+	tg = v0; a1 = sp + 36U; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 181212U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	s6 = v0;
+	v0 = 0;
+	v0 = v0 + ((u32)(uintptr_t)vae_fix_point_div_32 + 0U);
+	vf_sw((sp + 484U), v0);
+	v0 = s6 << 10;
+	vf_sw((sp + 516U), v0);
+	v0 = vf_lw((sp + 464U));
+	c = (v0 == s6); a2 = v0 << 10; if (c) goto L_338;
+	a1 = s3;
+	tg = s7; a0 = (u32)10; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 181260U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a1 = v0;
+	v0 = vf_lw((sp + 484U));
+	a2 = s6 << 10;
+	tg = v0; a0 = (u32)10; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 181280U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	s3 = v0;
+L_338:
+	a0 = vf_lhu((sp + 58U));
+	v0 = vf_lw((sp + 512U));
+	tg = v0; a1 = sp + 24U; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 181300U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	t0 = s2 + s0;
+	v0 = vae_lw((t0 + (u32)0), 181312U);
+	a2 = (u32)16;
+	a0 = s3 << 6;
+	v0 = vae_lw((v0 + (u32)4), 181324U);
+	a1 = (u32)16;
+	vf_sw((sp + 464U), t0);
+	vae_sw((v0 + (u32)8624), s6, 181336U);
+	tg = s4; vf_sw((sp + 424U), s1); { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 181340U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a0 = v0;
+	v0 = vf_lw((sp + 496U));
+	tg = v0; a1 = sp + 424U; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 181356U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a0 = v0;
+	v0 = vf_lw((sp + 456U));
+	a2 = (u32)16;
+	tg = v0; a1 = (u32)16; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 181376U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	s3 = v0 >> 6;
+	a0 = vf_lhu((sp + 442U));
+	v0 = vf_lw((sp + 488U));
+	tg = v0; a1 = sp + 424U; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 181396U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	t0 = vf_lw((sp + 464U));
+	a2 = (u32)16;
+	a1 = (u32)16;
+	v0 = vae_lw((t0 + (u32)0), 181416U);
+	vf_sw((sp + 424U), s1);
+	v0 = vae_lw((v0 + (u32)4), 181424U);
+	vae_sw((v0 + (u32)8628), s3, 181428U);
+	v0 = vf_lw((sp + 504U));
+	tg = s4; a0 = v0 << 6; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 181436U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a0 = v0;
+	v0 = vf_lw((sp + 500U));
+	tg = v0; a1 = sp + 424U; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 181452U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a0 = v0;
+	v0 = vf_lw((sp + 456U));
+	a2 = (u32)16;
+	tg = v0; a1 = (u32)16; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 181472U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	s6 = v0 >> 6;
+	a0 = vf_lhu((sp + 448U));
+	v0 = vf_lw((sp + 492U));
+	tg = v0; a1 = sp + 424U; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 181492U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	t0 = vf_lw((sp + 464U));
+	a0 = (u32)10;
+	v0 = vae_lw((t0 + (u32)0), 181508U);
+	vf_sw((sp + 456U), t0);
+	v0 = vae_lw((v0 + (u32)4), 181516U);
+	vae_sw((v0 + (u32)8632), s6, 181520U);
+	a2 = vae_lw((s5 + (u32)40), 181524U);
+	tg = s7; a1 = vae_lw((s5 + (u32)36), 181532U); { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 181528U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a2 = s6;
+	a1 = s3;
+	a0 = (u32)10;
+	tg = s7; s5 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 181548U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a2 = v0;
+	v0 = vf_lw((sp + 484U));
+	a1 = s5;
+	tg = v0; a0 = (u32)10; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 181568U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a1 = vf_lw((sp + 508U));
+	a2 = v0;
+	tg = s7; a0 = (u32)10; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 181584U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	s5 = v0;
+	a3 = v0;
+	a2 = v0;
+	vf_sw((sp + 16U), v0);
+	v0 = 0;
+	a1 = (u32)1;
+	v0 = v0 + ((u32)(uintptr_t)vae_tisp_blc_ae_write_dgain + 0U);
+	tg = v0; a0 = s1; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 181620U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	v0 = vf_lw((sp + 480U));
+	tg = v0; a0 = s1 & 255U; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 181632U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	t0 = vf_lw((sp + 456U));
+	a1 = vf_lw((sp + 516U));
+	a3 = s6;
+	v0 = vae_lw((t0 + (u32)0), 181652U);
+	a2 = s3;
+	v0 = vae_lw((v0 + (u32)4), 181660U);
+	vae_sw((v0 + (u32)8636), s5, 181664U);
+	v0 = vf_lw((sp + 460U));
+	tg = v0; a0 = (u32)10; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 181672U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a1 = v0;
+	a2 = s5;
+	tg = s7; a0 = (u32)10; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 181688U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	vf_sw((sp + 456U), v0);
+	v0 = vf_lw((sp + 460U));
+	a2 = s6;
+	a3 = s5;
+	a1 = s3;
+	tg = v0; a0 = (u32)10; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 181716U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	s6 = v0;
+L_4ec:
+	s7 = 0;
+	s7 = s7 + ((u32)(uintptr_t)(vae_ta_custom_ev) + 0U);
+	s7 = s7 + s0;
+	v0 = vae_lw((s7 + (u32)0), 181740U);
+	v1 = vf_lw((sp + 472U));
+	c = (v0 == v1); v0 = (u32)6; if (c) goto L_54c;
+	vf_sw((sp + 384U), v0);
+	v0 = 0;
+	a0 = s1;
+	a1 = sp + 376U;
+	v0 = v0 + ((u32)(uintptr_t)vae_x_tisp_event_push + 0U);
+	vf_sw((sp + 392U), v1);
+	tg = v0; vf_sw((sp + 396U), 0U); { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 181780U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	v0 = s2 + s0;
+	v0 = vae_lw((v0 + (u32)0), 181792U);
+	a0 = vf_lw((sp + 392U));
+	a1 = vf_lw((sp + 396U));
+	v0 = vae_lw((v0 + (u32)4), 181804U);
+	vae_sw((v0 + (u32)7472), a0, 181808U);
+	vae_sw((v0 + (u32)7476), a1, 181812U);
+	v0 = vf_lw((sp + 472U));
+	vae_sw((s7 + (u32)0), v0, 181820U);
+L_54c:
+	s7 = 0;
+	s7 = s7 + ((u32)(uintptr_t)(vae_ta_custom_tgain) + 0U);
+	s7 = s7 + s0;
+	v0 = vae_lw((s7 + (u32)0), 181836U);
+	v1 = vf_lw((sp + 468U));
+	c = (v0 == v1);  if (c) goto L_5c4;
+	a0 = v1 << 6;
+	a2 = (u32)16;
+	tg = s4; a1 = (u32)16; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 181860U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	v1 = v0;
+	v0 = (u32)4;
+	vf_sw((sp + 336U), v0);
+	v0 = 0;
+	a0 = s1;
+	v0 = v0 + ((u32)(uintptr_t)vae_x_tisp_event_push + 0U);
+	a1 = sp + 328U;
+	vf_sw((sp + 344U), v1);
+	vf_sw((sp + 460U), v1);
+	tg = v0; vf_sw((sp + 348U), 0U); { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 181904U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	v0 = s2 + s0;
+	v0 = vae_lw((v0 + (u32)0), 181916U);
+	v1 = vf_lw((sp + 460U));
+	v0 = vae_lw((v0 + (u32)4), 181924U);
+	vae_sw((v0 + (u32)7480), v1, 181928U);
+	vae_sw((v0 + (u32)7484), 0U, 181932U);
+	v0 = vf_lw((sp + 468U));
+	vae_sw((s7 + (u32)0), v0, 181940U);
+L_5c4:
+	s7 = 0;
+	s7 = s7 + ((u32)(uintptr_t)(vae_ta_custom_again) + 0U);
+	v1 = s7 + s0;
+	v0 = vae_lw((v1 + (u32)0), 181956U);
+	c = (v0 == s8); vf_sw((sp + 464U), v1); if (c) goto L_648;
+	v0 = vf_lw((sp + 476U));
+	a0 = (u32)-64;
+	a2 = (u32)16;
+	a1 = (u32)16;
+	tg = s4; a0 = v0 & a0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 181984U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a2 = v0;
+	v0 = (u32)5;
+	vf_sw((sp + 288U), v0);
+	v0 = 0;
+	a0 = s1;
+	v0 = v0 + ((u32)(uintptr_t)vae_x_tisp_event_push + 0U);
+	a1 = sp + 280U;
+	vf_sw((sp + 296U), a2);
+	vf_sw((sp + 460U), a2);
+	tg = v0; vf_sw((sp + 300U), 0U); { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 182028U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	v0 = s2 + s0;
+	v0 = vae_lw((v0 + (u32)0), 182040U);
+	a2 = vf_lw((sp + 460U));
+	v1 = vf_lw((sp + 464U));
+	a0 = vae_lw((v0 + (u32)4), 182052U);
+	vae_sw((v1 + (u32)0), s8, 182056U);
+	vae_sw((a0 + (u32)8612), s8, 182060U);
+	v0 = vae_lw((v0 + (u32)4), 182064U);
+	vae_sw((v0 + (u32)7488), a2, 182068U);
+	vae_sw((v0 + (u32)7492), 0U, 182072U);
+L_648:
+	s8 = 0;
+	s8 = s8 + ((u32)(uintptr_t)(vae_ta_custom_ev_short) + 0U);
+	s8 = s8 + s0;
+	v0 = vae_lw((s8 + (u32)0), 182088U);
+	v1 = vf_lw((sp + 456U));
+	c = (v0 == v1); s5 = 0; if (c) goto L_6b0;
+	v0 = (u32)10;
+	vf_sw((sp + 240U), v0);
+	v0 = 0;
+	a0 = s1;
+	a1 = sp + 232U;
+	v0 = v0 + ((u32)(uintptr_t)vae_x_tisp_event_push + 0U);
+	vf_sw((sp + 248U), v1);
+	tg = v0; vf_sw((sp + 252U), 0U); { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 182132U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	v0 = s2 + s0;
+	v0 = vae_lw((v0 + (u32)0), 182144U);
+	a0 = vf_lw((sp + 248U));
+	a1 = vf_lw((sp + 252U));
+	v0 = vae_lw((v0 + (u32)4), 182156U);
+	vae_sw((v0 + (u32)7504), a0, 182160U);
+	vae_sw((v0 + (u32)7508), a1, 182164U);
+	v0 = vf_lw((sp + 456U));
+	vae_sw((s8 + (u32)0), v0, 182172U);
+	s5 = 0;
+L_6b0:
+	s5 = s5 + ((u32)(uintptr_t)(vae_ta_custom_tgain_short) + 0U);
+	s5 = s5 + s0;
+	v0 = vae_lw((s5 + (u32)0), 182188U);
+	c = (v0 == s6); v0 = 0; if (c) goto L_718;
+	a2 = (u32)16;
+	a1 = (u32)16;
+	tg = s4; a0 = s6 << 6; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 182208U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	s8 = v0;
+	v0 = (u32)8;
+	vf_sw((sp + 192U), v0);
+	v0 = 0;
+	a0 = 0U;
+	v0 = v0 + ((u32)(uintptr_t)vae_x_tisp_event_push + 0U);
+	a1 = sp + 184U;
+	vf_sw((sp + 200U), s8);
+	tg = v0; vf_sw((sp + 204U), 0U); { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 182248U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	v0 = s2 + s0;
+	v0 = vae_lw((v0 + (u32)0), 182260U);
+	vae_sw((s5 + (u32)0), s6, 182264U);
+	v0 = vae_lw((v0 + (u32)4), 182268U);
+	vae_sw((v0 + (u32)7512), s8, 182272U);
+	vae_sw((v0 + (u32)7516), 0U, 182276U);
+	v0 = 0;
+L_718:
+	v0 = v0 + ((u32)(uintptr_t)vae_rodata + 7228U);
+	v0 = v0 + s0;
+	v0 = vae_lw((v0 + (u32)0), 182292U);
+	c = (v0 == s3); ra = vf_lw((sp + 564U)); if (c) goto L_78c;
+	a2 = (u32)16;
+	a1 = (u32)16;
+	tg = s4; a0 = s3 << 6; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 182312U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	s4 = v0;
+	v0 = (u32)9;
+	vf_sw((sp + 144U), v0);
+	v0 = 0;
+	s2 = s2 + s0;
+	a0 = s1;
+	v0 = v0 + ((u32)(uintptr_t)vae_x_tisp_event_push + 0U);
+	a1 = sp + 136U;
+	vf_sw((sp + 152U), s4);
+	tg = v0; vf_sw((sp + 156U), 0U); { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 182356U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	v0 = vae_lw((s2 + (u32)0), 182364U);
+	s0 = s7 + s0;
+	vae_sw((s0 + (u32)0), s3, 182372U);
+	v1 = vae_lw((v0 + (u32)4), 182376U);
+	vae_sw((v1 + (u32)8628), s3, 182380U);
+	v0 = vae_lw((v0 + (u32)4), 182384U);
+	vae_sw((v0 + (u32)7520), s4, 182388U);
+	vae_sw((v0 + (u32)7524), 0U, 182392U);
+	ra = vf_lw((sp + 564U));
+L_78c:
+	s8 = vf_lw((sp + 560U));
+	s7 = vf_lw((sp + 556U));
+	s6 = vf_lw((sp + 552U));
+	s5 = vf_lw((sp + 548U));
+	s4 = vf_lw((sp + 544U));
+	s3 = vf_lw((sp + 540U));
+	s2 = vf_lw((sp + 536U));
+	s1 = vf_lw((sp + 532U));
+	s0 = vf_lw((sp + 528U));
+	 return ((u64)v1 << 32) | v0;
+L_7b8:
+	v0 = 0;
+	a1 = 0U;
+	v0 = v0 + ((u32)(uintptr_t)vae_tisp_blc_ae_write_dgain + 0U);
+	tg = v0; a0 = s1; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 182456U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	c = 1; v0 = s1 & 255U; if (c) goto L_24c;
+L_7d4:
+	s6 = 0U;
+	c = 1; vf_sw((sp + 456U), 0U); if (c) goto L_4ec;
+	return ((u64)v1 << 32) | v0;
+}
+
+/* OEM tisp_ae_algo_deinit_internal (.text+0x2c8d4, 11 insns, frame 0) */
+u64 noinline vae_tisp_ae_algo_deinit_internal(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
+{
+	u32 at = 0, v0 = 0, v1 = 0, t0 = 0, t1 = 0, t2 = 0, t3 = 0, t4 = 0, t5 = 0, t6 = 0, t7 = 0, s0 = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0, s5 = 0, s6 = 0, s7 = 0, t8 = 0, t9 = 0, k0 = 0, k1 = 0, gp = 0, s8 = 0, ra = 0;
+	u32 tg = 0, c = 0; u64 acc = 0;
+	u32 vframe[2] __aligned(8);
+	u32 sp = (u32)(uintptr_t)vframe;
+	(void)tg; (void)c; (void)acc; (void)sp; (void)csp; (void)at; (void)k0; (void)k1; (void)gp; (void)ra;
+	vae_fn_enter();
+	v0 = 0;
+	v0 = v0 + ((u32)(uintptr_t)(vae_ta_custom_en) + 0U);
+	a0 = a0 << 2;
+	a0 = a0 + v0;
+	v1 = vae_lw((a0 + (u32)0), 182500U);
+	v0 = (u32)1;
+	c = (v1 != v0);  if (c) goto L_24;
+	vae_sw((a0 + (u32)0), 0U, 182516U);
+L_24:
+	 return ((u64)v1 << 32) | v0;
+	return ((u64)v1 << 32) | v0;
+}
+
 /* OEM api_ae_long_process (.text+0x2a214, 264 insns, frame 112) */
 u64 noinline vae_api_ae_long_process(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
 {
@@ -2061,6 +2676,557 @@ u64 noinline vae_tisp_clm_itp(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
 	v0 = (u32)(s32)(short)v0;
 	s0 = vf_lw((sp + 16U));
 	 return ((u64)v1 << 32) | v0;
+	return ((u64)v1 << 32) | v0;
+}
+
+/* OEM fix_point_div_32 (.text+0x174e0, 34 insns, frame 24) */
+u64 noinline vae_fix_point_div_32(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
+{
+	u32 at = 0, v0 = 0, v1 = 0, t0 = 0, t1 = 0, t2 = 0, t3 = 0, t4 = 0, t5 = 0, t6 = 0, t7 = 0, s0 = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0, s5 = 0, s6 = 0, s7 = 0, t8 = 0, t9 = 0, k0 = 0, k1 = 0, gp = 0, s8 = 0, ra = 0;
+	u32 tg = 0, c = 0; u64 acc = 0;
+	u32 vframe[7] __aligned(8);
+	u32 sp = (u32)(uintptr_t)vframe;
+	(void)tg; (void)c; (void)acc; (void)sp; (void)csp; (void)at; (void)k0; (void)k1; (void)gp; (void)ra;
+	vae_fn_enter();
+	acc = vae_divu(a1, a2, 95456U);
+	a3 = a0;
+	v1 = 0U;
+	vf_sw((sp + 16U), s0);
+	vf_sw((sp + 20U), ra);
+	s0 = 0U;
+	v0 = (u32)(acc >> 32);
+	a0 = (u32)acc;
+L_24:
+	c = (v1 == a3); v0 = v0 << 1; if (c) goto L_60;
+	a1 = a2 < v0;
+	c = (a1 == 0); s0 = s0 << 1; if (c) goto L_48;
+	s0 = s0 | 1U;
+	v0 = v0 - a2;
+L_40:
+	c = 1; v1 = v1 + (u32)1; if (c) goto L_24;
+L_48:
+	c = (a2 != v0);  if (c) goto L_40;
+	v0 = a3 + (u32)-1;
+	s0 = s0 | 1U;
+	v1 = v0 - v1;
+	s0 = s0 << (v1 & 31);
+L_60:
+	v0 = 0;
+	a2 = a3;
+	v0 = v0 + ((u32)(uintptr_t)vae_x___ashldi3 + 0U);
+	tg = v0; a1 = 0U; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 95564U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	ra = vf_lw((sp + 20U));
+	v0 = s0 | v0;
+	s0 = vf_lw((sp + 16U));
+	 return ((u64)v1 << 32) | v0;
+	return ((u64)v1 << 32) | v0;
+}
+
+/* OEM fix_point_mult2_32 (.text+0x17d84, 17 insns, frame 0) */
+u64 noinline vae_fix_point_mult2_32(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
+{
+	u32 at = 0, v0 = 0, v1 = 0, t0 = 0, t1 = 0, t2 = 0, t3 = 0, t4 = 0, t5 = 0, t6 = 0, t7 = 0, s0 = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0, s5 = 0, s6 = 0, s7 = 0, t8 = 0, t9 = 0, k0 = 0, k1 = 0, gp = 0, s8 = 0, ra = 0;
+	u32 tg = 0, c = 0; u64 acc = 0;
+	u32 vframe[2] __aligned(8);
+	u32 sp = (u32)(uintptr_t)vframe;
+	(void)tg; (void)c; (void)acc; (void)sp; (void)csp; (void)at; (void)k0; (void)k1; (void)gp; (void)ra;
+	vae_fn_enter();
+	v0 = 0U - a0;
+	v1 = (u32)-1;
+	v1 = v1 >> (v0 & 31);
+	a3 = a1 >> (a0 & 31);
+	t0 = a2 >> (a0 & 31);
+	a1 = v1 & a1;
+	v0 = (u32)((s32)a3 * (s32)t0);
+	a2 = v1 & a2;
+	acc = (u64)((s64)(s32)a1 * (s64)(s32)t0);
+	v0 = v0 << (a0 & 31);
+	acc += (u64)((s64)(s32)a3 * (s64)(s32)a2);
+	a3 = (u32)acc;
+	v0 = a3 + v0;
+	a1 = (u32)((s32)a1 * (s32)a2);
+	a1 = a1 >> (a0 & 31);
+	v0 = v0 + a1; return ((u64)v1 << 32) | v0;
+	return ((u64)v1 << 32) | v0;
+}
+
+/* OEM fix_point_mult3_32 (.text+0x17dc8, 11 insns, frame 24) */
+u64 noinline vae_fix_point_mult3_32(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
+{
+	u32 at = 0, v0 = 0, v1 = 0, t0 = 0, t1 = 0, t2 = 0, t3 = 0, t4 = 0, t5 = 0, t6 = 0, t7 = 0, s0 = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0, s5 = 0, s6 = 0, s7 = 0, t8 = 0, t9 = 0, k0 = 0, k1 = 0, gp = 0, s8 = 0, ra = 0;
+	u32 tg = 0, c = 0; u64 acc = 0;
+	u32 vframe[7] __aligned(8);
+	u32 sp = (u32)(uintptr_t)vframe;
+	(void)tg; (void)c; (void)acc; (void)sp; (void)csp; (void)at; (void)k0; (void)k1; (void)gp; (void)ra;
+	vae_fn_enter();
+	t9 = 0;
+	t9 = t9 + ((u32)(uintptr_t)vae_fix_point_mult2_32 + 0U);
+	vf_sw((sp + 20U), ra);
+	tg = t9; t2 = a3; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 97752U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	ra = vf_lw((sp + 20U));
+	a2 = t2;
+	a1 = v0;
+	tg = t9;  return vae_call(tg, a0, a1, a2, a3, csp, 97772U);
+	return ((u64)v1 << 32) | v0;
+}
+
+/* OEM system_reg_set_ae_trig (.text+0x22134, 6 insns, frame 0) */
+u64 noinline vae_system_reg_set_ae_trig(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
+{
+	u32 at = 0, v0 = 0, v1 = 0, t0 = 0, t1 = 0, t2 = 0, t3 = 0, t4 = 0, t5 = 0, t6 = 0, t7 = 0, s0 = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0, s5 = 0, s6 = 0, s7 = 0, t8 = 0, t9 = 0, k0 = 0, k1 = 0, gp = 0, s8 = 0, ra = 0;
+	u32 tg = 0, c = 0; u64 acc = 0;
+	u32 vframe[2] __aligned(8);
+	u32 sp = (u32)(uintptr_t)vframe;
+	(void)tg; (void)c; (void)acc; (void)sp; (void)csp; (void)at; (void)k0; (void)k1; (void)gp; (void)ra;
+	vae_fn_enter();
+	a0 = 1U << 16;
+	t9 = 0;
+	a1 = (u32)1;
+	t9 = t9 + ((u32)(uintptr_t)vae_x_system_reg_write + 0U);
+	tg = t9; a0 = a0 | 36864U; return vae_call(tg, a0, a1, a2, a3, csp, 139588U);
+	return ((u64)v1 << 32) | v0;
+}
+
+/* OEM tisp_blc_ae_write_dgain (.text+0x36a98, 184 insns, frame 56) */
+u64 noinline vae_tisp_blc_ae_write_dgain(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
+{
+	u32 at = 0, v0 = 0, v1 = 0, t0 = 0, t1 = 0, t2 = 0, t3 = 0, t4 = 0, t5 = 0, t6 = 0, t7 = 0, s0 = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0, s5 = 0, s6 = 0, s7 = 0, t8 = 0, t9 = 0, k0 = 0, k1 = 0, gp = 0, s8 = 0, ra = 0;
+	u32 tg = 0, c = 0; u64 acc = 0;
+	u32 vframe[15] __aligned(8);
+	u32 sp = (u32)(uintptr_t)vframe;
+	(void)tg; (void)c; (void)acc; (void)sp; (void)csp; (void)at; (void)k0; (void)k1; (void)gp; (void)ra;
+	vae_fn_enter();
+	v0 = (u32)8232;
+	vf_sw((sp + 28U), s3);
+	s3 = (u32)8244;
+	vf_sw((sp + 32U), s4);
+	if (a1 == 0) s3 = v0;
+	s4 = (u32)8240;
+	v0 = (u32)8228;
+	vf_sw((sp + 24U), s2);
+	if (a1 == 0) s4 = v0;
+	s2 = (u32)8248;
+	v0 = (u32)8236;
+	if (a1 == 0) s2 = v0;
+	v0 = 0;
+	v0 = v0 + ((u32)(uintptr_t)(blc_info) + 0U);
+	a0 = a0 << 2;
+	vf_sw((sp + 52U), ra);
+	vf_sw((sp + 44U), s7);
+	vf_sw((sp + 40U), s6);
+	vf_sw((sp + 36U), s5);
+	vf_sw((sp + 20U), s1);
+	vf_sw((sp + 48U), s8);
+	vf_sw((sp + 16U), s0);
+	a0 = a0 + v0;
+	v0 = vae_lw((a0 + (u32)0), 223992U);
+	a1 = a1 << 5;
+	s1 = 0;
+	a1 = v0 + a1;
+	s0 = vae_lw((a1 + (u32)12), 224008U);
+	s5 = a3;
+	s1 = s1 + ((u32)(uintptr_t)vae_tisp_round_int64 + 0U);
+	a0 = (u32)((s32)s0 * (s32)a2);
+	a1 = 0U;
+	tg = s1; a2 = (u32)12; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224028U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a0 = (u32)((s32)s0 * (s32)s5);
+	a2 = (u32)12;
+	a1 = 0U;
+	tg = s1; s7 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224048U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a0 = vae_lw((csp + 16U), 224056U);
+	a2 = (u32)12;
+	a1 = 0U;
+	a0 = (u32)((s32)s0 * (s32)a0);
+	tg = s1; s5 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224072U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	s6 = v0;
+	v1 = s7;
+	v0 = s7 < s5;
+	if (v0 != 0) v1 = s5;
+	v0 = s6 < v1;
+	if (v0 == 0) v1 = s6;
+	v0 = v1;
+	v1 = v1 >> 17;
+	c = (v1 != 0); v1 = v0 >> 16; if (c) goto L_2d0;
+	s0 = 0;
+	c = (v1 == 0); s0 = s0 + ((u32)(uintptr_t)vae_tisp_max + 0U); if (c) goto L_1f4;
+	a0 = s7;
+	a2 = (u32)2;
+	tg = s1; a1 = 0U; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224140U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a0 = s5;
+	a2 = (u32)2;
+	a1 = 0U;
+	tg = s1; s8 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224160U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a2 = (u32)2;
+	a0 = s6;
+	a1 = 0U;
+	tg = s1; s7 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224180U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a2 = (u32)4096;
+	a3 = 0U;
+	a0 = s8;
+	a1 = 0U;
+	tg = s0; s5 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224204U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a2 = (u32)4096;
+	a3 = 0U;
+	a0 = s7;
+	a1 = 0U;
+	tg = s0; s1 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224228U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a0 = s5;
+	a2 = (u32)4096;
+	a3 = 0U;
+	tg = s0; a1 = 0U; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224248U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	s0 = v0;
+	s5 = (u32)2;
+L_170:
+	a1 = s0 << 16;
+	v0 = 32767U << 16;
+	a1 = a1 & v0;
+	s1 = s1 & 32767U;
+	a1 = a1 | s1;
+	s1 = 0;
+	s1 = s1 + ((u32)(uintptr_t)vae_x_system_reg_write + 0U);
+	tg = s1; a0 = s4; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224292U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	s0 = s0 & 32767U;
+	a1 = 1024U << 16;
+	a1 = s0 | a1;
+	tg = s1; a0 = s3; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224312U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a1 = s5;
+	tg = s1; a0 = s2; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224324U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a1 = (u32)1;
+	tg = s1; a0 = (u32)8192; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224336U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	ra = vf_lw((sp + 52U));
+	s8 = vf_lw((sp + 48U));
+	s7 = vf_lw((sp + 44U));
+	s6 = vf_lw((sp + 40U));
+	s5 = vf_lw((sp + 36U));
+	s4 = vf_lw((sp + 32U));
+	s3 = vf_lw((sp + 28U));
+	s2 = vf_lw((sp + 24U));
+	s1 = vf_lw((sp + 20U));
+	s0 = vf_lw((sp + 16U));
+	v0 = 0U;
+	 return ((u64)v1 << 32) | v0;
+L_1f4:
+	v0 = v0 >> 15;
+	c = (v0 == 0); a2 = (u32)1024; if (c) goto L_288;
+	a0 = s7;
+	a2 = (u32)1;
+	tg = s1; a1 = 0U; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224416U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a0 = s5;
+	a2 = (u32)1;
+	a1 = 0U;
+	tg = s1; s8 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224436U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a2 = (u32)1;
+	a0 = s6;
+	a1 = 0U;
+	tg = s1; s7 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224456U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a2 = (u32)2048;
+	a3 = 0U;
+	a0 = s8;
+	a1 = 0U;
+	tg = s0; s5 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224480U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a2 = (u32)2048;
+	a3 = 0U;
+	a0 = s7;
+	a1 = 0U;
+	tg = s0; s1 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224504U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a0 = s5;
+	a2 = (u32)2048;
+	a3 = 0U;
+	tg = s0; a1 = 0U; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224524U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	s0 = v0;
+	c = 1; s5 = (u32)1; if (c) goto L_170;
+L_288:
+	a3 = 0U;
+	a0 = s7;
+	tg = s0; a1 = 0U; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224552U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a0 = s5;
+	a2 = (u32)1024;
+	a3 = 0U;
+	a1 = 0U;
+	tg = s0; s1 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224576U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a2 = (u32)1024;
+	a3 = 0U;
+	a0 = s6;
+	tg = s0; a1 = 0U; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224596U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	s0 = v0;
+	c = 1; s5 = 0U; if (c) goto L_170;
+L_2d0:
+	s5 = (u32)3;
+	s0 = (u32)16384;
+	c = 1; s1 = (u32)16384; if (c) goto L_170;
+	return ((u64)v1 << 32) | v0;
+}
+
+/* OEM tisp_gib_ae_write_dgain (.text+0x33980, 212 insns, frame 48) */
+u64 noinline vae_tisp_gib_ae_write_dgain(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
+{
+	u32 at = 0, v0 = 0, v1 = 0, t0 = 0, t1 = 0, t2 = 0, t3 = 0, t4 = 0, t5 = 0, t6 = 0, t7 = 0, s0 = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0, s5 = 0, s6 = 0, s7 = 0, t8 = 0, t9 = 0, k0 = 0, k1 = 0, gp = 0, s8 = 0, ra = 0;
+	u32 tg = 0, c = 0; u64 acc = 0;
+	u32 vframe[13] __aligned(8);
+	u32 sp = (u32)(uintptr_t)vframe;
+	(void)tg; (void)c; (void)acc; (void)sp; (void)csp; (void)at; (void)k0; (void)k1; (void)gp; (void)ra;
+	vae_fn_enter();
+	v0 = 0;
+	v0 = v0 + ((u32)(uintptr_t)(gib_info) + 0U);
+	a0 = a0 << 2;
+	a0 = a0 + v0;
+	vf_sw((sp + 44U), ra);
+	vf_sw((sp + 36U), s5);
+	vf_sw((sp + 32U), s4);
+	vf_sw((sp + 28U), s3);
+	vf_sw((sp + 24U), s2);
+	vf_sw((sp + 20U), s1);
+	vf_sw((sp + 40U), s6);
+	vf_sw((sp + 16U), s0);
+	v0 = vae_lw((a0 + (u32)0), 211380U);
+	s1 = 0;
+	s1 = s1 + ((u32)(uintptr_t)vae_tisp_round_int64 + 0U);
+	s0 = vae_lw((v0 + (u32)16), 211392U);
+	s3 = a2;
+	a2 = (u32)12;
+	a0 = (u32)((s32)s0 * (s32)a1);
+	a1 = 0U;
+	s2 = a3;
+	tg = s1; s6 = vae_lbu((v0 + (u32)41), 211420U); { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211416U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a0 = (u32)((s32)s0 * (s32)s3);
+	a2 = (u32)12;
+	a1 = 0U;
+	tg = s1; s4 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211436U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a0 = (u32)((s32)s0 * (s32)s2);
+	a2 = (u32)12;
+	a1 = 0U;
+	tg = s1; s5 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211456U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a0 = vae_lw((csp + 16U), 211464U);
+	a2 = (u32)12;
+	a1 = 0U;
+	a0 = (u32)((s32)s0 * (s32)a0);
+	tg = s1; s3 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211480U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	s2 = v0;
+	v1 = s4;
+	v0 = s4 < s5;
+	if (v0 != 0) v1 = s5;
+	v0 = s3 < v1;
+	if (v0 == 0) v1 = s3;
+	c = (s6 == 0); v0 = v1; if (c) goto L_c8;
+	v1 = v1 < s2;
+	if (v1 != 0) v0 = s2;
+L_c8:
+	v1 = v0 >> 17;
+	c = (v1 != 0); v1 = v0 >> 16; if (c) goto L_338;
+	s0 = 0;
+	c = (v1 == 0); s0 = s0 + ((u32)(uintptr_t)vae_tisp_max + 0U); if (c) goto L_210;
+	a0 = s4;
+	a2 = (u32)2;
+	tg = s1; a1 = 0U; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211560U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a0 = s5;
+	a2 = (u32)2;
+	a1 = 0U;
+	tg = s1; s4 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211580U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a0 = s3;
+	a2 = (u32)2;
+	a1 = 0U;
+	tg = s1; s5 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211600U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a0 = s2;
+	a2 = (u32)2;
+	a1 = 0U;
+	tg = s1; s3 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211620U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a0 = s4;
+	a2 = (u32)4096;
+	a3 = 0U;
+	a1 = 0U;
+	tg = s0; s2 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211644U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a2 = (u32)4096;
+	a3 = 0U;
+	a0 = s5;
+	a1 = 0U;
+	tg = s0; s4 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211668U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a0 = s3;
+	a2 = (u32)4096;
+	a3 = 0U;
+	a1 = 0U;
+	tg = s0; s1 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211692U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a1 = 0U;
+	a2 = (u32)4096;
+	a3 = 0U;
+	a0 = s2;
+	tg = s0; s3 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211716U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	s0 = v0;
+	a1 = (u32)2;
+L_194:
+	s2 = 0;
+	s2 = s2 + ((u32)(uintptr_t)vae_x_system_reg_write + 0U);
+	s5 = 32767U << 16;
+	a0 = (u32)32828;
+	tg = s2; s1 = s1 << 16; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211748U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	s1 = s1 & s5;
+	a1 = s4 & 32767U;
+	a1 = s1 | a1;
+	a0 = (u32)32768;
+	tg = s2; s0 = s0 << 16; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211772U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	s0 = s0 & s5;
+	a1 = s3 & 32767U;
+	a1 = s0 | a1;
+	tg = s2; a0 = (u32)32772; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211792U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a1 = (u32)1;
+	tg = s2; a0 = (u32)32832; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211804U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	ra = vf_lw((sp + 44U));
+	s6 = vf_lw((sp + 40U));
+	s5 = vf_lw((sp + 36U));
+	s4 = vf_lw((sp + 32U));
+	s3 = vf_lw((sp + 28U));
+	s2 = vf_lw((sp + 24U));
+	s1 = vf_lw((sp + 20U));
+	s0 = vf_lw((sp + 16U));
+	v0 = 0U;
+	 return ((u64)v1 << 32) | v0;
+L_210:
+	v0 = v0 >> 15;
+	c = (v0 == 0); a2 = (u32)1024; if (c) goto L_2d4;
+	a0 = s4;
+	a2 = (u32)1;
+	tg = s1; a1 = 0U; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211876U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a0 = s5;
+	a2 = (u32)1;
+	a1 = 0U;
+	tg = s1; s4 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211896U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a0 = s3;
+	a2 = (u32)1;
+	a1 = 0U;
+	tg = s1; s5 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211916U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a0 = s2;
+	a2 = (u32)1;
+	a1 = 0U;
+	tg = s1; s3 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211936U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a0 = s4;
+	a2 = (u32)2048;
+	a3 = 0U;
+	a1 = 0U;
+	tg = s0; s2 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211960U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a2 = (u32)2048;
+	a3 = 0U;
+	a0 = s5;
+	a1 = 0U;
+	tg = s0; s4 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211984U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a0 = s3;
+	a2 = (u32)2048;
+	a3 = 0U;
+	a1 = 0U;
+	tg = s0; s1 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 212008U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a1 = 0U;
+	a2 = (u32)2048;
+	a3 = 0U;
+	a0 = s2;
+	tg = s0; s3 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 212032U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	s0 = v0;
+	c = 1; a1 = (u32)1; if (c) goto L_194;
+L_2d4:
+	a0 = s4;
+	a3 = 0U;
+	tg = s0; a1 = 0U; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 212060U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a2 = (u32)1024;
+	a3 = 0U;
+	a0 = s5;
+	a1 = 0U;
+	tg = s0; s4 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 212084U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a0 = s3;
+	a2 = (u32)1024;
+	a3 = 0U;
+	a1 = 0U;
+	tg = s0; s1 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 212108U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	a1 = 0U;
+	a2 = (u32)1024;
+	a3 = 0U;
+	a0 = s2;
+	tg = s0; s3 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 212132U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	s0 = v0;
+	c = 1; a1 = 0U; if (c) goto L_194;
+L_338:
+	a1 = (u32)3;
+	s0 = (u32)16384;
+	s3 = (u32)16384;
+	s1 = (u32)16384;
+	c = 1; s4 = (u32)16384; if (c) goto L_194;
+	return ((u64)v1 << 32) | v0;
+}
+
+/* OEM tisp_log2_fixed_to_fixed (.text+0x1828c, 14 insns, frame 24) */
+u64 noinline vae_tisp_log2_fixed_to_fixed(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
+{
+	u32 at = 0, v0 = 0, v1 = 0, t0 = 0, t1 = 0, t2 = 0, t3 = 0, t4 = 0, t5 = 0, t6 = 0, t7 = 0, s0 = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0, s5 = 0, s6 = 0, s7 = 0, t8 = 0, t9 = 0, k0 = 0, k1 = 0, gp = 0, s8 = 0, ra = 0;
+	u32 tg = 0, c = 0; u64 acc = 0;
+	u32 vframe[7] __aligned(8);
+	u32 sp = (u32)(uintptr_t)vframe;
+	(void)tg; (void)c; (void)acc; (void)sp; (void)csp; (void)at; (void)k0; (void)k1; (void)gp; (void)ra;
+	vae_fn_enter();
+	t2 = a2;
+	v0 = 0;
+	t1 = a1;
+	vf_sw((sp + 20U), ra);
+	a2 = 0U;
+	v0 = v0 + ((u32)(uintptr_t)vae_tisp_log2_int_to_fixed + 0U);
+	tg = v0; a1 = t2; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 98984U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	ra = vf_lw((sp + 20U));
+	t1 = t1 << (t2 & 31);
+	v0 = v0 - t1;
+	 return ((u64)v1 << 32) | v0;
+	return ((u64)v1 << 32) | v0;
+}
+
+/* OEM tisp_math_exp2 (.text+0x17568, 49 insns, frame 32) */
+u64 noinline vae_tisp_math_exp2(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
+{
+	u32 at = 0, v0 = 0, v1 = 0, t0 = 0, t1 = 0, t2 = 0, t3 = 0, t4 = 0, t5 = 0, t6 = 0, t7 = 0, s0 = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0, s5 = 0, s6 = 0, s7 = 0, t8 = 0, t9 = 0, k0 = 0, k1 = 0, gp = 0, s8 = 0, ra = 0;
+	u32 tg = 0, c = 0; u64 acc = 0;
+	u32 vframe[9] __aligned(8);
+	u32 sp = (u32)(uintptr_t)vframe;
+	(void)tg; (void)c; (void)acc; (void)sp; (void)csp; (void)at; (void)k0; (void)k1; (void)gp; (void)ra;
+	vae_fn_enter();
+	a3 = (u32)1;
+	t0 = a3 << (a1 & 31);
+	t0 = t0 + (u32)-1;
+	vf_sw((sp + 20U), s0);
+	s0 = (u32)30;
+	v1 = 0;
+	s0 = s0 - a2;
+	t0 = t0 & a0;
+	v0 = a1 < (u32)6;
+	a0 = a0 >> (a1 & 31);
+	v1 = v1 + ((u32)(uintptr_t)vae_rodata + 6216U);
+	vf_sw((sp + 28U), ra);
+	vf_sw((sp + 24U), s1);
+	c = (v0 == 0); s0 = s0 - a0; if (c) goto L_70;
+	a3 = (u32)5;
+	a3 = a3 - a1;
+	a3 = t0 << (a3 & 31);
+	a3 = a3 << 2;
+	v1 = v1 + a3;
+	v0 = vae_lw((v1 + (u32)0), 95676U);
+L_58:
+	ra = vf_lw((sp + 28U));
+	v0 = v0 >> (s0 & 31);
+	s1 = vf_lw((sp + 24U));
+	s0 = vf_lw((sp + 20U));
+	 return ((u64)v1 << 32) | v0;
+L_70:
+	a2 = a1 + (u32)-5;
+	a0 = t0 >> (a2 & 31);
+	v0 = a0 << 2;
+	a0 = a0 + (u32)1;
+	a0 = a0 << 2;
+	v0 = v1 + v0;
+	v1 = v1 + a0;
+	s1 = vae_lw((v0 + (u32)0), 95732U);
+	a0 = vae_lw((v1 + (u32)0), 95736U);
+	a3 = a3 << (a2 & 31);
+	a3 = a3 + (u32)-1;
+	a3 = a3 & t0;
+	a0 = a0 - s1;
+	acc = (u64)a0 * (u64)a3;
+	v0 = 0;
+	v0 = v0 + ((u32)(uintptr_t)vae_x___lshrdi3 + 0U);
+	a0 = (u32)acc;
+	tg = v0; a1 = (u32)(acc >> 32); { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 95772U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
+	c = 1; v0 = s1 + v0; if (c) goto L_58;
 	return ((u64)v1 << 32) | v0;
 }
 
@@ -3523,34 +4689,6 @@ L_5b0:
 	return ((u64)v1 << 32) | v0;
 }
 
-/* OEM fix_point_mult2_32 (.text+0x17d84, 17 insns, frame 0) */
-u64 noinline vae_fix_point_mult2_32(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
-{
-	u32 at = 0, v0 = 0, v1 = 0, t0 = 0, t1 = 0, t2 = 0, t3 = 0, t4 = 0, t5 = 0, t6 = 0, t7 = 0, s0 = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0, s5 = 0, s6 = 0, s7 = 0, t8 = 0, t9 = 0, k0 = 0, k1 = 0, gp = 0, s8 = 0, ra = 0;
-	u32 tg = 0, c = 0; u64 acc = 0;
-	u32 vframe[2] __aligned(8);
-	u32 sp = (u32)(uintptr_t)vframe;
-	(void)tg; (void)c; (void)acc; (void)sp; (void)csp; (void)at; (void)k0; (void)k1; (void)gp; (void)ra;
-	vae_fn_enter();
-	v0 = 0U - a0;
-	v1 = (u32)-1;
-	v1 = v1 >> (v0 & 31);
-	a3 = a1 >> (a0 & 31);
-	t0 = a2 >> (a0 & 31);
-	a1 = v1 & a1;
-	v0 = (u32)((s32)a3 * (s32)t0);
-	a2 = v1 & a2;
-	acc = (u64)((s64)(s32)a1 * (s64)(s32)t0);
-	v0 = v0 << (a0 & 31);
-	acc += (u64)((s64)(s32)a3 * (s64)(s32)a2);
-	a3 = (u32)acc;
-	v0 = a3 + v0;
-	a1 = (u32)((s32)a1 * (s32)a2);
-	a1 = a1 >> (a0 & 31);
-	v0 = v0 + a1; return ((u64)v1 << 32) | v0;
-	return ((u64)v1 << 32) | v0;
-}
-
 /* OEM fix_point_mult3_64 (.text+0x17cac, 25 insns, frame 40) */
 u64 noinline vae_fix_point_mult3_64(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
 {
@@ -3608,391 +4746,6 @@ u64 noinline vae_tisp_ae_long_set_sensor_integration_time(u32 a0, u32 a1, u32 a2
 	tg = v0; a0 = v1 & 65535U; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 161176U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
 	ra = vf_lw((sp + 132U));
 	v0 = 0U;
-	 return ((u64)v1 << 32) | v0;
-	return ((u64)v1 << 32) | v0;
-}
-
-/* OEM tisp_blc_ae_write_dgain (.text+0x36a98, 184 insns, frame 56) */
-u64 noinline vae_tisp_blc_ae_write_dgain(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
-{
-	u32 at = 0, v0 = 0, v1 = 0, t0 = 0, t1 = 0, t2 = 0, t3 = 0, t4 = 0, t5 = 0, t6 = 0, t7 = 0, s0 = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0, s5 = 0, s6 = 0, s7 = 0, t8 = 0, t9 = 0, k0 = 0, k1 = 0, gp = 0, s8 = 0, ra = 0;
-	u32 tg = 0, c = 0; u64 acc = 0;
-	u32 vframe[15] __aligned(8);
-	u32 sp = (u32)(uintptr_t)vframe;
-	(void)tg; (void)c; (void)acc; (void)sp; (void)csp; (void)at; (void)k0; (void)k1; (void)gp; (void)ra;
-	vae_fn_enter();
-	v0 = (u32)8232;
-	vf_sw((sp + 28U), s3);
-	s3 = (u32)8244;
-	vf_sw((sp + 32U), s4);
-	if (a1 == 0) s3 = v0;
-	s4 = (u32)8240;
-	v0 = (u32)8228;
-	vf_sw((sp + 24U), s2);
-	if (a1 == 0) s4 = v0;
-	s2 = (u32)8248;
-	v0 = (u32)8236;
-	if (a1 == 0) s2 = v0;
-	v0 = 0;
-	v0 = v0 + ((u32)(uintptr_t)(blc_info) + 0U);
-	a0 = a0 << 2;
-	vf_sw((sp + 52U), ra);
-	vf_sw((sp + 44U), s7);
-	vf_sw((sp + 40U), s6);
-	vf_sw((sp + 36U), s5);
-	vf_sw((sp + 20U), s1);
-	vf_sw((sp + 48U), s8);
-	vf_sw((sp + 16U), s0);
-	a0 = a0 + v0;
-	v0 = vae_lw((a0 + (u32)0), 223992U);
-	a1 = a1 << 5;
-	s1 = 0;
-	a1 = v0 + a1;
-	s0 = vae_lw((a1 + (u32)12), 224008U);
-	s5 = a3;
-	s1 = s1 + ((u32)(uintptr_t)vae_tisp_round_int64 + 0U);
-	a0 = (u32)((s32)s0 * (s32)a2);
-	a1 = 0U;
-	tg = s1; a2 = (u32)12; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224028U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	a0 = (u32)((s32)s0 * (s32)s5);
-	a2 = (u32)12;
-	a1 = 0U;
-	tg = s1; s7 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224048U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	a0 = vae_lw((csp + 16U), 224056U);
-	a2 = (u32)12;
-	a1 = 0U;
-	a0 = (u32)((s32)s0 * (s32)a0);
-	tg = s1; s5 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224072U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	s6 = v0;
-	v1 = s7;
-	v0 = s7 < s5;
-	if (v0 != 0) v1 = s5;
-	v0 = s6 < v1;
-	if (v0 == 0) v1 = s6;
-	v0 = v1;
-	v1 = v1 >> 17;
-	c = (v1 != 0); v1 = v0 >> 16; if (c) goto L_2d0;
-	s0 = 0;
-	c = (v1 == 0); s0 = s0 + ((u32)(uintptr_t)vae_tisp_max + 0U); if (c) goto L_1f4;
-	a0 = s7;
-	a2 = (u32)2;
-	tg = s1; a1 = 0U; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224140U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	a0 = s5;
-	a2 = (u32)2;
-	a1 = 0U;
-	tg = s1; s8 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224160U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	a2 = (u32)2;
-	a0 = s6;
-	a1 = 0U;
-	tg = s1; s7 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224180U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	a2 = (u32)4096;
-	a3 = 0U;
-	a0 = s8;
-	a1 = 0U;
-	tg = s0; s5 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224204U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	a2 = (u32)4096;
-	a3 = 0U;
-	a0 = s7;
-	a1 = 0U;
-	tg = s0; s1 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224228U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	a0 = s5;
-	a2 = (u32)4096;
-	a3 = 0U;
-	tg = s0; a1 = 0U; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224248U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	s0 = v0;
-	s5 = (u32)2;
-L_170:
-	a1 = s0 << 16;
-	v0 = 32767U << 16;
-	a1 = a1 & v0;
-	s1 = s1 & 32767U;
-	a1 = a1 | s1;
-	s1 = 0;
-	s1 = s1 + ((u32)(uintptr_t)vae_x_system_reg_write + 0U);
-	tg = s1; a0 = s4; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224292U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	s0 = s0 & 32767U;
-	a1 = 1024U << 16;
-	a1 = s0 | a1;
-	tg = s1; a0 = s3; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224312U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	a1 = s5;
-	tg = s1; a0 = s2; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224324U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	a1 = (u32)1;
-	tg = s1; a0 = (u32)8192; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224336U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	ra = vf_lw((sp + 52U));
-	s8 = vf_lw((sp + 48U));
-	s7 = vf_lw((sp + 44U));
-	s6 = vf_lw((sp + 40U));
-	s5 = vf_lw((sp + 36U));
-	s4 = vf_lw((sp + 32U));
-	s3 = vf_lw((sp + 28U));
-	s2 = vf_lw((sp + 24U));
-	s1 = vf_lw((sp + 20U));
-	s0 = vf_lw((sp + 16U));
-	v0 = 0U;
-	 return ((u64)v1 << 32) | v0;
-L_1f4:
-	v0 = v0 >> 15;
-	c = (v0 == 0); a2 = (u32)1024; if (c) goto L_288;
-	a0 = s7;
-	a2 = (u32)1;
-	tg = s1; a1 = 0U; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224416U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	a0 = s5;
-	a2 = (u32)1;
-	a1 = 0U;
-	tg = s1; s8 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224436U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	a2 = (u32)1;
-	a0 = s6;
-	a1 = 0U;
-	tg = s1; s7 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224456U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	a2 = (u32)2048;
-	a3 = 0U;
-	a0 = s8;
-	a1 = 0U;
-	tg = s0; s5 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224480U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	a2 = (u32)2048;
-	a3 = 0U;
-	a0 = s7;
-	a1 = 0U;
-	tg = s0; s1 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224504U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	a0 = s5;
-	a2 = (u32)2048;
-	a3 = 0U;
-	tg = s0; a1 = 0U; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224524U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	s0 = v0;
-	c = 1; s5 = (u32)1; if (c) goto L_170;
-L_288:
-	a3 = 0U;
-	a0 = s7;
-	tg = s0; a1 = 0U; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224552U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	a0 = s5;
-	a2 = (u32)1024;
-	a3 = 0U;
-	a1 = 0U;
-	tg = s0; s1 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224576U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	a2 = (u32)1024;
-	a3 = 0U;
-	a0 = s6;
-	tg = s0; a1 = 0U; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 224596U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	s0 = v0;
-	c = 1; s5 = 0U; if (c) goto L_170;
-L_2d0:
-	s5 = (u32)3;
-	s0 = (u32)16384;
-	c = 1; s1 = (u32)16384; if (c) goto L_170;
-	return ((u64)v1 << 32) | v0;
-}
-
-/* OEM tisp_gib_ae_write_dgain (.text+0x33980, 212 insns, frame 48) */
-u64 noinline vae_tisp_gib_ae_write_dgain(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
-{
-	u32 at = 0, v0 = 0, v1 = 0, t0 = 0, t1 = 0, t2 = 0, t3 = 0, t4 = 0, t5 = 0, t6 = 0, t7 = 0, s0 = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0, s5 = 0, s6 = 0, s7 = 0, t8 = 0, t9 = 0, k0 = 0, k1 = 0, gp = 0, s8 = 0, ra = 0;
-	u32 tg = 0, c = 0; u64 acc = 0;
-	u32 vframe[13] __aligned(8);
-	u32 sp = (u32)(uintptr_t)vframe;
-	(void)tg; (void)c; (void)acc; (void)sp; (void)csp; (void)at; (void)k0; (void)k1; (void)gp; (void)ra;
-	vae_fn_enter();
-	v0 = 0;
-	v0 = v0 + ((u32)(uintptr_t)(gib_info) + 0U);
-	a0 = a0 << 2;
-	a0 = a0 + v0;
-	vf_sw((sp + 44U), ra);
-	vf_sw((sp + 36U), s5);
-	vf_sw((sp + 32U), s4);
-	vf_sw((sp + 28U), s3);
-	vf_sw((sp + 24U), s2);
-	vf_sw((sp + 20U), s1);
-	vf_sw((sp + 40U), s6);
-	vf_sw((sp + 16U), s0);
-	v0 = vae_lw((a0 + (u32)0), 211380U);
-	s1 = 0;
-	s1 = s1 + ((u32)(uintptr_t)vae_tisp_round_int64 + 0U);
-	s0 = vae_lw((v0 + (u32)16), 211392U);
-	s3 = a2;
-	a2 = (u32)12;
-	a0 = (u32)((s32)s0 * (s32)a1);
-	a1 = 0U;
-	s2 = a3;
-	tg = s1; s6 = vae_lbu((v0 + (u32)41), 211420U); { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211416U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	a0 = (u32)((s32)s0 * (s32)s3);
-	a2 = (u32)12;
-	a1 = 0U;
-	tg = s1; s4 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211436U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	a0 = (u32)((s32)s0 * (s32)s2);
-	a2 = (u32)12;
-	a1 = 0U;
-	tg = s1; s5 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211456U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	a0 = vae_lw((csp + 16U), 211464U);
-	a2 = (u32)12;
-	a1 = 0U;
-	a0 = (u32)((s32)s0 * (s32)a0);
-	tg = s1; s3 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211480U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	s2 = v0;
-	v1 = s4;
-	v0 = s4 < s5;
-	if (v0 != 0) v1 = s5;
-	v0 = s3 < v1;
-	if (v0 == 0) v1 = s3;
-	c = (s6 == 0); v0 = v1; if (c) goto L_c8;
-	v1 = v1 < s2;
-	if (v1 != 0) v0 = s2;
-L_c8:
-	v1 = v0 >> 17;
-	c = (v1 != 0); v1 = v0 >> 16; if (c) goto L_338;
-	s0 = 0;
-	c = (v1 == 0); s0 = s0 + ((u32)(uintptr_t)vae_tisp_max + 0U); if (c) goto L_210;
-	a0 = s4;
-	a2 = (u32)2;
-	tg = s1; a1 = 0U; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211560U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	a0 = s5;
-	a2 = (u32)2;
-	a1 = 0U;
-	tg = s1; s4 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211580U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	a0 = s3;
-	a2 = (u32)2;
-	a1 = 0U;
-	tg = s1; s5 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211600U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	a0 = s2;
-	a2 = (u32)2;
-	a1 = 0U;
-	tg = s1; s3 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211620U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	a0 = s4;
-	a2 = (u32)4096;
-	a3 = 0U;
-	a1 = 0U;
-	tg = s0; s2 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211644U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	a2 = (u32)4096;
-	a3 = 0U;
-	a0 = s5;
-	a1 = 0U;
-	tg = s0; s4 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211668U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	a0 = s3;
-	a2 = (u32)4096;
-	a3 = 0U;
-	a1 = 0U;
-	tg = s0; s1 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211692U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	a1 = 0U;
-	a2 = (u32)4096;
-	a3 = 0U;
-	a0 = s2;
-	tg = s0; s3 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211716U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	s0 = v0;
-	a1 = (u32)2;
-L_194:
-	s2 = 0;
-	s2 = s2 + ((u32)(uintptr_t)vae_x_system_reg_write + 0U);
-	s5 = 32767U << 16;
-	a0 = (u32)32828;
-	tg = s2; s1 = s1 << 16; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211748U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	s1 = s1 & s5;
-	a1 = s4 & 32767U;
-	a1 = s1 | a1;
-	a0 = (u32)32768;
-	tg = s2; s0 = s0 << 16; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211772U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	s0 = s0 & s5;
-	a1 = s3 & 32767U;
-	a1 = s0 | a1;
-	tg = s2; a0 = (u32)32772; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211792U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	a1 = (u32)1;
-	tg = s2; a0 = (u32)32832; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211804U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	ra = vf_lw((sp + 44U));
-	s6 = vf_lw((sp + 40U));
-	s5 = vf_lw((sp + 36U));
-	s4 = vf_lw((sp + 32U));
-	s3 = vf_lw((sp + 28U));
-	s2 = vf_lw((sp + 24U));
-	s1 = vf_lw((sp + 20U));
-	s0 = vf_lw((sp + 16U));
-	v0 = 0U;
-	 return ((u64)v1 << 32) | v0;
-L_210:
-	v0 = v0 >> 15;
-	c = (v0 == 0); a2 = (u32)1024; if (c) goto L_2d4;
-	a0 = s4;
-	a2 = (u32)1;
-	tg = s1; a1 = 0U; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211876U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	a0 = s5;
-	a2 = (u32)1;
-	a1 = 0U;
-	tg = s1; s4 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211896U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	a0 = s3;
-	a2 = (u32)1;
-	a1 = 0U;
-	tg = s1; s5 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211916U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	a0 = s2;
-	a2 = (u32)1;
-	a1 = 0U;
-	tg = s1; s3 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211936U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	a0 = s4;
-	a2 = (u32)2048;
-	a3 = 0U;
-	a1 = 0U;
-	tg = s0; s2 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211960U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	a2 = (u32)2048;
-	a3 = 0U;
-	a0 = s5;
-	a1 = 0U;
-	tg = s0; s4 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 211984U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	a0 = s3;
-	a2 = (u32)2048;
-	a3 = 0U;
-	a1 = 0U;
-	tg = s0; s1 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 212008U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	a1 = 0U;
-	a2 = (u32)2048;
-	a3 = 0U;
-	a0 = s2;
-	tg = s0; s3 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 212032U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	s0 = v0;
-	c = 1; a1 = (u32)1; if (c) goto L_194;
-L_2d4:
-	a0 = s4;
-	a3 = 0U;
-	tg = s0; a1 = 0U; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 212060U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	a2 = (u32)1024;
-	a3 = 0U;
-	a0 = s5;
-	a1 = 0U;
-	tg = s0; s4 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 212084U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	a0 = s3;
-	a2 = (u32)1024;
-	a3 = 0U;
-	a1 = 0U;
-	tg = s0; s1 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 212108U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	a1 = 0U;
-	a2 = (u32)1024;
-	a3 = 0U;
-	a0 = s2;
-	tg = s0; s3 = v0; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 212132U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	s0 = v0;
-	c = 1; a1 = 0U; if (c) goto L_194;
-L_338:
-	a1 = (u32)3;
-	s0 = (u32)16384;
-	s3 = (u32)16384;
-	s1 = (u32)16384;
-	c = 1; s4 = (u32)16384; if (c) goto L_194;
-	return ((u64)v1 << 32) | v0;
-}
-
-/* OEM tisp_log2_fixed_to_fixed (.text+0x1828c, 14 insns, frame 24) */
-u64 noinline vae_tisp_log2_fixed_to_fixed(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
-{
-	u32 at = 0, v0 = 0, v1 = 0, t0 = 0, t1 = 0, t2 = 0, t3 = 0, t4 = 0, t5 = 0, t6 = 0, t7 = 0, s0 = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0, s5 = 0, s6 = 0, s7 = 0, t8 = 0, t9 = 0, k0 = 0, k1 = 0, gp = 0, s8 = 0, ra = 0;
-	u32 tg = 0, c = 0; u64 acc = 0;
-	u32 vframe[7] __aligned(8);
-	u32 sp = (u32)(uintptr_t)vframe;
-	(void)tg; (void)c; (void)acc; (void)sp; (void)csp; (void)at; (void)k0; (void)k1; (void)gp; (void)ra;
-	vae_fn_enter();
-	t2 = a2;
-	v0 = 0;
-	t1 = a1;
-	vf_sw((sp + 20U), ra);
-	a2 = 0U;
-	v0 = v0 + ((u32)(uintptr_t)vae_tisp_log2_int_to_fixed + 0U);
-	tg = v0; a1 = t2; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 98984U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	ra = vf_lw((sp + 20U));
-	t1 = t1 << (t2 & 31);
-	v0 = v0 - t1;
 	 return ((u64)v1 << 32) | v0;
 	return ((u64)v1 << 32) | v0;
 }
@@ -5048,69 +5801,6 @@ L_b4:
 	return ((u64)v1 << 32) | v0;
 }
 
-/* OEM fix_point_div_32 (.text+0x174e0, 34 insns, frame 24) */
-u64 noinline vae_fix_point_div_32(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
-{
-	u32 at = 0, v0 = 0, v1 = 0, t0 = 0, t1 = 0, t2 = 0, t3 = 0, t4 = 0, t5 = 0, t6 = 0, t7 = 0, s0 = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0, s5 = 0, s6 = 0, s7 = 0, t8 = 0, t9 = 0, k0 = 0, k1 = 0, gp = 0, s8 = 0, ra = 0;
-	u32 tg = 0, c = 0; u64 acc = 0;
-	u32 vframe[7] __aligned(8);
-	u32 sp = (u32)(uintptr_t)vframe;
-	(void)tg; (void)c; (void)acc; (void)sp; (void)csp; (void)at; (void)k0; (void)k1; (void)gp; (void)ra;
-	vae_fn_enter();
-	acc = vae_divu(a1, a2, 95456U);
-	a3 = a0;
-	v1 = 0U;
-	vf_sw((sp + 16U), s0);
-	vf_sw((sp + 20U), ra);
-	s0 = 0U;
-	v0 = (u32)(acc >> 32);
-	a0 = (u32)acc;
-L_24:
-	c = (v1 == a3); v0 = v0 << 1; if (c) goto L_60;
-	a1 = a2 < v0;
-	c = (a1 == 0); s0 = s0 << 1; if (c) goto L_48;
-	s0 = s0 | 1U;
-	v0 = v0 - a2;
-L_40:
-	c = 1; v1 = v1 + (u32)1; if (c) goto L_24;
-L_48:
-	c = (a2 != v0);  if (c) goto L_40;
-	v0 = a3 + (u32)-1;
-	s0 = s0 | 1U;
-	v1 = v0 - v1;
-	s0 = s0 << (v1 & 31);
-L_60:
-	v0 = 0;
-	a2 = a3;
-	v0 = v0 + ((u32)(uintptr_t)vae_x___ashldi3 + 0U);
-	tg = v0; a1 = 0U; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 95564U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	ra = vf_lw((sp + 20U));
-	v0 = s0 | v0;
-	s0 = vf_lw((sp + 16U));
-	 return ((u64)v1 << 32) | v0;
-	return ((u64)v1 << 32) | v0;
-}
-
-/* OEM fix_point_mult3_32 (.text+0x17dc8, 11 insns, frame 24) */
-u64 noinline vae_fix_point_mult3_32(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
-{
-	u32 at = 0, v0 = 0, v1 = 0, t0 = 0, t1 = 0, t2 = 0, t3 = 0, t4 = 0, t5 = 0, t6 = 0, t7 = 0, s0 = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0, s5 = 0, s6 = 0, s7 = 0, t8 = 0, t9 = 0, k0 = 0, k1 = 0, gp = 0, s8 = 0, ra = 0;
-	u32 tg = 0, c = 0; u64 acc = 0;
-	u32 vframe[7] __aligned(8);
-	u32 sp = (u32)(uintptr_t)vframe;
-	(void)tg; (void)c; (void)acc; (void)sp; (void)csp; (void)at; (void)k0; (void)k1; (void)gp; (void)ra;
-	vae_fn_enter();
-	t9 = 0;
-	t9 = t9 + ((u32)(uintptr_t)vae_fix_point_mult2_32 + 0U);
-	vf_sw((sp + 20U), ra);
-	tg = t9; t2 = a3; { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 97752U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	ra = vf_lw((sp + 20U));
-	a2 = t2;
-	a1 = v0;
-	tg = t9;  return vae_call(tg, a0, a1, a2, a3, csp, 97772U);
-	return ((u64)v1 << 32) | v0;
-}
-
 /* OEM tisp_ae_short_expt (.text+0x27ca8, 241 insns, frame 96) */
 u64 noinline vae_tisp_ae_short_expt(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
 {
@@ -5449,6 +6139,101 @@ L_118:
 	a2 = a3 + v1;
 	v1 = v1 + (u32)1;
 	c = 1; vae_sb((a2 + (u32)0), t0, 162124U); if (c) goto L_70;
+	return ((u64)v1 << 32) | v0;
+}
+
+/* OEM tisp_max (.text+0x18598, 12 insns, frame 0) */
+u64 noinline vae_tisp_max(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
+{
+	u32 at = 0, v0 = 0, v1 = 0, t0 = 0, t1 = 0, t2 = 0, t3 = 0, t4 = 0, t5 = 0, t6 = 0, t7 = 0, s0 = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0, s5 = 0, s6 = 0, s7 = 0, t8 = 0, t9 = 0, k0 = 0, k1 = 0, gp = 0, s8 = 0, ra = 0;
+	u32 tg = 0, c = 0; u64 acc = 0;
+	u32 vframe[2] __aligned(8);
+	u32 sp = (u32)(uintptr_t)vframe;
+	(void)tg; (void)c; (void)acc; (void)sp; (void)csp; (void)at; (void)k0; (void)k1; (void)gp; (void)ra;
+	vae_fn_enter();
+	v1 = a3;
+	a3 = (s32)a3 < (s32)a1;
+	c = (a3 != 0); v0 = a2; if (c) goto L_20;
+	c = (a1 != v1); a2 = a2 < a0; if (c) goto L_28;
+	c = (a2 == 0);  if (c) goto L_28;
+L_20:
+	v0 = a0;
+	v1 = a1;
+L_28:
+	 return ((u64)v1 << 32) | v0;
+	return ((u64)v1 << 32) | v0;
+}
+
+/* OEM tisp_log2_int_to_fixed (.text+0x18194, 62 insns, frame 0) */
+u64 noinline vae_tisp_log2_int_to_fixed(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
+{
+	u32 at = 0, v0 = 0, v1 = 0, t0 = 0, t1 = 0, t2 = 0, t3 = 0, t4 = 0, t5 = 0, t6 = 0, t7 = 0, s0 = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0, s5 = 0, s6 = 0, s7 = 0, t8 = 0, t9 = 0, k0 = 0, k1 = 0, gp = 0, s8 = 0, ra = 0;
+	u32 tg = 0, c = 0; u64 acc = 0;
+	u32 vframe[2] __aligned(8);
+	u32 sp = (u32)(uintptr_t)vframe;
+	(void)tg; (void)c; (void)acc; (void)sp; (void)csp; (void)at; (void)k0; (void)k1; (void)gp; (void)ra;
+	vae_fn_enter();
+	c = (a0 == 0); v0 = 0U; if (c) goto L_c4;
+	v1 = 1U << 16;
+	v1 = a0 < v1;
+	c = (v1 != 0); v1 = a0; if (c) goto L_cc;
+	v1 = a0 >> 16;
+	v0 = (u32)16;
+L_20:
+	a3 = v1 < (u32)256;
+	c = (a3 != 0); a3 = v1 < (u32)16; if (c) goto L_3c;
+	v0 = v0 + (u32)8;
+	v1 = v1 >> 8;
+	v0 = v0 & 255U;
+	a3 = v1 < (u32)16;
+L_3c:
+	c = (a3 != 0); a3 = v1 < (u32)4; if (c) goto L_54;
+	v0 = v0 + (u32)4;
+	v1 = v1 >> 4;
+	v0 = v0 & 255U;
+	a3 = v1 < (u32)4;
+L_54:
+	c = (a3 != 0); a3 = (u32)1; if (c) goto L_68;
+	v0 = v0 + (u32)2;
+	v1 = v1 >> 2;
+	v0 = v0 & 255U;
+L_68:
+	c = (v1 == a3); v1 = v0 < (u32)16; if (c) goto L_7c;
+	v0 = v0 + (u32)1;
+	v0 = v0 & 255U;
+	v1 = v0 < (u32)16;
+L_7c:
+	c = (v1 == 0); v1 = v0 + (u32)-15; if (c) goto L_d4;
+	v1 = (u32)15;
+	v1 = v1 - v0;
+	a0 = a0 << (v1 & 31);
+L_90:
+	v1 = 0U;
+	a3 = 0U;
+L_98:
+	t0 = (s32)a3 < (s32)a1;
+	c = (t0 != 0); t0 = (u32)((s32)a0 * (s32)a0); if (c) goto L_dc;
+	v0 = v0 << (a1 & 31);
+	v0 = v0 + v1;
+	v1 = (u32)15;
+	v0 = v0 << (a2 & 31);
+	a0 = a0 & 32767U;
+	a2 = v1 - a2;
+	a0 = a0 >> (a2 & 31);
+	v0 = v0 | a0;
+L_c4:
+	 return ((u64)v1 << 32) | v0;
+L_cc:
+	c = 1; v0 = 0U; if (c) goto L_20;
+L_d4:
+	c = 1; a0 = a0 >> (v1 & 31); if (c) goto L_90;
+L_dc:
+	v1 = v1 << 1;
+	c = ((s32)t0 >= 0); a0 = t0 >> 15; if (c) goto L_f0;
+	a0 = t0 >> 16;
+	v1 = v1 + (u32)1;
+L_f0:
+	c = 1; a3 = a3 + (u32)1; if (c) goto L_98;
 	return ((u64)v1 << 32) | v0;
 }
 
@@ -8389,101 +9174,6 @@ L_2ec:
 	return ((u64)v1 << 32) | v0;
 }
 
-/* OEM tisp_max (.text+0x18598, 12 insns, frame 0) */
-u64 noinline vae_tisp_max(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
-{
-	u32 at = 0, v0 = 0, v1 = 0, t0 = 0, t1 = 0, t2 = 0, t3 = 0, t4 = 0, t5 = 0, t6 = 0, t7 = 0, s0 = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0, s5 = 0, s6 = 0, s7 = 0, t8 = 0, t9 = 0, k0 = 0, k1 = 0, gp = 0, s8 = 0, ra = 0;
-	u32 tg = 0, c = 0; u64 acc = 0;
-	u32 vframe[2] __aligned(8);
-	u32 sp = (u32)(uintptr_t)vframe;
-	(void)tg; (void)c; (void)acc; (void)sp; (void)csp; (void)at; (void)k0; (void)k1; (void)gp; (void)ra;
-	vae_fn_enter();
-	v1 = a3;
-	a3 = (s32)a3 < (s32)a1;
-	c = (a3 != 0); v0 = a2; if (c) goto L_20;
-	c = (a1 != v1); a2 = a2 < a0; if (c) goto L_28;
-	c = (a2 == 0);  if (c) goto L_28;
-L_20:
-	v0 = a0;
-	v1 = a1;
-L_28:
-	 return ((u64)v1 << 32) | v0;
-	return ((u64)v1 << 32) | v0;
-}
-
-/* OEM tisp_log2_int_to_fixed (.text+0x18194, 62 insns, frame 0) */
-u64 noinline vae_tisp_log2_int_to_fixed(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
-{
-	u32 at = 0, v0 = 0, v1 = 0, t0 = 0, t1 = 0, t2 = 0, t3 = 0, t4 = 0, t5 = 0, t6 = 0, t7 = 0, s0 = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0, s5 = 0, s6 = 0, s7 = 0, t8 = 0, t9 = 0, k0 = 0, k1 = 0, gp = 0, s8 = 0, ra = 0;
-	u32 tg = 0, c = 0; u64 acc = 0;
-	u32 vframe[2] __aligned(8);
-	u32 sp = (u32)(uintptr_t)vframe;
-	(void)tg; (void)c; (void)acc; (void)sp; (void)csp; (void)at; (void)k0; (void)k1; (void)gp; (void)ra;
-	vae_fn_enter();
-	c = (a0 == 0); v0 = 0U; if (c) goto L_c4;
-	v1 = 1U << 16;
-	v1 = a0 < v1;
-	c = (v1 != 0); v1 = a0; if (c) goto L_cc;
-	v1 = a0 >> 16;
-	v0 = (u32)16;
-L_20:
-	a3 = v1 < (u32)256;
-	c = (a3 != 0); a3 = v1 < (u32)16; if (c) goto L_3c;
-	v0 = v0 + (u32)8;
-	v1 = v1 >> 8;
-	v0 = v0 & 255U;
-	a3 = v1 < (u32)16;
-L_3c:
-	c = (a3 != 0); a3 = v1 < (u32)4; if (c) goto L_54;
-	v0 = v0 + (u32)4;
-	v1 = v1 >> 4;
-	v0 = v0 & 255U;
-	a3 = v1 < (u32)4;
-L_54:
-	c = (a3 != 0); a3 = (u32)1; if (c) goto L_68;
-	v0 = v0 + (u32)2;
-	v1 = v1 >> 2;
-	v0 = v0 & 255U;
-L_68:
-	c = (v1 == a3); v1 = v0 < (u32)16; if (c) goto L_7c;
-	v0 = v0 + (u32)1;
-	v0 = v0 & 255U;
-	v1 = v0 < (u32)16;
-L_7c:
-	c = (v1 == 0); v1 = v0 + (u32)-15; if (c) goto L_d4;
-	v1 = (u32)15;
-	v1 = v1 - v0;
-	a0 = a0 << (v1 & 31);
-L_90:
-	v1 = 0U;
-	a3 = 0U;
-L_98:
-	t0 = (s32)a3 < (s32)a1;
-	c = (t0 != 0); t0 = (u32)((s32)a0 * (s32)a0); if (c) goto L_dc;
-	v0 = v0 << (a1 & 31);
-	v0 = v0 + v1;
-	v1 = (u32)15;
-	v0 = v0 << (a2 & 31);
-	a0 = a0 & 32767U;
-	a2 = v1 - a2;
-	a0 = a0 >> (a2 & 31);
-	v0 = v0 | a0;
-L_c4:
-	 return ((u64)v1 << 32) | v0;
-L_cc:
-	c = 1; v0 = 0U; if (c) goto L_20;
-L_d4:
-	c = 1; a0 = a0 >> (v1 & 31); if (c) goto L_90;
-L_dc:
-	v1 = v1 << 1;
-	c = ((s32)t0 >= 0); a0 = t0 >> 15; if (c) goto L_f0;
-	a0 = t0 >> 16;
-	v1 = v1 + (u32)1;
-L_f0:
-	c = 1; a3 = a3 + (u32)1; if (c) goto L_98;
-	return ((u64)v1 << 32) | v0;
-}
-
 /* OEM tisp_set_sensor_analog_gain (.text+0x275f8, 32 insns, frame 56) */
 u64 noinline vae_tisp_set_sensor_analog_gain(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
 {
@@ -8576,64 +9266,6 @@ L_ac:
 	s1 = vf_lw((sp + 20U));
 	s0 = vf_lw((sp + 16U));
 	 return ((u64)v1 << 32) | v0;
-	return ((u64)v1 << 32) | v0;
-}
-
-/* OEM tisp_math_exp2 (.text+0x17568, 49 insns, frame 32) */
-u64 noinline vae_tisp_math_exp2(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
-{
-	u32 at = 0, v0 = 0, v1 = 0, t0 = 0, t1 = 0, t2 = 0, t3 = 0, t4 = 0, t5 = 0, t6 = 0, t7 = 0, s0 = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0, s5 = 0, s6 = 0, s7 = 0, t8 = 0, t9 = 0, k0 = 0, k1 = 0, gp = 0, s8 = 0, ra = 0;
-	u32 tg = 0, c = 0; u64 acc = 0;
-	u32 vframe[9] __aligned(8);
-	u32 sp = (u32)(uintptr_t)vframe;
-	(void)tg; (void)c; (void)acc; (void)sp; (void)csp; (void)at; (void)k0; (void)k1; (void)gp; (void)ra;
-	vae_fn_enter();
-	a3 = (u32)1;
-	t0 = a3 << (a1 & 31);
-	t0 = t0 + (u32)-1;
-	vf_sw((sp + 20U), s0);
-	s0 = (u32)30;
-	v1 = 0;
-	s0 = s0 - a2;
-	t0 = t0 & a0;
-	v0 = a1 < (u32)6;
-	a0 = a0 >> (a1 & 31);
-	v1 = v1 + ((u32)(uintptr_t)vae_rodata + 6216U);
-	vf_sw((sp + 28U), ra);
-	vf_sw((sp + 24U), s1);
-	c = (v0 == 0); s0 = s0 - a0; if (c) goto L_70;
-	a3 = (u32)5;
-	a3 = a3 - a1;
-	a3 = t0 << (a3 & 31);
-	a3 = a3 << 2;
-	v1 = v1 + a3;
-	v0 = vae_lw((v1 + (u32)0), 95676U);
-L_58:
-	ra = vf_lw((sp + 28U));
-	v0 = v0 >> (s0 & 31);
-	s1 = vf_lw((sp + 24U));
-	s0 = vf_lw((sp + 20U));
-	 return ((u64)v1 << 32) | v0;
-L_70:
-	a2 = a1 + (u32)-5;
-	a0 = t0 >> (a2 & 31);
-	v0 = a0 << 2;
-	a0 = a0 + (u32)1;
-	a0 = a0 << 2;
-	v0 = v1 + v0;
-	v1 = v1 + a0;
-	s1 = vae_lw((v0 + (u32)0), 95732U);
-	a0 = vae_lw((v1 + (u32)0), 95736U);
-	a3 = a3 << (a2 & 31);
-	a3 = a3 + (u32)-1;
-	a3 = a3 & t0;
-	a0 = a0 - s1;
-	acc = (u64)a0 * (u64)a3;
-	v0 = 0;
-	v0 = v0 + ((u32)(uintptr_t)vae_x___lshrdi3 + 0U);
-	a0 = (u32)acc;
-	tg = v0; a1 = (u32)(acc >> 32); { u64 rv = vae_call(tg, a0, a1, a2, a3, sp, 95772U); v0 = (u32)rv; v1 = (u32)(rv >> 32); }
-	c = 1; v0 = s1 + v0; if (c) goto L_58;
 	return ((u64)v1 << 32) | v0;
 }
 

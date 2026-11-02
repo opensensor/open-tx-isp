@@ -21894,7 +21894,8 @@ static int t41_tuning_af_weight(unsigned int channel, unsigned int is_get,
     return 0;
 }
 
-static int t41_tuning_copy_ae_stats(unsigned int channel, uintptr_t user_ptr)
+/* kdst != NULL: the statistics go to that kernel buffer (TX_ISP_TUNING_T41_AE_STATS_BYTES, custom AE library, #76) instead of user_ptr */
+static int t41_ae_stats_to(unsigned int channel, void *kdst, uintptr_t user_ptr)
 {
     const unsigned int histogram_bytes =
         TX_ISP_TUNING_T41_AE_HIST_BINS * sizeof(u32);
@@ -21910,7 +21911,7 @@ static int t41_tuning_copy_ae_stats(unsigned int channel, uintptr_t user_ptr)
     u32 mean_q8;
     int ret;
 
-    if (channel >= ARRAY_SIZE(ae_info) || !user_ptr)
+    if (channel >= ARRAY_SIZE(ae_info) || (!user_ptr && !kdst))
         return -EINVAL;
     info = (u32 *)(uintptr_t)ae_info[channel];
     if (!t41_kernel_data_ptr(info))
@@ -21940,7 +21941,9 @@ static int t41_tuning_copy_ae_stats(unsigned int channel, uintptr_t user_ptr)
             tisp_ae_hist_last + channel * T41_AE_HIST_LAST_BYTES,
             (const unsigned char *)state, T41_AE_STATE_BYTES);
         local_irq_restore(flags);
-        if (!ret && private_copy_to_user((void __user *)user_ptr, response,
+        if (!ret && kdst)
+            memcpy(kdst, response, TX_ISP_TUNING_T41_AE_STATS_BYTES);
+        else if (!ret && private_copy_to_user((void __user *)user_ptr, response,
                                          TX_ISP_TUNING_T41_AE_STATS_BYTES))
             ret = -EFAULT;
         kfree(allocation);
@@ -21957,11 +21960,18 @@ static int t41_tuning_copy_ae_stats(unsigned int channel, uintptr_t user_ptr)
     ret = tx_isp_tuning_t41_ae_stats_pack(
         response, TX_ISP_TUNING_T41_AE_STATS_BYTES,
         histogram, TX_ISP_TUNING_T41_AE_HIST_BINS, &mean_q8);
-    if (!ret && private_copy_to_user((void __user *)user_ptr, response,
+    if (!ret && kdst)
+        memcpy(kdst, response, TX_ISP_TUNING_T41_AE_STATS_BYTES);
+    else if (!ret && private_copy_to_user((void __user *)user_ptr, response,
                                      TX_ISP_TUNING_T41_AE_STATS_BYTES))
         ret = -EFAULT;
     kfree(allocation);
     return ret;
+}
+
+static int t41_tuning_copy_ae_stats(unsigned int channel, uintptr_t user_ptr)
+{
+    return t41_ae_stats_to(channel, NULL, user_ptr);
 }
 
 static int t41_tuning_copy_awb_global_stats(unsigned int channel,
@@ -38308,6 +38318,8 @@ static int t41_ioctl_internal_chn(uintptr_t file, bool set, uint32_t user_arg)
                                 sizeof(req)) ? -EFAULT : 0;
 }
 
+static int t41_ioctl_ae_algo(uintptr_t file, uint32_t cmd, uint32_t user_arg);   /* custom AE library (#76), tx_isp_t41_vae.h */
+
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000014474 origin=fragment_seed original=tx_isp_unlocked_ioctl */
 int64_t tx_isp_unlocked_ioctl(uintptr_t a0, uint32_t a1, uint32_t a2)
 {
@@ -38479,6 +38491,14 @@ int64_t tx_isp_unlocked_ioctl(uintptr_t a0, uint32_t a1, uint32_t a2)
     }
     if (a1 == 0xc004542fU || a1 == 0xc0045430U) {
         regtrace_ret = t41_ioctl_internal_chn(a0, a1 == 0xc004542fU, a2);
+        if (t41_runtime_trace)
+            printk(KERN_WARNING
+               "t41: tx-isp ioctl exit cmd=0x%x ret=%d\n",
+               a1, regtrace_ret);
+        return regtrace_ret;
+    }
+    if (a1 >= 0xc004541bU && a1 <= 0xc004541eU) {
+        regtrace_ret = t41_ioctl_ae_algo(a0, a1, a2);
         if (t41_runtime_trace)
             printk(KERN_WARNING
                "t41: tx-isp ioctl exit cmd=0x%x ret=%d\n",

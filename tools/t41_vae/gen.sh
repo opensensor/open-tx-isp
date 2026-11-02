@@ -16,5 +16,6 @@ VAE_IN=$W VAE_OUT=$HERE/../../driver/t41/tx_isp_t41_vae_gen.inc python3 -I "$HER
 	sensor_alloc_integration_time sensor_start_changes sensor_end_changes \
 	sensor_alloc_digital_gain sensor_set_digital_gain sensor_set_integration_time_short \
 	sensor_alloc_analog_gain_short sensor_set_analog_gain_short sensor_alloc_integration_time_short \
-	tisp_clm_write_csc_para tisp_clm_ct_interp tisp_clm_write_lut
+	tisp_clm_write_csc_para tisp_clm_ct_interp tisp_clm_write_lut \
+	tisp_ae_algo_init tisp_ae_algo_handle tisp_ae_algo_deinit_internal
 rm -rf $W

@@ -534,6 +534,31 @@ raised to its limit before gain, gain reduced before IT, 50 Hz IT lattice
 mean back near target within ~0.5 s and settled in ~2 s, no guard faults,
 no oops.
 
+## Custom AE library (`IMP_ISP_SetAeAlgoFunc`, Lu-Fi/openimp#76)
+
+The stock module serves four ioctls on `/dev/tx-isp` for the user-space AE library that libimp registers in `IMP_ISP_EnableSensor`
+(one worker thread): `0xc004541d` open, `0xc004541b` get handle, `0xc004541c` set handle, `0xc004541e` close. Reference: the stock
+`tx-isp-t41.ko` (symbols: `tx_isp_set_ae_algo_open`, `tx_isp_get_ae_algo_handle`, `tisp_ae_algo_init/handle/deinit`). They are served by
+`t41_ioctl_ae_algo` (`tx_isp_t41_vae.h`), clean C on top of the translated vendor chain (`tx_isp_t41_vae_gen.inc`, roots `tisp_ae_algo_init`,
+`tisp_ae_algo_handle`, `tisp_ae_algo_deinit_internal` added to `tools/t41_vae/gen.sh`):
+
+- open: `tisp_ae_algo_init(0, 1, attr)` fills the init attribute (limits from the AE parameters), the module adds the sensor values, allocates the 2002 byte
+  info block and re-arms `ae_algo_comp`. Needs `t41_vendor_ae=1` (default) because the library is woken by the statistics event of the vendor AE.
+- while a library is registered `vae_ta_custom_en[0] == 1`: the translated `tisp_ae_calc_process` still runs the statistics step (`tisp_ae_algorithm`),
+  skips its own EV allocation and completes `ae_algo_comp` (that wakes the get-handle ioctl, about one call per frame).
+- get handle: statistics (the tuning AE statistics block, 1934 bytes) + the exposure words + the sensor attribute words; the exposure is the library's last
+  answer (AE state +8608..), before the first answer the exposure the sensor driver started with (the internal AE never ran).
+- set handle: `tisp_ae_algo_handle(0, answer)` (translated): the integration time / analog gain / ISP digital gain go through the translated sensor
+  callbacks into the pending slots the frame-done work sends to the sensor, exactly like the internal AE. The realized exposure of the proc file
+  and the IMP getters is the library's answer while it controls the AE.
+- close: `tisp_ae_algo_deinit` + `tisp_ae_algo_init(0, 0, 0)` + free the info block; the internal AE takes over again.
+
+The stock module has ONE channel and no AWB library path: the second-sensor handle `0xc0045420` and the AWB ioctls `0xc0045423..26` are not in the stock
+dispatcher and answer `-ENOTTY` here as well (`IMP_ISP_SetAwbAlgoFunc` registers the record in libimp, the open fails, the library is never called).
+Differences to stock (hardening): the info block is cleared after close (a second close freed it twice), a get handle without open or after close
+answers `-EINVAL` (stock dereferences NULL), an interrupted wait returns the error, channel numbers above 0 are refused. Source guard:
+`tests/check_t41_custom_ae.sh`; QEMU (debug kernel with `slub_debug`) and camera evidence in Lu-Fi/openimp#76.
+
 ## ioctl stack-overflow hardening and device test plan
 
 The recovered `tx_isp_unlocked_ioctl`, `frame_channel_unlocked_ioctl` and the

@@ -31,6 +31,8 @@ DATA = {
     'blc_info': 'blc_info', 'gib_info': 'gib_info', 'ae_algo_comp': 'ae_algo_comp_storage',
     'ae_api_tmp': 'ae_api_tmp_storage', 'tisp_ae_hist_last': 'tisp_ae_hist_last',
     'tisp_ae_hist': 'vae_tisp_ae_hist', 'ta_custom_en': 'vae_ta_custom_en',
+    'ta_custom_again': 'vae_ta_custom_again', 'ta_custom_ev': 'vae_ta_custom_ev', 'ta_custom_ev_short': 'vae_ta_custom_ev_short',
+    'ta_custom_tgain': 'vae_ta_custom_tgain', 'ta_custom_tgain_short': 'vae_ta_custom_tgain_short',
     'ae_ceguang': 'vae_ae_ceguang', 'slock_hist': 'vae_slock', 'slock_stas': 'vae_slock',
     'clm_info': '&clm_info',
     # defog (gen_defog.sh): own storage for the OEM statics, shared tparamsP

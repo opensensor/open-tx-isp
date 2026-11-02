@@ -23,6 +23,8 @@ static u32 vae_fault_addr, vae_fault_pc;
 static u32 vae_calls;
 static u32 vae_tisp_ae_hist[2104 / 4];
 static u32 vae_ta_custom_en[2];
+/* custom AE library (#76): last values tisp_ae_algo_handle applied (event push only on a change), per channel */
+static u32 vae_ta_custom_again[2], vae_ta_custom_ev[2], vae_ta_custom_ev_short[2], vae_ta_custom_tgain[2], vae_ta_custom_tgain_short[2];
 static u32 vae_ae_ceguang[320 / 4];
 static u32 vae_slock[4];
 static const char vae_str[] = "t41-vae";
@@ -273,8 +275,11 @@ int32_t t41_vae_calc_process(uint32_t channel)
 	{
 		/* realized total gain (again * dgain, Q10 linear) -> log2 Q16,
 		 * with the OEM's own tisp_log2_fixed_to_fixed */
-		u32 it = *(u32 *)(cache + 576), ag = *(u32 *)(cache + 580);
-		u32 dg = *(u32 *)(cache + 588), gain_q16;
+		/* a custom AE library (#76) bypasses the EV allocation that refreshes ae_cache +576..: its answer is the
+		 * realized exposure, tisp_ae_algo_handle keeps it in the AE state +8608.. (stock api_ae_get_exprinfo_attr reads it there) */
+		const unsigned char *rz = vae_ta_custom_en[channel] ? (const unsigned char *)(uintptr_t)info[1] + 8608 : cache + 576;
+		u32 it = *(u32 *)(rz + 0), ag = *(u32 *)(rz + 4);
+		u32 dg = *(u32 *)(rz + 12), gain_q16;
 		u64 total = (u64)ag * (dg ? dg : 1024) >> 10;
 
 		if (total > 0x3ffffff)
@@ -306,4 +311,250 @@ int32_t t41_vae_calc_process(uint32_t channel)
 		       vae_events_seen);
 	return (int32_t)ret;
 }
+
+/*
+ * Custom AE algorithm library (IMP_ISP_SetAeAlgoFunc, #76).
+ *
+ * Stock tx_isp_unlocked_ioctl (T41 1.2.5 / 1.2.6 tx-isp-t41.ko, reference: the same module with symbols): libimp registers the user callbacks
+ * in IMP_ISP_EnableSensor and runs one worker thread that loops
+ *   0xc004541b  get handle   tx_isp_get_ae_algo_handle: wait for ae_algo_comp, fill the info block (statistics + exposure), copy 2002 bytes out
+ *   0xc004541c  set handle   tisp_ae_algo_handle(channel, answer): the library's exposure goes to the sensor through sensor_ctrl_main
+ * and registers / unregisters with
+ *   0xc004541d  open         tx_isp_set_ae_algo_open: tisp_ae_algo_init(channel, 1, init attribute), allocate the info block, init ae_algo_comp
+ *   0xc004541e  close        tisp_ae_algo_deinit + tisp_ae_algo_init(channel, 0, 0) + kfree(info block)
+ * The stock module has ONE channel (one 16 byte completion, one info pointer); the second-sensor ioctl 0xc0045420 and the AWB ioctls
+ * 0xc0045423..26 do not exist in the stock dispatcher (they answer -ENOTTY there as here).  While ta_custom_en is set the vendor AE
+ * still computes the statistics (tisp_ae_algorithm), skips its own EV allocation and completes ae_algo_comp at the end of
+ * tisp_ae_calc_process: that is how the library is woken (translated chain, vae_tisp_ae_calc_process).
+ * tisp_ae_algo_init / tisp_ae_algo_handle / tisp_ae_algo_deinit_internal are translated from the stock module like the rest of the chain.
+ * Differences: the info block is kzalloc'ed (stock: kmalloc-2048 cache) and cleared after close (stock leaves the freed pointer, a second close
+ * freed it twice); a get/close race and a get without open answer -EINVAL (stock dereferences NULL); the interrupted wait returns the error
+ * (stock carries on); the exposure words of the info block are the live ones (see t41_ae_algo_get).
+ */
+#define T41_AE_ALGO_COOKIE	0x336acU
+#define T41_AE_ALGO_INFO_BYTES	2002U
+
+static unsigned char *t41_ae_algo_info;
+static DEFINE_MUTEX(t41_ae_algo_lock);
+static u32 t41_ae_algo_gets, t41_ae_algo_sets;
+
+static unsigned char *t41_ae_algo_core(void)
+{
+	unsigned char *core = (unsigned char *)(uintptr_t)*(u32 *)(void *)g_ispcore;
+
+	if (!t41_kernel_data_ptr(core))
+		core = (unsigned char *)(uintptr_t)ispcore_sd;
+	return t41_kernel_data_ptr(core) ? core : NULL;
+}
+
+static unsigned char *t41_ae_algo_attr(unsigned char *core, u32 ch)
+{
+	unsigned char *attr = (unsigned char *)(uintptr_t)*(u32 *)(void *)(core + 360 + ch * 96);
+
+	return t41_kernel_data_ptr(attr) ? attr : NULL;
+}
+
+static u32 t41_ae_algo_exp2(u32 v)
+{
+	u32 frame[8] __aligned(8) = { 0 };
+
+	return (u32)vae_tisp_math_exp2(v, 16, 10, 0, (u32)(uintptr_t)frame);
+}
+
+static int t41_ae_algo_open(u32 user)
+{
+	u32 frame[8] __aligned(8) = { 0 };
+	u32 u[34];
+	unsigned char *core, *attr, *info_blk, *params, *state;
+	u32 ch, *aei;
+
+	if (!user)
+		return -EFAULT;
+	if (private_copy_from_user(u, (const void __user *)(uintptr_t)user, sizeof(u)))
+		return -EFAULT;
+	if (u[0] != T41_AE_ALGO_COOKIE) {
+		isp_printf(2, "[%s %d] [ %s:%d ] Ae Algo Function register version error\n", "tx_isp_set_ae_algo_open", 1571, "tx_isp_set_ae_algo_open", 1571);
+		return -EPERM;
+	}
+	ch = u[1];
+	if (ch >= 1U)				/* the stock module has one channel */
+		return -EINVAL;
+	if (t41_vendor_ae <= 0)			/* the safe AE controller has no statistics event for a library */
+		return -EOPNOTSUPP;
+	core = t41_ae_algo_core();
+	attr = core ? t41_ae_algo_attr(core, ch) : NULL;
+	if (!core || !attr)
+		return -EPERM;
+	aei = (u32 *)(uintptr_t)ae_info[ch];
+	if (!t41_kernel_data_ptr(aei) || !t41_kernel_data_ptr((void *)(uintptr_t)aei[0]) ||
+	    !t41_kernel_data_ptr((void *)(uintptr_t)aei[1]))
+		return -ENODEV;
+	params = (unsigned char *)(uintptr_t)aei[0];
+	state = (unsigned char *)(uintptr_t)aei[1];
+	(void)params;
+	info_blk = kzalloc(2048, GFP_KERNEL);
+	if (!info_blk)
+		return -ENOMEM;
+	mutex_lock(&t41_ae_algo_lock);
+	if (t41_ae_algo_info) {			/* already open: stock would leak the old block */
+		mutex_unlock(&t41_ae_algo_lock);
+		kfree(info_blk);
+		return -EBUSY;
+	}
+	{
+		/* stock keeps the realized exposure in AE state +8608.. only while the internal AE runs (api_ae_get_exprinfo_attr
+		 * copies ae_cache +576..+607 there); seed it so the first info block shows the live exposure */
+		unsigned char *cache = (unsigned char *)(uintptr_t)*(u32 *)(void *)(ae_cache + ch * 4);
+
+		if (t41_kernel_data_ptr(cache))
+			memcpy(state + 8608, cache + 576, 32);
+	}
+	vae_tisp_ae_algo_init(ch, 1, (u32)(uintptr_t)u, 0, (u32)(uintptr_t)frame);
+	u[27] = *(u32 *)(void *)(core + ch * 96 + 376);
+	u[3] = *(u32 *)(void *)(attr + 176);
+	u[4] = t41_ae_algo_exp2(*(u32 *)(void *)(attr + 160));
+	u[5] = t41_ae_algo_exp2(*(u32 *)(void *)(attr + 164));
+	u[15] = *(u32 *)(void *)(attr + 272);
+	u[16] = t41_ae_algo_exp2(*(u32 *)(void *)(attr + 280));
+	u[17] = t41_ae_algo_exp2(*(u32 *)(void *)(attr + 308));
+	if (*(u32 *)(void *)(core + (ch + 118) * 4) != 0) {	/* WDR */
+		u[6] = system_reg_read(8228) & 0xffff;
+		u[18] = system_reg_read(8240) & 0xffff;
+	} else {
+		u[6] = system_reg_read(0x8000) & 0xffff;
+	}
+	BUILD_BUG_ON(sizeof(struct completion) != 16U);
+	init_completion((struct completion *)(void *)ae_algo_comp_storage);
+	t41_ae_algo_info = info_blk;
+	t41_ae_algo_gets = t41_ae_algo_sets = 0;
+	mutex_unlock(&t41_ae_algo_lock);
+	if (private_copy_to_user((void __user *)(uintptr_t)user, u, sizeof(u))) {
+		isp_printf(2, "[%s %d] [ %s:%d ] copy to user error\n", "tx_isp_set_ae_algo_open", 1627, "tx_isp_set_ae_algo_open", 1627);
+		return -EFAULT;
+	}
+	return 0;
+}
+
+static int t41_ae_algo_close(u32 user)
+{
+	u32 frame[8] __aligned(8) = { 0 };
+	u32 u[2];
+	unsigned char *blk;
+
+	if (!user || private_copy_from_user(u, (const void __user *)(uintptr_t)user, sizeof(u)))
+		return -EFAULT;
+	if (u[1] >= 1U)
+		return -EINVAL;
+	mutex_lock(&t41_ae_algo_lock);
+	vae_tisp_ae_algo_deinit_internal(u[1], 0, 0, 0, (u32)(uintptr_t)frame);
+	vae_tisp_ae_algo_init(u[1], 0, 0, 0, (u32)(uintptr_t)frame);
+	blk = t41_ae_algo_info;
+	t41_ae_algo_info = NULL;
+	mutex_unlock(&t41_ae_algo_lock);
+	complete((struct completion *)(void *)ae_algo_comp_storage);	/* a get-handle waiting for the next frame leaves with -EINVAL */
+	kfree(blk);							/* kfree(NULL) is fine: a repeated close frees nothing */
+	return 0;
+}
+
+static int t41_ae_algo_get(u32 user)
+{
+	u32 frame[8] __aligned(8) = { 0 };
+	u32 ei[16];
+	unsigned char *core, *attr, *info_blk, *cache, *state;
+	u32 *aei;
+	int ret, k;
+
+	if (!user)
+		return -EFAULT;
+	ret = private_wait_for_completion_interruptible((struct completion *)(void *)ae_algo_comp_storage);
+	if (ret)
+		return ret;
+	mutex_lock(&t41_ae_algo_lock);
+	info_blk = t41_ae_algo_info;
+	core = t41_ae_algo_core();
+	attr = core ? t41_ae_algo_attr(core, 0) : NULL;
+	aei = (u32 *)(uintptr_t)ae_info[0];
+	if (!info_blk || !core || !attr || !t41_kernel_data_ptr(aei) || !t41_kernel_data_ptr((void *)(uintptr_t)aei[1])) {
+		mutex_unlock(&t41_ae_algo_lock);
+		return -EINVAL;
+	}
+	state = (unsigned char *)(uintptr_t)aei[1];
+	cache = (unsigned char *)(uintptr_t)*(u32 *)(void *)(ae_cache + 0);
+	memset(info_blk + 8, 0, TX_ISP_TUNING_T41_AE_STATS_BYTES + 60U);
+	t41_ae_stats_to(0, info_blk + 8, 0);
+	/* exposure words: the library's last answer (state +8608.., stock api_ae_get_exprinfo_attr) while it controls the AE.  Until it has changed
+	 * something the state is empty: the exposure the sensor runs with is used (below) */
+	if (!*(u32 *)(void *)(state + 8608)) {		/* no exposure known yet (the library has not changed anything) */
+		if (t41_kernel_data_ptr(cache) && *(u32 *)(void *)(cache + 576))
+			memcpy(state + 8608, cache + 576, 32);
+		else {
+			/* the library registers before the first stream, so the internal AE never ran: the sensor runs on the exposure its driver
+			 * started with (video attr +176 integration time, +160 / +164 the log2 gains: the values tisp_ae_algo_init hands the library) */
+			u32 st[8] = { 0 };
+
+			st[0] = *(u32 *)(void *)(attr + 176);
+			st[1] = t41_ae_algo_exp2(*(u32 *)(void *)(attr + 160));
+			st[2] = t41_ae_algo_exp2(*(u32 *)(void *)(attr + 164));
+			st[3] = 1024;
+			st[4] = *(u32 *)(void *)(attr + 272);
+			st[5] = t41_ae_algo_exp2(*(u32 *)(void *)(attr + 280));
+			st[6] = t41_ae_algo_exp2(*(u32 *)(void *)(attr + 308));
+			st[7] = 1024;
+			memcpy(state + 8608, st, 32);
+		}
+	}
+	memcpy(ei, state + 8608, 32);
+	{
+		u32 w[14];
+
+		w[0] = ei[0]; w[1] = ei[1]; w[2] = ei[2]; w[3] = ei[3];
+		w[4] = ei[4]; w[5] = ei[5]; w[6] = ei[6]; w[7] = ei[7];
+		w[8] = *(u32 *)(void *)(core + 472);
+		w[9] = *(u16 *)(void *)(attr + 180);
+		w[10] = *(u16 *)(void *)(attr + 182);
+		w[11] = *(u32 *)(void *)(core + 376);
+		w[12] = *(u32 *)(void *)(core + 368);
+		w[13] = *(u32 *)(void *)(core + 372);
+		for (k = 0; k < 14; k++)
+			memcpy(info_blk + 1946 + 4 * k, &w[k], 4);
+	}
+	(void)frame;
+	t41_ae_algo_gets++;
+	ret = private_copy_to_user((void __user *)(uintptr_t)user, info_blk, T41_AE_ALGO_INFO_BYTES) ? -EFAULT : 0;
+	mutex_unlock(&t41_ae_algo_lock);
+	return ret;
+}
+
+static int t41_ae_algo_set(u32 user)
+{
+	u32 frame[8] __aligned(8) = { 0 };
+	u32 u[14];
+
+	if (!user || private_copy_from_user(u, (const void __user *)(uintptr_t)user, sizeof(u)))
+		return -EFAULT;
+	if (u[1] >= 1U)
+		return -EINVAL;
+	mutex_lock(&t41_ae_algo_lock);
+	if (!t41_ae_algo_info || !vae_ta_custom_en[u[1]]) {
+		mutex_unlock(&t41_ae_algo_lock);
+		return -EINVAL;
+	}
+	vae_tisp_ae_algo_handle(u[1], (u32)(uintptr_t)u, 0, 0, (u32)(uintptr_t)frame);
+	t41_ae_algo_sets++;
+	mutex_unlock(&t41_ae_algo_lock);
+	return 0;
+}
+
+static int t41_ioctl_ae_algo(uintptr_t file, uint32_t cmd, uint32_t user_arg)
+{
+	(void)file;
+	switch (cmd) {
+	case 0xc004541bU: return t41_ae_algo_get(user_arg);
+	case 0xc004541cU: return t41_ae_algo_set(user_arg);
+	case 0xc004541dU: return t41_ae_algo_open(user_arg);
+	case 0xc004541eU: return t41_ae_algo_close(user_arg);
+	}
+	return -ENOTTY;
+}
+
 #endif
