@@ -553,11 +553,22 @@ The stock module serves four ioctls on `/dev/tx-isp` for the user-space AE libra
   and the IMP getters is the library's answer while it controls the AE.
 - close: `tisp_ae_algo_deinit` + `tisp_ae_algo_init(0, 0, 0)` + free the info block; the internal AE takes over again.
 
-The stock module has ONE channel and no AWB library path: the second-sensor handle `0xc0045420` and the AWB ioctls `0xc0045423..26` are not in the stock
-dispatcher and answer `-ENOTTY` here as well (`IMP_ISP_SetAwbAlgoFunc` registers the record in libimp, the open fails, the library is never called).
+The stock module has ONE channel and no AWB library path: the second-sensor handle `0xc0045420` is not in the stock dispatcher and answers `-ENOTTY` here as
+well; the AWB ioctls `0xc0045423..26` are not in it either, this module serves them as an extra (next section).
 Differences to stock (hardening): the info block is cleared after close (a second close freed it twice), a get handle without open or after close
 answers `-EINVAL` (stock dereferences NULL), an interrupted wait returns the error, channel numbers above 0 are refused. Source guard:
 `tests/check_t41_custom_ae.sh`; QEMU (debug kernel with `slub_debug`) and camera evidence in Lu-Fi/openimp#76.
+
+## Custom AWB library (`IMP_ISP_SetAwbAlgoFunc`, extra beyond the vendor, Lu-Fi/openimp#195)
+
+The stock module has no AWB library path; this module serves the user-space protocol libimp and the T40 module use (`tx_isp_t41_awb_algo.h`):
+`0xc0045425` open (reply: the 20 byte init attribute, the zone grid of the native AWB), `0xc0045423` get (waits for the next AWB frame, returns the
+2732 byte block `{cookie, channel, IMPISPAwbInfo}`: current gains = the gains in the WB registers, global statistics, 2700 byte zone statistics),
+`0xc0045424` result `{cookie, channel, change, r, b, ct}`, `0xc0045426` close. One channel (`0xc0045420`, the second-sensor handle, stays ENOTTY).
+The wake-up is the end of the native AWB frame work (`t41_awb_algo_wake`); the library needs `t41_native_awb=1` (default). A result with `change == 1`
+and both gains in 0x200..0x1800 (hardware unit, 1024 = 1.0, the range of `IMP_ISP_Tuning_SetWB`) switches to manual hardware gains
+(`t41_native_awb_compat`, frozen), the colour temperature is ignored; close, a crashed client (file release) and a late close give the application's
+state back. Locking, error codes and the differences to the stock AE path: see the header comment and `tests/t41_awb_algo_host.sh`.
 
 ## ioctl stack-overflow hardening and device test plan
 

@@ -36992,9 +36992,11 @@ tx_isp_video_link_destroy_isra_30xf4:
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000013c24 origin=manual original=tx_isp_release */
+static void t41_awb_algo_release(uintptr_t file);   /* custom AWB library (#195), tx_isp_t41_awb_algo.h */
 int32_t tx_isp_release(uint32_t a0, uintptr_t a1)
 {
     t41_heapwatch_mark("tx_isp_release");
+    t41_awb_algo_release(a1);   /* the file that registered a custom AWB library is going away */
 	char *miscdev;
 	char *slot;
 	char *end;
@@ -38368,6 +38370,7 @@ static int t41_ioctl_internal_chn(uintptr_t file, bool set, uint32_t user_arg)
 }
 
 static int t41_ioctl_ae_algo(uintptr_t file, uint32_t cmd, uint32_t user_arg);   /* custom AE library (#76), tx_isp_t41_vae.h */
+static int t41_ioctl_awb_algo(uintptr_t file, uint32_t cmd, uint32_t user_arg);  /* custom AWB library (#195), tx_isp_t41_awb_algo.h */
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000014474 origin=fragment_seed original=tx_isp_unlocked_ioctl */
 int64_t tx_isp_unlocked_ioctl(uintptr_t a0, uint32_t a1, uint32_t a2)
@@ -38556,6 +38559,14 @@ int64_t tx_isp_unlocked_ioctl(uintptr_t a0, uint32_t a1, uint32_t a2)
     }
     if (a1 >= 0xc004541bU && a1 <= 0xc004541eU) {
         regtrace_ret = t41_ioctl_ae_algo(a0, a1, a2);
+        if (t41_runtime_trace)
+            printk(KERN_WARNING
+               "t41: tx-isp ioctl exit cmd=0x%x ret=%d\n",
+               a1, regtrace_ret);
+        return regtrace_ret;
+    }
+    if (a1 >= 0xc0045423U && a1 <= 0xc0045426U) {
+        regtrace_ret = t41_ioctl_awb_algo(a0, a1, a2);
         if (t41_runtime_trace)
             printk(KERN_WARNING
                "t41: tx-isp ioctl exit cmd=0x%x ret=%d\n",
@@ -173822,4 +173833,5 @@ static noinline void t41_note(const char *fmt, ...)
 }
 
 #include "tx_isp_t41_vae.h"
+#include "tx_isp_t41_awb_algo.h"
 #include "tx_isp_t41_dfg.h"
