@@ -3794,6 +3794,30 @@ static int subdev_video_destroy_link(struct tx_isp_subdev_pad *src,
     return 0;
 }
 
+/*
+ * Optional bypass graph (T31, link config 1).  Stock SetISPBypass(DISABLE)
+ * rebuilds the link graph without the ISP core: the VIC MDMA writes raw
+ * sensor frames (2 bytes per pixel) straight into frame channel 0's buffers.
+ * Off by default; with 0 the link ioctls behave as before (config index is
+ * only stored).
+ */
+static int isp_bypass_graph;
+module_param(isp_bypass_graph, int, S_IRUGO);
+MODULE_PARM_DESC(isp_bypass_graph,
+		 "Enable the vendor ISP bypass graph (link config 1: raw frames from the VIC on channel 0) (default: 0)");
+
+/* Frame completion for the bypass graph: the VIC bank buffer at phys_addr is
+ * done.  Same delivery as an MSCA channel 0 completion. */
+void tx_isp_bypass_frame_done(u32 phys_addr)
+{
+    u32 evt[4] = { 0, 0, phys_addr, 0 };
+
+    if (!ourISPdev || !ourISPdev->bypass_graph)
+        return;
+    ourISPdev->frame_count++;
+    frame_chan_event(&frame_channels[0], TX_ISP_FRAME_EVENT_BUFFER_DONE, evt);
+}
+
 /* OEM video-link destroy walks a static config table selected by active_link
  * rather than a dynamic pointer stored in the device. */
 static struct tx_isp_link_config oem_video_link_configs[][2] = {
@@ -3861,6 +3885,11 @@ static int tx_isp_video_link_destroy_impl(struct tx_isp_dev *isp_dev)
     }
 
 reset_state:
+    /* The bypass graph goes away with the links (vendor destroys it too) */
+    if (isp_dev->bypass_graph) {
+        isp_dev->bypass_graph = false;
+        tx_isp_vic_bypass_detach(isp_dev->vic_dev);
+    }
     /* Reset active link selection if tracked */
     isp_dev->active_link = -1;
     isp_dev->links_enabled = false;
@@ -6319,6 +6348,27 @@ static long tx_isp_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned 
 
         pr_info("TX_ISP_VIDEO_LINK_SETUP: config=%d\n", link_config);
 
+        if (isp_bypass_graph) {
+            if (link_config == 1) {
+                /* Vendor order: S_CTRL ISP_CTRL_BYPASS (value 0) comes first */
+                if (!isp_dev->bypass_enabled || !isp_dev->vic_dev) {
+                    pr_err("LINK_SETUP: bypass graph needs ISP bypass control set first\n");
+                    return -EINVAL;
+                }
+                ret = tx_isp_vic_bypass_attach(isp_dev->vic_dev);
+                if (ret) {
+                    pr_err("LINK_SETUP: bypass graph attach failed: %d\n", ret);
+                    return ret;
+                }
+                isp_dev->bypass_graph = true;
+                pr_info("LINK_SETUP: bypass graph active (frame channel 0 <- VIC MDMA, ISP core skipped)\n");
+            } else if (isp_dev->bypass_graph) {
+                isp_dev->bypass_graph = false;
+                tx_isp_vic_bypass_detach(isp_dev->vic_dev);
+                pr_info("LINK_SETUP: normal graph restored\n");
+            }
+        }
+
         isp_dev->active_link = link_config;
         isp_dev->links_enabled = true;
 
@@ -8129,6 +8179,28 @@ static int __submit_buffer_to_msca(int channel, u32 phys_addr)
         return -EINVAL;
 
     state = &frame_channels[channel].state;
+
+    /* Bypass graph: channel 0 buffers go to the VIC ring (raw frames), the
+     * MSCA is not used.  Channels 1/2 have no source in this graph. */
+    if (ourISPdev->bypass_graph) {
+        struct tx_isp_vic_device *vic = ourISPdev->vic_dev;
+        u32 need;
+
+        if (channel != 0 || !vic)
+            return -EINVAL;
+        need = vic->width * vic->height * 2;
+        if (!state->sizeimage || state->sizeimage < need) {
+            pr_err_ratelimited("bypass QBUF: buffer %u < raw frame %u\n",
+                               state->sizeimage, need);
+            return -EINVAL;
+        }
+        ret = tx_isp_dma_range_validate(phys_addr, need,
+                                        TX_ISP_T31_PHYS_DRAM_LIMIT);
+        if (ret)
+            return ret;
+        return tx_isp_vic_bypass_qbuf(vic, phys_addr);
+    }
+
     width = state->width ? state->width :
             (channel == 0 ? TX_ISP_MAX_WIDTH : 640U);
     height = state->height ? state->height :

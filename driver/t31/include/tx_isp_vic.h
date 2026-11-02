@@ -34,6 +34,14 @@ int tx_isp_vic_slake_subdev(struct tx_isp_subdev *sd);
 /* Missing function declaration that caused implicit declaration error */
 int tx_isp_subdev_pipo(struct tx_isp_subdev *sd, void *arg);
 
+/* Bypass graph (link config 1, ISP core skipped): frame channel 0 is fed by
+ * the VIC MDMA with raw frames. */
+int tx_isp_vic_bypass_attach(struct tx_isp_vic_device *vic_dev);
+void tx_isp_vic_bypass_detach(struct tx_isp_vic_device *vic_dev);
+int tx_isp_vic_bypass_qbuf(struct tx_isp_vic_device *vic_dev, u32 phys_addr);
+int tx_isp_vic_bypass_stream(struct tx_isp_vic_device *vic_dev, int on);
+void tx_isp_vic_bypass_clear(struct tx_isp_vic_device *vic_dev);
+
 /* VIC File Operations */
 int vic_chardev_open(struct inode *inode, struct file *file);
 int vic_chardev_release(struct inode *inode, struct file *file);

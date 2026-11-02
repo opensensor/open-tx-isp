@@ -294,6 +294,7 @@ struct tx_isp_dev {
     int tuning_enabled;
     bool streaming_enabled;
     bool bypass_enabled;
+    bool bypass_graph;      /* link config 1 active: frame channel 0 fed by the VIC MDMA */
     bool links_enabled;
     u32 instance;
     struct ae_info *ae_info;

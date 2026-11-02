@@ -738,6 +738,7 @@ static void vic_free_buffer_list(struct list_head *head)
 
 /* Forward declaration for streaming functions */
 int ispvic_frame_channel_s_stream(struct tx_isp_vic_device *vic_dev, int enable);
+extern void tx_isp_bypass_frame_done(u32 phys_addr);
 
 /* OEM global raw_pipe — populated during pipo init for the recovered callback
  * table.  Frame-channel completion is owned by the core MSCA FIFO drain.
@@ -825,6 +826,19 @@ gpio_handling:
     return 0;
 }
 
+/* Bypass graph: a bank buffer the ring skipped without a frame (dropped MDMA
+ * interrupt) goes back to the queue so the frame channel slot is programmed
+ * again instead of staying ACTIVE forever.  IRQ context, GFP_ATOMIC. */
+static void vic_bypass_requeue(struct tx_isp_vic_device *vic_dev, u32 addr)
+{
+	struct vic_buffer_entry *e = kzalloc(sizeof(*e), GFP_ATOMIC);
+
+	if (!e)
+		return;
+	e->buffer_addr = addr;
+	list_add_tail(&e->list, &vic_dev->queue_head);
+}
+
 /* vic_mdma_irq_function - OEM HLIL: handles MDMA DMA completion per channel.
  *
  * OEM has two paths:
@@ -883,6 +897,7 @@ int vic_mdma_irq_function(struct tx_isp_vic_device *vic_dev, int channel)
 		{
 			u32 current_dma_addr = vic_base ? readl(vic_base + 0x380) : 0;
 			struct vic_buffer_entry *done_buf;
+			u32 deliver_addr = 0;
 			int i;
 
 			/* OEM: pop from done_head */
@@ -899,7 +914,12 @@ int vic_mdma_irq_function(struct tx_isp_vic_device *vic_dev, int channel)
 
 			/* This is VIC input-ring completion, not MSCA output
 			 * completion.  The core ISR owns frame-channel delivery and
-			 * supplies the completed MSCA Y address from its FIFO. */
+			 * supplies the completed MSCA Y address from its FIFO.
+			 * In the bypass graph there is no MSCA: the VIC bank buffer
+			 * is the frame channel buffer and is delivered below. */
+			if (ourISPdev && ourISPdev->bypass_graph &&
+			    done_buf->buffer_addr == current_dma_addr)
+				deliver_addr = done_buf->buffer_addr;
 
 			/* OEM: move to free_head */
 			list_add_tail(&done_buf->list, &vic_dev->free_head);
@@ -924,8 +944,14 @@ int vic_mdma_irq_function(struct tx_isp_vic_device *vic_dev, int channel)
 
 					list_add_tail(&extra->list, &vic_dev->free_head);
 
-					if (extra->buffer_addr == current_dma_addr)
+					if (extra->buffer_addr == current_dma_addr) {
+						if (ourISPdev && ourISPdev->bypass_graph)
+							deliver_addr = extra->buffer_addr;
 						break;
+					}
+					if (ourISPdev && ourISPdev->bypass_graph &&
+					    extra->buffer_addr)
+						vic_bypass_requeue(vic_dev, extra->buffer_addr);
 				}
 
 				if (i >= (int)vic_dev->active_buffer_count) {
@@ -962,6 +988,9 @@ refill:
 
 				kfree(q_buf);
 			}
+
+			if (deliver_addr)
+				tx_isp_bypass_frame_done(deliver_addr);
 		}
 	}
 
@@ -3643,6 +3672,74 @@ int tx_isp_subdev_pipo(struct tx_isp_subdev *sd, void *arg)
     return 0;
 }
 EXPORT_SYMBOL(tx_isp_subdev_pipo);
+
+/*
+ * Bypass graph (link config 1: VIC -> frame channel, ISP core skipped).
+ * Stock T31 reaches this through the pad link; the frame channel then talks
+ * to the VIC frame-channel ops (ispvic_frame_channel_qbuf/s_stream/clearbuf)
+ * and the VIC MDMA writes the sensor's raw frame (2 bytes per pixel) straight
+ * into the QBUF'd buffers.  Only entered with the isp_bypass_graph module
+ * parameter set; the normal graph never touches these.
+ */
+static void *tx_isp_vic_bypass_pipe[6];
+
+int tx_isp_vic_bypass_attach(struct tx_isp_vic_device *vic_dev)
+{
+	if (!vic_dev)
+		return -ENODEV;
+	if (!vic_dev->width || !vic_dev->height)
+		return -EINVAL;
+	/* Pipe object: ring of 5 bank nodes, processing = 1 */
+	return tx_isp_subdev_pipo(&vic_dev->sd, tx_isp_vic_bypass_pipe);
+}
+
+void tx_isp_vic_bypass_clear(struct tx_isp_vic_device *vic_dev)
+{
+	if (!vic_dev)
+		return;
+	if (vic_dev->stream_state)
+		ispvic_frame_channel_s_stream(vic_dev, 0);
+	ispvic_frame_channel_clearbuf();
+}
+
+void tx_isp_vic_bypass_detach(struct tx_isp_vic_device *vic_dev)
+{
+	if (!vic_dev)
+		return;
+	tx_isp_vic_bypass_clear(vic_dev);
+	/* clearbuf leaves the nodes on free_head; the normal graph does not
+	 * use the ring (processing = 0 as after probe). */
+	vic_free_buffer_list(&vic_dev->free_head);
+	INIT_LIST_HEAD(&vic_dev->free_head);
+}
+
+int tx_isp_vic_bypass_qbuf(struct tx_isp_vic_device *vic_dev, u32 phys_addr)
+{
+	struct vic_buffer_entry *e;
+
+	if (!vic_dev || !phys_addr)
+		return -EINVAL;
+	if (vic_dev->sd.host_priv != vic_dev)
+		return -ENODEV;
+	e = kzalloc(sizeof(*e), GFP_ATOMIC);
+	if (!e)
+		return -ENOMEM;
+	e->buffer_addr = phys_addr;
+	/* ispvic_frame_channel_qbuf links e on queue_head and frees it once
+	 * a bank takes the address. */
+	return ispvic_frame_channel_qbuf(&vic_dev->sd, e);
+}
+
+int tx_isp_vic_bypass_stream(struct tx_isp_vic_device *vic_dev, int on)
+{
+	if (!vic_dev)
+		return -ENODEV;
+	if (on)
+		return ispvic_frame_channel_s_stream(vic_dev, 1);
+	tx_isp_vic_bypass_clear(vic_dev);
+	/* Re-arm the ring for the next STREAMON. */
+	return tx_isp_vic_bypass_attach(vic_dev);
+}
 
 /* VIC platform driver structure - CRITICAL MISSING PIECE */
 static struct platform_driver tx_isp_vic_platform_driver = {

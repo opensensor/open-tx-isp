@@ -4190,6 +4190,16 @@ static int ispcore_pad_event_handle(int32_t* arg1, int32_t arg2, void* arg3)
             pr_info("*** ispcore_pad_event_handle: STREAMON ch=%u state=%u ***\n",
                     dispatch->channel_id, dispatch->state);
 
+            /* Bypass graph: channel 0 runs on the VIC MDMA ring */
+            if (isp_dev->bypass_graph) {
+                if (dispatch->channel_id != 0)
+                    return 0;
+                result = tx_isp_vic_bypass_stream(isp_dev->vic_dev, 1);
+                if (!result)
+                    dispatch->state = 4;
+                return result;
+            }
+
             if (ispcore_bypass_enabled(isp_dev))
                 return 0;
 
@@ -4207,6 +4217,14 @@ static int ispcore_pad_event_handle(int32_t* arg1, int32_t arg2, void* arg3)
         case TX_ISP_FRAME_EVENT_STREAM_OFF: {
             /* Stream stop */
             ISP_DEBUG("ispcore_pad_event_handle: case 0x3000004 (stream stop)");
+            if (isp_dev->bypass_graph) {
+                if (dispatch->channel_id == 0 && dispatch->state == 4) {
+                    result = tx_isp_vic_bypass_stream(isp_dev->vic_dev, 0);
+                    dispatch->state = 3;
+                    return result;
+                }
+                return 0;
+            }
             return ispcore_frame_channel_streamoff(arg1);
         }
 
@@ -4284,6 +4302,14 @@ static int ispcore_pad_event_handle(int32_t* arg1, int32_t arg2, void* arg3)
              * in both modes. It already runs on idle channels (REQBUFS,
              * release), so an idle MSCA in bypass mode is no new case. */
             result = 0;
+            if (isp_dev->bypass_graph) {
+                /* Ring buffers of a stopped bypass channel: stream stop
+                 * already drained them; only a channel-0 clear while idle
+                 * has anything to do. */
+                if (dispatch->channel_id == 0 && !isp_dev->vic_dev->stream_state)
+                    tx_isp_vic_bypass_stream(isp_dev->vic_dev, 0);
+                break;
+            }
             if ((dispatch->enabled & 0x20) == 0 &&
                 dispatch->channel_id < MSCA_FIFO_CHANNELS) {
                 unsigned long fifo_flags;
