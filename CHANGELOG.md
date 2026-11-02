@@ -4,6 +4,12 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-03 (later), T40 unused lifted OEM code removed (Lu-Fi/openimp#85, QEMU reach data, Eufy T40 camera-tested)
+
+- **About 9,000 lines of unreferenced lifted OEM code deleted** from `tx_isp_t40_recovered.c`: top-level lifted functions of the MDNS / CCM / DMSC / CLM families (replaced by the C chains of the last steps) and of BCSH / LSC / BLC / AF / gamma / ADR that the linker already dropped (`--gc-sections`) and that nothing references. Evidence: reach trace of the module over the full apitest plus the streamer workload in the own QEMU T40; after each deletion round the module has no new undefined symbol (functions the compiler had inlined were restored by that check). What is still linked is reached from the lifted `tisp_main_init` / `tisp_deinit` / event tables and is not touched. The scanner list of `lifted_ptr_scale_check` lost `tisp_mdns_wdr_en`.
+- **Size** (same build): `.text` 454,140 -> 453,240, `.rodata` -96 B, string literals -604 B, `.data` -32 B, `.t40c2` 28,980 -> 17,440, `.bss` 726,752 -> 644,672 (-82 KB RAM: static objects that only the removed code used).
+- Reach result for the remaining plan items: YSP / YDNS lifted bodies are live (13.2 KB of 15.2 KB executed), the AE leftovers (5.9 KB not executed) are API bodies reached through `tx_isp_core_ops_s_ctrl`; neither is a deletion candidate.
+
 ## 2026-11-03, T40 GIB DEIR LUT base fixed, Unicorn checks for the GIB and LSC C (Lu-Fi/openimp#85, host only)
 
 - **Real bug found by the new GIB check:** `tisp_gib_write_reg` wrote the DEIR LUT (RGB-IR matrix, only when the sensor's IR mode is on) of the main channel to 0x50170 and of the second channel to 0x50140. The OEM does it the other way round (main 0x50140, second 0x50170). Not visible on the Eufy (GIB runs only with `t40_gates_oem_offset=1`, and the sc830ai is no IR sensor), fixed.
