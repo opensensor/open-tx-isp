@@ -559,6 +559,13 @@ Differences to stock (hardening): the info block is cleared after close (a secon
 answers `-EINVAL` (stock dereferences NULL), an interrupted wait returns the error, channel numbers above 0 are refused. Source guard:
 `tests/check_t41_custom_ae.sh`; QEMU (debug kernel with `slub_debug`) and camera evidence in Lu-Fi/openimp#76.
 
+Extra beyond the vendor (Lu-Fi/openimp#197): the file that registered the AE library is remembered and `tx_isp_release` unregisters it (`t41_ae_algo_release`: the
+same steps as the close). Stock leaves the library registered when its client is killed and every later open answers `-EBUSY` until the module is reloaded.
+The protocol block of `tx_isp_t41_vae.h` (between `T41-AE-ALGO-PROTOCOL-BEGIN/END`) follows the AWB library: one mutex, a get without a registered library answers
+`-EINVAL` at once (stock waits on a never initialised completion: an oops on the unmodified module), the unregister wakes every waiter (`complete_all`),
+frees the info block once and clears the pointer (close plus release free nothing twice), the completion is initialised once, a failed copy of the open reply
+unregisters again. Without a registered library nothing changes. Tests: `tests/t41_ae_algo_host.sh` (15 mutations), device client `tests/t41_algo/aerace.c`.
+
 ## Custom AWB library (`IMP_ISP_SetAwbAlgoFunc`, extra beyond the vendor, Lu-Fi/openimp#195)
 
 The stock module has no AWB library path; this module serves the user-space protocol libimp and the T40 module use (`tx_isp_t41_awb_algo.h`):

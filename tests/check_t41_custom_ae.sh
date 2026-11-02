@@ -16,9 +16,10 @@ grep -q '0xc0045420' "$f" && { echo "check_t41_custom_ae: the second-sensor hand
 grep -q 'u64 noinline vae_tisp_ae_algo_init(' "$g" && grep -q 'u64 noinline vae_tisp_ae_algo_handle(' "$g" && grep -q 'u64 noinline vae_tisp_ae_algo_deinit_internal(' "$g" || { echo "check_t41_custom_ae: the translated tisp_ae_algo_* chain is missing from tx_isp_t41_vae_gen.inc (tools/t41_vae/gen.sh roots)"; fail=1; }
 grep -q "'ta_custom_en': 'vae_ta_custom_en'" $(dirname "$0")/../tools/t41_vae/asm2c.py || { echo "check_t41_custom_ae: ta_custom_en must map to vae_ta_custom_en (the flag vae_tisp_ae_calc_process reads)"; fail=1; }
 grep -q 'vae_tisp_ae_algo_init(ch, 1, (u32)(uintptr_t)u' "$v" || { echo "check_t41_custom_ae: open must run the translated tisp_ae_algo_init(ch, 1, ...)"; fail=1; }
-grep -q 'vae_tisp_ae_algo_deinit_internal(u\[1\]' "$v" && grep -q 'vae_tisp_ae_algo_init(u\[1\], 0, 0' "$v" || { echo "check_t41_custom_ae: close must run tisp_ae_algo_deinit + tisp_ae_algo_init(ch, 0, 0)"; fail=1; }
+grep -q 'vae_tisp_ae_algo_deinit_internal(ch, 0, 0, 0' "$v" && grep -q 'vae_tisp_ae_algo_init(ch, 0, 0, 0' "$v" || { echo "check_t41_custom_ae: close must run tisp_ae_algo_deinit + tisp_ae_algo_init(ch, 0, 0)"; fail=1; }
 grep -q 't41_ae_algo_info = NULL;' "$v" || { echo "check_t41_custom_ae: close must clear the info pointer (a second close freed it twice, #65 on T40)"; fail=1; }
 grep -q 'vae_ta_custom_en\[channel\] ? (const unsigned char \*)(uintptr_t)info\[1\] + 8608' "$v" || { echo "check_t41_custom_ae: the realized exposure of a custom AE is the library's answer (AE state +8608..)"; fail=1; }
-awk '/^static int t41_ae_algo_open\(/,/^}/' "$v" | grep -q 't41_vendor_ae <= 0' || { echo "check_t41_custom_ae: open must refuse the safe AE controller (no statistics event)"; fail=1; }
+awk '/^static int t41_ae_algo_hw_precheck\(/,/^}/' "$v" | grep -q 't41_vendor_ae <= 0' || { echo "check_t41_custom_ae: open must refuse the safe AE controller (no statistics event)"; fail=1; }
+awk '/^int32_t tx_isp_release\(uint32_t a0, uintptr_t a1\)$/,/^}/' "$f" | head -9 | grep -q 't41_ae_algo_release(a1);' || { echo "check_t41_custom_ae: tx_isp_release must call t41_ae_algo_release (a killed client must not leave the library registered, extra beyond the vendor)"; fail=1; }
 [ $fail = 0 ] && echo "check_t41_custom_ae: ok"
 exit $fail

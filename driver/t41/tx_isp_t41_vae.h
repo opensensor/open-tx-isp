@@ -330,13 +330,185 @@ int32_t t41_vae_calc_process(uint32_t channel)
  * Differences: the info block is kzalloc'ed (stock: kmalloc-2048 cache) and cleared after close (stock leaves the freed pointer, a second close
  * freed it twice); a get/close race and a get without open answer -EINVAL (stock dereferences NULL); the interrupted wait returns the error
  * (stock carries on); the exposure words of the info block are the live ones (see t41_ae_algo_get).
+ *
+ * Extra beyond the vendor (Lu-Fi/openimp, "AE algorithm library released when its client dies"): the stock module has no tx_isp_release hook for
+ * the library, a killed client leaves it registered and every later open answers EBUSY until the module is reloaded.  Here the file that
+ * registered the library is remembered and tx_isp_release unregisters it (t41_ae_algo_release: the same steps as the close).  Locking protocol as
+ * the T41 AWB library (tx_isp_t41_awb_algo.h): t41_ae_algo_lock guards the registration, open, close, result and the part of a get between its
+ * wake-up and copy_to_user; a get without a registered library answers -EINVAL at once; the unregister wakes every waiter (complete_all), frees the
+ * info block once and clears the pointer, so a close followed by the release (or the reverse) frees nothing twice; the completion is initialised
+ * once.  Without a registered library nothing changes (vendor-identical).
  */
 #define T41_AE_ALGO_COOKIE	0x336acU
 #define T41_AE_ALGO_INFO_BYTES	2002U
 
-static unsigned char *t41_ae_algo_info;
+#define T41_AE_ALGO_COMP	((struct completion *)(void *)ae_algo_comp_storage)
+
+/* chain / hardware hooks, defined below the protocol block (the host test brings its own) */
+static int t41_ae_algo_hw_precheck(const u32 *u);			/* no side effects: errors the open answers before it allocates */
+static int t41_ae_algo_hw_register(u32 *u);				/* tisp_ae_algo_init(ch, 1, ...), the init attribute into u */
+static void t41_ae_algo_hw_unregister(u32 ch);				/* tisp_ae_algo_deinit + tisp_ae_algo_init(ch, 0, 0) */
+static int t41_ae_algo_hw_fill(unsigned char *info_blk);		/* statistics + exposure into the block, -EINVAL if the AE is gone */
+static int t41_ae_algo_hw_set(u32 *u);					/* tisp_ae_algo_handle, -EINVAL if no custom AE is active */
+
+/* T41-AE-ALGO-PROTOCOL-BEGIN */
+static unsigned char *t41_ae_algo_info;		/* non-NULL = a library is registered */
+static uintptr_t t41_ae_algo_owner;		/* the file that registered it (release hook) */
+static bool t41_ae_algo_comp_ready;
 static DEFINE_MUTEX(t41_ae_algo_lock);
 static u32 t41_ae_algo_gets, t41_ae_algo_sets;
+
+/* t41_ae_algo_lock held.  Unregister: stop the chain, free the info block once, wake every waiter. */
+static void t41_ae_algo_unregister_locked(void)
+{
+	unsigned char *blk = t41_ae_algo_info;
+
+	if (!blk)
+		return;
+	t41_ae_algo_hw_unregister(0);
+	t41_ae_algo_info = NULL;
+	t41_ae_algo_owner = 0;
+	if (t41_ae_algo_comp_ready)
+		complete_all(T41_AE_ALGO_COMP);	/* a get-handle waiting for the next frame leaves with -EINVAL */
+	kfree(blk);
+}
+
+static int t41_ae_algo_open(uintptr_t file, u32 user)
+{
+	u32 u[34];
+	unsigned char *info_blk;
+	int ret;
+
+	if (!user)
+		return -EFAULT;
+	if (private_copy_from_user(u, (const void __user *)(uintptr_t)user, sizeof(u)))
+		return -EFAULT;
+	ret = t41_ae_algo_hw_precheck(u);
+	if (ret)
+		return ret;
+	info_blk = kzalloc(2048, GFP_KERNEL);
+	if (!info_blk)
+		return -ENOMEM;
+	mutex_lock(&t41_ae_algo_lock);
+	if (t41_ae_algo_info) {			/* already open: stock would leak the old block */
+		mutex_unlock(&t41_ae_algo_lock);
+		kfree(info_blk);
+		return -EBUSY;
+	}
+	ret = t41_ae_algo_hw_register(u);
+	if (ret) {
+		mutex_unlock(&t41_ae_algo_lock);
+		kfree(info_blk);
+		return ret;
+	}
+	BUILD_BUG_ON(sizeof(struct completion) != 16U);
+	if (!t41_ae_algo_comp_ready) {		/* once: a completion with a waiter must never be initialised again */
+		init_completion(T41_AE_ALGO_COMP);
+		t41_ae_algo_comp_ready = true;
+	}
+	T41_AE_ALGO_COMP->done = 0;		/* a new library starts without a pending frame */
+	t41_ae_algo_gets = t41_ae_algo_sets = 0;
+	t41_ae_algo_owner = file;
+	t41_ae_algo_info = info_blk;
+	if (private_copy_to_user((void __user *)(uintptr_t)user, u, sizeof(u))) {
+		isp_printf(2, "[%s %d] [ %s:%d ] copy to user error\n", "tx_isp_set_ae_algo_open", 1627, "tx_isp_set_ae_algo_open", 1627);
+		t41_ae_algo_unregister_locked();	/* the client never learns it is registered: do not keep the library */
+		mutex_unlock(&t41_ae_algo_lock);
+		return -EFAULT;
+	}
+	mutex_unlock(&t41_ae_algo_lock);
+	return 0;
+}
+
+static int t41_ae_algo_close(u32 user)
+{
+	u32 u[2];
+
+	if (!user || private_copy_from_user(u, (const void __user *)(uintptr_t)user, sizeof(u)))
+		return -EFAULT;
+	if (u[1] >= 1U)
+		return -EINVAL;
+	mutex_lock(&t41_ae_algo_lock);
+	t41_ae_algo_unregister_locked();	/* a repeated close frees nothing */
+	mutex_unlock(&t41_ae_algo_lock);
+	return 0;
+}
+
+static int t41_ae_algo_get(u32 user)
+{
+	unsigned char *info_blk;
+	int ret;
+
+	if (!user)
+		return -EFAULT;
+	mutex_lock(&t41_ae_algo_lock);
+	ret = t41_ae_algo_info ? 0 : -EINVAL;	/* no library registered: nothing would ever complete */
+	mutex_unlock(&t41_ae_algo_lock);
+	if (ret)
+		return ret;
+	ret = private_wait_for_completion_interruptible(T41_AE_ALGO_COMP);
+	if (ret)
+		return ret;
+	mutex_lock(&t41_ae_algo_lock);
+	info_blk = t41_ae_algo_info;
+	if (!info_blk) {			/* closed while waiting */
+		mutex_unlock(&t41_ae_algo_lock);
+		return -EINVAL;
+	}
+	ret = t41_ae_algo_hw_fill(info_blk);
+	if (ret) {
+		mutex_unlock(&t41_ae_algo_lock);
+		return ret;
+	}
+	t41_ae_algo_gets++;
+	ret = private_copy_to_user((void __user *)(uintptr_t)user, info_blk, T41_AE_ALGO_INFO_BYTES) ? -EFAULT : 0;
+	mutex_unlock(&t41_ae_algo_lock);
+	return ret;
+}
+
+static int t41_ae_algo_set(u32 user)
+{
+	u32 u[14];
+	int ret;
+
+	if (!user || private_copy_from_user(u, (const void __user *)(uintptr_t)user, sizeof(u)))
+		return -EFAULT;
+	if (u[1] >= 1U)
+		return -EINVAL;
+	mutex_lock(&t41_ae_algo_lock);
+	if (!t41_ae_algo_info) {		/* a late result after the close */
+		mutex_unlock(&t41_ae_algo_lock);
+		return -EINVAL;
+	}
+	ret = t41_ae_algo_hw_set(u);
+	if (!ret)
+		t41_ae_algo_sets++;
+	mutex_unlock(&t41_ae_algo_lock);
+	return ret;
+}
+
+/* tx_isp_release hook: the file that registered the library is going away (killed client) */
+static void t41_ae_algo_release(uintptr_t file)
+{
+	mutex_lock(&t41_ae_algo_lock);
+	if (t41_ae_algo_info && t41_ae_algo_owner == file)
+		t41_ae_algo_unregister_locked();
+	mutex_unlock(&t41_ae_algo_lock);
+}
+
+static int t41_ioctl_ae_algo(uintptr_t file, uint32_t cmd, uint32_t user_arg)
+{
+	switch (cmd) {
+	case 0xc004541bU: return t41_ae_algo_get(user_arg);
+	case 0xc004541cU: return t41_ae_algo_set(user_arg);
+	case 0xc004541dU: return t41_ae_algo_open(file, user_arg);
+	case 0xc004541eU: return t41_ae_algo_close(user_arg);
+	}
+	return -ENOTTY;
+}
+/* T41-AE-ALGO-PROTOCOL-END */
+
+/* ---- chain side ---- */
 
 static unsigned char *t41_ae_algo_core(void)
 {
@@ -361,17 +533,11 @@ static u32 t41_ae_algo_exp2(u32 v)
 	return (u32)vae_tisp_math_exp2(v, 16, 10, 0, (u32)(uintptr_t)frame);
 }
 
-static int t41_ae_algo_open(u32 user)
+static int t41_ae_algo_hw_precheck(const u32 *u)
 {
-	u32 frame[8] __aligned(8) = { 0 };
-	u32 u[34];
-	unsigned char *core, *attr, *info_blk, *params, *state;
+	unsigned char *core, *attr;
 	u32 ch, *aei;
 
-	if (!user)
-		return -EFAULT;
-	if (private_copy_from_user(u, (const void __user *)(uintptr_t)user, sizeof(u)))
-		return -EFAULT;
 	if (u[0] != T41_AE_ALGO_COOKIE) {
 		isp_printf(2, "[%s %d] [ %s:%d ] Ae Algo Function register version error\n", "tx_isp_set_ae_algo_open", 1571, "tx_isp_set_ae_algo_open", 1571);
 		return -EPERM;
@@ -389,18 +555,22 @@ static int t41_ae_algo_open(u32 user)
 	if (!t41_kernel_data_ptr(aei) || !t41_kernel_data_ptr((void *)(uintptr_t)aei[0]) ||
 	    !t41_kernel_data_ptr((void *)(uintptr_t)aei[1]))
 		return -ENODEV;
-	params = (unsigned char *)(uintptr_t)aei[0];
+	return 0;
+}
+
+/* t41_ae_algo_lock held, hw_precheck passed */
+static int t41_ae_algo_hw_register(u32 *u)
+{
+	u32 frame[8] __aligned(8) = { 0 };
+	unsigned char *core, *attr, *state;
+	u32 ch = u[1], *aei;
+
+	core = t41_ae_algo_core();
+	attr = core ? t41_ae_algo_attr(core, ch) : NULL;
+	aei = (u32 *)(uintptr_t)ae_info[ch];
+	if (!core || !attr || !t41_kernel_data_ptr(aei) || !t41_kernel_data_ptr((void *)(uintptr_t)aei[1]))
+		return -ENODEV;
 	state = (unsigned char *)(uintptr_t)aei[1];
-	(void)params;
-	info_blk = kzalloc(2048, GFP_KERNEL);
-	if (!info_blk)
-		return -ENOMEM;
-	mutex_lock(&t41_ae_algo_lock);
-	if (t41_ae_algo_info) {			/* already open: stock would leak the old block */
-		mutex_unlock(&t41_ae_algo_lock);
-		kfree(info_blk);
-		return -EBUSY;
-	}
 	{
 		/* stock keeps the realized exposure in AE state +8608.. only while the internal AE runs (api_ae_get_exprinfo_attr
 		 * copies ae_cache +576..+607 there); seed it so the first info block shows the live exposure */
@@ -423,61 +593,30 @@ static int t41_ae_algo_open(u32 user)
 	} else {
 		u[6] = system_reg_read(0x8000) & 0xffff;
 	}
-	BUILD_BUG_ON(sizeof(struct completion) != 16U);
-	init_completion((struct completion *)(void *)ae_algo_comp_storage);
-	t41_ae_algo_info = info_blk;
-	t41_ae_algo_gets = t41_ae_algo_sets = 0;
-	mutex_unlock(&t41_ae_algo_lock);
-	if (private_copy_to_user((void __user *)(uintptr_t)user, u, sizeof(u))) {
-		isp_printf(2, "[%s %d] [ %s:%d ] copy to user error\n", "tx_isp_set_ae_algo_open", 1627, "tx_isp_set_ae_algo_open", 1627);
-		return -EFAULT;
-	}
 	return 0;
 }
 
-static int t41_ae_algo_close(u32 user)
+static void t41_ae_algo_hw_unregister(u32 ch)
 {
 	u32 frame[8] __aligned(8) = { 0 };
-	u32 u[2];
-	unsigned char *blk;
 
-	if (!user || private_copy_from_user(u, (const void __user *)(uintptr_t)user, sizeof(u)))
-		return -EFAULT;
-	if (u[1] >= 1U)
-		return -EINVAL;
-	mutex_lock(&t41_ae_algo_lock);
-	vae_tisp_ae_algo_deinit_internal(u[1], 0, 0, 0, (u32)(uintptr_t)frame);
-	vae_tisp_ae_algo_init(u[1], 0, 0, 0, (u32)(uintptr_t)frame);
-	blk = t41_ae_algo_info;
-	t41_ae_algo_info = NULL;
-	mutex_unlock(&t41_ae_algo_lock);
-	complete((struct completion *)(void *)ae_algo_comp_storage);	/* a get-handle waiting for the next frame leaves with -EINVAL */
-	kfree(blk);							/* kfree(NULL) is fine: a repeated close frees nothing */
-	return 0;
+	vae_tisp_ae_algo_deinit_internal(ch, 0, 0, 0, (u32)(uintptr_t)frame);
+	vae_tisp_ae_algo_init(ch, 0, 0, 0, (u32)(uintptr_t)frame);
 }
 
-static int t41_ae_algo_get(u32 user)
+/* t41_ae_algo_lock held, info_blk non-NULL */
+static int t41_ae_algo_hw_fill(unsigned char *info_blk)
 {
-	u32 frame[8] __aligned(8) = { 0 };
 	u32 ei[16];
-	unsigned char *core, *attr, *info_blk, *cache, *state;
+	unsigned char *core, *attr, *cache, *state;
 	u32 *aei;
-	int ret, k;
+	int k;
 
-	if (!user)
-		return -EFAULT;
-	ret = private_wait_for_completion_interruptible((struct completion *)(void *)ae_algo_comp_storage);
-	if (ret)
-		return ret;
-	mutex_lock(&t41_ae_algo_lock);
-	info_blk = t41_ae_algo_info;
 	core = t41_ae_algo_core();
 	attr = core ? t41_ae_algo_attr(core, 0) : NULL;
 	aei = (u32 *)(uintptr_t)ae_info[0];
-	if (!info_blk || !core || !attr || !t41_kernel_data_ptr(aei) || !t41_kernel_data_ptr((void *)(uintptr_t)aei[1])) {
-		mutex_unlock(&t41_ae_algo_lock);
+	if (!core || !attr || !t41_kernel_data_ptr(aei) || !t41_kernel_data_ptr((void *)(uintptr_t)aei[1]))
 		return -EINVAL;
-	}
 	state = (unsigned char *)(uintptr_t)aei[1];
 	cache = (unsigned char *)(uintptr_t)*(u32 *)(void *)(ae_cache + 0);
 	memset(info_blk + 8, 0, TX_ISP_TUNING_T41_AE_STATS_BYTES + 60U);
@@ -518,43 +657,18 @@ static int t41_ae_algo_get(u32 user)
 		for (k = 0; k < 14; k++)
 			memcpy(info_blk + 1946 + 4 * k, &w[k], 4);
 	}
-	(void)frame;
-	t41_ae_algo_gets++;
-	ret = private_copy_to_user((void __user *)(uintptr_t)user, info_blk, T41_AE_ALGO_INFO_BYTES) ? -EFAULT : 0;
-	mutex_unlock(&t41_ae_algo_lock);
-	return ret;
-}
-
-static int t41_ae_algo_set(u32 user)
-{
-	u32 frame[8] __aligned(8) = { 0 };
-	u32 u[14];
-
-	if (!user || private_copy_from_user(u, (const void __user *)(uintptr_t)user, sizeof(u)))
-		return -EFAULT;
-	if (u[1] >= 1U)
-		return -EINVAL;
-	mutex_lock(&t41_ae_algo_lock);
-	if (!t41_ae_algo_info || !vae_ta_custom_en[u[1]]) {
-		mutex_unlock(&t41_ae_algo_lock);
-		return -EINVAL;
-	}
-	vae_tisp_ae_algo_handle(u[1], (u32)(uintptr_t)u, 0, 0, (u32)(uintptr_t)frame);
-	t41_ae_algo_sets++;
-	mutex_unlock(&t41_ae_algo_lock);
 	return 0;
 }
 
-static int t41_ioctl_ae_algo(uintptr_t file, uint32_t cmd, uint32_t user_arg)
+/* t41_ae_algo_lock held, a library is registered */
+static int t41_ae_algo_hw_set(u32 *u)
 {
-	(void)file;
-	switch (cmd) {
-	case 0xc004541bU: return t41_ae_algo_get(user_arg);
-	case 0xc004541cU: return t41_ae_algo_set(user_arg);
-	case 0xc004541dU: return t41_ae_algo_open(user_arg);
-	case 0xc004541eU: return t41_ae_algo_close(user_arg);
-	}
-	return -ENOTTY;
+	u32 frame[8] __aligned(8) = { 0 };
+
+	if (!vae_ta_custom_en[u[1]])
+		return -EINVAL;
+	vae_tisp_ae_algo_handle(u[1], (u32)(uintptr_t)u, 0, 0, (u32)(uintptr_t)frame);
+	return 0;
 }
 
 #endif

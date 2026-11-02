@@ -36993,10 +36993,12 @@ tx_isp_video_link_destroy_isra_30xf4:
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000013c24 origin=manual original=tx_isp_release */
 static void t41_awb_algo_release(uintptr_t file);   /* custom AWB library (#195), tx_isp_t41_awb_algo.h */
+static void t41_ae_algo_release(uintptr_t file);    /* custom AE library, tx_isp_t41_vae.h */
 int32_t tx_isp_release(uint32_t a0, uintptr_t a1)
 {
     t41_heapwatch_mark("tx_isp_release");
     t41_awb_algo_release(a1);   /* the file that registered a custom AWB library is going away */
+    t41_ae_algo_release(a1);    /* same for a custom AE library (extra beyond the vendor: no EBUSY after a killed client) */
 	char *miscdev;
 	char *slot;
 	char *end;
