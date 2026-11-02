@@ -7,6 +7,8 @@ set -e
 HERE=$(cd "$(dirname "$0")" && pwd); D=$HERE/../driver/t40
 BIN=${1:-$T40_TUNING_BIN}; DAT=${2:-$T40_OEM_DATA}
 if [ ! -r "$BIN" ] || [ ! -r "$DAT" ]; then echo "t40_vct_host: SKIP (no tuning bin / OEM .data: set T40_TUNING_BIN and T40_OEM_DATA)"; [ -z "$T40_ORACLE_STRICT" ] || exit 1; exit 0; fi
+# the generated init code addresses the OEM .data by fixed offsets: only the .data of the exact build it was lifted from (190016 bytes) fits
+if [ "$(stat -c %s "$DAT")" != 190016 ]; then echo "t40_vct_host: SKIP (OEM .data is $(stat -c %s "$DAT") bytes, the harness needs the 190016-byte .data of the vendor build it was lifted from; see tests/README.oracles.md)"; [ -z "$T40_ORACLE_STRICT" ] || exit 1; exit 0; fi
 W=$(mktemp -d); trap 'rm -rf $W' EXIT
 sed -n '/^#include "tx_isp_t40_vawb_gen.inc"/q;p' $D/tx_isp_t40_vawb.h > $W/top.h
 sed -i -E -e 's/a >= 0x80000000U \&\& a < 0xfffff000U \&\& !\(a \& align\)/harness_ok(a, align)/' \

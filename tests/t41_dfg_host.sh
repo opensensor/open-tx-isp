@@ -3,8 +3,8 @@
 #   t41_dfg_host.sh [tuning-bin]    (DFG_BIN as alternative)
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd); REPO=$HERE/..; W=$(mktemp -d); [ -n "$KEEP" ] || trap "rm -rf $W" EXIT
-BIN=${1:-${DFG_BIN:-/mnt/NVMe/git/scratch-clones/session-110bf918/cinnado-d1-t41/extract/app/sensor/sc5336-t41.bin}}
-[ -r "$BIN" ] || { echo "t41_dfg_host: SKIP (no tuning bin)"; exit 0; }
+BIN=${1:-${DFG_BIN:-}}
+[ -r "$BIN" ] || { echo "t41_dfg_host: SKIP (set DFG_BIN=<sc5336-t41.bin> or pass the tuning bin as argument)"; exit 0; }
 # vae.h up to the generated include = guards + external leaves; the guard
 # range check becomes the harness one (host pointers are below 2 GB)
 sed -n '/^#include "tx_isp_t41_vae_gen.inc"/q;p' $REPO/driver/t41/tx_isp_t41_vae.h > $W/top.h

@@ -67,13 +67,13 @@ wakeups.
 frame-interval enumeration. `tests/t41_v4l2_mmap_test.c` allocates two full
 resolution buffers, captures ten frames, checks sequence/timestamp/payload
 metadata, and optionally writes the final NV12 frame for visual validation.
-Both tests run with the selected channel exclusively owned by V4L2. The Raptor
+Both tests run with the selected channel exclusively owned by V4L2. The application
 V4L2 backend uses the same node rather than opening a parallel IMP channel.
 
-The standalone lifecycle was additionally validated with Raptor fully
+The standalone lifecycle was additionally validated with the application fully
 stopped: three consecutive open/capture/close cycles each delivered ten
-2560x1440 frames at 40 ms intervals, then Raptor restarted and reclaimed the
-sensor normally. This removes Raptor as a prerequisite for `/dev/video0`.
+2560x1440 frames at 40 ms intervals, then the application restarted and reclaimed the
+sensor normally. This removes the application as a prerequisite for `/dev/video0`.
 
 The T41 adapter's call into the recovered private ioctl handlers uses the
 narrow `KERNEL_DS` bridge available in Linux 4.4. This compatibility glue is
@@ -83,7 +83,7 @@ longer exists.
 
 ## Correctness contract
 
-- The private Raptor/OpenIMP path and public V4L2 path are mutually exclusive
+- The private the application/OpenIMP path and public V4L2 path are mutually exclusive
   owners of a scaler channel until multi-consumer DMA semantics are proven.
 - `sizeimage`, Y/UV offsets, and allocation validation come only from
   `tx_isp_nv12_layout_build()` and `tx_isp_nv12_buffer_build()`.
@@ -108,7 +108,7 @@ saturation controls for a standalone userspace controller. Recovered
 brightness, contrast, and hue setters fail with `EOPNOTSUPP` until their BCSH
 workspace is complete; they never enter the known invalid pointer path.
 `openimp-tuningd` holds that descriptor and tracks gain independently of
-Raptor, so capture/encoder restarts do not reset the tuning policy.
+The application, so capture/encoder restarts do not reset the tuning policy.
 
 ## Performance gate
 

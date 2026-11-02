@@ -87,7 +87,7 @@ MMIO/logging; explicit tracing and rate-limited failures remain available.
 
 Promotion ran before S10 bind mounts, with the preceding module and complete
 manifest retained in `/opt/t41-iq/generic-rollback-8d`. A fresh boot verifies
-all twenty artifacts, unchanged sensor calibration and saved Raptor config,
+all twenty artifacts, unchanged sensor calibration and saved the application config,
 day mode, advancing tuning work and another six passing reconnects. Neo
 audio and the other deployed libraries/binaries are unchanged. No firmware
 partition was flashed.

@@ -7,15 +7,15 @@ performance optimization or V4L2 work begins.
 The benchmark deliberately does **not** claim to isolate kernel ISP execution
 time. The vendor kernels do not expose per-module CPU accounting, and the
 current pipeline crosses the sensor driver, TX-ISP, OpenIMP or OEM `libimp`,
-the encoder, and Raptor. Results therefore keep these measurements separate:
+the encoder, and the application. Results therefore keep these measurements separate:
 
 - whole-system CPU consumption and iowait
 - per-daemon CPU capacity, RSS, virtual size, threads, and context switches
 - system memory availability and kernel-memory indicators
 - loaded module footprint and exact on-disk module size/hash
-- delivered encoded frames from the Raptor ring producer sequence
+- delivered encoded frames from the application ring producer sequence
 - raw ISP and codec interrupt rates, by interrupt and in aggregate
-- Raptor stream configuration, ring allocation, and pipeline file identities
+- The application stream configuration, ring allocation, and pipeline file identities
 - ISP overflow, kernel-fatal, and userspace-fault deltas
 
 Raw interrupt rate is never reported as FPS. A 25 fps T41 stream can generate
@@ -44,7 +44,7 @@ window. A serious comparison should use at least a 30-second warm-up and a
 120-second measurement. The output directory must not already exist.
 
 The script needs only POSIX `sh`, `/proc`, `awk`, `stat`, and the BusyBox tools
-normally present in Thingino. `ringdump`, `raptorctl`, `sha256sum`, `logread`,
+normally present in Thingino. `ringdump`, an application control tool, `sha256sum`, `logread`,
 and `logcat` add evidence when available; missing optional commands do not
 abort sampling.
 
@@ -52,7 +52,7 @@ abort sampling.
 
 An open-versus-OEM or before-versus-after comparison is valid only when these
 conditions are held constant and verified in `metadata.tsv` and the captured
-Raptor status:
+The application status:
 
 1. same camera, sensor, lens, scene, illumination, and thermal settling time
 2. same resolution, configured FPS, codec, rate-control mode, bitrate, GOP,

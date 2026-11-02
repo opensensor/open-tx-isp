@@ -2,7 +2,7 @@
 
 This is the gate for moving development effort to another SoC, not a claim
 that every T41 ISP mode is recovered. The physical target is T41NQ/OS04D10,
-2560x1440 at 25 fps, H.264/AAC with Neo audio, forced Raptor day mode and the
+2560x1440 at 25 fps, H.264/AAC with Neo audio, forced the application day mode and the
 unchanged installed sensor calibration. No complete firmware was flashed.
 
 ## Verified checkpoint
@@ -34,7 +34,7 @@ keeping two capture buffers and explicit output-count overrides. The old
 fourth buffer spilled into uncached memory and periodically stalled IDRs.
 The repair passed a cold-boot 900-second decode with 22,489 frames and no
 FFmpeg warnings, plus reconnect and cadence checks. RVD is persistently
-staged; no Raptor configuration or Neo audio library was changed.
+staged; no the application configuration or Neo audio library was changed.
 
 ## Required before calling the normal daytime path finished
 

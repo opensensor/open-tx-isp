@@ -11,7 +11,7 @@ OpenIMP sends Gen3 `IMPISPAntiflickerAttr` through ioctl `0xc0105435`, inner
 control `0x08000026`. Its payload is an eight-byte enum/frequency structure,
 not the older SoCs' exposure-value response sharing that command number.
 The T41 startup dispatcher had no route for it and returned success without
-applying SET or filling GET. Raptor therefore reported success while native
+applying SET or filling GET. The application therefore reported success while native
 AE retained its default AUTO policy. The existing `tisp_s_antiflick` wrapper
 was unreachable from that public ioctl.
 
@@ -79,7 +79,7 @@ measurement (not the subsampled raw diagnostic above):
 | OFF | 4.759 | 125.06 | 6.09% |
 | NORMAL 60 Hz | 0.0318 | 213.95 | 61.71% |
 
-Raptor's settled OEM exposure query reports EV 369 and unity analog gain
+The application's settled OEM exposure query reports EV 369 and unity analog gain
 under NORMAL; GIB reads `0x04440444` for both gain pairs. Stock also loses
 the highlight detail at its 60 Hz minimum exposure. Neither proprietary
 firmware nor arbitrary post-gain attenuation is evidence of a solution to
@@ -111,8 +111,8 @@ Build the target-only tests with the T41 compiler:
 Stage under `/tmp`. With the normal capture owner active, `antiflicker-test`
 alone reads the policy, `--check` exercises and restores it, and `MODE FREQ`
 sets it. For example, `1 60` selects NORMAL, while `2 60` selects AUTO. These
-are SDK mode numbers, **not** Raptor's off/50/60 CLI values. On Raptor,
-`raptorctl rvd set-antiflicker 2` selects NORMAL 60 Hz.
+are SDK mode numbers, **not** an application CLI's off/50/60 values. In an application,
+The application CLI selects NORMAL 60 Hz for mode 2.
 
 `luma-test 500` captures the unused third output and prints CSV numeric rows
 after the lifecycle preamble/header. Check source sequence/timestamps as well

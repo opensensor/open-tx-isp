@@ -32,7 +32,7 @@ Live and verified chains (all literal-translation `_lit` unless noted):
   candidate-selection AWB -- both work when ISP stats are alive, but see
   open work item 2.
 
-Current harness profile (RTSP endpoint is `/ch0` since the raptor.conf
+Current harness profile (RTSP endpoint is `/ch0` since the app config
 restore -- see the 2026-06-10 forensic section's bench-incident note):
 
     THINGINO_PASS=... ALLOW_ACTIVE_STREAM_STOP=1 \
@@ -52,8 +52,8 @@ Forensic ground truth (same-scene stock references):
   0x12000 CLM ctrl/trig, 0x13000 YSP, 0x16000 MSCA.
 - To boot stock for reference: clean power cycle, then
   `insmod /lib/modules/4.4.94/ingenic/tx-isp-t40.ko`, the gc4653 sensor ko,
-  `/etc/init.d/S31raptor start`. Day mode is forced via `[ircut]` in
-  `/etc/raptor.conf`. Never rmmod a streaming driver -- power-cycle.
+  `/etc/init.d/<app-init> start`. Day mode is forced via `[ircut]` in
+  `<app-config>`. Never rmmod a streaming driver -- power-cycle.
 
 Open work, ranked (details in the final 2026-06-10/06-11 sections):
 
@@ -145,7 +145,7 @@ for a minimal valid-color baseline. The next experiments should hold the
 streaming machinery constant and vary only ISP color/tuning state.
 
 Active-stream register reads are also a risk. An always-on proc snapshot of
-the DMSC/BCSH/GIB windows wedged the camera while Raptor was running and
+the DMSC/BCSH/GIB windows wedged the camera while the application was running and
 forced a recovery reboot. The driver now exposes this only through the
 default-off `enable_t40_color_reg_snapshot` parameter. Do not enable it in the
 normal RTSP profile until the individual register windows are isolated.
@@ -317,7 +317,7 @@ Neutral-UV buffer test:
   `framechan_neutral_uv_value`. It fills the completed UV plane only from the
   deferred frame-done work item, and direct IRQ calls record a skip instead of
   mapping/writing frame memory. Runtime validation is still pending because
-  `192.0.2.242` dropped off the network while stopping Raptor before the
+  `192.0.2.242` dropped off the network while stopping the application before the
   diagnostic module was inserted:
   `logs/20260608-163949-driver-neutral-uv-smoke-242`.
 - Runtime validation after a clean Tasmota power cycle
@@ -472,7 +472,7 @@ Next experiments (knobs now exposed in `tools/t40_safe_qbuf_dump_probe.sh`:
 ## 2026-06-08 Live OEM capture: root cause is the wrong output engine
 
 Reboot to a clean boot, then load the genuine stock driver
-(`/lib/modules/4.4.94/ingenic/tx-isp-t40.ko`, note hyphens) + sensor + Raptor
+(`/lib/modules/4.4.94/ingenic/tx-isp-t40.ko`, note hyphens) + sensor + the application
 and read the VIC and ISP-core channel registers *during streaming*. Evidence:
 `logs/20260608-195228-t40-oem-live-ctrl-stream-242/` (`oem-load-stream.log`,
 `oem-core-channel-regs.log`, `oem-stock-frame.jpg`). The fresh stock frame is
@@ -805,7 +805,7 @@ on .242:
   `0x7fef88d9`). The bit only latches around stream start — live devmem
   toggles do not change the picture.
 - Stock boots into night mode on the bench; force day via `[ircut]
-  enabled=true mode=day` in `/etc/raptor.conf` (already applied to .242)
+  enabled=true mode=day` in `<app-config>` (already applied to .242)
   before using stock frames as color references
   (`logs/20260610-stock-lsc-reference/stock-day-baseline.jpg`).
 
@@ -882,7 +882,7 @@ ISR path. Avoid reintroducing that class of "help" until OEM evidence proves it.
    - denoise family
 8. Do not broad-call recovered T40 color init helpers. Isolate one block per
    boot, or mirror the exact OEM register writes manually, and capture
-   pre/post proc evidence before starting Raptor.
+   pre/post proc evidence before starting the application.
 9. Only after a plausible lifelike frame appears, map T40 tuning-blob offsets
    for the active blocks and replace guesses with blob-backed values.
 
@@ -1349,14 +1349,14 @@ inspection workaround and continue with the MSCA UV-plane/AWB gain path
 separately.
 
 Note: the 2026-06-09 `t40-awb-blockinit-realuv` attempt did not reach the new
-AWB code; the partial `load-safe.log` ends during `S31raptor stop`, before
+AWB code; the partial `load-safe.log` ends during `<app-init> stop`, before
 `insmod`. The camera was power-cycled and restored with the known-good
 neutral-UV recovered stream:
 `logs/20260609-142105-t40-recover-clean-neutraluv-242`.
 
 Follow-up: `logs/20260609-142438-t40-awb-cb-neutraluv-242` reproduced the same
 failure signature while stopping the active recovered stream. The log again ends
-inside `S31raptor stop` after consumer daemons stop and before any new `insmod`,
+inside `<app-init> stop` after consumer daemons stop and before any new `insmod`,
 so this is not an AWB-code result. Treat it as a recovered-driver
 release/stream-stop blocker: killing the active `rvd` stream can take the camera
 off-LAN before the module reload starts.
@@ -1560,7 +1560,7 @@ callback chain unconditionally).
   ae_sensor_apply_force_packed on restart - no more ratcheting or reload
   slams. UV trim uses EMA'd means and a wider neutral window to stop
   ring-buffer sampling jitter from dithering the gains. The probe deploys
-  and auto-starts /tmp/3a.sh after raptor.
+  and auto-starts /tmp/3a.sh after the application.
 - top40 sweep negative results (live, with temporal-noise metric): bits
   4/13/14 no visible effect without inits; bit6 brightens; **bit15 blanks
   the output to a solid green frame** (and fooled the temporal-noise
@@ -1810,7 +1810,7 @@ NEXT MILESTONE: literal-translate (mips2c) the faithful tisp_bcsh chain
 (OEM tisp_bcsh_main_init 0x6a738), tisp_clm_init, and tisp_lsc_init, like
 the MDNS/YSP/CCM bring-ups. Stock day-mode register ground truth for all
 three is in the bank dumps. Stock day/night switch for reference boots:
-`raptorctl ric mode day`.
+the application CLI (day mode).
 
 2026-06-10 update: the faithful BCSH chain is now compiled in as
 `driver/t40/tx_isp_t40_bcsh_lit.inc`, gated behind `enable_bcsh=0`
@@ -1835,7 +1835,7 @@ small `mips2c_literal.py` fix for MIPS `seb`/`seh`. Local T40 module build
 passes.
 
 Live result: `ENABLE_BCSH=1 ENABLE_CLM=1 CLM_STAGE_LIMIT=0` reboots during
-Raptor start / stream block-init before any frame capture
+The application start / stream block-init before any frame capture
 (`logs/20260610-clm-bcsh-lit-clean`). The camera was restored to the
 known-good BCSH/CLM-off stream afterward (`logs/20260610-stable-restore-after-clm`).
 The CLM entrypoint now has `clm_stage_limit` (probe `CLM_STAGE_LIMIT`):
@@ -1884,13 +1884,13 @@ CT anchor.
 
 ## 2026-06-10 Same-scene stock-vs-recovered forensic diff (night bench scene)
 
-Bench incident first: `/etc/raptor.conf` was found truncated to 0 bytes
+Bench incident first: `<app-config>` was found truncated to 0 bytes
 (mtime 17:38, likely a casualty of one of the CLM stage-14 oops/power-cut
 cycles). Symptoms of the empty conf: stock `tx-isp-t40.ko` + sensor insmod
 fails with `Failed to get I2C adapter 0, deferring probe` (the conf's
 `[sensor] i2c_adapter = 1` is what points rvd at the right bus) and rvd dies
 with `IMP_ISP_AddSensor failed`. Restored from the squashfs copy
-(`cp /rom/etc/raptor.conf /etc/raptor.conf`), then re-applied ONLY the
+(`cp /rom<app-config> <app-config>`), then re-applied ONLY the
 `[ircut] enabled = true / mode = day` lines (321/322). NOTE: the factory conf
 serves RTSP at `/ch0` and `/ch1` -- the old `/main` alias lived in the lost
 custom conf. Harness runs need `RTSP_PATH=ch0` until someone re-adds the alias.
@@ -2408,7 +2408,7 @@ current acute crash regime:
 - `SKIP_REG_SNAPSHOT=1`: skips active GC4653 I2C and devmem snapshots. Earlier
   runs showed frame IRQ/qbuf activity, then the probe died while doing active
   register diagnostics.
-- `RTSP_FIRST=1` and `FAST_RTSP_ONLY=1`: return immediately after Raptor starts
+- `RTSP_FIRST=1` and `FAST_RTSP_ONLY=1`: return immediately after the application starts
   and capture the RTSP frame before SCP/qbuf/3A/status diagnostics.
 - `PRESTREAM_EXPO_IT=N`: optional pre-stream GC4653 `0x0202/0x0203` write. In
   this bench state the direct I2C write returned `I/O error`, so the useful
@@ -2532,7 +2532,7 @@ the acute bench failure again:
 - `logs/20260611-081140-restored-final-daymatch-dmsc-bcsh-it905-r1520-b1850`:
   reboot during/just after recovered `insmod`.
 - `logs/20260611-081444-restore-stable-compromise-ag2-it1440-r1500-b2000`:
-  reached Raptor/RTSP but hard-hung during first-frame decode; no JPEG written,
+  reached the application/RTSP but hard-hung during first-frame decode; no JPEG written,
   `No route to host`.
 
 The device was power-cycled back to a clean reachable boot after the failures.

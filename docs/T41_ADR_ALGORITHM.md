@@ -122,7 +122,7 @@ and another three TCP/three UDP reconnects. No partition was flashed.
 
 Still required: a matched OEM-enabled comparison and physical mode/WDR
 validation. An OEM comparison helper was rejected on device open with EPERM
-(Raptor owns the tuning device); it made no tuning changes.
+(the application owns the tuning device); it made no tuning changes.
 The installed OS04D10 calibration has TOP byte 7 set to one; saved OEM
 captures also show bit 7 set in `0x03990ac9`. Native boot `505965b7` correctly
 preserves that bypass and has zero ADR completions. This is not evidence of

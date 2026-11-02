@@ -201,7 +201,7 @@ collapsed to an unconditional-zero stub. Host tests cover null, linked,
 self-linked, and unrelated state-bit combinations. Sequential T23/T41 builds
 left T31's artifact unchanged, and fail-safe device boots registered one
 sensor each, accepted forced day mode, advanced ISP interrupts, and decoded
-149 and 151 1080p frames in six seconds. Final kernel, system, and Raptor logs
+149 and 151 1080p frames in six seconds. Final kernel, system, and the application logs
 contained no driver faults. The active T23 and T41 module hashes are
 `86970c12687c268c795a53c91db734716662eefe2eaca4b41e6a45edf28ce61b`
 and
@@ -484,7 +484,7 @@ T31 returns the exact used size through its eight-byte contract.
 
 ## Validation Matrix
 
-The July 30 through August 25, 2026 device cycles exercised the real Raptor
+The July 30 through August 25, 2026 device cycles exercised the real the application
 consumer, RTSP or direct processed output, mode/control paths, and captured
 kernel/service diagnostics. A row records the behavior actually gated; it is
 not a blanket image-parity claim.
@@ -541,7 +541,7 @@ The frame-channel contract extraction was rebuilt sequentially because
 `build_local.sh` changes shared top-level build selection and therefore cannot
 produce authoritative artifacts in parallel. The deterministic T23, T31, and
 T41 modules all passed fail-safe boots with loader status zero and consumed
-one-shot markers. Raptor reports both configured channels at 25 fps on every
+one-shot markers. The application reports both configured channels at 25 fps on every
 device; T31 and T41 additionally saved fresh 302,532- and 379,001-byte
 1920x1080 JPEGs while an external monitor occupied the RTSP servers' client
 slots. ISP interrupts advanced, day mode applied, and `dmesg`, `logread`, and
@@ -555,7 +555,7 @@ T31 decoded 126 in ten seconds, and T41 decoded 201 in eight seconds. T31
 again completed 100 ISP/exposure query pairs, while T41 completed 100 typed
 frame-rate queries at 25/1. All three passed day/night/auto/day transitions
 and ended in day mode with loader status zero, the one-shot marker consumed,
-Raptor running, and their staged open module active.
+The application running, and their staged open module active.
 
 The checked frame-layout extraction then passed a second clean reboot on all
 three targets. T23 decoded 123 frames in five seconds, T31 decoded 88 in seven

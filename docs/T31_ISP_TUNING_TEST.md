@@ -31,7 +31,7 @@ Auf der Kamera (nur lesen):
 ```sh
 ssh root@CAM 'uname -r; cat /proc/cpuinfo | grep -i "machine\|system type"; lsmod'
 ssh root@CAM 'cat /etc/modules.d/20-isp; cat /etc/modules.d/30-sensor* 2>/dev/null'
-ssh root@CAM 'ls /etc/init.d/ | grep -Ei "prudynt|raptor|timps|majestic|stream"'
+ssh root@CAM 'ls /etc/init.d/ | grep -Ei "stream|rtsp|video"'
 ssh root@CAM 'modinfo tx_isp_t31 2>/dev/null || find /lib/modules -name "tx-isp-t31.ko"'
 ssh root@CAM 'cat /proc/jz/isp/isp-m0; which devmem'
 ```
@@ -45,8 +45,7 @@ Weiter nur, wenn:
   Vergleichsstand.
 - `devmem` vorhanden ist.
 
-Notieren: Streamer-Init-Skript (z. B. `/etc/init.d/S95timps` oder
-`S95prudynt`), Modulparameter aus `20-isp`, Sensormodul und Parameter aus
+Notieren: Streamer-Init-Skript (z. B. `/etc/init.d/S95<app>`), Modulparameter aus `20-isp`, Sensormodul und Parameter aus
 `30-sensor*`, `uname -r`.
 
 ## 2. Modul bauen (lokal)
@@ -106,7 +105,7 @@ dmesg | tail -20
    echo 1 > /proc/sys/kernel/panic_on_oops; echo 10 > /proc/sys/kernel/panic
    ```
    Ein Oops im Testmodul führt so zu einem Neustart mit dem Modul aus dem Flash.
-2. Streamer stoppen, z. B. `/etc/init.d/S95timps stop` (bzw. das in Abschnitt 1
+2. Streamer stoppen, z. B. `/etc/init.d/<app-init> stop` (bzw. das in Abschnitt 1
    gefundene Skript). Prüfen, dass kein Prozess mehr `/dev/isp-m0`,
    `/dev/tx-isp` oder `/dev/framechan*` offen hat:
    ```sh
@@ -191,8 +190,8 @@ Hinweis: Wie im Stock setzt ein FPS-Wechsel oder ein Tag/Nacht-Wechsel die
 Kappe auf das Sensorlimit zurück. `/proc/jz/isp/isp-m0` zeigt mit Patch 0005
 das Sensorlimit (`sensor->attr`), nicht die AE-Kappe; maßgeblich ist `expr`.
 
-Falls der Streamer timps ist und `image.ae_it_max_us` bereits konfiguriert
-ist: im timps-Log muss statt „GetExpr gave no line/max reference“ nun
+Falls die Anwendung `image.ae_it_max_us` bereits konfiguriert
+ist: im Anwendungs-Log muss statt „GetExpr gave no line/max reference“ nun
 „capped AE at … lines“ und später „cap in effect“ stehen. Die Konfiguration
 dafür **nicht** ändern, wenn sie nach `/etc` geschrieben würde.
 

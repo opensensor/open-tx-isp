@@ -177,7 +177,7 @@ calibrated mean/target converge near 74/73 in the tested daylight scene.
 Six TCP/UDP H.264/AAC reconnect/decode tests pass.
 
 A separate HAL defect invalidated earlier color comparisons: V4L2 exposed
-an entire Annex-B access unit as one IDR descriptor, hiding SPS from Raptor's
+an entire Annex-B access unit as one IDR descriptor, hiding SPS from the application's
 VUI correction. Splitting actual NAL descriptors changes the open stream's
 declaration from limited BT.709 to full-range BT.601, matching its ISP CSC
 and the stock stream. Decoding one identical compressed frame correctly

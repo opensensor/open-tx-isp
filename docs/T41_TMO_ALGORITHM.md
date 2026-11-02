@@ -122,5 +122,5 @@ TCP and three UDP reconnects: all passed without decoder/timestamp warnings
 or kernel faults. Its bark luma was 69.16, paper R/G 0.928 and B/G 1.086;
 nearby stock was 64.24, 0.938 and 1.137 respectively. Bark R/G was still
 1.932 versus stock 1.581. These changing-daylight samples do not establish
-that white balance is solved. Raptor's prior shared-origin timestamp fix,
+that white balance is solved. The application's prior shared-origin timestamp fix,
 neo audio libraries, sensor module and installed IQ bin were retained.

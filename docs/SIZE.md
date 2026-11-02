@@ -42,7 +42,7 @@ build without anchors). `TX_ISP_FW_ANCHORS=y` includes it.
 Parameters that only served the bring-up (experiment switches, diagnostic
 counters) are built in only on request; the variables keep their default
 values, so the default behaviour does not change. A parameter is in this
-group when no document, tool, test, script, OpenIMP, timps or thingino file
+group when no document, tool, test, script, OpenIMP or firmware file
 reads or sets it (searched 2026-10-11). The vendor parameters
 (`isp_clk*`, `clk*_name`, `isp_memopt`, `direct_mode`, `ivdc_*`,
 `isp_ch*`, `print_level`, ...), the documented ones and the T41 V4L2
@@ -68,7 +68,7 @@ Same scheme as T23/T41, on the single-file T40 recovered driver
 (`t40_bringup_param*` macros in `tx_isp_t40_recovered.c`):
 `TX_ISP_T40_BRINGUP_PARAMS=n` (default since 2026-10-24) leaves out 340 of the
 548 parameters: every one whose name appears in no tool, script, test, doc,
-OpenIMP, timps, thingino or audit file (searched 2026-10-24). The vendor
+OpenIMP, firmware or audit file (searched 2026-10-24). The vendor
 parameters (`isp_dual_buf`, `isp_ch0_pre_dequeue_time`, `isp_memopt`,
 `isp_clk`, `clk_name`, `print_level`) always stay. `TX_ISP_T40_DEBUG_PROC=n`
 (default) does not create the legacy `/proc/tx_isp_t40_recovered` file (its
@@ -90,7 +90,7 @@ section anchors on.
   follow-ups run as with `t40_ct_chains=0`. `tests/t40_vct_host.sh` still tests
   the chain on the host.
 - 49 more parameters behind `TX_ISP_T40_BRINGUP_PARAMS` (same rule as above,
-  searched 2026-11-01 in this repository's docs/tests/tools, OpenIMP, timps, the
+  searched 2026-11-01 in this repository's docs/tests/tools, OpenIMP, the
   firmware tree and the image's /etc; session audit scripts still in use kept
   `ae_soft_updates`, `t40_adr_cyc`, `t40_adr_lowmem`, `t40_defog_sum_*`,
   `t40_exit_stats_off`, `t40_release_reset_count`, `t40_vawb_faults`,
