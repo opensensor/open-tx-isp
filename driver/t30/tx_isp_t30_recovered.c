@@ -80,6 +80,7 @@
 #endif
 #include "tx_isp_t30_v4l2.h"
 #include "tx_isp_t30_stab.h"
+#include "tx_isp_t30_fmt5c.h"
 
 #ifndef __regtrace_stringify
 #define __regtrace_stringify_1(x) #x
@@ -32369,6 +32370,54 @@ static inline void tx_isp_t30_check_frame_channel_layout(void)
 	BUILD_BUG_ON(sizeof(struct tx_isp_t30_frame_channel) != 0x2c0);
 }
 
+/* Format set/get on a kernel copy of the 0x4c-byte object; the 0x4c and 0x5c
+ * user forms both end up here (OEM frame_channel_vidioc_set_fmt/_get_fmt). */
+static long tx_isp_t30_frame_channel_set_format_kern(
+	struct tx_isp_t30_frame_channel *chan,
+	struct tx_isp_t30_frame_image_format *fmt)
+{
+	long ret;
+
+	if (fmt->type != V4L2_BUF_TYPE_VIDEO_CAPTURE)
+		return -EINVAL;
+	if (fmt->pix.field == V4L2_FIELD_ANY)
+		fmt->pix.field = V4L2_FIELD_INTERLACED;
+	else if (fmt->pix.field != V4L2_FIELD_INTERLACED)
+		return -EINVAL;
+	if (fmt->pix.colorspace != V4L2_COLORSPACE_SRGB)
+		return -EINVAL;
+
+	ret = tx_isp_send_event_to_remote(chan->pad,
+					  TX_ISP_FRAME_EVENT_SET_FORMAT, fmt);
+	pr_info("tx-isp-t30: frame%d remote format ret=%ld size=%u pad=%p sink=%p handler=%p\n",
+		chan->index, ret, fmt->pix.sizeimage, chan->pad,
+		chan->pad ? chan->pad->link.sink : NULL,
+		chan->pad && chan->pad->link.sink ?
+		((struct tx_isp_t30_subdev_pad *)
+		 chan->pad->link.sink)->event : NULL);
+	if (ret && ret != -ENOIOCTLCMD)
+		return ret;
+	return 0;
+}
+
+static long tx_isp_t30_frame_channel_get_format_kern(
+	struct tx_isp_t30_frame_channel *chan,
+	struct tx_isp_t30_frame_image_format *fmt)
+{
+	long ret;
+
+	memset(fmt, 0, sizeof(*fmt));
+	ret = tx_isp_send_event_to_remote(chan->pad,
+					  TX_ISP_FRAME_EVENT_GET_FORMAT, fmt);
+	if (ret && ret != -ENOIOCTLCMD)
+		return ret;
+
+	fmt->pix.colorspace = V4L2_COLORSPACE_SRGB;
+	fmt->pix.field = V4L2_FIELD_INTERLACED;
+	fmt->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+	return 0;
+}
+
 static long tx_isp_t30_frame_channel_set_format(
 	struct tx_isp_t30_frame_channel *chan, unsigned long arg)
 {
@@ -32379,25 +32428,8 @@ static long tx_isp_t30_frame_channel_set_format(
 		return -EINVAL;
 	if (copy_from_user(&fmt, (void __user *)arg, sizeof(fmt)))
 		return -ENOMEM;
-
-	if (fmt.type != V4L2_BUF_TYPE_VIDEO_CAPTURE)
-		return -EINVAL;
-	if (fmt.pix.field == V4L2_FIELD_ANY)
-		fmt.pix.field = V4L2_FIELD_INTERLACED;
-	else if (fmt.pix.field != V4L2_FIELD_INTERLACED)
-		return -EINVAL;
-	if (fmt.pix.colorspace != V4L2_COLORSPACE_SRGB)
-		return -EINVAL;
-
-	ret = tx_isp_send_event_to_remote(chan->pad,
-					  TX_ISP_FRAME_EVENT_SET_FORMAT, &fmt);
-	pr_info("tx-isp-t30: frame%d remote format ret=%ld size=%u pad=%p sink=%p handler=%p\n",
-		chan->index, ret, fmt.pix.sizeimage, chan->pad,
-		chan->pad ? chan->pad->link.sink : NULL,
-		chan->pad && chan->pad->link.sink ?
-		((struct tx_isp_t30_subdev_pad *)
-		 chan->pad->link.sink)->event : NULL);
-	if (ret && ret != -ENOIOCTLCMD)
+	ret = tx_isp_t30_frame_channel_set_format_kern(chan, &fmt);
+	if (ret)
 		return ret;
 	if (copy_to_user((void __user *)arg, &fmt, sizeof(fmt)))
 		return -ENOMEM;
@@ -32414,15 +32446,78 @@ static long tx_isp_t30_frame_channel_get_format(
 
 	if (IS_ERR_OR_NULL(chan) || !arg)
 		return -EINVAL;
-	ret = tx_isp_send_event_to_remote(chan->pad,
-					  TX_ISP_FRAME_EVENT_GET_FORMAT, &fmt);
-	if (ret && ret != -ENOIOCTLCMD)
+	ret = tx_isp_t30_frame_channel_get_format_kern(chan, &fmt);
+	if (ret)
 		return ret;
-
-	fmt.pix.colorspace = V4L2_COLORSPACE_SRGB;
-	fmt.pix.field = V4L2_FIELD_INTERLACED;
-	fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
 	if (copy_to_user((void __user *)arg, &fmt, sizeof(fmt)))
+		return -ENOMEM;
+	chan->fmt = fmt;
+	return 0;
+}
+
+/*
+ * 0xc05c56c3 / 0x405c56c4: the format form of the vendor libimp (#178).  The
+ * extra 4.x pix words are not used; they are returned as the caller sent them.
+ */
+static inline void tx_isp_t30_check_fmt5c_layout(void)
+{
+	BUILD_BUG_ON(sizeof(struct tx_isp_t30_fmt5c) != TX_ISP_T30_FMT5C_SIZE);
+	BUILD_BUG_ON(sizeof(struct tx_isp_t30_fmt4c) != TX_ISP_T30_FMT4C_SIZE);
+	BUILD_BUG_ON(sizeof(struct tx_isp_t30_frame_image_format) !=
+		     TX_ISP_T30_FMT4C_SIZE);
+	BUILD_BUG_ON(offsetof(struct tx_isp_t30_frame_image_format, crop_enable) !=
+		     offsetof(struct tx_isp_t30_fmt4c, crop_enable));
+	BUILD_BUG_ON(offsetof(struct tx_isp_t30_frame_image_format, rate_mask) !=
+		     offsetof(struct tx_isp_t30_fmt4c, rate_mask));
+	BUILD_BUG_ON(offsetof(struct tx_isp_t30_fmt5c, crop_enable) !=
+		     offsetof(struct tx_isp_t30_fmt4c, crop_enable) + 16);
+}
+
+static long tx_isp_t30_frame_channel_set_format_5c(
+	struct tx_isp_t30_frame_channel *chan, unsigned long arg)
+{
+	struct tx_isp_t30_fmt5c wire;
+	struct tx_isp_t30_fmt4c narrow;
+	struct tx_isp_t30_frame_image_format fmt;
+	long ret;
+
+	tx_isp_t30_check_fmt5c_layout();
+	if (IS_ERR_OR_NULL(chan) || !arg)
+		return -EINVAL;
+	if (copy_from_user(&wire, (void __user *)arg, sizeof(wire)))
+		return -ENOMEM;
+	tx_isp_t30_fmt5c_to_4c(&wire, &narrow);
+	memcpy(&fmt, &narrow, sizeof(fmt));
+	ret = tx_isp_t30_frame_channel_set_format_kern(chan, &fmt);
+	if (ret)
+		return ret;
+	memcpy(&narrow, &fmt, sizeof(narrow));
+	tx_isp_t30_fmt4c_to_5c(&narrow, &wire);
+	if (copy_to_user((void __user *)arg, &wire, sizeof(wire)))
+		return -ENOMEM;
+
+	chan->fmt = fmt;
+	return 0;
+}
+
+static long tx_isp_t30_frame_channel_get_format_5c(
+	struct tx_isp_t30_frame_channel *chan, unsigned long arg)
+{
+	struct tx_isp_t30_fmt5c wire;
+	struct tx_isp_t30_fmt4c narrow;
+	struct tx_isp_t30_frame_image_format fmt;
+	long ret;
+
+	tx_isp_t30_check_fmt5c_layout();
+	if (IS_ERR_OR_NULL(chan) || !arg)
+		return -EINVAL;
+	ret = tx_isp_t30_frame_channel_get_format_kern(chan, &fmt);
+	if (ret)
+		return ret;
+	memset(&wire, 0, sizeof(wire));
+	memcpy(&narrow, &fmt, sizeof(narrow));
+	tx_isp_t30_fmt4c_to_5c(&narrow, &wire);
+	if (copy_to_user((void __user *)arg, &wire, sizeof(wire)))
 		return -ENOMEM;
 	chan->fmt = fmt;
 	return 0;
@@ -32815,6 +32910,12 @@ static long frame_channel_unlocked_ioctl(struct file *filp, unsigned int cmd,
 		break;
 	case TX_ISP_T30_FRAME_IOCTL_GET_FORMAT:
 		ret = tx_isp_t30_frame_channel_get_format(chan, arg);
+		break;
+	case TX_ISP_T30_FRAME_IOCTL_SET_FORMAT_5C:
+		ret = tx_isp_t30_frame_channel_set_format_5c(chan, arg);
+		break;
+	case TX_ISP_T30_FRAME_IOCTL_GET_FORMAT_5C:
+		ret = tx_isp_t30_frame_channel_get_format_5c(chan, arg);
 		break;
 	case VIDIOC_REQBUFS:
 		ret = tx_isp_t30_frame_reqbufs(chan, arg);
