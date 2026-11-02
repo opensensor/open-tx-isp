@@ -1,249 +1,243 @@
 # lifted_ptr_scale_check.py baseline: <tag> <function> <class> <count> <status> [note]
 # status open = not yet compared with the OEM, dead/ok/fixed = reviewed (see the script header)
 # #189 pass 4 (T40 tailcall/argc triage, host/compile first, then the Eufy and the Cinnado camera): scanner cuts a two-line `return c ?\n x : 0;` hard return (func_adr_reg_write_* are shadowed by hand code); T40 reachability = events 6..13 skipped (t40_ev_updates=0), REGCALL_* mdns -> *_lit, VIC MDMA never enabled, tisp_deinit skipped; fixed: system_reg_write_af, tisp_s_module_control (lost `and` mask + mdns trig tail), tisp_ae_s_comp (hand translation), tisp_csc_set_attr, tisp_dmsc_params_refresh; camera proof (Eufy, apitest 398/0, t40dev equal to the previous image, 6/6 reload cycles, ModuleControl word readback follows the toggled bits, AF register 0x1a038/0x1a238 reads 0xC8F1 on the old and the new image so the stored value itself is not distinguishable on that board, AeComp and contrast numbers equal): reached by that code path, no visible effect change; tisp_s_fixed_contrast_attr is a SHIM again: its restored tail tisp_bcsh_set_mjpeg_contrast runs the dead lifted tisp_bcsh_ev_update (NULL state) and oopsed on the camera in apitest SetFixedContraster; T41: video_input_cmd_open stays a shim (its fops have no .read/.release, a read is -EIO; with the tail and the seq trio restored the proc file printed garbage because video_input_cmd_show uses wrong string labels), tisp_suspend_all / tisp_resume_all dead (PM, tpm_cb unresolved). Known scanner limit: only the first `jr t9` of a function is reported; the only T40 functions with two tails are vic_mdma_irq_function1/2 (checked by hand).
-t23 JZ_Isp_Awb ctr 6 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 JZ_Isp_Awb loop 8 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 JZ_Isp_Awb step 9 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 JZ_Isp_Awb var 6 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 JZ_Isp_Awb_Awbg2reg step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 JZ_Isp_Awb_Awbg2reg var 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 JZ_Isp_Awb_Reg2par step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 JZ_Isp_Get_Awb_Statistics step 3 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 JZ_Isp_Get_Awb_Statistics var 4 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 Tiziano_ae0_fpga off 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 Tiziano_ae0_fpga step 8 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 Tiziano_ae0_fpga var 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 Tiziano_af_fpga loop 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 Tiziano_af_fpga off 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 Tiziano_af_fpga step 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 Tiziano_af_fpga var 5 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 Tiziano_awb_fpga ctr 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 Tiziano_awb_fpga loop 4 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 Tiziano_awb_fpga off 4 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 Tiziano_awb_fpga step 16 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 Tiziano_awb_fpga var 11 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 Tiziano_awb_set_gain off 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 __frame_channel_vb2_streamoff step 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 __vb2_queue_free off 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 __vb2_queue_free step 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 ae0_tune2 ctr 4 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 ae0_tune2 loop 6 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 ae0_tune2 off 4 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 ae0_tune2 step 9 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 ae0_tune2 var 5 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 ae0_weight_mean2 off 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 ae0_weight_mean2 step 5 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 ae0_weight_mean2 var 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 ae1_weight_mean2 step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 apical_isp_ae_zone_weight_s_attr_isra_45 ctr 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 apical_isp_ae_zone_weight_s_attr_isra_45 loop 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 apical_isp_ae_zone_weight_s_attr_isra_45 step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 apical_isp_ae_zone_weight_s_attr_isra_45 var 3 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 apical_isp_af_hist_s_attr_isra_48 step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 apical_isp_af_weight_s_attr_isra_49 ctr 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 apical_isp_af_weight_s_attr_isra_49 loop 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 apical_isp_af_weight_s_attr_isra_49 step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 apical_isp_af_weight_s_attr_isra_49 var 3 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 apical_isp_autozoom_g_attr_isra_71 step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 apical_isp_autozoom_s_attr_isra_28 step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
+# #189 T23 pass 5 (vendor ISVP-T23-1.3.0 tx-isp-t23.ko compared, Ghidra project proj/t23, host/compile only, no camera yet): reachability fix (the indented closing brace of printf made every prototype below it a root; `open` entries now are real ones); fixed: ispcore_core_ops_ioctl (hand-written event walk tx_isp_t23_core_ioctl.h, 3rd argument was a zero local, sub-device table walked with typed strides), jz_isp_ccm (lost movz and skip branch, typed index/offset registers), tisp_ae_mean_update (typed offset registers); the other 19 reachable entries are dead (no dispatcher / hand-written replacement, see notes); unlinked entries are dead. Runtime effect of the fixes needs the camera proof listed in the #189 comment.
+t23 JZ_Isp_Awb ctr 6 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 JZ_Isp_Awb loop 8 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 JZ_Isp_Awb step 9 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 JZ_Isp_Awb var 6 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 JZ_Isp_Awb_Awbg2reg step 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 JZ_Isp_Awb_Awbg2reg var 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 JZ_Isp_Awb_Reg2par step 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 JZ_Isp_Get_Awb_Statistics step 3 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 JZ_Isp_Get_Awb_Statistics var 4 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 Tiziano_ae0_fpga off 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 Tiziano_ae0_fpga step 8 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 Tiziano_ae0_fpga var 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 Tiziano_af_fpga loop 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 Tiziano_af_fpga off 2 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 Tiziano_af_fpga step 2 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 Tiziano_af_fpga var 5 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 Tiziano_awb_fpga ctr 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 Tiziano_awb_fpga loop 4 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 Tiziano_awb_fpga off 4 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 Tiziano_awb_fpga step 16 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 Tiziano_awb_fpga var 11 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 Tiziano_awb_set_gain off 2 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 __frame_channel_vb2_streamoff step 2 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 __vb2_queue_free off 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 __vb2_queue_free step 2 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 ae0_tune2 ctr 4 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 ae0_tune2 loop 6 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 ae0_tune2 off 4 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 ae0_tune2 step 9 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 ae0_tune2 var 5 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 ae0_weight_mean2 off 2 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 ae0_weight_mean2 step 5 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 ae0_weight_mean2 var 2 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 ae1_weight_mean2 step 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 apical_isp_ae_zone_weight_s_attr_isra_45 ctr 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 apical_isp_ae_zone_weight_s_attr_isra_45 loop 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 apical_isp_ae_zone_weight_s_attr_isra_45 step 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 apical_isp_ae_zone_weight_s_attr_isra_45 var 3 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 apical_isp_af_hist_s_attr_isra_48 step 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 apical_isp_af_weight_s_attr_isra_49 ctr 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 apical_isp_af_weight_s_attr_isra_49 loop 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 apical_isp_af_weight_s_attr_isra_49 step 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 apical_isp_af_weight_s_attr_isra_49 var 3 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 apical_isp_autozoom_g_attr_isra_71 step 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 apical_isp_autozoom_s_attr_isra_28 step 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
 t23 apical_isp_core_ops_g_ctrl off 67 shim #189 T23 triage: the hand-written switch in front handles every control id that regtrace_isp_m0_is_image_control lets through (brightness/contrast/saturation/sharpness/hue/hilight/backlight); the lifted compare chain (id base held in a typed pointer, v0 + 66 stepped x4) is not reachable for any other id
 t23 apical_isp_core_ops_g_ctrl step 24 shim #189 T23 triage: the hand-written switch in front handles every control id that regtrace_isp_m0_is_image_control lets through (brightness/contrast/saturation/sharpness/hue/hilight/backlight); the lifted compare chain (id base held in a typed pointer, v0 + 66 stepped x4) is not reachable for any other id
 t23 apical_isp_core_ops_g_ctrl var 1 shim #189 T23 triage: the hand-written switch in front handles every control id that regtrace_isp_m0_is_image_control lets through (brightness/contrast/saturation/sharpness/hue/hilight/backlight); the lifted compare chain (id base held in a typed pointer, v0 + 66 stepped x4) is not reachable for any other id
 t23 apical_isp_core_ops_s_ctrl off 43 shim #189 T23 triage: the hand-written switch in front handles every control id that regtrace_isp_m0_is_image_control lets through (brightness/contrast/saturation/sharpness/hue/hilight/backlight); the lifted compare chain (id base held in a typed pointer, v0 + 66 stepped x4) is not reachable for any other id
 t23 apical_isp_core_ops_s_ctrl step 31 shim #189 T23 triage: the hand-written switch in front handles every control id that regtrace_isp_m0_is_image_control lets through (brightness/contrast/saturation/sharpness/hue/hilight/backlight); the lifted compare chain (id base held in a typed pointer, v0 + 66 stepped x4) is not reachable for any other id
 t23 apical_isp_core_ops_s_ctrl var 1 shim #189 T23 triage: the hand-written switch in front handles every control id that regtrace_isp_m0_is_image_control lets through (brightness/contrast/saturation/sharpness/hue/hilight/backlight); the lifted compare chain (id base held in a typed pointer, v0 + 66 stepped x4) is not reachable for any other id
-t23 apical_isp_gamma_g_attr_isra_79 ctr 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 apical_isp_gamma_g_attr_isra_79 loop 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 apical_isp_gamma_g_attr_isra_79 step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 crc32 step 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 dump_vic_reg step 1 unreach
-t23 find_new_buffer step 1 unreach
-t23 fix_point_mult2_64 var 5 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 frame_chan_event off 9 unreach
-t23 frame_chan_event step 18 unreach
-t23 func_zone_ct_weight var 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 isp_core_cmd_set step 4 unreach
-t23 isp_core_tuning_init off 1 unreach
-t23 isp_core_tuning_init step 2 unreach
-t23 isp_framesource_show ctr 1 unreach
-t23 isp_framesource_show loop 1 unreach
-t23 isp_framesource_show off 5 unreach
-t23 isp_framesource_show step 9 unreach
-t23 isp_info_show_isra_1 step 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 isp_mem_init off 1 unreach
-t23 isp_subdev_release_clks step 1 unreach
-t23 isp_vic_cmd_set ctr 2 unreach
-t23 isp_vic_cmd_set loop 2 unreach
-t23 isp_vic_cmd_set off 3 unreach
-t23 isp_vic_cmd_set step 9 unreach
-t23 isp_vic_cmd_set var 2 unreach
-t23 ispcore_core_ops_init off 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 ispcore_core_ops_init step 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 ispcore_core_ops_ioctl off 2 open #189 T23: executed in the QEMU T23 run; sub-device pointer table walk steps by typed pointer (s1 + 56 -> +224, s2 += 4 -> 16) and beqzl/beql delay slots are unmatched; needs the OEM tx-isp-t23.ko in a Ghidra project (not available in this pass); apitest on the T23 camera passes, so the effect of the walk is unknown
-t23 ispcore_core_ops_ioctl step 6 open #189 T23: executed in the QEMU T23 run; sub-device pointer table walk steps by typed pointer (s1 + 56 -> +224, s2 += 4 -> 16) and beqzl/beql delay slots are unmatched; needs the OEM tx-isp-t23.ko in a Ghidra project (not available in this pass); apitest on the T23 camera passes, so the effect of the walk is unknown
-t23 ispcore_interrupt_service_routine ctr 2 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 ispcore_interrupt_service_routine loop 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 ispcore_interrupt_service_routine step 6 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 ispcore_interrupt_service_routine var 2 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 ispcore_irq_fs_work off 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 ispcore_irq_fs_work step 9 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 ispcore_irq_thread_handle off 3 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 ispcore_irq_thread_handle step 5 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 ispcore_pad_event_handle loop 7 unreach
-t23 ispcore_pad_event_handle off 6 unreach
-t23 ispcore_pad_event_handle step 12 unreach
-t23 ispcore_pad_event_handle var 5 unreach
-t23 ispvic_frame_channel_qbuf off 3 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 ispvic_frame_channel_qbuf step 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 ivdc_disable_irq step 1 unreach
-t23 ivdc_enable_irq off 1 unreach
-t23 ivdc_pad_event_handle off 7 unreach
+t23 apical_isp_gamma_g_attr_isra_79 ctr 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 apical_isp_gamma_g_attr_isra_79 loop 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 apical_isp_gamma_g_attr_isra_79 step 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 crc32 step 2 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 dump_vic_reg step 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 find_new_buffer step 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 fix_point_mult2_64 var 5 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 frame_chan_event off 9 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 frame_chan_event step 18 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 func_zone_ct_weight var 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 isp_core_cmd_set step 4 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 isp_core_tuning_init off 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 isp_core_tuning_init step 2 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 isp_framesource_show ctr 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 isp_framesource_show loop 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 isp_framesource_show off 5 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 isp_framesource_show step 9 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 isp_info_show_isra_1 step 2 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 isp_mem_init off 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 isp_subdev_release_clks step 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 isp_vic_cmd_set ctr 2 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 isp_vic_cmd_set loop 2 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 isp_vic_cmd_set off 3 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 isp_vic_cmd_set step 9 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 isp_vic_cmd_set var 2 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 ispcore_core_ops_init off 1 dead #189 T23 pass 5: dead - table slot core_ops[1] only; the hand-written core bring-up (source_core_start) does the init and no sender of event 0x1000000 exists outside the unreachable lifted pad handler; vendor 1.3.0 body compared, same format switch
+t23 ispcore_core_ops_init step 1 dead #189 T23 pass 5: dead - table slot core_ops[1] only; the hand-written core bring-up (source_core_start) does the init and no sender of event 0x1000000 exists outside the unreachable lifted pad handler; vendor 1.3.0 body compared, same format switch
+t23 ispcore_interrupt_service_routine ctr 2 dead #189 T23 pass 5: dead - core ops +0x20 is never dispatched; the registered ISR is the hand-written isp_irq_handle_body (isp_irq_handle_generated_unused is unused)
+t23 ispcore_interrupt_service_routine loop 1 dead #189 T23 pass 5: dead - core ops +0x20 is never dispatched; the registered ISR is the hand-written isp_irq_handle_body (isp_irq_handle_generated_unused is unused)
+t23 ispcore_interrupt_service_routine step 6 dead #189 T23 pass 5: dead - core ops +0x20 is never dispatched; the registered ISR is the hand-written isp_irq_handle_body (isp_irq_handle_generated_unused is unused)
+t23 ispcore_interrupt_service_routine var 2 dead #189 T23 pass 5: dead - core ops +0x20 is never dispatched; the registered ISR is the hand-written isp_irq_handle_body (isp_irq_handle_generated_unused is unused)
+t23 ispcore_irq_fs_work off 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 ispcore_irq_fs_work step 9 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 ispcore_irq_thread_handle off 3 dead #189 T23 pass 5: dead - core ops +0x24 is never dispatched; the threaded handler is the hand-written isp_irq_thread_handle stub
+t23 ispcore_irq_thread_handle step 5 dead #189 T23 pass 5: dead - core ops +0x24 is never dispatched; the threaded handler is the hand-written isp_irq_thread_handle stub
+t23 ispcore_pad_event_handle loop 7 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 ispcore_pad_event_handle off 6 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 ispcore_pad_event_handle step 12 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 ispcore_pad_event_handle var 5 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 ispvic_frame_channel_qbuf off 3 dead #189 T23 pass 5: dead - only reachable through tx_isp_subdev_pipo <- vic_core_ops_ioctl event 0x300000a, sent only by the unreachable lifted ispcore_pad_event_handle; confirmed wrong vs vendor 1.3.0 (typed offsets s0 + 504 etc., second pop_buffer_fifo lost): fix before that path is ever enabled
+t23 ispvic_frame_channel_qbuf step 1 dead #189 T23 pass 5: dead - only reachable through tx_isp_subdev_pipo <- vic_core_ops_ioctl event 0x300000a, sent only by the unreachable lifted ispcore_pad_event_handle; confirmed wrong vs vendor 1.3.0 (typed offsets s0 + 504 etc., second pop_buffer_fifo lost): fix before that path is ever enabled
+t23 ivdc_disable_irq step 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 ivdc_enable_irq off 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 ivdc_pad_event_handle off 7 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
 t23 ivdc_pad_event_handle postret 1 shim hand-written tail call / dispatcher in front of the old lifted body (the lifted rest never runs, no delay slot lost at runtime)
-t23 ivdc_pad_event_handle step 1 unreach
-t23 ivdc_pad_event_handle var 3 unreach
-t23 ivdc_slake_module off 2 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 ivdc_slake_module step 2 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 ivdc_slake_module var 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 jz_isp_ccm ctr 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 jz_isp_ccm loop 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 jz_isp_ccm step 3 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 printf_func0 ctr 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 printf_func0 loop 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 printf_func0 off 4 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 printf_func0 step 3 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 private_math_exp2 step 2 unreach
-t23 private_math_exp2 var 1 unreach
-t23 proc_ivdc_writel off 1 unreach
-t23 proc_ivdc_writel step 5 unreach
-t23 sensor_init step 22 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 sub_68e08 step 6 unreach
-t23 subdev_sensor_ops_set_input off 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 subdev_sensor_ops_set_input step 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_adr_param_array_get step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_adr_param_array_set ctr 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_adr_param_array_set loop 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_adr_param_array_set off 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_adr_param_array_set step 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_ae0_get_hist ctr 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_ae0_get_hist loop 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_ae0_get_hist step 5 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_ae0_get_hist var 4 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_ae0_get_statistics step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_ae0_get_statistics var 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_ae0_process_impl off 6 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_ae0_process_impl step 14 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_ae0_process_impl var 12 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_ae1_expt off 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_ae1_expt var 5 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_ae1_get_hist step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_ae1_get_statistics step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_ae_mean_update step 2 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 tisp_ae_mean_update var 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 tisp_ae_param_array_get step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_af_get_attr off 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_af_get_attr step 5 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_af_get_statistics step 4 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_api_mdns_share_mem_en argc 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_awb_get_ct_trend ctr 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 tisp_awb_get_ct_trend loop 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 tisp_awb_get_ct_trend step 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 tisp_bcsh_param_array_get step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_ccm_param_array_get step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_ccm_set_attr step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_core_switch_bin off 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_core_switch_bin step 4 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_csccr_para_refresh_by_mode var 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_csccr_update_para step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_csccr_update_para var 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_defog_wdr_en step 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_dmsc_param_array_get step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_dpc_param_array_get step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_g_draw_block_attr var 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_g_mscaler_mask_block_attr step 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 tisp_g_mscaler_mask_block_attr var 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 tisp_gib_param_array_get step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_init unal 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_lsc_judge_ct_update_flag off 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_lsc_judge_ct_update_flag step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_lsc_param_array_set off 3 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_mdns_get_malloc_cfg step 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_mdns_get_malloc_cfg var 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_mdns_param_array_get step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_mdns_y_3d_param_cfg step 3 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_mdns_y_3d_param_cfg var 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_msca_api_set_mask argc 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 tisp_msca_api_set_mask ctr 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 tisp_msca_api_set_mask loop 2 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 tisp_msca_api_set_mask off 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 tisp_msca_api_set_mask step 7 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 tisp_msca_api_set_osd loop 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 tisp_msca_api_set_osd off 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 tisp_msca_api_set_osd step 7 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 tisp_msca_deinit step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_msca_param_array_get step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_msca_scaling_algorithm argc 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_s_adr_str_internal ctr 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 tisp_s_adr_str_internal loop 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 tisp_s_adr_str_internal step 3 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 tisp_s_adr_str_internal var 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 tisp_s_ae_at_list step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_s_ae_it_max step 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 tisp_s_af_attr step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_s_af_weight step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_s_mdns_ratio ctr 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_s_mdns_ratio loop 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_s_mdns_ratio step 3 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_s_mscaler_mask_block_attr step 2 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 tisp_s_mscaler_mask_block_attr var 2 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 tisp_s_osd_block_attr var 17 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_sdns_param_array_get step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_set_ae1_ag step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_set_ae_freeze step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_sharpen_param_array_get step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tisp_vic_ctrl_ioctl loop 1 unreach
-t23 tisp_vic_ctrl_ioctl off 3 unreach
-t23 tisp_vic_ctrl_ioctl step 4 unreach
-t23 tisp_vic_mmap off 1 unreach
-t23 tisp_ydns_param_array_get step 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tiziano_adr_algorithm off 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tiziano_adr_algorithm step 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tiziano_adr_get_data step 2 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 tiziano_ae_para_addr step 9 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tiziano_ae_params_refresh step 4 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tiziano_af_init off 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tiziano_af_set_hardware_param step 8 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 tiziano_ccm_init off 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tiziano_deflicker_expt step 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tiziano_defog_algorithm off 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tiziano_defog_algorithm step 3 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tiziano_defog_algorithm var 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tiziano_defog_get_data loop 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tiziano_defog_get_data step 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tiziano_defog_init off 8 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tiziano_defog_init step 19 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tiziano_defog_interrupt_static step 8 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tiziano_load_parameters loop 3 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tiziano_load_parameters off 5 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tiziano_load_parameters step 11 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tx_isp_csi_activate_subdev off 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 tx_isp_fs_probe off 3 unreach
-t23 tx_isp_fs_probe step 4 unreach
-t23 tx_isp_ivdc_probe off 2 unreach
-t23 tx_isp_release off 2 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tx_isp_release step 6 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tx_isp_subdev_pipo off 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 tx_isp_unregister_platforms step 1 unreach
-t23 tx_isp_vic_activate_subdev off 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 tx_isp_vic_probe off 1 unreach
-t23 tx_isp_vic_probe step 1 unreach
-t23 tx_isp_video_link_destroy_isra_9 loop 3 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tx_isp_video_link_destroy_isra_9 step 5 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tx_isp_video_link_destroy_isra_9 var 1 open #189 T23 triage: not a symbol in the linked module (inlined or gc-sections dropped); not compared with the OEM
-t23 tx_isp_vin_slake_subdev step 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 vic_mdma_enable var 2 unreach
-t23 vic_sensor_ops_ioctl ctr 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 vic_sensor_ops_ioctl loop 1 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
-t23 vic_sensor_ops_ioctl step 4 open #189 T23 triage: QEMU T23 TB coverage 0 (stream, snapshots, day/night, tuning workload); not compared with the OEM
+t23 ivdc_pad_event_handle step 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 ivdc_pad_event_handle var 3 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 ivdc_slake_module off 2 dead #189 T23 pass 5: dead - internal ops slot only, no hand-written dispatcher of activate/slake; vendor 1.3.0 compared (same state machine)
+t23 ivdc_slake_module step 2 dead #189 T23 pass 5: dead - internal ops slot only, no hand-written dispatcher of activate/slake; vendor 1.3.0 compared (same state machine)
+t23 ivdc_slake_module var 1 dead #189 T23 pass 5: dead - internal ops slot only, no hand-written dispatcher of activate/slake; vendor 1.3.0 compared (same state machine)
+t23 printf_func0 ctr 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 printf_func0 loop 2 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 printf_func0 off 4 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 printf_func0 step 3 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 private_math_exp2 step 2 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 private_math_exp2 var 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 proc_ivdc_writel off 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 proc_ivdc_writel step 5 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 sensor_init step 22 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 sub_68e08 step 6 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 subdev_sensor_ops_set_input off 2 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 subdev_sensor_ops_set_input step 2 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_adr_param_array_get step 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_adr_param_array_set ctr 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_adr_param_array_set loop 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_adr_param_array_set off 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_adr_param_array_set step 2 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_ae0_get_hist ctr 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_ae0_get_hist loop 2 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_ae0_get_hist step 5 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_ae0_get_hist var 4 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_ae0_get_statistics step 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_ae0_get_statistics var 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_ae0_process_impl off 6 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_ae0_process_impl step 14 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_ae0_process_impl var 12 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_ae1_expt off 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_ae1_expt var 5 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_ae1_get_hist step 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_ae1_get_statistics step 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_ae_param_array_get step 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_af_get_attr off 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_af_get_attr step 5 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_af_get_statistics step 4 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_api_mdns_share_mem_en argc 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_awb_get_ct_trend ctr 1 dead #189 T23 pass 5: dead - only behind the apical_isp_core_ops_g_ctrl shim (tisp_g_awb_ct_trend)
+t23 tisp_awb_get_ct_trend loop 1 dead #189 T23 pass 5: dead - only behind the apical_isp_core_ops_g_ctrl shim (tisp_g_awb_ct_trend)
+t23 tisp_awb_get_ct_trend step 1 dead #189 T23 pass 5: dead - only behind the apical_isp_core_ops_g_ctrl shim (tisp_g_awb_ct_trend)
+t23 tisp_bcsh_param_array_get step 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_ccm_param_array_get step 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_ccm_set_attr step 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_core_switch_bin off 2 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_core_switch_bin step 4 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_csccr_para_refresh_by_mode var 2 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_csccr_update_para step 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_csccr_update_para var 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_defog_wdr_en step 2 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_dmsc_param_array_get step 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_dpc_param_array_get step 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_g_draw_block_attr var 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_g_mscaler_mask_block_attr step 1 dead #189 T23 pass 5: dead - only behind the apical_isp_core_ops_g_ctrl shim; tx_isp_t23_tuning_ext.h has the host-tested replacement
+t23 tisp_g_mscaler_mask_block_attr var 1 dead #189 T23 pass 5: dead - only behind the apical_isp_core_ops_g_ctrl shim; tx_isp_t23_tuning_ext.h has the host-tested replacement
+t23 tisp_gib_param_array_get step 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_init unal 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_lsc_judge_ct_update_flag off 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_lsc_judge_ct_update_flag step 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_lsc_param_array_set off 3 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_mdns_get_malloc_cfg step 2 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_mdns_get_malloc_cfg var 2 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_mdns_param_array_get step 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_mdns_y_3d_param_cfg step 3 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_mdns_y_3d_param_cfg var 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_msca_api_set_mask argc 1 dead #189 T23 pass 5: dead - replaced by tx_isp_t23_osd.h / tuning_ext.h (host tested); the lifted chain runs only through ispcore_irq_thread_handle
+t23 tisp_msca_api_set_mask ctr 1 dead #189 T23 pass 5: dead - replaced by tx_isp_t23_osd.h / tuning_ext.h (host tested); the lifted chain runs only through ispcore_irq_thread_handle
+t23 tisp_msca_api_set_mask loop 2 dead #189 T23 pass 5: dead - replaced by tx_isp_t23_osd.h / tuning_ext.h (host tested); the lifted chain runs only through ispcore_irq_thread_handle
+t23 tisp_msca_api_set_mask off 1 dead #189 T23 pass 5: dead - replaced by tx_isp_t23_osd.h / tuning_ext.h (host tested); the lifted chain runs only through ispcore_irq_thread_handle
+t23 tisp_msca_api_set_mask step 7 dead #189 T23 pass 5: dead - replaced by tx_isp_t23_osd.h / tuning_ext.h (host tested); the lifted chain runs only through ispcore_irq_thread_handle
+t23 tisp_msca_api_set_osd loop 1 dead #189 T23 pass 5: dead - replaced by tx_isp_t23_osd.h (host tested); the lifted chain runs only through ispcore_irq_thread_handle
+t23 tisp_msca_api_set_osd off 1 dead #189 T23 pass 5: dead - replaced by tx_isp_t23_osd.h (host tested); the lifted chain runs only through ispcore_irq_thread_handle
+t23 tisp_msca_api_set_osd step 7 dead #189 T23 pass 5: dead - replaced by tx_isp_t23_osd.h (host tested); the lifted chain runs only through ispcore_irq_thread_handle
+t23 tisp_msca_deinit step 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_msca_param_array_get step 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_msca_scaling_algorithm argc 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_s_adr_str_internal ctr 1 dead #189 T23 pass 5: dead - only behind the s_ctrl shim; ADR runs the exact lift LD_tisp_s_adr_str_internal (source_adr_oem=1)
+t23 tisp_s_adr_str_internal loop 1 dead #189 T23 pass 5: dead - only behind the s_ctrl shim; ADR runs the exact lift LD_tisp_s_adr_str_internal (source_adr_oem=1)
+t23 tisp_s_adr_str_internal step 3 dead #189 T23 pass 5: dead - only behind the s_ctrl shim; ADR runs the exact lift LD_tisp_s_adr_str_internal (source_adr_oem=1)
+t23 tisp_s_adr_str_internal var 1 dead #189 T23 pass 5: dead - only behind the s_ctrl shim; ADR runs the exact lift LD_tisp_s_adr_str_internal (source_adr_oem=1)
+t23 tisp_s_ae_at_list step 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_s_ae_it_max step 1 dead #189 T23 pass 5: dead - only behind the apical_isp_core_ops_s_ctrl shim; ae_runtime.inc handles AE_IT_MAX
+t23 tisp_s_af_attr step 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_s_af_weight step 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_s_mdns_ratio ctr 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_s_mdns_ratio loop 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_s_mdns_ratio step 3 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_s_mscaler_mask_block_attr step 2 dead #189 T23 pass 5: dead - only behind the apical_isp_core_ops_s_ctrl shim; tx_isp_t23_tuning_ext.h has the host-tested replacement
+t23 tisp_s_mscaler_mask_block_attr var 2 dead #189 T23 pass 5: dead - only behind the apical_isp_core_ops_s_ctrl shim; tx_isp_t23_tuning_ext.h has the host-tested replacement
+t23 tisp_s_osd_block_attr var 17 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_sdns_param_array_get step 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_set_ae1_ag step 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_set_ae_freeze step 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_sharpen_param_array_get step 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_vic_ctrl_ioctl loop 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_vic_ctrl_ioctl off 3 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_vic_ctrl_ioctl step 4 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_vic_mmap off 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tisp_ydns_param_array_get step 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tiziano_adr_algorithm off 2 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tiziano_adr_algorithm step 2 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tiziano_adr_get_data step 2 dead #189 T23 pass 5: dead - ADR runs the exact lift LD_tiziano_adr_get_data while source_adr_oem=1 (default)
+t23 tiziano_ae_para_addr step 9 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tiziano_ae_params_refresh step 4 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tiziano_af_init off 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tiziano_af_set_hardware_param step 8 dead #189 T23 pass 5: dead - AF runs tx_isp_t23_af.inc (host tested) while source_af=1 (default); the lifted body only with source_af=0
+t23 tiziano_ccm_init off 2 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tiziano_deflicker_expt step 2 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tiziano_defog_algorithm off 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tiziano_defog_algorithm step 3 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tiziano_defog_algorithm var 2 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tiziano_defog_get_data loop 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tiziano_defog_get_data step 2 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tiziano_defog_init off 8 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tiziano_defog_init step 19 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tiziano_defog_interrupt_static step 8 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tiziano_load_parameters loop 3 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tiziano_load_parameters off 5 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tiziano_load_parameters step 11 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tx_isp_csi_activate_subdev off 1 dead #189 T23 pass 5: dead - internal ops slot only, no dispatcher; vendor 1.3.0 mutex is at +0x130 bytes
+t23 tx_isp_fs_probe off 3 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tx_isp_fs_probe step 4 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tx_isp_ivdc_probe off 2 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tx_isp_release off 2 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tx_isp_release step 6 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tx_isp_subdev_pipo off 1 dead #189 T23 pass 5: dead - event 0x300000a has no live sender; confirmed wrong vs vendor 1.3.0 (local raw_pipe shadows the global, s0 + 0x200 typed offsets): fix before that path is ever enabled
+t23 tx_isp_unregister_platforms step 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tx_isp_vic_activate_subdev off 1 dead #189 T23 pass 5: dead - internal ops slot only, no dispatcher; wrong vs vendor 1.3.0 (mutex s0 + 0x134 typed, epilogue stores behind the frame): fix before it is ever enabled
+t23 tx_isp_vic_probe off 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tx_isp_vic_probe step 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tx_isp_video_link_destroy_isra_9 loop 3 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tx_isp_video_link_destroy_isra_9 step 5 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tx_isp_video_link_destroy_isra_9 var 1 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 tx_isp_vin_slake_subdev step 1 dead #189 T23 pass 5: dead - internal ops slot only, no dispatcher; vendor 1.3.0 compared
+t23 vic_mdma_enable var 2 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
+t23 vic_sensor_ops_ioctl ctr 1 dead #189 T23 pass 5: dead - sensor ops slot only; the lifted body returns -ENOSYS for every event (vendor calls tx_isp_vic_start for 0x200000c/f); VIC start is done by the hand-written vic stream path
+t23 vic_sensor_ops_ioctl loop 1 dead #189 T23 pass 5: dead - sensor ops slot only; the lifted body returns -ENOSYS for every event (vendor calls tx_isp_vic_start for 0x200000c/f); VIC start is done by the hand-written vic stream path
+t23 vic_sensor_ops_ioctl step 4 dead #189 T23 pass 5: dead - sensor ops slot only; the lifted body returns -ENOSYS for every event (vendor calls tx_isp_vic_start for 0x200000c/f); VIC start is done by the hand-written vic stream path
 t30 apical_api_init_idx_array postret 1 shim hand-written tail call / dispatcher in front of the old lifted body (the lifted rest never runs, no delay slot lost at runtime)
 t30 awb_roi tailcall 1 open
 t30 isp_vic_interrupt_service_routine postret 1 shim hand-written tail call / dispatcher in front of the old lifted body (the lifted rest never runs, no delay slot lost at runtime)

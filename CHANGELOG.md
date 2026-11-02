@@ -4,6 +4,11 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-02, T23 lifted-code triage against the vendor T23 module (Lu-Fi/openimp#189 pass 5, host and compile only, NOT yet camera-tested)
+
+- Compared with the vendor ISVP-T23-1.3.0 `tx-isp-t23.ko` (local Ghidra project, nothing vendor copied): `ispcore_core_ops_ioctl` is now a hand-written event walk (`tx_isp_t23_core_ioctl.h`, host test `tx_isp_t23_core_ioctl_test`; the lifted version had no third argument and walked the sub-device table with typed-pointer strides), `jz_isp_ccm` (lost `movz` and skip branch, index/offset registers retyped) and `tisp_ae_mean_update` (offset registers retyped). The latter two run only with the module parameters `source_core_start=0`.
+- Scanner: the indented closing brace of `printf` made every prototype below it a reachability root; fixed, so `open` now means reachable. The 22 reachable T23 entries were triaged (3 fixed, 19 dead because the hand-written layer replaces them or nothing dispatches them), unlinked entries are `dead`. Open: camera proof of the three fixes (see the #189 comment).
+
 ## 2026-11-01, T40 lost tail calls / lost ALU in lifted code, camera proof (Lu-Fi/openimp#189 pass 4, camera-tested on T40; T41 proc open left as a shim)
 
 - Restored on T40 (vendor T40 module and libt40-firmware compared): `system_reg_write_af` (both legs fall through to the AF register store), `tisp_s_module_control` (lost mask `0x200080` and the MDNS trigger tail), `tisp_ae_s_comp` (hand translation of the lost tail), `tisp_csc_set_attr` and `tisp_dmsc_params_refresh` (no default runtime change). Host test `tests/t40_lost_tail_host.sh`.
