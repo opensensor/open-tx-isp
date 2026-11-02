@@ -3,7 +3,7 @@ CC ?= cc
 CFLAGS ?= -O2
 CFLAGS += -std=c99 -Wall -Wextra -Werror
 
-.PHONY: all check clean t40_lost_tail_host lifted_ptr_scale_check t40_hardcoded_anchor_check t30_storage_audit t30_fw_irq_gate t40_vct_host t40_af_stats_host t40_bcsh_dn_host t40_tstp_host t40_bitexact_host t40_callarg_check t41_sensor_barrier_check t40_hardcoded_anchor_check t40_clk_teardown_check t40_tstp_init_check t40_custom_algo_wake_check t41_custom_ae_check t41_af_gate_check lifted_ptr_scale_check
+.PHONY: all check clean t40_vic_layout_check t40_lost_tail_host lifted_ptr_scale_check t40_hardcoded_anchor_check t30_storage_audit t30_fw_irq_gate t40_vct_host t40_af_stats_host t40_bcsh_dn_host t40_tstp_host t40_bitexact_host t40_callarg_check t41_sensor_barrier_check t40_hardcoded_anchor_check t40_clk_teardown_check t40_tstp_init_check t40_custom_algo_wake_check t41_custom_ae_check t41_af_gate_check lifted_ptr_scale_check
 
 # Every host test binary.  A new test is registered with "TESTS += name"
 # (plus its build rule); `check` builds and runs all of them, keeps going
@@ -12,7 +12,7 @@ CFLAGS += -std=c99 -Wall -Wextra -Werror
 # so a test cannot be added and then silently never run.
 TESTS :=
 # Further check steps, run as "$(MAKE) <target>" after the binaries.
-CHECK_TARGETS := t30_storage_audit t30_fw_irq_gate t41_dfg_host t40_vct_host t40_af_stats_host t40_bcsh_dn_host t40_tstp_host t40_bitexact_host t40_callarg_check t41_sensor_barrier_check t40_hardcoded_anchor_check t40_clk_teardown_check t40_tstp_init_check t40_custom_algo_wake_check t41_custom_ae_check t41_af_gate_check lifted_ptr_scale_check t40_lost_tail_host
+CHECK_TARGETS := t40_vic_layout_check t30_storage_audit t30_fw_irq_gate t41_dfg_host t40_vct_host t40_af_stats_host t40_bcsh_dn_host t40_tstp_host t40_bitexact_host t40_callarg_check t41_sensor_barrier_check t40_hardcoded_anchor_check t40_clk_teardown_check t40_tstp_init_check t40_custom_algo_wake_check t41_custom_ae_check t41_af_gate_check lifted_ptr_scale_check t40_lost_tail_host
 # Sources that only run on the camera (not built on the host).
 TARGET_TESTS := $(basename $(wildcard t41_v4l2_*_test.c)) t41_antiflicker_ioctl_test
 TEST_TIMEOUT ?= 600
@@ -629,8 +629,14 @@ lifted_ptr_scale_check:
 	@# #189 pass 4 (T40, vendor T40 module + libt40-firmware compared): restored tail calls / the lost module-control mask
 	python3 ./lifted_ptr_scale_check.py --expect-clean t40:system_reg_write_af:tailcall t40:tisp_s_module_control:tailcall t40:tisp_ae_s_comp:tailcall \
 		t40:tisp_csc_set_attr:tailcall t40:tisp_dmsc_params_refresh:tailcall
+	@# #189 T40 layout pass: the VIC ISR has no typed-pointer finding left in any class
+	python3 ./lifted_ptr_scale_check.py --expect-clean t40:isp_vic_interrupt_service_routine
 	@# #189 pass 5 (T23, vendor tx-isp-t23.ko 1.3.0 compared): typed-pointer byte arithmetic restored in the live T23 functions
 	python3 ./lifted_ptr_scale_check.py --expect-clean t23:ispcore_core_ops_ioctl t23:jz_isp_ccm t23:tisp_ae_mean_update
+
+# T40 VIC interrupt counter block and output format table are real objects, not stray anchors (#189 layout class)
+t40_vic_layout_check:
+	python3 ./t40_vic_layout_check.py
 
 # T40 lost tail calls / ALU restored in lifted code, run against callee stubs (#189)
 t40_lost_tail_host:
