@@ -2,7 +2,7 @@
 # t40_wdr_log2_host.sh: tisp_wdr_log2 of the open T40 driver against the OEM instructions (unicorn), plus a mutation check.
 # Needs T40_OEM_KO (vendor tx-isp-t40.ko) and T40_CC (its toolchain's gcc, for objdump); SKIP without them (make check).
 H=$(cd "$(dirname "$0")" && pwd); f=$H/../driver/t40/tx_isp_t40_recovered.c
-[ -r "${T40_OEM_KO:-}" ] && [ -x "${T40_CC:-}" ] || { echo "t40_wdr_log2_host: SKIP (set T40_OEM_KO and T40_CC)"; exit 0; }
+[ -r "${T40_OEM_KO:-}" ] && [ -x "${T40_CC:-}" ] || { echo "t40_wdr_log2_host: SKIP (set T40_OEM_KO and T40_CC)"; [ -z "${T40_ORACLE_STRICT:-}" ] || exit 1; exit 0; }
 OD=${T40_CC%gcc}objdump; W=$(mktemp -d); trap 'rm -rf "$W"' EXIT
 run() {   # $1 = source
 	{ echo '#include <stdint.h>'; echo '#include <stdio.h>'

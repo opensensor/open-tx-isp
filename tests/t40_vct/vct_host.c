@@ -25,6 +25,7 @@ typedef int8_t s8; typedef int16_t s16; typedef int32_t s32; typedef int64_t s64
 #define noinline __attribute__((noinline))
 #define __aligned(x) __attribute__((aligned(x)))
 #define unlikely(x) __builtin_expect(!!(x), 0)
+#define likely(x) __builtin_expect(!!(x), 1)
 #define KERN_WARNING ""
 #define KERN_INFO ""
 #define BIT(n) (1U << (n))
@@ -101,7 +102,16 @@ static u32 harness_ok(u32 a, u32 align)
 	if (a >= (u32)(uintptr_t)stk_lo && a < (u32)(uintptr_t)stk_lo + 0x40000) return 1;
 	return a >= 0x30000000U && a < 0x30400000U;
 }
+/* driver C helpers used by tx_isp_t40_awb_*.inc (included from the top part); bodies from CFIX_INC below */
+static int regtrace_is_kernel_ptr(const void *p) { return p != 0; }
+static int regtrace_is_kernel_ptr_any(const void *p) { return p != 0; }
+static bool regtrace_enable_isp_3a_diag;
+int32_t fix_point_div_32(int32_t, int32_t, int32_t);
+int64_t fix_point_div(int32_t, int32_t, int32_t, int32_t, int32_t, int32_t);
+int32_t fix_point_mult2_32(int32_t, int32_t, int32_t);
+int32_t fix_point_mult3_32(uint32_t, uint32_t, uint32_t, uint32_t);
 #include VAWB_TOP
+#include CFIX_INC
 static u64 vawb_x___private_spin_lock_irqsave(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp) { vawb_sw(a1, 0, 6); return 0; }
 static u64 vawb_x_private_spin_unlock_irqrestore(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp) { return 0; }
 static u64 vawb_x_private_spin_lock_init(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp) { return 0; }
@@ -222,7 +232,7 @@ static void load(const char *fn, u8 *dst, long off, u32 n)
 {
 	FILE *f = fopen(fn, "rb");
 
-	if (!f || fseek(f, off, SEEK_SET) || fread(dst, 1, n, f) != n) { printf("read %s failed\n", fn); exit(2); }
+	if (!f || fseek(f, off, SEEK_SET) || fread(dst, 1, n, f) != n) { printf("read %s failed (need %u bytes at offset %ld: the OEM .data of the vendor module this test was written for)\n", fn, n, off); exit(2); }
 	fclose(f);
 }
 

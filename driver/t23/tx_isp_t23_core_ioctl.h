@@ -9,7 +9,7 @@
  * bytes, `s2 += 4` stepped 16) and had no third argument at all (the argument pointer
  * was a zero local), so the walk read the wrong words and a real event dereferenced NULL.
  *
- * Result as the vendor libt23-firmware 1.3.0 module (ISVP-T23-1.3.0): -ENOIOCTLCMD (-515) from a
+ * Result as the vendor libt23-firmware 1.3.0 module: -ENOIOCTLCMD (-515) from a
  * sub-device without a handler is not an error; the first other non-zero result ends the walk and is
  * returned; an error of the core sub-device itself is also logged ("Failed to ioctl!", the
  * caller does that via *own_failed).  Other commands do nothing and return 0.

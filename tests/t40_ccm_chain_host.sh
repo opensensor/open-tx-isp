@@ -5,7 +5,7 @@
 # Needs the vendor module (T40_OEM_KO), a mipsel-linux-gcc (T40_CC) and python3 unicorn + pyelftools, else SKIP.
 HERE=$(cd "$(dirname "$0")" && pwd)
 KO=${T40_OEM_KO:-}; CC=${T40_CC:-}
-if [ ! -r "$KO" ] || [ ! -x "$CC" ] || ! python3 -c "import unicorn, elftools" 2>/dev/null; then echo "t40_ccm_chain_host: SKIP (T40_OEM_KO / T40_CC / python3 unicorn+pyelftools missing)"; exit 0; fi
+if [ ! -r "$KO" ] || [ ! -x "$CC" ] || ! python3 -c "import unicorn, elftools" 2>/dev/null; then echo "t40_ccm_chain_host: SKIP (T40_OEM_KO / T40_CC / python3 unicorn+pyelftools missing)"; [ -z "$T40_ORACLE_STRICT" ] || exit 1; exit 0; fi
 W=$(mktemp -d); trap 'rm -rf $W' EXIT
 "$HERE/t40_ccm/build_emu.sh" "$CC" $W/ok.o || { echo "t40_ccm_chain_host: FAIL build"; exit 1; }
 python3 "$HERE/../tools/ko_emu/diff_ccm_chain.py" "$KO" $W/ok.o --n ${N:-1500} || { echo "t40_ccm_chain_host: FAIL"; exit 1; }

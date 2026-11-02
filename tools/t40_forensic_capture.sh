@@ -82,7 +82,7 @@ set -eu
 		enable_gib_lit gib_lit_gain gib_lit_gain_now gib_lit_final_gain \
 		enable_dmsc_static enable_dmsc_lit dmsc_lit_gain dmsc_lit_gain_now \
 		enable_bcsh bcsh_saturation bcsh_ev bcsh_ct \
-		enable_clm clm_ct clm_ct_now clm_ct_region clm_stage_reached frame_3a_completed_seq \
+		frame_3a_completed_seq \
 		frame_3a_completed_y_phys frame_3a_completed_uv_phys; do
 		printf '%s=' "$p"
 		cat "/sys/module/tx_isp_t40_recovered/parameters/$p" 2>/dev/null || printf ERR

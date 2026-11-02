@@ -1022,10 +1022,20 @@ compares it with a literal transcription of the Ghidra decompile of the 1.2.5
 module (registers, workspace and parameter bytes, 20000 random cases);
 `tests/check_t41_af_gate.sh` guards the default-off gate. Read-only
 counters: `af_live`, `af_irqs`, `af_runs`, `af_bad_index`.
-ISP-device ioctls StartNightMode 0xc004542e, WDR_OPEN 0xc004548d (start-mode
-flags read at sensor add), LDC 0xc0045479..7b and GPIO 0xc004548e/f (no
-handler at all in the 1.2.5 module: it returns 0 for them without doing
-anything; a newer OEM module is needed to derive them) are unchanged.
+ISP-device ioctls (all follow the 1.2.5 `tx_isp_unlocked_ioctl`,
+`tx_isp_t41_devioctl.h`, host test `tx_isp_t41_devioctl_test`):
+
+- StartNightMode 0xc004542e: 4-byte vinum, stores 10 at core + 0x1d4 + 4 *
+  vinum (stock: unchecked, here vinum 0..2). The word is the VIC frame
+  counter that the next first `/dev/isp-m0` tuning open consumes (value 10
+  sets tuning + 0x18 = 1 and clears it); it has no other effect.
+- WDR_OPEN 0xc004548d: 8 bytes {vinum, mode}; a non-zero mode byte is stored
+  (stock: core + 0x364, the WDR buffer mode 1 = line / 2 = frame; here a
+  module variable, the open WDR buffer ioctl does not size from it), mode 0
+  is answered -EFAULT as on stock.
+- LDC 0xc0045479..7b and GPIO 0xc004548e/f: the 1.2.5 module has no handler
+  and answers 0 without doing anything. Here the same: **vendor no-op, no
+  lens-distortion and no GPIO function** (before: -ENOTTY).
 
 ## Known issues (2026-10-10)
 

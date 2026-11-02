@@ -17,6 +17,7 @@
 #include "tx_isp_t41_scaler.h"
 #include "tx_isp_t41_capture_gate.h"
 #include "tx_isp_t41_tmo.h"
+#include "tx_isp_t41_devioctl.h"
 #include "tx_isp_t41_tmo_map.h"
 #include "tx_isp_t41_tmo_mxu3.h"
 #include <linux/random.h>
@@ -37880,6 +37881,54 @@ static int t41_ioctl_buf_info(uint32_t command, uint32_t user_arg)
     return 0;
 }
 
+/*
+ * StartNightMode (0xc004542e), WDR_OPEN (0xc004548d) and the LDC / GPIO
+ * commands: see tx_isp_t41_devioctl.h for the stock semantics.
+ */
+static u8 t41_wdr_open_byte;
+
+static int t41_ioctl_start_night(uintptr_t file, uint32_t user_arg)
+{
+    unsigned char *core = (unsigned char *)(uintptr_t)ispcore_sd;
+    uint32_t vinum = 0;
+    int word;
+
+    if (!file || !user_arg || !t41_load_ptr(file, 136))
+        return -EINVAL;
+    if (private_copy_from_user(&vinum, (const void __user *)(uintptr_t)user_arg,
+                               sizeof(vinum)))
+        return -EFAULT;
+    word = t41_night_start_word(vinum);
+    if (word < 0)
+        return word;
+    if (!t41_kernel_data_ptr(core))
+        return -ENODEV;
+    /* consumed by the next isp_core_tunning_open (core + 468 == 10) */
+    WRITE_ONCE(*(uint32_t *)(void *)(core + 468 + 4 * word),
+               T41_NIGHT_START_MAGIC);
+    return 0;
+}
+
+static int t41_ioctl_wdr_open(uintptr_t file, uint32_t user_arg)
+{
+    uint32_t req[2];
+    u8 mode;
+    int ret;
+
+    if (!file || !user_arg || !t41_load_ptr(file, 136))
+        return -EINVAL;
+    if (private_copy_from_user(req, (const void __user *)(uintptr_t)user_arg,
+                               sizeof(req)))
+        return -EFAULT;
+    ret = t41_wdr_open_mode(req[1], &mode);
+    if (ret) {
+        pr_warn_ratelimited("t41: wdr_open vinum %u mode 0 refused\n", req[0]);
+        return ret;
+    }
+    WRITE_ONCE(t41_wdr_open_byte, mode);
+    return 0;
+}
+
 static int t41_ioctl_video_link_setup(uintptr_t file, uint32_t user_arg)
 {
     int32_t input[2];
@@ -38489,6 +38538,14 @@ int64_t tx_isp_unlocked_ioctl(uintptr_t a0, uint32_t a1, uint32_t a2)
                a1, regtrace_ret);
         return regtrace_ret;
     }
+    if (t41_devioctl_is_vendor_noop(a1)) {
+        /* LDC and GPIO: no handler in the stock module, it answers 0 */
+        return 0;
+    }
+    if (a1 == 0xc004542eU)
+        return t41_ioctl_start_night(a0, a2);
+    if (a1 == 0xc004548dU)
+        return t41_ioctl_wdr_open(a0, a2);
     if (a1 == 0xc004542fU || a1 == 0xc0045430U) {
         regtrace_ret = t41_ioctl_internal_chn(a0, a1 == 0xc004542fU, a2);
         if (t41_runtime_trace)

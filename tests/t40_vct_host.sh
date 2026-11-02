@@ -6,7 +6,7 @@
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd); D=$HERE/../driver/t40
 BIN=${1:-$T40_TUNING_BIN}; DAT=${2:-$T40_OEM_DATA}
-if [ ! -r "$BIN" ] || [ ! -r "$DAT" ]; then echo "t40_vct_host: SKIP (no tuning bin / OEM .data: set T40_TUNING_BIN and T40_OEM_DATA)"; exit 0; fi
+if [ ! -r "$BIN" ] || [ ! -r "$DAT" ]; then echo "t40_vct_host: SKIP (no tuning bin / OEM .data: set T40_TUNING_BIN and T40_OEM_DATA)"; [ -z "$T40_ORACLE_STRICT" ] || exit 1; exit 0; fi
 W=$(mktemp -d); trap 'rm -rf $W' EXIT
 sed -n '/^#include "tx_isp_t40_vawb_gen.inc"/q;p' $D/tx_isp_t40_vawb.h > $W/top.h
 sed -i -E -e 's/a >= 0x80000000U \&\& a < 0xfffff000U \&\& !\(a \& align\)/harness_ok(a, align)/' \
@@ -19,7 +19,11 @@ sed -i -E -e 's/a >= 0x80000000U \&\& a < 0xfffff000U \&\& !\(a \& align\)/harne
        -e 's/^(static (u8|u16|u32|u64) vct_[a-z_]+(\[[0-9]+\])?(, vct_[a-z_]+(\[[0-9]+\])?)*)( = |;)/\1 VD\6/' $W/top.h
 echo '#endif' >> $W/top.h
 sed -e 's/^static const u8 vawb_rodata\(\[[0-9]*\]\) __aligned(8)/static u8 vawb_rodata\1 __aligned(8) VD/' $D/tx_isp_t40_vawb_gen.inc > $W/gen.inc
-gcc -O1 -g0 -falign-functions=16 -no-pie -fno-pie -w -fno-strict-aliasing -Wl,--section-start=.vdata=0x30000000 \
+# the C fix-point helpers of the driver (used by tx_isp_t40_awb_long.inc / _ctd.inc)
+for f in fix_point_div_32 fix_point_div fix_point_mult2_32 fix_point_mult3_32; do
+	awk -v f="$f" '!p && $0 ~ "^int(32|64)_t " f "\\(" && $0 !~ /;$/ {p=1} p {print} p && /^}/ {exit}' $D/tx_isp_t40_recovered.c
+done > $W/cfix.inc
+gcc -O1 -g0 -I"$D" -DCFIX_INC="\"$W/cfix.inc\"" -falign-functions=16 -no-pie -fno-pie -w -fno-strict-aliasing -Wl,--section-start=.vdata=0x30000000 \
 	-DVAWB_TOP="\"$W/top.h\"" -DVAWB_INC="\"$W/gen.inc\"" -DVAWB_INIT="\"$HERE/t40_vct/vct_init_gen.inc\"" \
 	$HERE/t40_vct/vct_host.c -o $W/vct_host
 $W/vct_host "$BIN" "$DAT" ${3:-0}
