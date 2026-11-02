@@ -7506,6 +7506,27 @@ static u32 t40_wdr_out_mode[2];  /* SetWdrOutputMode shadow (linear sensor: flag
  * ovf", [24] = "dma chid ovf".  The lifted ISR bumped them at `&isp_memopt + 72 words + K` (x4 scaled), i.e. inside unrelated .bss objects
  * (pstMainAeOri_storage, vawb_frames, ae_cache ...).  Read by /proc/jz/isp/isp-w02 (isp_vic_frd_show). */
 static uint32_t vic_irq_cnt[3][25] T40C2;
+/* #189 layout: OEM isp_output_fmt (.data, 9 x 44 bytes, read-only in the OEM too): output format descriptors, indexed by the core's format
+ * index (core +0x270, never stored in the OEM or here, so always entry 0).  ispcore_core_ops_init copies +32 (format id) into the channel
+ * (+0xc) and derives stride = width * bits / 8 (+0x14) and size = height * stride (+0x18) from +36.  The lift read it at
+ * `&sclk_name - 7384` (x4 scaled), 29 KB below the 16 byte clock-name table.  Own read-only section so .rodata/.data keep their layout. */
+struct t40_isp_output_fmt {
+    char name[32];
+    uint32_t id;
+    uint32_t bits;
+    uint32_t reserved;
+};
+static const struct t40_isp_output_fmt t40_isp_output_fmt[9] __attribute__((section(".t40c2ro"))) = {
+    { "YUV 4:2:0 semi planar, Y/CbCr", 0, 12, 0 },
+    { "YUV 4:2:0 semi planar, Y/CrCb", 1, 12, 0 },
+    { "YUV 4:2:2 semi planar, Y/CrCb", 2, 16, 0 },
+    { "YUV 4:2:2 semi planar, Y/CbCr", 3, 16, 0 },
+    { "YUV 4:2:2 semi planar, CrCb/Y", 4, 16, 0 },
+    { "YUV 4:2:2 semi planar, CbCr/Y", 5, 16, 0 },
+    { "RAW8, BGGR", 6, 8, 0 },
+    { "RAW16, BGGR", 7, 16, 0 },
+    { "undetermine", 0, 0, 0 },
+};
 static uint32_t t40_ae_sec_showpar T40C2;   /* OEM aeShowPar[1]: sec AE show-par buffer (vmalloc(612)) */
 /* T40-LAYOUT: OEM tv_frame_start/_next/_end[2] (frame VB measurement timevals), outside .bss */
 /* #140 anchors: OEM AF .data objects the lift reached through &sclk_name - N.  stMainAfInterOri / stSecAfInterOri (.data+0xd24c /
@@ -165140,9 +165161,10 @@ ispcore_core_ops_init0x4b4:
     a0 = 44;
     v0 = (uintptr_t)v0 + (uintptr_t)a2;
     a3 = 216;
+    if (t0 >= ARRAY_SIZE(t40_isp_output_fmt))   /* OEM has no bound; the index (core +0x270) is never stored, i.e. 0 */
+        t0 = ARRAY_SIZE(t40_isp_output_fmt) - 1;
     a1 = t0 * a0;
-    v1 = (int32_t *)&sclk_name;
-    v1 = v1 - 7384;
+    v1 = (int32_t *)t40_isp_output_fmt;   /* #189: OEM isp_output_fmt (.data+0x2e338), the lift read &sclk_name - 7384 words */
     t2 = v0 + 3;
     a3 = (uintptr_t)v0 * (uintptr_t)a3;
     t0 = a1 + (uintptr_t)v1;
