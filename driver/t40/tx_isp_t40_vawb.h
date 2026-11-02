@@ -1,14 +1,16 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
- * T40 vendor AWB (t40_vawb=1): runtime for the mechanically translated OEM AWB
- * chain in tx_isp_t40_vawb_gen.inc (tools/t40_vawb/gen.sh, same asm2c.py as the
- * T41 vendor AE).  Source module: Eufy T8416 OEM tx-isp-t40.ko (with symbols).
+ * T40 vendor AWB: the OEM AWB chain as hand-translated C (tx_isp_t40_awb_*.inc) and the
+ * runtime for the mechanically translated OEM CT/EV colour chain in tx_isp_t40_vawb_gen.inc
+ * (tools/t40_vawb/gen.sh, same asm2c.py as the T41 vendor AE).  Source module: Eufy T8416
+ * OEM tx-isp-t40.ko (with symbols).
  *
- * Translated per frame: tisp_awb_get_statistics (IRQ), tisp_awb_main_process
- * (long_par_update, spec_calculate, long_alogrithm -> ct_detect, sat_weight,
- * set_gain), and for init / day-night / EV: params_transmit, params_refresh,
- * set_hardware_param, dn_params_refresh, main_ev_update, tgain_update.
- * Every OEM instruction is one C statement on 32-bit registers, relocations are
+ * C (bit-exact with the OEM, tests/t40_vawb_host.sh): tisp_awb_get_statistics (IRQ), tisp_awb_main_process
+ * (long_par_update, spec_calculate, long_alogrithm -> ct_detect, sat_weight, set_gain, event 13), and for init /
+ * day-night / EV: params_transmit, params_refresh, set_hardware_param, dn_params_refresh, main_ev_update,
+ * ev_update_Ywgt, tgain_update (tx_isp_t40_awb_*.inc).  The mechanically translated part left in
+ * tx_isp_t40_vawb_gen.inc is the CT/EV colour chain (t40_ct_chains, TX_ISP_T40_VCT).
+ * In the generated part every OEM instruction is one C statement on 32-bit registers, relocations are
  * resolved by symbol name against the driver's own objects (pstMainAwbOri,
  * stMainAwbOuter/Inter, tparamsN, ...), so the lifter defect classes of the
  * fragment lift (lost args, wrong .bss anchors, 64-bit pairs) cannot occur.
@@ -39,26 +41,9 @@ static u32 *const vawb_tawb_custom_en_host __attribute__((unused)) = vawb_tawb_c
 #ifdef awb_algo_enable
 #define vawb_tawb_custom_en ((u32 *)awb_algo_enable)
 #endif
-static u32 vawb_awb_num;
+/* tisp_awb_main_process: frame counter (0..50) and the OEM debug counter of finished process calls */
+static u8 vawb_awb_num;
 static u32 vawb_peter_test_count[2];
-static u32 vawb_converge_tele_gain = 0x00010001U;              /* OEM .data 0x2bf14 */
-/* awb_wide_tele_para: OEM main_init copies awb_wide_tele_para_t8416 (module
- * param a_awb_params default "T8416", .data 0x2c038).  [0] = enable, [1] = the
- * channel that gets the tele gain, [6] = 0 -> event 13 takes the CT of the
- * second (tele) sensor.  The open stack runs one sensor, so [0] is cleared in
- * t40_vawb_main_init: no tele gain, event 13 carries the main channel CT. */
-static const u8 vawb_wide_tele_para_t8416[144] = {
-	0x01, 0x01, 0x80, 0x00, 0x80, 0x00, 0x00, 0x04, 0x0a, 0x03, 0x09, 0x00, 0x0e, 0x00, 0x0e, 0x09,
-	0x02, 0x02, 0x2c, 0x02, 0x4d, 0x02, 0x72, 0x02, 0xb9, 0x02, 0x87, 0x03, 0xef, 0x03, 0xc6, 0x04,
-	0x0f, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0xe2, 0x02, 0xc1, 0x02, 0x8b, 0x02, 0x5b, 0x02, 0xfd, 0x01, 0x9c, 0x01, 0x78, 0x01, 0x4a, 0x01,
-	0xa0, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0xf5, 0x01, 0x1f, 0x02, 0x3e, 0x02, 0x5f, 0x02, 0xa6, 0x02, 0x74, 0x03, 0xdf, 0x03, 0xb8, 0x04,
-	0xdb, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x58, 0x03, 0x31, 0x03, 0xe8, 0x02, 0xa5, 0x02, 0x36, 0x02, 0xc2, 0x01, 0x8a, 0x01, 0x52, 0x01,
-	0xad, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-};
-static u8 vawb_wide_tele_para[144] __aligned(4);
 
 static noinline void vawb_fault_note(u32 addr, u32 pc)
 {
@@ -95,9 +80,8 @@ static noinline bool vawb_st_wild(u32 a, u32 pc)
 	    a - (u32)(uintptr_t)pstMainAwbOri < sizeof(pstMainAwbOri) ||
 	    a - (u32)(uintptr_t)pstMainAwbCtDetectOri < sizeof(pstMainAwbCtDetectOri) ||
 	    (a & ~(THREAD_SIZE - 1)) == (sp & ~(THREAD_SIZE - 1)) ||
-	    a - (u32)(uintptr_t)vawb_tawb_custom_en < 8U || a - (u32)(uintptr_t)&vawb_awb_num < 4U ||
-	    a - (u32)(uintptr_t)vawb_peter_test_count < 8U || a - (u32)(uintptr_t)&vawb_converge_tele_gain < 4U ||
-	    a - (u32)(uintptr_t)vawb_wide_tele_para < sizeof(vawb_wide_tele_para) ||
+	    a - (u32)(uintptr_t)vawb_tawb_custom_en < 8U || a - (u32)(uintptr_t)&vawb_awb_num < 1U ||
+	    a - (u32)(uintptr_t)vawb_peter_test_count < 8U ||
 	    a - (u32)(uintptr_t)vawb_argarea < sizeof(vawb_argarea))
 		return false;
 	if (vawb_wild++ < 12)
@@ -306,6 +290,7 @@ static u64 vawb_s_tisp_awb_ct_detect(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
 #include "tx_isp_t40_awb_long.inc"
 #include "tx_isp_t40_awb_gain.inc"
 #include "tx_isp_t40_awb_init.inc"
+#include "tx_isp_t40_awb_main.inc"
 #include "tx_isp_t40_vawb_gen.inc"
 
 
@@ -425,8 +410,6 @@ static int t40_vawb_main_init(uint32_t a0, uint32_t a1)
 
 	if (vawb_stacks_alloc())
 		return -ENOMEM;
-	memcpy(vawb_wide_tele_para, vawb_wide_tele_para_t8416, sizeof(vawb_wide_tele_para));
-	vawb_wide_tele_para[0] = 0;	/* single sensor: see vawb_wide_tele_para */
 	if (!regtrace_awb_main_inter_alloc())
 		return -ENOMEM;
 	if (!stMainAwbOuter) {
@@ -537,7 +520,7 @@ static int64_t t40_vawb_process(void)
 			vawb_dump_take(0);
 		u64 ls = tx_ls_work_begin();
 
-		ret = vawb_run_on(vawb_stk_proc, vawb_tisp_awb_main_process, 0, 0, 0, 0, (u32)(uintptr_t)argarea);
+		ret = vawb_run_on(vawb_stk_proc, vawb_s_tisp_awb_main_process, 0, 0, 0, 0, (u32)(uintptr_t)argarea);
 		tx_ls_work_end(T40_LS_WORK_VAWB_PROC, ls);
 		if (dump) {
 			vawb_dump_take(1);

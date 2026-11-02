@@ -24,10 +24,12 @@ ADAPT="system_reg_read div64_u64 __lshrdi3 __ashldi3"
 # branch of set_gain (single sensor: never taken) is gone.  tisp_awb_get_statistics and tisp_awb_sat_weight are the
 # C translation tx_isp_t40_awb_stats.inc.  tisp_awb_params_transmit, params_refresh, set_hardware_param, dn_params_refresh,
 # main_ev_update and ev_update_Ywgt (context pointer table, parameter refresh, statistics window registers, day / night, EV) are
-# the C translation tx_isp_t40_awb_init.inc (GR_REF mode, issue 85).
+# the C translation tx_isp_t40_awb_init.inc, tisp_awb_main_process, tisp_awb_long_par_update and tisp_awb_spec_calculate (the
+# per-frame step: zone parameter set, special-zone window registers, CT event) the C translation tx_isp_t40_awb_main.inc
+# (GR_REF mode, issue 85); no AWB function is translated mechanically any more, only the CT/EV colour chains.
 VAE_IN=$W VAE_OUT=$W/gen.inc VAE_DATA=$HERE/data.json VAE_TRACE="${VAE_TRACE:-}" \
-VAE_ADAPT="$ADAPT" VAE_STOP="tisp_clm_ct_update tisp_awb_ct_detect tisp_awb_long_alogrithm tisp_awb_set_gain tisp_awb_tgain_update tisp_awb_set_regional_threshold tisp_awb_set_lum_th_freq tisp_awb_get_statistics tisp_awb_sat_weight tisp_awb_params_transmit tisp_awb_params_refresh tisp_awb_set_hardware_param tisp_awb_dn_params_refresh tisp_awb_main_ev_update tisp_awb_ev_update_Ywgt" python3 -I "$HERE/asm2c.py" \
-	tisp_awb_main_process tisp_ct_update tisp_ccm_main_ct_update tisp_ccm_main_ev_update tisp_ccm_ev_ct_update \
+VAE_ADAPT="$ADAPT" VAE_STOP="tisp_clm_ct_update tisp_awb_ct_detect tisp_awb_long_alogrithm tisp_awb_set_gain tisp_awb_tgain_update tisp_awb_set_regional_threshold tisp_awb_set_lum_th_freq tisp_awb_get_statistics tisp_awb_sat_weight tisp_awb_params_transmit tisp_awb_params_refresh tisp_awb_set_hardware_param tisp_awb_dn_params_refresh tisp_awb_main_ev_update tisp_awb_ev_update_Ywgt tisp_awb_main_process tisp_awb_long_par_update tisp_awb_spec_calculate" python3 -I "$HERE/asm2c.py" \
+	tisp_ct_update tisp_ccm_main_ct_update tisp_ccm_main_ev_update tisp_ccm_ev_ct_update \
 	tisp_lsc_ct_update tisp_lsc_real_write_lut tisp_bcsh_main_ct_update tisp_bcsh_main_ev_update \
 	tisp_bcsh_ct_update tisp_bcsh_ev_update 2> $W/gen.err
 cat $W/gen.err >&2

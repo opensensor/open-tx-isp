@@ -12,7 +12,7 @@
  *
  * The OEM tele path of set_gain (tisp_awb_calc_tele_gain + tisp_awb_calc_div_sqrt_distance, taken only
  * when awb_wide_tele_para[0] == 1) is not translated: the open stack runs one sensor and
- * t40_vawb_main_init clears that byte, so the branch is never taken (see vawb_wide_tele_para).
+ * the event 13 of the process (tx_isp_t40_awb_main.inc) carries the colour temperature of the one channel, so the branch is never taken.
  *
  * ctx = pstMainAwbOri / pstSecAwbOri (u32 pointer table):
  *   ctx[0]   u16 config block: +68..+82 regional thresholds [8], +84..+90 luma threshold / frequency [4]
