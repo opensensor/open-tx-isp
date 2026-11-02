@@ -1087,8 +1087,8 @@ static struct platform_device tx_isp_fs_platform_device;
 
 static unsigned char video_input_cmd_buf[0x200];   /* T40-BSS-SHRINK: only constant offsets <= 0x16c are used (was 0x10000) */
 static unsigned char csi_cmd_buf[0x10000];
+static uintptr_t vic_err[0x4000];   /* #189: no longer the VIC counter block (that is vic_irq_cnt).  Only tisp_af_{main,sec}_tg_update still read a stray word at +0x50 (#140 AF anchor, never written: the compiler folds it to 0 and emits no object) */
 static unsigned char vic_cmd_buf[0x10000];
-static uintptr_t vic_err[0x4000];
 static uintptr_t _tisp_jump_table[4];   /* T40-BSS-SHRINK: unreferenced lifter placeholder (was [0x4000]) */
 static uintptr_t jump_table_7e1c0[0x4000];
 static uintptr_t jump_table_7f0b4[0x4000];
@@ -2968,8 +2968,6 @@ static unsigned char __attribute__((aligned(4))) tx_isp_fs_pads[20] = {
 static unsigned char __attribute__((aligned(4))) tx_isp_core_pads[16] = {
     0x02, 0x30, 0x02, 0x30, 0x02, 0x30, 0x02, 0x30, 0x02, 0x30, 0x02, 0x30, 0x02, 0x30, 0x00, 0x00, 
 };
-static unsigned char data_b441c[16384];
-static unsigned char data_b4480[16384];
 static unsigned char __attribute__((aligned(4))) snapraw_mode[4] = {
     0x02, 0x00, 0x00, 0x00, 
 };
@@ -7010,13 +7008,13 @@ int ispvic_frame_channel_qbuf(void *arg1, int arg2, int **arg3);
 int64_t ispvic_frame_channel_clearbuf(uintptr_t a0, uint32_t a1);
 int64_t ispvic_frame_channel_s_stream(uintptr_t a0, uint32_t a1, uint32_t a2);
 int tx_isp_vic_probe(struct platform_device *pdev);
-int32_t dump_isp_vic_frd_open(int32_t arg1, int32_t arg2);
-int32_t isp_vic_frd_show(void *arg1);
+int dump_isp_vic_frd_open(struct inode *inode, struct file *file);
+int isp_vic_frd_show(struct seq_file *m, void *unused);
 int32_t vic_sensor_ops_sync_sensor_attr(void *arg1, int32_t arg2);
 int32_t tx_isp_vic_activate_subdev(uintptr_t a0);
 int64_t tx_isp_vic_start(uintptr_t a0, uint32_t a1);
 int32_t vic_core_ops_init(uintptr_t a0, uintptr_t a1);
-int32_t dump_vic_reg(void);
+int32_t dump_vic_reg(uintptr_t vic);
 void check_vic_error(void);
 void tx_vic_enable_irq(int32_t arg1);
 void * tx_vic_disable_irq(int32_t arg1);
@@ -7503,6 +7501,11 @@ static u32 t40_wdr_out_mode[2];  /* SetWdrOutputMode shadow (linear sensor: flag
  * ~700 bytes of new statics in .bss delivered no frames at all).  State added after the lift lives in its own
  * section, outside .bss/.data. */
 #define T40C2 __attribute__((section(".t40c2")))
+/* #189 layout: the VIC interrupt counter block.  OEM vic_err (.bss, 0x12c bytes = 75 words) is three instances of 25 counters, one per
+ * VIC interrupt register set: [0..22] = one counter per status bit 9..31 (bit 9 = the OEM "vic_err" word itself), [23] = "dma arb trans done
+ * ovf", [24] = "dma chid ovf".  The lifted ISR bumped them at `&isp_memopt + 72 words + K` (x4 scaled), i.e. inside unrelated .bss objects
+ * (pstMainAeOri_storage, vawb_frames, ae_cache ...).  Read by /proc/jz/isp/isp-w02 (isp_vic_frd_show). */
+static uint32_t vic_irq_cnt[3][25] T40C2;
 static uint32_t t40_ae_sec_showpar T40C2;   /* OEM aeShowPar[1]: sec AE show-par buffer (vmalloc(612)) */
 /* T40-LAYOUT: OEM tv_frame_start/_next/_end[2] (frame VB measurement timevals), outside .bss */
 /* #140 anchors: OEM AF .data objects the lift reached through &sclk_name - N.  stMainAfInterOri / stSecAfInterOri (.data+0xd24c /
@@ -17392,6 +17395,19 @@ static void *regtrace_fs_subdev;
  * (a stale entry kept the unloaded module's fops and blocked the mkdir on the next load) */
 static struct proc_dir_entry *t40_isp_proc_dir_rm T40C2;   /* own section: keeps the lifted .bss layout */
 static struct proc_dir_entry *t40_isp_proc_m0 T40C2;
+static struct proc_dir_entry *t40_isp_proc_vic T40C2;
+/* (the OEM subdev->proc_fops slot, vic +0x38, keeps pointing at the empty .bss isp_vic_frd_fops: touching that object moved the .bss layout) */
+static struct file_operations t40_isp_vic_frd_fops T40C2 = {
+    .owner = THIS_MODULE,
+    .open = dump_isp_vic_frd_open,
+    .llseek = (loff_t (*)(struct file *, loff_t, int))seq_lseek,
+    .read = (ssize_t (*)(struct file *, char __user *, size_t, loff_t *))seq_read,
+    .release = (int (*)(struct inode *, struct file *))single_release,
+};
+/* /proc/jz/isp/isp-w02: VIC counters (OEM isp_vic_frd_show).  Created once /proc/jz/isp exists and the VIC subdev is registered
+ * (whichever of the two comes second), removed with the VIC remove or the core remove, whichever runs first. */
+static void t40_isp_proc_vic_create(void);
+static void t40_isp_proc_vic_remove(void);
 static void *regtrace_sensor_subdev;
 static void *regtrace_sensor_ops;
 static struct i2c_client *regtrace_sensor_client;
@@ -18818,6 +18834,7 @@ static int regtrace_subdev_init_internal(uintptr_t pdev_addr, uintptr_t sd_addr,
            pdev->name, sd, (void *)ops, pdata);
     if (!strcmp(pdev->name, "isp-w02")) {
         regtrace_vic_subdev = sd;
+        t40_isp_proc_vic_create();
     } else if (!strcmp(pdev->name, "isp-m0")) {
         regtrace_core_subdev = sd;
         regtrace_sync_tx_isp_slots();
@@ -18838,6 +18855,7 @@ static int regtrace_subdev_init_internal(uintptr_t pdev_addr, uintptr_t sd_addr,
                 printk(KERN_ERR "tx_isp_t40_recovered: jz_proc_mkdir(isp) failed\n");
             }
         }
+        t40_isp_proc_vic_create();
         regtrace_t40_core_activate_direct(1);
     } else if (!strcmp(pdev->name, "isp-fs")) {
         regtrace_fs_subdev = sd;
@@ -35028,76 +35046,58 @@ int tx_isp_vic_probe(struct platform_device *pdev)
     return result;
 }
 
-/* WHOLE_DRIVER_CANDIDATE fn_0000000000001548 origin=model_output original=dump_isp_vic_frd_open */
-int32_t dump_isp_vic_frd_open(int32_t arg1, int32_t arg2)
+/* WHOLE_DRIVER_CANDIDATE fn_0000000000001548 origin=model_output original=dump_isp_vic_frd_open + isp_vic_frd_show (rewritten, see below) */
+/* isp_vic_frd_show / dump_isp_vic_frd_open: /proc/jz/isp/isp-w02 (OEM isp_vic_frd_show).  The lift of the show function read the
+ * counter rows from video_input_cmd_buf offsets and copied vic_err[] onto itself; this is the OEM text: three state rows from the
+ * VIC device, then the three 23-value rows of the interrupt counter block vic_irq_cnt (OEM .bss vic_err, 75 words). */
+int dump_isp_vic_frd_open(struct inode *inode, struct file *file)
 {
-    return private_single_open_size();
+    return single_open_size(file, isp_vic_frd_show, PDE_DATA(inode), 0x400);
 }
 
-/* WHOLE_DRIVER_CANDIDATE fn_0000000000001590 origin=model_output original=isp_vic_frd_show */
-int32_t isp_vic_frd_show(void *arg1)
+int isp_vic_frd_show(struct seq_file *m, void *unused)
 {
-    void *v0;
-    void *s0_1;
-    int32_t var_6c_1, var_70_1, var_74_1, var_78_1;
-    int32_t var_54_1, var_58_1, var_5c_1, var_60_1, var_64_1, var_68_1;
-    int32_t var_6c_2, var_70_2, var_74_2, var_78_2;
-    int32_t var_70_3, var_74_3, var_78_3;
-    int32_t *i;
+    uintptr_t sd = (uintptr_t)m->private;
+    uintptr_t vic = 0;
+    int g, i;
 
-    v0 = *(void **)((char *)arg1 + 0x4c);
-
-    if (v0 != NULL && (unsigned long)v0 < 0xfffff001UL) {
-        s0_1 = *(void **)((char *)v0 + 0x10c);
-    } else {
-        s0_1 = NULL;
-    }
-
-    if (v0 == NULL || (unsigned long)v0 >= 0xfffff001UL || s0_1 == NULL || (unsigned long)s0_1 >= 0xfffff001UL) {
-        isp_printf(2, "[%s %d] The parameter is invalid!\n", "isp_vic_frd_show", __LINE__);
+    if (sd != 0 && sd < 0xfffff001UL)
+        vic = *(uint32_t *)(sd + 0x10c);
+    if (vic == 0 || vic >= 0xfffff001UL) {
+        isp_printf(2, "[%s %d] The parameter is invalid!\n", "isp_vic_frd_show", 0x9be);
         return 0;
     }
-
-    var_6c_1 = *(int32_t *)((char *)((char *)&video_input_cmd_buf + 0xf8));
-    var_70_1 = *(int32_t *)((char *)((char *)&video_input_cmd_buf + 0xf4));
-    var_74_1 = *(int32_t *)((char *)((char *)&video_input_cmd_buf + 0xf0));
-    var_78_1 = *(int32_t *)((char *)((char *)&video_input_cmd_buf + 0xd4));
-    private_seq_printf(arg1, "vic index: %d, %d, %d  vic mux: 0x%x, 0x%x, 0x%x\n", *(int32_t *)((char *)s0_1 + 0x24c));
-
-    var_54_1 = *(int32_t *)((char *)((char *)&video_input_cmd_buf + 0x16c));
-    var_58_1 = *(int32_t *)((char *)((char *)&video_input_cmd_buf + 0x168));
-    var_5c_1 = *(int32_t *)((char *)((char *)&video_input_cmd_buf + 0x164));
-    var_60_1 = *(int32_t *)((char *)((char *)&video_input_cmd_buf + 0x160));
-    var_64_1 = *(int32_t *)((char *)((char *)&video_input_cmd_buf + 0x15c));
-    var_68_1 = *(int32_t *)((char *)((char *)&video_input_cmd_buf + 0x158));
-    var_6c_2 = *(int32_t *)((char *)((char *)&video_input_cmd_buf + 0x154));
-    var_70_2 = *(int32_t *)((char *)((char *)&video_input_cmd_buf + 0x150));
-    var_74_2 = *(int32_t *)((char *)((char *)&video_input_cmd_buf + 0x14c));
-    var_78_2 = *(int32_t *)((char *)((char *)&video_input_cmd_buf + 0x148));
-    private_seq_printf(arg1, "(%d, %d, %d, %d), (%d, %d, %d, %d), (%d, %d, %d, %d)\n", *(int32_t *)((char *)s0_1 + 0x2c0));
-
-    var_70_3 = *(int32_t *)((char *)((char *)&csi_cmd_buf + 0xc));
-    var_74_3 = *(int32_t *)((char *)((char *)&csi_cmd_buf + 0x8));
-    var_78_3 = *(int32_t *)((char *)((char *)&csi_cmd_buf + 0x4));
-    private_seq_printf(arg1, "(%d, %d),\t(%d, %d),\t%d\n", *(int32_t *)((char *)s0_1 + 0x2fc));
-
-    for (i = 0; i < 23; i++) {
-        ((void **)vic_err)[(uintptr_t)i] = *(int32_t *)(((char *)&vic_err + 0x8) + (uintptr_t)i * 4);
+#define VF(o) (*(uint32_t *)(vic + (o)))
+    seq_printf(m, "vic index: %d, %d, %d  vic mux: 0x%x, 0x%x, 0x%x\n",
+               VF(0x24c), VF(0x250), VF(0x254), VF(0x270), VF(0x274), VF(0x278));
+    seq_printf(m, "(%d, %d, %d, %d), (%d, %d, %d, %d), (%d, %d, %d, %d)\n",
+               VF(0x2c0), VF(0x2c4), VF(0x2c8), VF(0x2cc), VF(0x2d0), VF(0x2d4), VF(0x2d8), VF(0x2dc),
+               VF(0x2e0), VF(0x2e4), VF(0x2e8), VF(0x2ec));
+    seq_printf(m, "(%d, %d),\t(%d, %d),\t%d\n", VF(0x2fc), VF(0x300), VF(0x304), VF(0x308), VF(0x30c));
+#undef VF
+    for (g = 0; g < 3; g++) {
+        for (i = 0; i < 23; i++)
+            seq_printf(m, i ? ", %d" : "%d", vic_irq_cnt[g][i]);
+        seq_putc(m, '\n');
     }
-    ((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t))private_seq_printf)((uintptr_t)(arg1), (uintptr_t)("%d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d\n"), (uintptr_t)(vic_err[0]), (uintptr_t)(vic_err[1]), (uintptr_t)(vic_err[2]), (uintptr_t)(vic_err[3]), (uintptr_t)(vic_err[4]), (uintptr_t)(vic_err[5]), (uintptr_t)(vic_err[6]), (uintptr_t)(vic_err[7]), (uintptr_t)(vic_err[8]), (uintptr_t)(vic_err[9]), (uintptr_t)(vic_err[10]), (uintptr_t)(vic_err[11]), (uintptr_t)(vic_err[12]), (uintptr_t)(vic_err[13]), (uintptr_t)(vic_err[14]), (uintptr_t)(vic_err[15]), (uintptr_t)(vic_err[16]), (uintptr_t)(vic_err[17]), (uintptr_t)(vic_err[18]), (uintptr_t)(vic_err[19]), (uintptr_t)(vic_err[20]), (uintptr_t)(vic_err[21]), (uintptr_t)(vic_err[22]));
-
-    for (i = 0; i < 23; i++) {
-        ((void **)data_b441c)[(uintptr_t)i] = *(int32_t *)(((char *)&vic_err + 0x6c) + (uintptr_t)i * 4);
-    }
-    ((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t))private_seq_printf)((uintptr_t)(arg1), (uintptr_t)("%d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d\n"), (uintptr_t)(data_b441c[0]), (uintptr_t)(data_b441c[1]), (uintptr_t)(data_b441c[2]), (uintptr_t)(data_b441c[3]), (uintptr_t)(data_b441c[4]), (uintptr_t)(data_b441c[5]), (uintptr_t)(data_b441c[6]), (uintptr_t)(data_b441c[7]), (uintptr_t)(data_b441c[8]), (uintptr_t)(data_b441c[9]), (uintptr_t)(data_b441c[10]), (uintptr_t)(data_b441c[11]), (uintptr_t)(data_b441c[12]), (uintptr_t)(data_b441c[13]), (uintptr_t)(data_b441c[14]), (uintptr_t)(data_b441c[15]), (uintptr_t)(data_b441c[16]), (uintptr_t)(data_b441c[17]), (uintptr_t)(data_b441c[18]), (uintptr_t)(data_b441c[19]), (uintptr_t)(data_b441c[20]), (uintptr_t)(data_b441c[21]), (uintptr_t)(data_b441c[22]));
-
-    for (i = 0; i < 23; i++) {
-        ((void **)data_b4480)[(uintptr_t)i] = *(int32_t *)(((char *)&vic_err + 0xd0) + (uintptr_t)i * 4);
-    }
-    ((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t))private_seq_printf)((uintptr_t)(arg1), (uintptr_t)("%d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d\n"), (uintptr_t)(data_b4480[0]), (uintptr_t)(data_b4480[1]), (uintptr_t)(data_b4480[2]), (uintptr_t)(data_b4480[3]), (uintptr_t)(data_b4480[4]), (uintptr_t)(data_b4480[5]), (uintptr_t)(data_b4480[6]), (uintptr_t)(data_b4480[7]), (uintptr_t)(data_b4480[8]), (uintptr_t)(data_b4480[9]), (uintptr_t)(data_b4480[10]), (uintptr_t)(data_b4480[11]), (uintptr_t)(data_b4480[12]), (uintptr_t)(data_b4480[13]), (uintptr_t)(data_b4480[14]), (uintptr_t)(data_b4480[15]), (uintptr_t)(data_b4480[16]), (uintptr_t)(data_b4480[17]), (uintptr_t)(data_b4480[18]), (uintptr_t)(data_b4480[19]), (uintptr_t)(data_b4480[20]), (uintptr_t)(data_b4480[21]), (uintptr_t)(data_b4480[22]));
-
     return 0;
 }
+
+static void t40_isp_proc_vic_create(void)
+{
+    if (t40_isp_proc_vic || !t40_isp_proc_dir_rm || !regtrace_vic_subdev)
+        return;
+    t40_isp_proc_vic = proc_create_data("isp-w02", 0444, t40_isp_proc_dir_rm, &t40_isp_vic_frd_fops, regtrace_vic_subdev);
+    printk(KERN_INFO "tx_isp_t40_recovered: proc /proc/jz/isp/isp-w02 %s\n", t40_isp_proc_vic ? "created" : "FAILED");
+}
+static void t40_isp_proc_vic_remove(void)
+{
+    if (t40_isp_proc_vic) {
+        proc_remove(t40_isp_proc_vic);
+        t40_isp_proc_vic = NULL;
+    }
+}
+
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000001960 origin=model_output original=vic_sensor_ops_sync_sensor_attr */
 int32_t vic_sensor_ops_sync_sensor_attr(void *arg1, int32_t arg2)
@@ -36754,38 +36754,16 @@ vic_core_ops_init0xa4:
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000002a70 origin=model_output original=dump_vic_reg */
-int32_t dump_vic_reg(void)
+/* OEM dump_vic_reg(vic): print the 0x1b4 bytes of VIC registers (vic +0xe8 = register base).  The lift read the base from a
+ * stray `&vic_err + 0xa0` (a zero table) and printed through the wrong format string (LC33 = "IGGB").  Only check_vic_error calls it. */
+int32_t dump_vic_reg(uintptr_t vic)
 {
-    int32_t *s0;
-    int32_t *s3;
-    int32_t *s4;
-    int32_t *result;
-    int32_t *v0;
-    int32_t a3_val;
-    const char *format_str;
-    void *isp_printf_func;
+    uintptr_t base = *(uint32_t *)(vic + 0xe8);
+    uintptr_t off;
 
-    s4 = 0;
-    s0 = 0;
-    s3 = 436;
-    
-    /* Load address of format string LC33 */
-    format_str = LC33;
-    
-    /* Load address of isp_printf */
-    isp_printf_func = (void *)&isp_printf;
-
-    while (1) {
-        v0 = *(int32_t *)((char *)((char *)&vic_err + 0xa0));
-        a3_val = *(int32_t *)((uintptr_t)v0 + (uintptr_t)s0);
-        result = ((int32_t (*)(int32_t, const char *, int32_t, int32_t))isp_printf_func)(1, format_str, s0, a3_val);
-        s0 = (void *)(uintptr_t)((uintptr_t)s0 + (4));
-        if (s0 == s3) {
-            break;
-        }
-    }
-
-    return result;
+    for (off = 0; off != 0x1b4; off += 4)
+        isp_printf(1, "register is 0x%x, value is 0x%x\n", off, *(uint32_t *)(base + off));
+    return 0;
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000002aec origin=fragment_seed original=check_vic_error */
@@ -39853,8 +39831,8 @@ int64_t isp_vic_interrupt_service_routine(uintptr_t a0, uint32_t a1)
     uint32_t *a3 = 0;
     uint32_t ra = 0;
     uintptr_t *s0 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -39991,7 +39969,7 @@ isp_vic_interrupt_service_routine0x130:
 
 isp_vic_interrupt_service_routine0x154:
     /* fragment 29: CallSetup */
-    v0 = (uintptr_t *)queue_work_on(2, (void *)(uintptr_t)(*(uint32_t *)((char *)&system_wq + 0)), (void *)(uintptr_t)a2); /* jalr target resolved by relocation */
+    v0 = (uintptr_t)queue_work_on(2, (void *)(uintptr_t)(*(uint32_t *)((char *)&system_wq + 0)), (void *)(uintptr_t)a2); /* jalr target resolved by relocation */
 
 isp_vic_interrupt_service_routine0x16c:
     /* fragment 30: StackAccess */
@@ -40013,13 +39991,10 @@ isp_vic_interrupt_service_routine0x188:
     v0 = (uintptr_t)v0 & 512;
 
     /* fragment 34: Branch */
-    v1 = (int32_t *)&isp_memopt;
     if (v0 == 0) { goto isp_vic_interrupt_service_routine0x1a4; }
 
     /* fragment 35: MemoryAccess */
-    v0 = *(uint32_t *)((char *)((char *)&vic_err));
-    v0 = v0 + 1;
-    *(uint32_t *)((char *)((char *)&vic_err)) = v0;
+    vic_irq_cnt[0][0]++;
 
 isp_vic_interrupt_service_routine0x1a4:
     /* fragment 36: StackAccess */
@@ -40028,16 +40003,9 @@ isp_vic_interrupt_service_routine0x1a4:
 
     /* fragment 37: Branch */
     int _bc_v0_37 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_37) { goto isp_vic_interrupt_service_routine0x1c4; }
 
-    /* fragment 38: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 39: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 4);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 4) = v1;
+    vic_irq_cnt[0][1]++;
 
 isp_vic_interrupt_service_routine0x1c4:
     /* fragment 40: StackAccess */
@@ -40046,16 +40014,9 @@ isp_vic_interrupt_service_routine0x1c4:
 
     /* fragment 41: Branch */
     int _bc_v0_41 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_41) { goto isp_vic_interrupt_service_routine0x1e4; }
 
-    /* fragment 42: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 43: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 8);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 8) = v1;
+    vic_irq_cnt[0][2]++;
 
 isp_vic_interrupt_service_routine0x1e4:
     /* fragment 44: StackAccess */
@@ -40064,16 +40025,9 @@ isp_vic_interrupt_service_routine0x1e4:
 
     /* fragment 45: Branch */
     int _bc_v0_45 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_45) { goto isp_vic_interrupt_service_routine0x204; }
 
-    /* fragment 46: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 47: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 12);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 12) = v1;
+    vic_irq_cnt[0][3]++;
 
 isp_vic_interrupt_service_routine0x204:
     /* fragment 48: StackAccess */
@@ -40082,16 +40036,9 @@ isp_vic_interrupt_service_routine0x204:
 
     /* fragment 49: Branch */
     int _bc_v0_49 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_49) { goto isp_vic_interrupt_service_routine0x224; }
 
-    /* fragment 50: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 51: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 16);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 16) = v1;
+    vic_irq_cnt[0][4]++;
 
 isp_vic_interrupt_service_routine0x224:
     /* fragment 52: StackAccess */
@@ -40100,16 +40047,9 @@ isp_vic_interrupt_service_routine0x224:
 
     /* fragment 53: Branch */
     int _bc_v0_53 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_53) { goto isp_vic_interrupt_service_routine0x244; }
 
-    /* fragment 54: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 55: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 20);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 20) = v1;
+    vic_irq_cnt[0][5]++;
 
 isp_vic_interrupt_service_routine0x244:
     /* fragment 56: StackAccess */
@@ -40118,288 +40058,169 @@ isp_vic_interrupt_service_routine0x244:
 
     /* fragment 57: Branch */
     int _bc_v0_57 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_57) { goto isp_vic_interrupt_service_routine0x264; }
 
-    /* fragment 58: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 59: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 24);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 24) = v1;
+    vic_irq_cnt[0][6]++;
 
 isp_vic_interrupt_service_routine0x264:
     /* fragment 60: StackAccess */
-    v0 = local_54;
+    v0 = ((uintptr_t)local_54 >> 16) & 1;   /* OEM: ext v0,v0,16,1 (status bit 16); the lift dropped the extract */
 
     /* fragment 61: Branch */
     int _bc_v0_61 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_61) { goto isp_vic_interrupt_service_routine0x284; }
 
-    /* fragment 62: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 63: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 28);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 28) = v1;
+    vic_irq_cnt[0][7]++;
 
 isp_vic_interrupt_service_routine0x284:
     /* fragment 64: StackAccess */
-    v0 = local_54;
+    v0 = ((uintptr_t)local_54 >> 17) & 1;   /* OEM: ext v0,v0,17,1 (status bit 17); the lift dropped the extract */
 
     /* fragment 65: Branch */
     int _bc_v0_65 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_65) { goto isp_vic_interrupt_service_routine0x2a4; }
 
-    /* fragment 66: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 67: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 32);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 32) = v1;
+    vic_irq_cnt[0][8]++;
 
 isp_vic_interrupt_service_routine0x2a4:
     /* fragment 68: StackAccess */
-    v0 = local_54;
+    v0 = ((uintptr_t)local_54 >> 18) & 1;   /* OEM: ext v0,v0,18,1 (status bit 18); the lift dropped the extract */
 
     /* fragment 69: Branch */
     int _bc_v0_69 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_69) { goto isp_vic_interrupt_service_routine0x2c4; }
 
-    /* fragment 70: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 71: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 36);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 36) = v1;
+    vic_irq_cnt[0][9]++;
 
 isp_vic_interrupt_service_routine0x2c4:
     /* fragment 72: StackAccess */
-    v0 = local_54;
+    v0 = ((uintptr_t)local_54 >> 19) & 1;   /* OEM: ext v0,v0,19,1 (status bit 19); the lift dropped the extract */
 
     /* fragment 73: Branch */
     int _bc_v0_73 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_73) { goto isp_vic_interrupt_service_routine0x2e4; }
 
-    /* fragment 74: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 75: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 40);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 40) = v1;
+    vic_irq_cnt[0][10]++;
 
 isp_vic_interrupt_service_routine0x2e4:
     /* fragment 76: StackAccess */
-    v0 = local_54;
+    v0 = ((uintptr_t)local_54 >> 20) & 1;   /* OEM: ext v0,v0,20,1 (status bit 20); the lift dropped the extract */
 
     /* fragment 77: Branch */
     int _bc_v0_77 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_77) { goto isp_vic_interrupt_service_routine0x304; }
 
-    /* fragment 78: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 79: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 44);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 44) = v1;
+    vic_irq_cnt[0][11]++;
 
 isp_vic_interrupt_service_routine0x304:
     /* fragment 80: StackAccess */
-    v0 = local_54;
+    v0 = ((uintptr_t)local_54 >> 21) & 1;   /* OEM: ext v0,v0,21,1 (status bit 21); the lift dropped the extract */
 
     /* fragment 81: Branch */
     int _bc_v0_81 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_81) { goto isp_vic_interrupt_service_routine0x324; }
 
-    /* fragment 82: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 83: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 48);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 48) = v1;
+    vic_irq_cnt[0][12]++;
 
 isp_vic_interrupt_service_routine0x324:
     /* fragment 84: StackAccess */
-    v0 = local_54;
+    v0 = ((uintptr_t)local_54 >> 22) & 1;   /* OEM: ext v0,v0,22,1 (status bit 22); the lift dropped the extract */
 
     /* fragment 85: Branch */
     int _bc_v0_85 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_85) { goto isp_vic_interrupt_service_routine0x344; }
 
-    /* fragment 86: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 87: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 52);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 52) = v1;
+    vic_irq_cnt[0][13]++;
 
 isp_vic_interrupt_service_routine0x344:
     /* fragment 88: StackAccess */
-    v0 = local_54;
+    v0 = ((uintptr_t)local_54 >> 23) & 1;   /* OEM: ext v0,v0,23,1 (status bit 23); the lift dropped the extract */
 
     /* fragment 89: Branch */
     int _bc_v0_89 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_89) { goto isp_vic_interrupt_service_routine0x364; }
 
-    /* fragment 90: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 91: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 56);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 56) = v1;
+    vic_irq_cnt[0][14]++;
 
 isp_vic_interrupt_service_routine0x364:
     /* fragment 92: StackAccess */
-    v0 = local_54;
+    v0 = ((uintptr_t)local_54 >> 24) & 1;   /* OEM: ext v0,v0,24,1 (status bit 24); the lift dropped the extract */
 
     /* fragment 93: Branch */
     int _bc_v0_93 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_93) { goto isp_vic_interrupt_service_routine0x384; }
 
-    /* fragment 94: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 95: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 60);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 60) = v1;
+    vic_irq_cnt[0][15]++;
 
 isp_vic_interrupt_service_routine0x384:
     /* fragment 96: StackAccess */
-    v0 = local_54;
+    v0 = ((uintptr_t)local_54 >> 25) & 1;   /* OEM: ext v0,v0,25,1 (status bit 25); the lift dropped the extract */
 
     /* fragment 97: Branch */
     int _bc_v0_97 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_97) { goto isp_vic_interrupt_service_routine0x3a4; }
 
-    /* fragment 98: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 99: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 64);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 64) = v1;
+    vic_irq_cnt[0][16]++;
 
 isp_vic_interrupt_service_routine0x3a4:
     /* fragment 100: StackAccess */
-    v0 = local_54;
+    v0 = ((uintptr_t)local_54 >> 26) & 1;   /* OEM: ext v0,v0,26,1 (status bit 26); the lift dropped the extract */
 
     /* fragment 101: Branch */
     int _bc_v0_101 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_101) { goto isp_vic_interrupt_service_routine0x3c4; }
 
-    /* fragment 102: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 103: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 68);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 68) = v1;
+    vic_irq_cnt[0][17]++;
 
 isp_vic_interrupt_service_routine0x3c4:
     /* fragment 104: StackAccess */
-    v0 = local_54;
+    v0 = ((uintptr_t)local_54 >> 27) & 1;   /* OEM: ext v0,v0,27,1 (status bit 27); the lift dropped the extract */
 
     /* fragment 105: Branch */
     int _bc_v0_105 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_105) { goto isp_vic_interrupt_service_routine0x3e4; }
 
-    /* fragment 106: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 107: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 72);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 72) = v1;
+    vic_irq_cnt[0][18]++;
 
 isp_vic_interrupt_service_routine0x3e4:
     /* fragment 108: StackAccess */
-    v0 = local_54;
+    v0 = ((uintptr_t)local_54 >> 28) & 1;   /* OEM: ext v0,v0,28,1 (status bit 28); the lift dropped the extract */
 
     /* fragment 109: Branch */
     int _bc_v0_109 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_109) { goto isp_vic_interrupt_service_routine0x404; }
 
-    /* fragment 110: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 111: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 76);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 76) = v1;
+    vic_irq_cnt[0][19]++;
 
 isp_vic_interrupt_service_routine0x404:
     /* fragment 112: StackAccess */
-    v0 = local_54;
+    v0 = ((uintptr_t)local_54 >> 29) & 1;   /* OEM: ext v0,v0,29,1 (status bit 29); the lift dropped the extract */
 
     /* fragment 113: Branch */
     int _bc_v0_113 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_113) { goto isp_vic_interrupt_service_routine0x424; }
 
-    /* fragment 114: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 115: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 80);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 80) = v1;
+    vic_irq_cnt[0][20]++;
 
 isp_vic_interrupt_service_routine0x424:
     /* fragment 116: StackAccess */
-    v0 = local_54;
+    v0 = ((uintptr_t)local_54 >> 30) & 1;   /* OEM: ext v0,v0,30,1 (status bit 30); the lift dropped the extract */
 
     /* fragment 117: Branch */
     int _bc_v0_117 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_117) { goto isp_vic_interrupt_service_routine0x444; }
 
-    /* fragment 118: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 119: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 84);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 84) = v1;
+    vic_irq_cnt[0][21]++;
 
 isp_vic_interrupt_service_routine0x444:
     /* fragment 120: StackAccess */
     v0 = local_54;
 
     /* fragment 121: Branch */
-    int _bc_v0_121 = v0 >= 0;
-    v0 = (uintptr_t *)&isp_memopt;
+    int _bc_v0_121 = (int32_t)v0 >= 0;   /* OEM: bgez on status bit 31 (an unsigned/pointer >= 0 is always true) */
     if (_bc_v0_121) { goto isp_vic_interrupt_service_routine0x460; }
 
-    /* fragment 122: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 123: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 88);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 88) = v1;
+    vic_irq_cnt[0][22]++;
 
 isp_vic_interrupt_service_routine0x460:
     /* fragment 124: StackAccess */
@@ -40412,7 +40233,7 @@ isp_vic_interrupt_service_routine0x460:
 
     /* fragment 126: CallSetup */
     *(uint32_t *)((char *)s0 + 764) = ((*(uint32_t *)((char *)(s0) + 764)) + 1);
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)vic_mdma_irq_function0)(s0, *(uint32_t *)((char *)(s0) + 588), 0); /* jalr target resolved by relocation */
+    v0 = (uintptr_t)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)vic_mdma_irq_function0)(s0, *(uint32_t *)((char *)(s0) + 588), 0); /* jalr target resolved by relocation */
 
 isp_vic_interrupt_service_routine0x490:
     /* fragment 127: StackAccess */
@@ -40421,11 +40242,11 @@ isp_vic_interrupt_service_routine0x490:
 
     /* fragment 128: Branch */
     int _bc_v0_128 = v0 == 0;
-    v0 = (uintptr_t *)&vic_mdma_irq_function0;
+    v0 = (uintptr_t)&vic_mdma_irq_function0;
     if (_bc_v0_128) { goto isp_vic_interrupt_service_routine0x4c0; }
 
     /* fragment 129: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)vic_mdma_irq_function0)(s0, *(uint32_t *)((char *)(s0) + 588), 1); /* jalr target resolved by relocation */
+    v0 = (uintptr_t)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)vic_mdma_irq_function0)(s0, *(uint32_t *)((char *)(s0) + 588), 1); /* jalr target resolved by relocation */
 
     /* fragment 130: MemoryAccess */
     v0 = *(uint32_t *)((char *)s0 + 768);
@@ -40439,12 +40260,11 @@ isp_vic_interrupt_service_routine0x4c0:
 
     /* fragment 132: Branch */
     int _bc_v0_132 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_132) { goto isp_vic_interrupt_service_routine0x4f8; }
 
     /* fragment 133: CallSetup */
-    *(uint32_t *)((char *)((char *)&vic_err + 0x14)) = ((*(uint32_t *)((char *)((char *)&vic_err + 0x14))) + 1);
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)isp_printf)(1, &LC76); /* jalr target resolved by relocation */
+    vic_irq_cnt[0][23]++;
+    v0 = (uintptr_t)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)isp_printf)(1, &LC76); /* jalr target resolved by relocation */
 
 isp_vic_interrupt_service_routine0x4f8:
     /* fragment 134: StackAccess */
@@ -40455,25 +40275,21 @@ isp_vic_interrupt_service_routine0x4f8:
     if (v0 == 0) { goto isp_vic_interrupt_service_routine0x538; }
 
     /* fragment 136: CallSetup */
-    v0 = (uintptr_t *)&isp_memopt;
-    v0 = v0 + 72;
-    v1 = *(uint32_t *)((char *)v0 + 96);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 96) = v1;
+    vic_irq_cnt[0][24]++;
 
 isp_vic_interrupt_service_routine0x51c:
     /* fragment 137: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)isp_printf)(1, &LC77); /* jalr target resolved by relocation */
+    v0 = (uintptr_t)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)isp_printf)(1, &LC77); /* jalr target resolved by relocation */
 
 isp_vic_interrupt_service_routine0x534:
     /* fragment 138: Epilogue */
     /* function epilogue: restore registers and return */
-    return (int64_t)v0;
+    return 1;   /* #189: every OEM exit returns 1 (IRQ_HANDLED); the lift returned whatever v0 held (a2 of the last call, could be IRQ_WAKE_THREAD) */
 
 isp_vic_interrupt_service_routine0x538:
     /* fragment 139: Epilogue */
     /* function epilogue: restore registers and return */
-    return (int64_t)v0;
+    return 1;
 
 isp_vic_interrupt_service_routine0x53c:
     /* fragment 140: Arithmetic */
@@ -40497,7 +40313,7 @@ isp_vic_interrupt_service_routine0x548:
 
 isp_vic_interrupt_service_routine0x55c:
     /* fragment 145: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)isp_printf)(0, &LC75); /* jalr target resolved by relocation */
+    v0 = (uintptr_t)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)isp_printf)(0, &LC75); /* jalr target resolved by relocation */
 
     /* fragment 146: Branch */
     goto isp_vic_interrupt_service_routine0x16c;
@@ -40639,7 +40455,7 @@ isp_vic_interrupt_service_routine0x6ac:
 
 isp_vic_interrupt_service_routine0x6d0:
     /* fragment 175: CallSetup */
-    v0 = (uintptr_t *)queue_work_on(2, (void *)(uintptr_t)(*(uint32_t *)((char *)&system_wq + 0)), (void *)(uintptr_t)a2); /* jalr target resolved by relocation */
+    v0 = (uintptr_t)queue_work_on(2, (void *)(uintptr_t)(*(uint32_t *)((char *)&system_wq + 0)), (void *)(uintptr_t)a2); /* jalr target resolved by relocation */
 
 isp_vic_interrupt_service_routine0x6e8:
     /* fragment 176: StackAccess */
@@ -40664,16 +40480,9 @@ isp_vic_interrupt_service_routine0x70c:
 
     /* fragment 180: Branch */
     int _bc_v0_180 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_180) { goto isp_vic_interrupt_service_routine0x72c; }
 
-    /* fragment 181: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 182: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 100);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 100) = v1;
+    vic_irq_cnt[1][0]++;
 
 isp_vic_interrupt_service_routine0x72c:
     /* fragment 183: StackAccess */
@@ -40682,16 +40491,9 @@ isp_vic_interrupt_service_routine0x72c:
 
     /* fragment 184: Branch */
     int _bc_v0_184 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_184) { goto isp_vic_interrupt_service_routine0x74c; }
 
-    /* fragment 185: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 186: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 104);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 104) = v1;
+    vic_irq_cnt[1][1]++;
 
 isp_vic_interrupt_service_routine0x74c:
     /* fragment 187: StackAccess */
@@ -40700,16 +40502,9 @@ isp_vic_interrupt_service_routine0x74c:
 
     /* fragment 188: Branch */
     int _bc_v0_188 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_188) { goto isp_vic_interrupt_service_routine0x76c; }
 
-    /* fragment 189: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 190: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 108);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 108) = v1;
+    vic_irq_cnt[1][2]++;
 
 isp_vic_interrupt_service_routine0x76c:
     /* fragment 191: StackAccess */
@@ -40718,16 +40513,9 @@ isp_vic_interrupt_service_routine0x76c:
 
     /* fragment 192: Branch */
     int _bc_v0_192 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_192) { goto isp_vic_interrupt_service_routine0x78c; }
 
-    /* fragment 193: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 194: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 112);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 112) = v1;
+    vic_irq_cnt[1][3]++;
 
 isp_vic_interrupt_service_routine0x78c:
     /* fragment 195: StackAccess */
@@ -40736,16 +40524,9 @@ isp_vic_interrupt_service_routine0x78c:
 
     /* fragment 196: Branch */
     int _bc_v0_196 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_196) { goto isp_vic_interrupt_service_routine0x7ac; }
 
-    /* fragment 197: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 198: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 116);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 116) = v1;
+    vic_irq_cnt[1][4]++;
 
 isp_vic_interrupt_service_routine0x7ac:
     /* fragment 199: StackAccess */
@@ -40754,16 +40535,9 @@ isp_vic_interrupt_service_routine0x7ac:
 
     /* fragment 200: Branch */
     int _bc_v0_200 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_200) { goto isp_vic_interrupt_service_routine0x7cc; }
 
-    /* fragment 201: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 202: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 120);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 120) = v1;
+    vic_irq_cnt[1][5]++;
 
 isp_vic_interrupt_service_routine0x7cc:
     /* fragment 203: StackAccess */
@@ -40772,288 +40546,169 @@ isp_vic_interrupt_service_routine0x7cc:
 
     /* fragment 204: Branch */
     int _bc_v0_204 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_204) { goto isp_vic_interrupt_service_routine0x7ec; }
 
-    /* fragment 205: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 206: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 124);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 124) = v1;
+    vic_irq_cnt[1][6]++;
 
 isp_vic_interrupt_service_routine0x7ec:
     /* fragment 207: StackAccess */
-    v0 = local_3c;
+    v0 = ((uintptr_t)local_3c >> 16) & 1;   /* OEM: ext v0,v0,16,1 (status bit 16); the lift dropped the extract */
 
     /* fragment 208: Branch */
     int _bc_v0_208 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_208) { goto isp_vic_interrupt_service_routine0x80c; }
 
-    /* fragment 209: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 210: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 128);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 128) = v1;
+    vic_irq_cnt[1][7]++;
 
 isp_vic_interrupt_service_routine0x80c:
     /* fragment 211: StackAccess */
-    v0 = local_3c;
+    v0 = ((uintptr_t)local_3c >> 17) & 1;   /* OEM: ext v0,v0,17,1 (status bit 17); the lift dropped the extract */
 
     /* fragment 212: Branch */
     int _bc_v0_212 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_212) { goto isp_vic_interrupt_service_routine0x82c; }
 
-    /* fragment 213: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 214: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 132);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 132) = v1;
+    vic_irq_cnt[1][8]++;
 
 isp_vic_interrupt_service_routine0x82c:
     /* fragment 215: StackAccess */
-    v0 = local_3c;
+    v0 = ((uintptr_t)local_3c >> 18) & 1;   /* OEM: ext v0,v0,18,1 (status bit 18); the lift dropped the extract */
 
     /* fragment 216: Branch */
     int _bc_v0_216 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_216) { goto isp_vic_interrupt_service_routine0x84c; }
 
-    /* fragment 217: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 218: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 136);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 136) = v1;
+    vic_irq_cnt[1][9]++;
 
 isp_vic_interrupt_service_routine0x84c:
     /* fragment 219: StackAccess */
-    v0 = local_3c;
+    v0 = ((uintptr_t)local_3c >> 19) & 1;   /* OEM: ext v0,v0,19,1 (status bit 19); the lift dropped the extract */
 
     /* fragment 220: Branch */
     int _bc_v0_220 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_220) { goto isp_vic_interrupt_service_routine0x86c; }
 
-    /* fragment 221: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 222: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 140);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 140) = v1;
+    vic_irq_cnt[1][10]++;
 
 isp_vic_interrupt_service_routine0x86c:
     /* fragment 223: StackAccess */
-    v0 = local_3c;
+    v0 = ((uintptr_t)local_3c >> 20) & 1;   /* OEM: ext v0,v0,20,1 (status bit 20); the lift dropped the extract */
 
     /* fragment 224: Branch */
     int _bc_v0_224 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_224) { goto isp_vic_interrupt_service_routine0x88c; }
 
-    /* fragment 225: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 226: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 144);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 144) = v1;
+    vic_irq_cnt[1][11]++;
 
 isp_vic_interrupt_service_routine0x88c:
     /* fragment 227: StackAccess */
-    v0 = local_3c;
+    v0 = ((uintptr_t)local_3c >> 21) & 1;   /* OEM: ext v0,v0,21,1 (status bit 21); the lift dropped the extract */
 
     /* fragment 228: Branch */
     int _bc_v0_228 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_228) { goto isp_vic_interrupt_service_routine0x8ac; }
 
-    /* fragment 229: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 230: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 148);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 148) = v1;
+    vic_irq_cnt[1][12]++;
 
 isp_vic_interrupt_service_routine0x8ac:
     /* fragment 231: StackAccess */
-    v0 = local_3c;
+    v0 = ((uintptr_t)local_3c >> 22) & 1;   /* OEM: ext v0,v0,22,1 (status bit 22); the lift dropped the extract */
 
     /* fragment 232: Branch */
     int _bc_v0_232 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_232) { goto isp_vic_interrupt_service_routine0x8cc; }
 
-    /* fragment 233: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 234: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 152);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 152) = v1;
+    vic_irq_cnt[1][13]++;
 
 isp_vic_interrupt_service_routine0x8cc:
     /* fragment 235: StackAccess */
-    v0 = local_3c;
+    v0 = ((uintptr_t)local_3c >> 23) & 1;   /* OEM: ext v0,v0,23,1 (status bit 23); the lift dropped the extract */
 
     /* fragment 236: Branch */
     int _bc_v0_236 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_236) { goto isp_vic_interrupt_service_routine0x8ec; }
 
-    /* fragment 237: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 238: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 156);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 156) = v1;
+    vic_irq_cnt[1][14]++;
 
 isp_vic_interrupt_service_routine0x8ec:
     /* fragment 239: StackAccess */
-    v0 = local_3c;
+    v0 = ((uintptr_t)local_3c >> 24) & 1;   /* OEM: ext v0,v0,24,1 (status bit 24); the lift dropped the extract */
 
     /* fragment 240: Branch */
     int _bc_v0_240 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_240) { goto isp_vic_interrupt_service_routine0x90c; }
 
-    /* fragment 241: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 242: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 160);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 160) = v1;
+    vic_irq_cnt[1][15]++;
 
 isp_vic_interrupt_service_routine0x90c:
     /* fragment 243: StackAccess */
-    v0 = local_3c;
+    v0 = ((uintptr_t)local_3c >> 25) & 1;   /* OEM: ext v0,v0,25,1 (status bit 25); the lift dropped the extract */
 
     /* fragment 244: Branch */
     int _bc_v0_244 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_244) { goto isp_vic_interrupt_service_routine0x92c; }
 
-    /* fragment 245: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 246: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 164);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 164) = v1;
+    vic_irq_cnt[1][16]++;
 
 isp_vic_interrupt_service_routine0x92c:
     /* fragment 247: StackAccess */
-    v0 = local_3c;
+    v0 = ((uintptr_t)local_3c >> 26) & 1;   /* OEM: ext v0,v0,26,1 (status bit 26); the lift dropped the extract */
 
     /* fragment 248: Branch */
     int _bc_v0_248 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_248) { goto isp_vic_interrupt_service_routine0x94c; }
 
-    /* fragment 249: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 250: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 168);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 168) = v1;
+    vic_irq_cnt[1][17]++;
 
 isp_vic_interrupt_service_routine0x94c:
     /* fragment 251: StackAccess */
-    v0 = local_3c;
+    v0 = ((uintptr_t)local_3c >> 27) & 1;   /* OEM: ext v0,v0,27,1 (status bit 27); the lift dropped the extract */
 
     /* fragment 252: Branch */
     int _bc_v0_252 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_252) { goto isp_vic_interrupt_service_routine0x96c; }
 
-    /* fragment 253: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 254: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 172);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 172) = v1;
+    vic_irq_cnt[1][18]++;
 
 isp_vic_interrupt_service_routine0x96c:
     /* fragment 255: StackAccess */
-    v0 = local_3c;
+    v0 = ((uintptr_t)local_3c >> 28) & 1;   /* OEM: ext v0,v0,28,1 (status bit 28); the lift dropped the extract */
 
     /* fragment 256: Branch */
     int _bc_v0_256 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_256) { goto isp_vic_interrupt_service_routine0x98c; }
 
-    /* fragment 257: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 258: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 176);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 176) = v1;
+    vic_irq_cnt[1][19]++;
 
 isp_vic_interrupt_service_routine0x98c:
     /* fragment 259: StackAccess */
-    v0 = local_3c;
+    v0 = ((uintptr_t)local_3c >> 29) & 1;   /* OEM: ext v0,v0,29,1 (status bit 29); the lift dropped the extract */
 
     /* fragment 260: Branch */
     int _bc_v0_260 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_260) { goto isp_vic_interrupt_service_routine0x9ac; }
 
-    /* fragment 261: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 262: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 180);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 180) = v1;
+    vic_irq_cnt[1][20]++;
 
 isp_vic_interrupt_service_routine0x9ac:
     /* fragment 263: StackAccess */
-    v0 = local_3c;
+    v0 = ((uintptr_t)local_3c >> 30) & 1;   /* OEM: ext v0,v0,30,1 (status bit 30); the lift dropped the extract */
 
     /* fragment 264: Branch */
     int _bc_v0_264 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_264) { goto isp_vic_interrupt_service_routine0x9cc; }
 
-    /* fragment 265: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 266: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 184);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 184) = v1;
+    vic_irq_cnt[1][21]++;
 
 isp_vic_interrupt_service_routine0x9cc:
     /* fragment 267: StackAccess */
     v0 = local_3c;
 
     /* fragment 268: Branch */
-    int _bc_v0_268 = v0 >= 0;
-    v0 = (uintptr_t *)&isp_memopt;
+    int _bc_v0_268 = (int32_t)v0 >= 0;   /* OEM: bgez on status bit 31 (an unsigned/pointer >= 0 is always true) */
     if (_bc_v0_268) { goto isp_vic_interrupt_service_routine0x9e8; }
 
-    /* fragment 269: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 270: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 188);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 188) = v1;
+    vic_irq_cnt[1][22]++;
 
 isp_vic_interrupt_service_routine0x9e8:
     /* fragment 271: StackAccess */
@@ -41066,7 +40721,7 @@ isp_vic_interrupt_service_routine0x9e8:
 
     /* fragment 273: CallSetup */
     *(uint32_t *)((char *)s0 + 772) = ((*(uint32_t *)((char *)(s0) + 772)) + 1);
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)vic_mdma_irq_function1)(s0, *(uint32_t *)((char *)(s0) + 592), 0); /* jalr target resolved by relocation */
+    v0 = (uintptr_t)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)vic_mdma_irq_function1)(s0, *(uint32_t *)((char *)(s0) + 592), 0); /* jalr target resolved by relocation */
 
 isp_vic_interrupt_service_routine0xa18:
     /* fragment 274: StackAccess */
@@ -41079,7 +40734,7 @@ isp_vic_interrupt_service_routine0xa18:
 
     /* fragment 276: CallSetup */
     *(uint32_t *)((char *)s0 + 776) = ((*(uint32_t *)((char *)(s0) + 776)) + 1);
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)vic_mdma_irq_function1)(s0, *(uint32_t *)((char *)(s0) + 592), 1); /* jalr target resolved by relocation */
+    v0 = (uintptr_t)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)vic_mdma_irq_function1)(s0, *(uint32_t *)((char *)(s0) + 592), 1); /* jalr target resolved by relocation */
 
 isp_vic_interrupt_service_routine0xa48:
     /* fragment 277: StackAccess */
@@ -41088,12 +40743,11 @@ isp_vic_interrupt_service_routine0xa48:
 
     /* fragment 278: Branch */
     int _bc_v0_278 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_278) { goto isp_vic_interrupt_service_routine0xa80; }
 
     /* fragment 279: CallSetup */
-    *(uint32_t *)((char *)((char *)&vic_err + 0x78)) = ((*(uint32_t *)((char *)((char *)&vic_err + 0x78))) + 1);
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)isp_printf)(1, &LC76); /* jalr target resolved by relocation */
+    vic_irq_cnt[1][23]++;
+    v0 = (uintptr_t)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)isp_printf)(1, &LC76); /* jalr target resolved by relocation */
 
 isp_vic_interrupt_service_routine0xa80:
     /* fragment 280: StackAccess */
@@ -41104,14 +40758,7 @@ isp_vic_interrupt_service_routine0xa80:
     if (v0 == 0) { goto isp_vic_interrupt_service_routine0x538; }
 
     /* fragment 282: ConstantLoad */
-    v0 = (uintptr_t *)&isp_memopt + 0x48;   /* #161: the lift kept only the +0x48 words of &isp_memopt (counter at NULL + 0x10c) */
-
-    /* fragment 283: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 196);
-    v1 = v1 + 1;
-
-    /* fragment 284: Branch */
-    *(uint32_t *)((char *)v0 + 196) = v1;
+    vic_irq_cnt[1][24]++;
     goto isp_vic_interrupt_service_routine0x51c;
 
 isp_vic_interrupt_service_routine0xaa8:
@@ -41128,7 +40775,7 @@ isp_vic_interrupt_service_routine0xaa8:
 
 isp_vic_interrupt_service_routine0xabc:
     /* fragment 288: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)isp_printf)(0, &LC75); /* jalr target resolved by relocation */
+    v0 = (uintptr_t)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)isp_printf)(0, &LC75); /* jalr target resolved by relocation */
 
     /* fragment 289: Branch */
     goto isp_vic_interrupt_service_routine0x6e8;
@@ -41257,16 +40904,9 @@ isp_vic_interrupt_service_routine0xc04:
 
     /* fragment 313: Branch */
     int _bc_v0_313 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_313) { goto isp_vic_interrupt_service_routine0xc24; }
 
-    /* fragment 314: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 315: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 200);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 200) = v1;
+    vic_irq_cnt[2][0]++;
 
 isp_vic_interrupt_service_routine0xc24:
     /* fragment 316: StackAccess */
@@ -41275,16 +40915,9 @@ isp_vic_interrupt_service_routine0xc24:
 
     /* fragment 317: Branch */
     int _bc_v0_317 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_317) { goto isp_vic_interrupt_service_routine0xc44; }
 
-    /* fragment 318: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 319: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 204);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 204) = v1;
+    vic_irq_cnt[2][1]++;
 
 isp_vic_interrupt_service_routine0xc44:
     /* fragment 320: StackAccess */
@@ -41293,16 +40926,9 @@ isp_vic_interrupt_service_routine0xc44:
 
     /* fragment 321: Branch */
     int _bc_v0_321 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_321) { goto isp_vic_interrupt_service_routine0xc64; }
 
-    /* fragment 322: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 323: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 208);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 208) = v1;
+    vic_irq_cnt[2][2]++;
 
 isp_vic_interrupt_service_routine0xc64:
     /* fragment 324: StackAccess */
@@ -41311,16 +40937,9 @@ isp_vic_interrupt_service_routine0xc64:
 
     /* fragment 325: Branch */
     int _bc_v0_325 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_325) { goto isp_vic_interrupt_service_routine0xc84; }
 
-    /* fragment 326: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 327: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 212);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 212) = v1;
+    vic_irq_cnt[2][3]++;
 
 isp_vic_interrupt_service_routine0xc84:
     /* fragment 328: StackAccess */
@@ -41329,16 +40948,9 @@ isp_vic_interrupt_service_routine0xc84:
 
     /* fragment 329: Branch */
     int _bc_v0_329 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_329) { goto isp_vic_interrupt_service_routine0xca4; }
 
-    /* fragment 330: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 331: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 216);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 216) = v1;
+    vic_irq_cnt[2][4]++;
 
 isp_vic_interrupt_service_routine0xca4:
     /* fragment 332: StackAccess */
@@ -41347,16 +40959,9 @@ isp_vic_interrupt_service_routine0xca4:
 
     /* fragment 333: Branch */
     int _bc_v0_333 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_333) { goto isp_vic_interrupt_service_routine0xcc4; }
 
-    /* fragment 334: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 335: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 220);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 220) = v1;
+    vic_irq_cnt[2][5]++;
 
 isp_vic_interrupt_service_routine0xcc4:
     /* fragment 336: StackAccess */
@@ -41365,288 +40970,169 @@ isp_vic_interrupt_service_routine0xcc4:
 
     /* fragment 337: Branch */
     int _bc_v0_337 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_337) { goto isp_vic_interrupt_service_routine0xce4; }
 
-    /* fragment 338: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 339: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 224);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 224) = v1;
+    vic_irq_cnt[2][6]++;
 
 isp_vic_interrupt_service_routine0xce4:
     /* fragment 340: StackAccess */
-    v0 = local_24;
+    v0 = ((uintptr_t)local_24 >> 16) & 1;   /* OEM: ext v0,v0,16,1 (status bit 16); the lift dropped the extract */
 
     /* fragment 341: Branch */
     int _bc_v0_341 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_341) { goto isp_vic_interrupt_service_routine0xd04; }
 
-    /* fragment 342: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 343: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 228);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 228) = v1;
+    vic_irq_cnt[2][7]++;
 
 isp_vic_interrupt_service_routine0xd04:
     /* fragment 344: StackAccess */
-    v0 = local_24;
+    v0 = ((uintptr_t)local_24 >> 17) & 1;   /* OEM: ext v0,v0,17,1 (status bit 17); the lift dropped the extract */
 
     /* fragment 345: Branch */
     int _bc_v0_345 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_345) { goto isp_vic_interrupt_service_routine0xd24; }
 
-    /* fragment 346: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 347: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 232);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 232) = v1;
+    vic_irq_cnt[2][8]++;
 
 isp_vic_interrupt_service_routine0xd24:
     /* fragment 348: StackAccess */
-    v0 = local_24;
+    v0 = ((uintptr_t)local_24 >> 18) & 1;   /* OEM: ext v0,v0,18,1 (status bit 18); the lift dropped the extract */
 
     /* fragment 349: Branch */
     int _bc_v0_349 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_349) { goto isp_vic_interrupt_service_routine0xd44; }
 
-    /* fragment 350: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 351: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 236);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 236) = v1;
+    vic_irq_cnt[2][9]++;
 
 isp_vic_interrupt_service_routine0xd44:
     /* fragment 352: StackAccess */
-    v0 = local_24;
+    v0 = ((uintptr_t)local_24 >> 19) & 1;   /* OEM: ext v0,v0,19,1 (status bit 19); the lift dropped the extract */
 
     /* fragment 353: Branch */
     int _bc_v0_353 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_353) { goto isp_vic_interrupt_service_routine0xd64; }
 
-    /* fragment 354: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 355: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 240);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 240) = v1;
+    vic_irq_cnt[2][10]++;
 
 isp_vic_interrupt_service_routine0xd64:
     /* fragment 356: StackAccess */
-    v0 = local_24;
+    v0 = ((uintptr_t)local_24 >> 20) & 1;   /* OEM: ext v0,v0,20,1 (status bit 20); the lift dropped the extract */
 
     /* fragment 357: Branch */
     int _bc_v0_357 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_357) { goto isp_vic_interrupt_service_routine0xd84; }
 
-    /* fragment 358: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 359: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 244);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 244) = v1;
+    vic_irq_cnt[2][11]++;
 
 isp_vic_interrupt_service_routine0xd84:
     /* fragment 360: StackAccess */
-    v0 = local_24;
+    v0 = ((uintptr_t)local_24 >> 21) & 1;   /* OEM: ext v0,v0,21,1 (status bit 21); the lift dropped the extract */
 
     /* fragment 361: Branch */
     int _bc_v0_361 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_361) { goto isp_vic_interrupt_service_routine0xda4; }
 
-    /* fragment 362: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 363: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 248);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 248) = v1;
+    vic_irq_cnt[2][12]++;
 
 isp_vic_interrupt_service_routine0xda4:
     /* fragment 364: StackAccess */
-    v0 = local_24;
+    v0 = ((uintptr_t)local_24 >> 22) & 1;   /* OEM: ext v0,v0,22,1 (status bit 22); the lift dropped the extract */
 
     /* fragment 365: Branch */
     int _bc_v0_365 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_365) { goto isp_vic_interrupt_service_routine0xdc4; }
 
-    /* fragment 366: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 367: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 252);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 252) = v1;
+    vic_irq_cnt[2][13]++;
 
 isp_vic_interrupt_service_routine0xdc4:
     /* fragment 368: StackAccess */
-    v0 = local_24;
+    v0 = ((uintptr_t)local_24 >> 23) & 1;   /* OEM: ext v0,v0,23,1 (status bit 23); the lift dropped the extract */
 
     /* fragment 369: Branch */
     int _bc_v0_369 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_369) { goto isp_vic_interrupt_service_routine0xde4; }
 
-    /* fragment 370: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 371: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 256);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 256) = v1;
+    vic_irq_cnt[2][14]++;
 
 isp_vic_interrupt_service_routine0xde4:
     /* fragment 372: StackAccess */
-    v0 = local_24;
+    v0 = ((uintptr_t)local_24 >> 24) & 1;   /* OEM: ext v0,v0,24,1 (status bit 24); the lift dropped the extract */
 
     /* fragment 373: Branch */
     int _bc_v0_373 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_373) { goto isp_vic_interrupt_service_routine0xe04; }
 
-    /* fragment 374: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 375: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 260);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 260) = v1;
+    vic_irq_cnt[2][15]++;
 
 isp_vic_interrupt_service_routine0xe04:
     /* fragment 376: StackAccess */
-    v0 = local_24;
+    v0 = ((uintptr_t)local_24 >> 25) & 1;   /* OEM: ext v0,v0,25,1 (status bit 25); the lift dropped the extract */
 
     /* fragment 377: Branch */
     int _bc_v0_377 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_377) { goto isp_vic_interrupt_service_routine0xe24; }
 
-    /* fragment 378: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 379: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 264);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 264) = v1;
+    vic_irq_cnt[2][16]++;
 
 isp_vic_interrupt_service_routine0xe24:
     /* fragment 380: StackAccess */
-    v0 = local_24;
+    v0 = ((uintptr_t)local_24 >> 26) & 1;   /* OEM: ext v0,v0,26,1 (status bit 26); the lift dropped the extract */
 
     /* fragment 381: Branch */
     int _bc_v0_381 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_381) { goto isp_vic_interrupt_service_routine0xe44; }
 
-    /* fragment 382: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 383: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 268);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 268) = v1;
+    vic_irq_cnt[2][17]++;
 
 isp_vic_interrupt_service_routine0xe44:
     /* fragment 384: StackAccess */
-    v0 = local_24;
+    v0 = ((uintptr_t)local_24 >> 27) & 1;   /* OEM: ext v0,v0,27,1 (status bit 27); the lift dropped the extract */
 
     /* fragment 385: Branch */
     int _bc_v0_385 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_385) { goto isp_vic_interrupt_service_routine0xe64; }
 
-    /* fragment 386: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 387: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 272);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 272) = v1;
+    vic_irq_cnt[2][18]++;
 
 isp_vic_interrupt_service_routine0xe64:
     /* fragment 388: StackAccess */
-    v0 = local_24;
+    v0 = ((uintptr_t)local_24 >> 28) & 1;   /* OEM: ext v0,v0,28,1 (status bit 28); the lift dropped the extract */
 
     /* fragment 389: Branch */
     int _bc_v0_389 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_389) { goto isp_vic_interrupt_service_routine0xe84; }
 
-    /* fragment 390: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 391: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 276);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 276) = v1;
+    vic_irq_cnt[2][19]++;
 
 isp_vic_interrupt_service_routine0xe84:
     /* fragment 392: StackAccess */
-    v0 = local_24;
+    v0 = ((uintptr_t)local_24 >> 29) & 1;   /* OEM: ext v0,v0,29,1 (status bit 29); the lift dropped the extract */
 
     /* fragment 393: Branch */
     int _bc_v0_393 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_393) { goto isp_vic_interrupt_service_routine0xea4; }
 
-    /* fragment 394: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 395: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 280);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 280) = v1;
+    vic_irq_cnt[2][20]++;
 
 isp_vic_interrupt_service_routine0xea4:
     /* fragment 396: StackAccess */
-    v0 = local_24;
+    v0 = ((uintptr_t)local_24 >> 30) & 1;   /* OEM: ext v0,v0,30,1 (status bit 30); the lift dropped the extract */
 
     /* fragment 397: Branch */
     int _bc_v0_397 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_397) { goto isp_vic_interrupt_service_routine0xec4; }
 
-    /* fragment 398: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 399: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 284);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 284) = v1;
+    vic_irq_cnt[2][21]++;
 
 isp_vic_interrupt_service_routine0xec4:
     /* fragment 400: StackAccess */
     v0 = local_24;
 
     /* fragment 401: Branch */
-    int _bc_v0_401 = v0 >= 0;
-    v0 = (uintptr_t *)&isp_memopt;
+    int _bc_v0_401 = (int32_t)v0 >= 0;   /* OEM: bgez on status bit 31 (an unsigned/pointer >= 0 is always true) */
     if (_bc_v0_401) { goto isp_vic_interrupt_service_routine0xee0; }
 
-    /* fragment 402: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 403: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 288);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 288) = v1;
+    vic_irq_cnt[2][22]++;
 
 isp_vic_interrupt_service_routine0xee0:
     /* fragment 404: StackAccess */
@@ -41655,16 +41141,9 @@ isp_vic_interrupt_service_routine0xee0:
 
     /* fragment 405: Branch */
     int _bc_v0_405 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_405) { goto isp_vic_interrupt_service_routine0xf00; }
 
-    /* fragment 406: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 407: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 292);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 292) = v1;
+    vic_irq_cnt[2][23]++;
 
 isp_vic_interrupt_service_routine0xf00:
     /* fragment 408: StackAccess */
@@ -41673,16 +41152,9 @@ isp_vic_interrupt_service_routine0xf00:
 
     /* fragment 409: Branch */
     int _bc_v0_409 = v0 == 0;
-    v0 = (uintptr_t *)&isp_memopt;
     if (_bc_v0_409) { goto isp_vic_interrupt_service_routine0xf20; }
 
-    /* fragment 410: Arithmetic */
-    v0 = v0 + 72;
-
-    /* fragment 411: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v0 + 296);
-    v1 = v1 + 1;
-    *(uint32_t *)((char *)v0 + 296) = v1;
+    vic_irq_cnt[2][24]++;
 
 isp_vic_interrupt_service_routine0xf20:
     /* fragment 412: StackAccess */
@@ -41695,7 +41167,7 @@ isp_vic_interrupt_service_routine0xf20:
 
     /* fragment 414: CallSetup */
     *(uint32_t *)((char *)s0 + 780) = ((*(uint32_t *)((char *)(s0) + 780)) + 1);
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)vic_mdma_irq_function2)(s0, *(uint32_t *)((char *)(s0) + 596), 0); /* jalr target resolved by relocation */
+    v0 = (uintptr_t)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)vic_mdma_irq_function2)(s0, *(uint32_t *)((char *)(s0) + 596), 0); /* jalr target resolved by relocation */
 
 isp_vic_interrupt_service_routine0xf50:
     /* fragment 415: StackAccess */
@@ -41707,7 +41179,7 @@ isp_vic_interrupt_service_routine0xf50:
 
     /* fragment 417: CallSetup */
     *(uint32_t *)((char *)s0 + 784) = ((*(uint32_t *)((char *)(s0) + 784)) + 1);
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)vic_mdma_irq_function2)(s0, *(uint32_t *)((char *)(s0) + 596), 1); /* jalr target resolved by relocation */
+    v0 = (uintptr_t)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)vic_mdma_irq_function2)(s0, *(uint32_t *)((char *)(s0) + 596), 1); /* jalr target resolved by relocation */
 
     /* fragment 418: Branch */
     goto isp_vic_interrupt_service_routine0x538;
@@ -145587,7 +145059,6 @@ int32_t tisp_bcsh_Tccm_Comp2Orig(uintptr_t a0)
     /* fragment 3: #161: OEM 0x7a51c tail call tisp_bcsh_reg2para(*(a0 + 0x24), *(a0 + 0xcc)) (the jr.hb was lost; the lift
      * also took the second/third pointer pair from a never-assigned register, NULL + 32/200) */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)tisp_bcsh_reg2para)(*(uint32_t *)((char *)(a0) + 36), *(uint32_t *)((char *)(a0) + 204));
-    a1 = *(uint32_t *)((char *)((char *)&vic_err + 0x84));
     ra = local_14;
     a0 = *(uint32_t *)((char *)&vic_cmd_buf);
 
@@ -169699,6 +169170,8 @@ int tx_isp_vic_remove(struct platform_device *pdev)
     int __maybe_unused __fr = regtrace_fr_mark(0x91, 0);
     uintptr_t a0 = (uintptr_t)pdev;
 
+    t40_isp_proc_vic_remove();   /* the node holds the VIC subdev pointer */
+
     uint32_t *local_10 = 0;
     uint32_t local_14 = 0;
     uint32_t *local_18 = 0;
@@ -169969,6 +169442,7 @@ int tx_isp_core_remove(struct platform_device *pdev)
     regtrace_fr_mark(0x97, 0);
 
     /* /proc/jz/isp/isp-m0 points at this object and the module's fops */
+    t40_isp_proc_vic_remove();
     if (t40_isp_proc_m0) {
         proc_remove(t40_isp_proc_m0);
         t40_isp_proc_m0 = NULL;
