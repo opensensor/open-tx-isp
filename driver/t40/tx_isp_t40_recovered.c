@@ -25322,6 +25322,7 @@ struct regtrace_t40_awb_custom_wire {
 };
 
 static uint32_t t40_awb_set_ct, t40_awb_set_start_en, t40_awb_set_start[2];   /* H2: last SetAwbAttr ct / start (ch 0) */
+static int t40_awb_algo_manual;   /* #65: the custom AWB library set manual gains (undone at unregister) */
 struct regtrace_t40_awb_attr_wire {
     uint32_t mode;
     struct regtrace_t40_awb_gain_wire gain;
@@ -59001,6 +59002,14 @@ static int32_t t40_get_ae_algo_handle(uintptr_t a0, uint32_t user, uint32_t idx)
     tisp_g_ae_statis_attr(idx, (uintptr_t)(info + 8));
     memset(ei, 0, sizeof(ei));
     tisp_g_ae_exprinfo_attr(idx, (uintptr_t)ei);
+    if (idx == 0 && !ae_wdr_en[0]) {
+        /* #65: the exposure the library is told about is the one the sensor runs with now (the open driver's AE state; the OEM
+         * ctrl words stay zero until the library has answered once, so a library never saw the real starting exposure) */
+        ei[6] = regtrace_ae_soft_cur_it;
+        ei[7] = tisp_math_exp2(regtrace_gc4653_again_log2_gain(regtrace_ae_soft_cur_again), 16, 10);
+        ei[8] = 1024;
+        ei[9] = READ_ONCE(regtrace_ae_isp_dgain_cur);
+    }
     attr = (char *)t40_ae_algo_attr((uintptr_t)core, idx);
     w[0] = ei[6]; w[1] = ei[7]; w[2] = ei[8]; w[3] = ei[9];          /* sp+48..60 */
     w[4] = ei[31]; w[5] = ei[32]; w[6] = ei[33]; w[7] = ei[34];      /* sp+148..160 */
@@ -59757,6 +59766,13 @@ tx_isp_unlocked_ioctl0x3b0:
 
     /* fragment 105: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)tisp_g_awb_statis_attr)(0, (*(uint32_t *)((char *)((char *)&awb_info_mine))) + 32); /* jalr target resolved by relocation */
+
+    /* #65: the gains the library is told about are the live ones (IMPISPAwbInfo.cur_r_gain / cur_b_gain at info + 8 / + 12; the OEM
+     * words stay zero in this driver, so a library could not know the starting white balance) */
+    if (awb_info_mine[0]) {
+        *(uint32_t *)((char *)(uintptr_t)awb_info_mine[0] + 8) = READ_ONCE(regtrace_awb_grayworld_last_rgain);
+        *(uint32_t *)((char *)(uintptr_t)awb_info_mine[0] + 12) = READ_ONCE(regtrace_awb_grayworld_last_bgain);
+    }
 
     /* fragment 106: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)private_copy_to_user)(s1, *(uint32_t *)((char *)((char *)&awb_info_mine)), 2732); /* jalr target resolved by relocation */
@@ -82194,34 +82210,77 @@ int32_t tisp_ae_algo_handle(uintptr_t a0, uintptr_t a1)
     again = in[5];
     again_s = in[9];                                   /* s4 = in[36] (0x2bb84), kept when not WDR */
 
-    fr[3] = ch;
-    it_r = t40_sc_call(348, in[4], &fr[3]);
-    if (in[4] != it_r)
-        again = fix_point_div_32(10, fix_point_mult2_32(10, again, in[4] << 10), it_r << 10);
-    t40_sc_call(356, *(uint16_t *)((char *)fr + 34), fr);
-    ctrls[3] = it_r;                                   /* +12 */
-    gi[0] = ch;
-    v = tisp_log2_fixed_to_fixed(again << 6, 16, 16);
-    v = t40_sc_call(332, v, gi);
-    again_raw = tisp_math_exp2(v, 16, 16);
-    again_r = again_raw >> 6;
-    t40_sc_call(372, gi[1], gi);
-    gi[0] = ch;
-    v = tisp_log2_fixed_to_fixed(in[6] << 6, 16, 16);
-    v = t40_sc_call(340, v, gi);
-    dgain_r = tisp_math_exp2(v, 16, 16) >> 6;
-    t40_sc_call(380, *(uint16_t *)((char *)gi + 8), gi);   /* OEM lhu 432(sp); alloc_dgain wrote +26 */
-    ctrls[2] = dgain_r;                                /* +8 */
-    v = fix_point_div_32(10, fix_point_mult2_32(10, in[5], in[6]), fix_point_mult2_32(10, again_r, dgain_r));
-    ispdg = fix_point_mult2_32(10, in[7], v);
-    if (ae_wdr_en[ch])
-        tisp_blc_ae_write_dgain(ch, 0, ispdg, ispdg, ispdg);
-    else
-        tisp_gib_ae_write_dgain(ch, ispdg, ispdg, ispdg, ispdg);
-    system_reg_set_ae_trig(3, ch & 0xff);
-    ctrls[4] = ispdg;                                  /* +16 */
-    ev_l = fix_point_mult2_32(10, fix_point_mult3_32(10, it_r << 10, again_r, dgain_r), ispdg);
-    tgain = fix_point_mult3_32(10, again_r, dgain_r, ispdg);
+    if (ch == 0 && !ae_wdr_en[0]) {
+        /* #65: the sensor_ctrl_main slots of this driver are stubs (the open driver applies exposure through the AE sensor-apply path:
+         * forced packed word = (gain ladder index << 16) | integration lines, plus the ISP dgain), so the library's result goes there,
+         * the way the own exposure loop commits its decision.  Request -> applied values: integration time clamped to the sensor
+         * range (the gain is scaled to keep the product, as the OEM does after alloc_it), analog gain to the nearest step of the gain
+         * ladder (no digital gain on the sensor), the residual (request / applied gain) goes into the ISP digital gain. */
+        uint32_t max_it = regtrace_t40_ae_max_it(), min_it = regtrace_ae_soft_min_it;
+        uint32_t maxidx = regtrace_t40_ae_max_again_index(), idx, best, k, d, bd = 0xffffffffU, dgmax = regtrace_t40_ae_isp_dgain_max_eff();
+
+        it_r = in[4];
+        if (max_it > min_it)
+            it_r = clamp_t(uint32_t, it_r, min_it, max_it);
+        if (in[4] != it_r && it_r)
+            again = fix_point_div_32(10, fix_point_mult2_32(10, again, in[4] << 10), it_r << 10);
+        v = tisp_log2_fixed_to_fixed(again << 6, 16, 16);
+        best = 0;
+        for (k = 0; k <= maxidx && k < 26U; k++) {
+            uint32_t g = regtrace_gc4653_again_log2_gain(k);
+
+            d = g > v ? g - v : v - g;
+            if (d < bd) { bd = d; best = k; }
+        }
+        idx = best;
+        again_raw = tisp_math_exp2(regtrace_gc4653_again_log2_gain(idx), 16, 16);
+        again_r = again_raw >> 6;
+        dgain_r = 1024;
+        v = fix_point_div_32(10, fix_point_mult2_32(10, in[5], in[6]), fix_point_mult2_32(10, again_r, dgain_r));
+        ispdg = clamp_t(uint32_t, fix_point_mult2_32(10, in[7], v), 1024U, dgmax > 1024U ? dgmax : 1024U);
+        ctrls[3] = it_r;
+        ctrls[2] = dgain_r;
+        regtrace_ae_soft_cur_it = it_r;
+        regtrace_ae_soft_cur_again = idx;
+        regtrace_ae_sensor_apply_force_packed = (idx << 16) | (it_r & 0xffffU);
+        WRITE_ONCE(regtrace_ae_isp_dgain_cur, ispdg);
+        (void)regtrace_t40_ae_isp_dgain_apply();
+        regtrace_gc4653_tuning_again_update(idx);
+        ctrls[4] = ispdg;
+        ev_l = fix_point_mult2_32(10, fix_point_mult3_32(10, it_r << 10, again_r, dgain_r), ispdg);
+        tgain = fix_point_mult3_32(10, again_r, dgain_r, ispdg);
+    } else {
+        fr[3] = ch;
+        it_r = t40_sc_call(348, in[4], &fr[3]);
+        if (in[4] != it_r)
+            again = fix_point_div_32(10, fix_point_mult2_32(10, again, in[4] << 10), it_r << 10);
+        t40_sc_call(356, *(uint16_t *)((char *)fr + 34), fr);
+        ctrls[3] = it_r;                                   /* +12 */
+        gi[0] = ch;
+        v = tisp_log2_fixed_to_fixed(again << 6, 16, 16);
+        v = t40_sc_call(332, v, gi);
+        again_raw = tisp_math_exp2(v, 16, 16);
+        again_r = again_raw >> 6;
+        t40_sc_call(372, gi[1], gi);
+        gi[0] = ch;
+        v = tisp_log2_fixed_to_fixed(in[6] << 6, 16, 16);
+        v = t40_sc_call(340, v, gi);
+        dgain_r = tisp_math_exp2(v, 16, 16) >> 6;
+        t40_sc_call(380, *(uint16_t *)((char *)gi + 8), gi);   /* OEM lhu 432(sp); alloc_dgain wrote +26 */
+        ctrls[2] = dgain_r;                                /* +8 */
+        v = fix_point_div_32(10, fix_point_mult2_32(10, in[5], in[6]), fix_point_mult2_32(10, again_r, dgain_r));
+        ispdg = fix_point_mult2_32(10, in[7], v);
+        if (ae_wdr_en[ch])
+            tisp_blc_ae_write_dgain(ch, 0, ispdg, ispdg, ispdg);
+        else
+            tisp_gib_ae_write_dgain(ch, ispdg, ispdg, ispdg, ispdg);
+        system_reg_set_ae_trig(3, ch & 0xff);
+        ctrls[4] = ispdg;                                  /* +16 */
+        ev_l = fix_point_mult2_32(10, fix_point_mult3_32(10, it_r << 10, again_r, dgain_r), ispdg);
+        tgain = fix_point_mult3_32(10, again_r, dgain_r, ispdg);
+
+
+    }
 
     if (ae_wdr_en[ch] == 1) {
         uint32_t its_r, dgs_r, ispdg_s;
@@ -87339,8 +87398,13 @@ int64_t tisp_awb_main_process(void)
 {
     if (READ_ONCE(t40_vawb_live)) {
         /* manual WB / frozen (IMPISPWBAttr): keep the gains the control plane wrote */
-        if (READ_ONCE(regtrace_awb_control_mode) == 1U || READ_ONCE(regtrace_awb_control_frozen))
+        if (READ_ONCE(regtrace_awb_control_mode) == 1U || READ_ONCE(regtrace_awb_control_frozen)) {
+            /* #65: a custom AWB library must keep being served while the gains are held (its own manual result sets this mode):
+             * the vendor completes awb_algo_comp after every AWB step, otherwise the library's get-handle ioctl sleeps for good */
+            if (READ_ONCE(awb_algo_enable[0]) == 1)
+                private_complete((uintptr_t)&awb_algo_comp);
             return 0;
+        }
         return t40_vawb_process();
     }
     regtrace_t40_awb_step = 99;   /* T40-AWB-STEP: entered */
@@ -88242,18 +88306,18 @@ int32_t tisp_awb_set_mode(int32_t arg1, int32_t *arg2)
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000034754 origin=model_output original=tisp_awb_set_frz */
 char *tisp_awb_set_frz(int32_t arg1, char arg2)
 {
-    int32_t *v0;
+    /* #65: OEM tisp_awb_set_frz: *(u8 *)*(ori + 476) = arg2 with ori = pst{Main,Sec}AwbOri (the object tisp_awb_get_frz reads).
+     * The lift addressed a bss anchor (+15668 / +16180) that is not that object: the pointer there is NULL and the first
+     * custom AWB result (tisp_awb_algo_handle -> tisp_s_awb_attr) oopsed in the 0xc0045424 ioctl.  An AWB context that is not
+     * initialised yet (NULL pointer) is skipped. */
+    uint8_t *ori = arg1 ? (uint8_t *)pstSecAwbOri : (uint8_t *)pstMainAwbOri;
     char *result;
-    int32_t *addr;
 
-    if (arg1 != 0) {
-        addr = (int32_t *)(_bss_start + 16180);
-    } else {
-        addr = (int32_t *)(_bss_start + 15668);
-    }
-
-    v0 = addr;
-    result = (char *)v0[0x77];
+    if (!regtrace_is_kernel_ptr(ori))
+        return NULL;
+    result = (char *)(uintptr_t)*(uint32_t *)(ori + 476);
+    if (!regtrace_is_kernel_ptr(result))
+        return NULL;
     *result = arg2;
     return result;
 }
@@ -88913,6 +88977,25 @@ int32_t tisp_awb_algo_handle(uint32_t a0, uintptr_t a1)
         awb_attr[2] = (uint32_t)(uintptr_t)local_18;
         awb_attr[4] = (uint32_t)(uintptr_t)local_20;
         v0 = (uintptr_t *)(uintptr_t)tisp_s_awb_attr(a0, (uintptr_t)awb_attr);
+        /* #65: the white balance of this driver is its own control plane (manual mode + gains -> WBG, the path of
+         * IMP_ISP_Tuning_SetAwbAttr); the OEM AWB context set by tisp_s_awb_attr is not what drives the picture.  Zero gains are
+         * ignored, gains are limited like SetAwbAttr (<= 0x3fff). */
+        {
+            uint32_t rg = (uint32_t)(uintptr_t)local_14, bg = (uint32_t)(uintptr_t)local_18;
+
+            if (a0 == 0 && rg && bg && rg <= 0x3fffU && bg <= 0x3fffU) {
+                mutex_lock(&regtrace_t40_running_mode_lock);
+                WRITE_ONCE(regtrace_awb_control_mode, 1U);
+                WRITE_ONCE(regtrace_awb_manual_rgain, rg);
+                WRITE_ONCE(regtrace_awb_manual_bgain, bg);
+                WRITE_ONCE(regtrace_awb_grayworld_last_rgain, rg);
+                WRITE_ONCE(regtrace_awb_grayworld_last_bgain, bg);
+                WRITE_ONCE(t40_awb_algo_manual, 1);
+                if (!READ_ONCE(regtrace_running_mode))
+                    regtrace_awb_grayworld_apply(rg, bg);
+                mutex_unlock(&regtrace_t40_running_mode_lock);
+            }
+        }
     }
 
     /* fragment 4: Epilogue */
@@ -88940,6 +89023,15 @@ int32_t tisp_awb_algo_deinit_internal(int32_t arg1)
 
     if (*addr == 1)
         *addr = 0;
+    /* #65: unregistering gives the white balance back to the driver's automatic mode (the library's gains were a manual setting) */
+    if (!arg1 && READ_ONCE(t40_awb_algo_manual)) {
+        mutex_lock(&regtrace_t40_running_mode_lock);
+        WRITE_ONCE(t40_awb_algo_manual, 0);
+        WRITE_ONCE(regtrace_awb_control_mode, 0U);
+        WRITE_ONCE(regtrace_awb_manual_rgain, 0U);
+        WRITE_ONCE(regtrace_awb_manual_bgain, 0U);
+        mutex_unlock(&regtrace_t40_running_mode_lock);
+    }
 
     return 1;
 }
