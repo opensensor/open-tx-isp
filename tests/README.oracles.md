@@ -2,7 +2,7 @@
 
 Eight host checks compare our C code with the instructions of the vendor module under the Unicorn
 emulator, or with translated vendor code:
-`t40_ccm_conv_host t40_ccm_chain_host t40_dmsc_chain_host t40_mdns_chain_host t40_gib_host t40_lsc_host`
+`t40_ccm_conv_host t40_ccm_chain_host t40_dmsc_chain_host t40_mdns_chain_host t40_ysp_chain_host t40_ydns_host t40_gib_host t40_lsc_host`
 (need `T40_OEM_KO`, and `T40_CC` for the chain ones), `t40_vct_host` (`T40_TUNING_BIN` + `T40_OEM_DATA`) and
 `t40_bcsh_dn_host` (`T40_TUNING_BIN`, or the initialised `external/ingenic-sdk` submodule).
 
