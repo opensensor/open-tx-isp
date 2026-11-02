@@ -1576,7 +1576,7 @@ static unsigned char data_336ac[16384];
 static uint32_t awb_algo_comp[T40_ALGO_IDX_COUNT * 4];
 static uint32_t awb_info_mine[T40_ALGO_IDX_COUNT];
 static uint8_t tispPollValue;
-static int32_t dumpQueue;
+static wait_queue_head_t dumpQueue;   /* OEM .bss: a wait queue head (12 bytes); was a 4-byte int, __init_waitqueue_head wrote 8 bytes past it into the next variables */
 static unsigned char tisp_par_info[480];
 /* T40-AE-MAXINT: OEM .bss tisp_ae_main_ctrls/tisp_ae_sec_ctrls are 0xa4-byte AE control blocks
  * (tisp_ae_sensor_inform/ctrls_update/sync_sensor_attr access +20..+140).  Declared as a single
@@ -69944,6 +69944,23 @@ int32_t tisp_event_init(uint32_t a0)
     }
 
     ch = &regtrace_tisp_events[a0];
+    if (ch->initialized) {
+        /* Every stream start calls this again while the tisp-event thread (started once, stopped only at module exit)
+         * may sleep on ch->wq or hold a popped node: re-initialising the wait queue and the node lists under it gave
+         * "list_del corruption" in the event thread after a streamer restart (debug QEMU T40, origin/next 2026-11-03).
+         * Keep the queue, the lock and the node the thread holds; only drop the events still queued. */
+        unsigned long flags;
+        struct regtrace_tisp_event_node *node;
+
+        spin_lock_irqsave(&ch->lock, flags);
+        while ((node = regtrace_tisp_event_list_pop(&ch->used_head)) != NULL)
+            regtrace_tisp_event_list_add_tail(&ch->free_head, node);
+        spin_unlock_irqrestore(&ch->lock, flags);
+        regtrace_tisp_event_init_count++;
+        regtrace_tisp_event_init_last_channel = a0;
+        regtrace_tisp_event_init_last_ret = 0;
+        return 0;
+    }
     init_waitqueue_head(&ch->wq);
     spin_lock_init(&ch->lock);
     ch->initialized = true;
@@ -77567,13 +77584,18 @@ int32_t tisp_ae_algo_handle(uintptr_t a0, uintptr_t a1)
         if (in[4] != it_r && it_r)
             again = fix_point_div_32(10, fix_point_mult2_32(10, again, in[4] << 10), it_r << 10);
         v = tisp_log2_fixed_to_fixed(again << 6, 16, 16);
-        /* M3: the highest ladder step whose SENSOR gain does not exceed the request (the ISP digital gain below makes up the
-         * rest and cannot go under 1x: the nearest step above the request overshot the total gain), and the residual is
-         * computed from the gain the sensor applies, not from the GC4653 ladder value */
-        best = 0;
-        for (k = 0; k <= maxidx && k < 26U; k++) {
-            if (t40_ae_sensor_again_log2(k) <= v)
-                best = k;
+        /* M3: the ladder step whose SENSOR gain (log2) is nearest to the request, and the residual is computed from the gain
+         * the sensor applies, not from the GC4653 ladder value (the ladder steps are ~1.17x apart: the floor step was up
+         * to 15 % below a request, the nearest one is within half a step; above the request the ISP gain stays at 1x) */
+        {
+            uint32_t bd = 0xffffffffU;
+
+            best = 0;
+            for (k = 0; k <= maxidx && k < 26U; k++) {
+                uint32_t g = t40_ae_sensor_again_log2(k), d = g > v ? g - v : v - g;
+
+                if (d < bd) { bd = d; best = k; }
+            }
         }
         idx = best;
         again_raw = tisp_math_exp2(t40_ae_sensor_again_log2(idx), 16, 16);
