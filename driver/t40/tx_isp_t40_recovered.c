@@ -7667,12 +7667,7 @@ static uint32_t t40_antiflick_pending_a2;
 static bool t40_antiflick_pending_valid;
 static uint32_t t40_runmode_pending;             /* SetISPRunningMode (CID 0x8000071) received before the tuning context exists */
 static bool t40_runmode_pending_valid;
-static bool regtrace_t40_vendor_awb_process;   /* defined with its module_param further down */
-/* T40-VAWB: vendor AWB = mechanically translated OEM chain (tx_isp_t40_vawb.h / _gen.inc). Read at
- * tisp_awb_main_init (stream start); 0 = the old lift (fixed seed gains unless t40_vendor_awb_process=1). */
-static bool regtrace_t40_vawb = 1;
-module_param_named(t40_vawb, regtrace_t40_vawb, bool, 0644);
-MODULE_PARM_DESC(t40_vawb, "T40 AWB: 1 = vendor AWB (OEM chain, default), 0 = old lifted path");
+/* T40 AWB: the OEM chain as C (tx_isp_t40_awb_*.inc, tx_isp_t40_vawb.h).  Set when its init succeeded: it owns pstMainAwbOri. */
 static bool t40_vawb_live;   /* the translated chain owns pstMainAwbOri (set by its init) */
 static int t40_vawb_main_init(uint32_t a0, uint32_t a1);
 static void t40_vawb_cleanup(void);
@@ -85243,129 +85238,12 @@ static void *regtrace_awb_main_inter_alloc(void)
 /* WHOLE_DRIVER_CANDIDATE fn_00000000000311b4 origin=fragment_seed original=tisp_awb_main_init */
 int32_t tisp_awb_main_init(uint32_t a0, uint32_t a1)
 {
-    if (regtrace_t40_vawb) {
-        int vret = t40_vawb_main_init(a0, a1);
+    int vret = t40_vawb_main_init(a0, a1);
 
-        WRITE_ONCE(t40_vawb_live, vret == 0);
-        if (!vret)
-            return 0;
-        printk(KERN_WARNING "tx_isp_t40_recovered: vendor AWB init failed (%d), old path\n", vret);
-    } else {
-        WRITE_ONCE(t40_vawb_live, false);
-    }
-    /* OEM anchors the AWB pointer table at pstMainAwbOri (.bss+0x3f34), not isp_memopt */
-    uint32_t *ctx = pstMainAwbOri;
-    void *inter;
-    void *outer;
-    uint32_t nbuf;
-    uint8_t *skip_hw;
-    int32_t ret;
-
-    inter = regtrace_awb_main_inter_alloc();
-    if (!inter)
-        return -ENOMEM;
-
-    if (!stMainAwbOuter) {
-        outer = (void *)(uintptr_t)
-            ((uintptr_t (*)(uintptr_t))(uintptr_t)private_vmalloc)(4752);
-        if (!outer)
-            return -ENOMEM;
-        memset(outer, 0, 4752);
-        stMainAwbOuter = (uintptr_t)outer;
-    }
-
-    if (regtrace_awb_main_init_stage_limit == 1) {
-        printk(KERN_INFO "tx_isp_t40_recovered: awb-main-init stage-limit=1 inter=%p outer=%p\n",
-               inter, (void *)(uintptr_t)stMainAwbOuter);
-        return 0;
-    }
-
-    (void)tisp_awb_params_transmit((uintptr_t)ctx, 0);
-
-    if (regtrace_awb_main_init_stage_limit == 2) {
-        printk(KERN_INFO "tx_isp_t40_recovered: awb-main-init stage-limit=2 ctx49=0x%x inter=%p outer=%p\n",
-               ctx[49], inter, (void *)(uintptr_t)stMainAwbOuter);
-        return 0;
-    }
-
-    if (!ctx[49])
-        return -EFAULT;
-    *(uint16_t *)(uintptr_t)ctx[49] = (uint16_t)a0;
-    *(uint16_t *)((uintptr_t)ctx[49] + 2) = (uint16_t)a1;
-
-    nbuf = *(uint32_t *)((char *)&tparamsN);
-    if (!nbuf)
-        return -ENOENT;
-
-    ret = tisp_awb_params_refresh((int32_t *)ctx, 0,
-                                  (void *)(uintptr_t)(nbuf + 4288));
-    if (ret)
-        return ret;
-
-    if (regtrace_awb_main_init_stage_limit == 3) {
-        printk(KERN_INFO "tx_isp_t40_recovered: awb-main-init stage-limit=3 ctx49=0x%x inter=%p outer=%p\n",
-               ctx[49], inter, (void *)(uintptr_t)stMainAwbOuter);
-        return 0;
-    }
-
-    skip_hw = (uint8_t *)(uintptr_t)ctx[119];
-    if (regtrace_enable_awb_reg_writes && !skip_hw) {
-        printk(KERN_WARNING "tx_isp_t40_recovered: awb-main-init missing ctx[119] skip pointer; refusing reg writes\n");
-        return -EFAULT;
-    }
-
-    if (regtrace_enable_awb_reg_writes && !*skip_hw) {
-        printk(KERN_INFO "tx_isp_t40_recovered: awb-main-init pre-hw ctx=%p ctx0=0x%x ctx34=0x%x ctx117=0x%x ct=0x%x outer=%p inter=%p\n",
-               ctx, ctx[0], ctx[34], ctx[117],
-               ctx[117] ? *(uint32_t *)(uintptr_t)ctx[117] : 0,
-               (void *)(uintptr_t)stMainAwbOuter,
-               (void *)(uintptr_t)stMainAwbInter);
-        (void)tisp_awb_set_hardware_param((uintptr_t)ctx, 0);
-        printk(KERN_INFO "tx_isp_t40_recovered: awb-main-init hw-param done\n");
-        private_msleep(30);
-        if (regtrace_enable_awb_set_gain) {
-            (void)tisp_awb_set_gain((uintptr_t)ctx, 0);
-            printk(KERN_INFO "tx_isp_t40_recovered: awb-main-init set-gain done\n");
-        } else {
-            printk(KERN_INFO "tx_isp_t40_recovered: awb-main-init set-gain skipped by param\n");
-        }
-    } else if (!regtrace_enable_awb_reg_writes) {
-        printk(KERN_INFO "tx_isp_t40_recovered: awb-main-init skipping AWB hardware register writes by param\n");
-    } else {
-        printk(KERN_INFO "tx_isp_t40_recovered: awb-main-init skipping AWB hardware register writes by ctx flag\n");
-    }
-
-    if (regtrace_awb_main_init_stage_limit == 4) {
-        if (regtrace_enable_awb_grayworld) {
-            /*
-             * Gray-world mode: register only the repaired stats IRQ handler
-             * (no event-14 process callback), seed sane indoor gains so the
-             * pre-convergence frames aren't green, and arm the first stats
-             * capture.
-             */
-            regtrace_awb_grayworld_apply(regtrace_awb_grayworld_last_rgain,
-                                         regtrace_awb_grayworld_last_bgain);
-            (void)system_irq_func_set(3,
-                (int32_t)(uintptr_t)&tisp_awb_main_interrupt_static);
-            (void)system_reg_set_awb_trig(1, 0);
-            printk(KERN_INFO "tx_isp_t40_recovered: awb-main-init stage-limit=4 grayworld irq registered rgain=0x%x bgain=0x%x\n",
-                   regtrace_awb_grayworld_last_rgain,
-                   regtrace_awb_grayworld_last_bgain);
-            return 0;
-        }
-        printk(KERN_INFO "tx_isp_t40_recovered: awb-main-init stage-limit=4 before callback registration\n");
-        return 0;
-    }
-
-    (void)system_irq_func_set(3,
-                              (int32_t)(uintptr_t)&tisp_awb_main_interrupt_static);
-    (void)tisp_event_set_cb(0, 14,
-                            (int32_t)(uintptr_t)&tisp_awb_main_process);
-
-    printk(KERN_INFO "tx_isp_t40_recovered: awb-main-init repaired pi=0x%x blob=0x%x inter=%p outer=%p reg_writes=%u ret=0\n",
-           a0, a1, inter, (void *)(uintptr_t)stMainAwbOuter,
-           regtrace_enable_awb_reg_writes ? 1U : 0U);
-    return 0;
+    WRITE_ONCE(t40_vawb_live, vret == 0);
+    if (vret)
+        printk(KERN_WARNING "tx_isp_t40_recovered: AWB init failed (%d)\n", vret);
+    return vret;
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000031310 origin=fragment_seed original=tisp_awb_sec_init */
@@ -86350,40 +86228,11 @@ int32_t tisp_awb_main_interrupt_static(void)
     }
     addr = *(uint32_t *)(tispinfo + 36);
 
-    if (regtrace_enable_awb_grayworld && !READ_ONCE(t40_vawb_live)) {
-        regtrace_awb_grayworld_irqs++;
-        if (!READ_ONCE(regtrace_running_mode) &&
-            (regtrace_awb_grayworld_interval == 0 ||
-             (regtrace_awb_grayworld_irqs %
-              (regtrace_awb_grayworld_interval + 1)) == 0))
-            regtrace_awb_grayworld_update();
-        /* re-arm the stats engine for the next frame */
-        (void)system_reg_set_awb_trig(1, 0);
-        goto count;
-    }
-
-    if (addr && bank * size + size <= 0x20000U) {   /* stay inside the 128 KB AWB stats buffer (regtrace_tisp_dma_alloc index 1) */
+    if (READ_ONCE(t40_vawb_live) && addr && bank * size + size <= 0x20000U) {   /* stay inside the 128 KB AWB stats buffer (regtrace_tisp_dma_alloc index 1) */
         addr += bank * size;
         ((void (*)(uintptr_t, uintptr_t, uintptr_t, uintptr_t))(uintptr_t)
             private_dma_cache_sync)(0, addr, size, 0);
-        if (READ_ONCE(t40_vawb_live))
-            t40_vawb_get_statistics(addr);
-        else
-            (void)tisp_awb_get_statistics(addr, (uintptr_t)pstMainAwbOri);
-        {   /* T40-AWB-STATDIAG: raw HW stats words and the algorithm inputs ctx[5] (=a0+20) / ctx[4] (=a0+16) for the first IRQs */
-            static unsigned int nsd;
-            if (nsd++ < 6 && regtrace_t40_vendor_awb_process) {
-                const uint32_t *hw = (const uint32_t *)(uintptr_t)addr;
-                const uint32_t *p5 = (const uint32_t *)(uintptr_t)pstMainAwbOri[5];
-                const uint16_t *p4 = (const uint16_t *)(uintptr_t)pstMainAwbOri[4];
-                uint32_t sum = 0; unsigned int k;
-                for (k = 0; k < 256; k++) sum += hw[k];
-                printk(KERN_INFO "tx_isp_t40_recovered: AWBSTAT irq#%u hw[0..5]=%x %x %x %x %x %x sum256=%x | ctx5=%p [0..3]=%x %x %x %x | ctx4=%p [0..3]=%u %u %u %u\n",
-                       nsd, hw[0], hw[1], hw[2], hw[3], hw[4], hw[5], sum,
-                       p5, p5 ? p5[0] : 0, p5 ? p5[1] : 0, p5 ? p5[2] : 0, p5 ? p5[3] : 0,
-                       p4, p4 ? p4[0] : 0, p4 ? p4[1] : 0, p4 ? p4[2] : 0, p4 ? p4[3] : 0);
-            }
-        }
+        t40_vawb_get_statistics(addr);
         memset(ev, 0, sizeof(ev));
         ev[2] = 14;
         (void)tisp_event_push(0, (uintptr_t)ev);
@@ -86391,7 +86240,6 @@ int32_t tisp_awb_main_interrupt_static(void)
         printk(KERN_WARNING "tx_isp_t40_recovered: awb-irq skip: tispinfo stats vaddr unset (enable_tisp_main_init_tispinfo_dma?)\n");
     }
 
-count:
     ctr = (uint32_t *)(uintptr_t)pstMainAwbOri[102];
     if (ctr) {
         *ctr += 1;
@@ -86883,136 +86731,19 @@ int32_t tisp_awb_spec_calculate(uintptr_t a0, uint32_t a1)
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000033a7c origin=fragment_seed original=tisp_awb_main_process */
-static bool regtrace_t40_vendor_awb_process;   /* T40-AWB: run the lifted vendor AWB algorithm on event 14 (default off: the lift of tisp_awb_long_alogrithm/ct_detect still has ~20 unrestored div/mflo sites and hung the event thread in FBL15) */
-module_param_named(t40_vendor_awb_process, regtrace_t40_vendor_awb_process, bool, 0644);
-static uint32_t regtrace_t40_vendor_awb_process_skipped;
-t40_bringup_param_named(t40_vendor_awb_process_skipped, regtrace_t40_vendor_awb_process_skipped, uint, 0444);
 int64_t tisp_awb_main_process(void)
 {
-    if (READ_ONCE(t40_vawb_live)) {
-        /* manual WB / frozen (IMPISPWBAttr): keep the gains the control plane wrote */
-        if (READ_ONCE(regtrace_awb_control_mode) == 1U || READ_ONCE(regtrace_awb_control_frozen)) {
-            /* #65: a custom AWB library must keep being served while the gains are held (its own manual result sets this mode):
-             * the vendor completes awb_algo_comp after every AWB step, otherwise the library's get-handle ioctl sleeps for good */
-            if (READ_ONCE(awb_algo_enable[0]) == 1)
-                private_complete((uintptr_t)&awb_algo_comp);
-            return 0;
-        }
-        return t40_vawb_process();
-    }
-    regtrace_t40_awb_step = 99;   /* T40-AWB-STEP: entered */
-    if (!regtrace_t40_vendor_awb_process) {
-        regtrace_t40_vendor_awb_process_skipped++;
-    regtrace_t40_awb_step = 0;   /* T40-AWB-STEP done */
+    if (!READ_ONCE(t40_vawb_live))
+        return 0;
+    /* manual WB / frozen (IMPISPWBAttr): keep the gains the control plane wrote */
+    if (READ_ONCE(regtrace_awb_control_mode) == 1U || READ_ONCE(regtrace_awb_control_frozen)) {
+        /* #65: a custom AWB library must keep being served while the gains are held (its own manual result sets this mode):
+         * the vendor completes awb_algo_comp after every AWB step, otherwise the library's get-handle ioctl sleeps for good */
+        if (READ_ONCE(awb_algo_enable[0]) == 1)
+            private_complete((uintptr_t)&awb_algo_comp);
         return 0;
     }
-    /* OEM event ABI: 12 words, id at +8, eight payload words at +16. */
-    uint32_t event_10[12] = { 0 };
-    uint32_t local_44 = 0;
-    uint32_t local_48 = 0;
-    uint32_t local_4c = 0;
-    uint32_t *a0 = 0;
-    uint32_t *a1 = 0;
-    uint32_t *a2 = 0;
-    uint32_t ra = 0;
-    uintptr_t *s0 = 0;
-    uint32_t *s1 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
-
-    /*
-     * OEM tisp_awb_main_process passes a0=&pstMainAwbOri (.bss+0x3f34) and
-     * a1=&pstMainAwbCtDetectOri (.bss+0x3cac) to the AWB algorithm calls. The
-     * reconstruction failed to resolve the s0/s1 .bss base registers and
-     * defaulted them to &isp_memopt (a 4-byte module-param int), so
-     * tisp_awb_long_par_update dereferenced *(isp_memopt+12) past the int into
-     * adjacent .bss -> NULL pointer -> *(uint16)(NULL+2) paging-fault oops in
-     * the tisp-event-0 thread once the OEM AWB process actually ran. Restore
-     * the real structs (pstMainAwbOri[128]=0x200, pstMainAwbCtDetectOri[34]=0x88).
-     */
-    /* fragment 0: CallSetup */
-    { static unsigned int n; if (n++ < 2) printk(KERN_INFO "tx_isp_t40_recovered: AWBTAB pstMainAwbOri=%p [0]=%x [38]=%x [39]=%x [115]=%x [127]=%x outer=%x inter=%x CtDetectOri=%p [33]=%x\n", (void *)&pstMainAwbOri, pstMainAwbOri[0], pstMainAwbOri[38], pstMainAwbOri[39], pstMainAwbOri[115], pstMainAwbOri[127], (unsigned)stMainAwbOuter, (unsigned)stMainAwbInter, (void *)&pstMainAwbCtDetectOri, pstMainAwbCtDetectOri[33]); }   /* T40-AWBTAB-DIAG */
-    regtrace_t40_awb_step = 1;   /* T40-AWB-STEP */
-    if (regtrace_t40_awb_proc_stages & 1U) v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)tisp_awb_long_par_update)(&pstMainAwbOri, &pstMainAwbCtDetectOri, *(uint32_t *)((char *)((char *)&stMainAwbInter))); /* jalr target resolved by relocation */
-
-    /* fragment 1: CallSetup */
-    regtrace_t40_awb_step = 2;   /* T40-AWB-STEP */
-    if (regtrace_t40_awb_proc_stages & 2U) v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)tisp_awb_spec_calculate)(&pstMainAwbOri, 0); /* jalr target resolved by relocation */
-
-    /* fragment 2: CallSetup */
-    regtrace_t40_awb_step = 3;   /* T40-AWB-STEP */
-    if (regtrace_t40_awb_proc_stages & 4U) v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)tisp_awb_long_alogrithm)(&pstMainAwbOri, &pstMainAwbCtDetectOri, 0); /* jalr target resolved by relocation */
-
-    /* fragment 3: Arithmetic */
-    v0 = (uintptr_t *)&isp_memopt;
-
-    /* fragment 4: MemoryAccess */
-    v1 = awb_algo_enable[0]; /* #173: OEM tawb_custom_en[0], the array tisp_awb_algo_init writes */
-    v0 = 1;
-
-    /* fragment 5: Branch */
-    int _bc_v1_5 = v1 != v0;
-    v0 = (uintptr_t *)&tisp_awb_set_gain;
-    if (_bc_v1_5) { goto tisp_awb_main_process0x8c; }
-
-    /* fragment 6: CallSetup */
-    regtrace_t40_awb_step = 4;   /* T40-AWB-STEP */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)private_complete)(&awb_algo_comp); /* jalr target resolved by relocation */
-
-    /* fragment 7: CallSetup */
-    v0 = (uintptr_t *)&tisp_awb_set_gain;
-
-tisp_awb_main_process0x8c:
-    /* fragment 8: CallSetup */
-    regtrace_t40_awb_step = 5;   /* T40-AWB-STEP */
-    if (regtrace_t40_awb_proc_stages & 8U) v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)tisp_awb_set_gain)(&pstMainAwbOri, 0); /* jalr target resolved by relocation */
-
-    /* fragment 9: CallSetup */
-    /*
-     * OEM: lw v0,28(s0); lw v0,0(v0) with s0=&pstMainAwbOri -> the value is
-     * *(*(pstMainAwbOri+28)). The reconstruction mis-resolved pstMainAwbOri+28
-     * (.bss+0x3f50) to &vic_mdma_ch1_set_buff_index.
-     */
-    event_10[2] = 13;
-    event_10[5] = 0;
-    event_10[4] = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&pstMainAwbOri) + 28)) + 0);
-    regtrace_t40_awb_step = 6;   /* T40-AWB-STEP */
-    if (regtrace_t40_awb_proc_stages & 16U) v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)tisp_event_push)(0, (uintptr_t)event_10); /* jalr target resolved by relocation */
-
-    /* fragment 10: Arithmetic */
-    v1 = (int32_t *)&isp_memopt;
-
-    /* fragment 11: MemoryAccess */
-    v0 = *(uint8_t *)((char *)((char *)&awb_num));
-    v0 = (uintptr_t *)((uintptr_t)v0 + 1);   /* T40-PTRSTEP: byte add (OEM addiu) */
-    v0 = (uintptr_t)v0 & 255;
-    a0 = v0 < 101;
-
-    /* fragment 12: Branch */
-    if (a0 == 0) { goto tisp_awb_main_process0x104; }
-
-    /* fragment 13: MemoryAccess */
-    *(uint8_t *)((char *)((char *)&awb_num)) = v0;
-
-tisp_awb_main_process0xec:
-    /* fragment 14: Epilogue */
-    /* function epilogue: restore registers and return */
-
-    /* fragment 15: Arithmetic */
-    v0 = 0;
-
-    /* fragment 16: Epilogue */
-    /* function epilogue: restore registers and return */
-    regtrace_t40_awb_step = 0;   /* T40-AWB-STEP done */
-    return (int64_t)v0;
-
-tisp_awb_main_process0x104:
-    /* fragment 17: Branch */
-    awb_num = 0;   /* OEM 0x345a4: sb zero,awb_num (.bss+17364) - the lift stored to isp_memopt+16708, an unrelated .bss byte */
-    goto tisp_awb_main_process0xec;
-
-    regtrace_t40_awb_step = 0;   /* T40-AWB-STEP done */
-    return ((int64_t)(uint32_t)v1 << 32) | (uint32_t)v0;
+    return t40_vawb_process();
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000033b88 origin=fragment_seed original=tisp_awb_sec_process */
@@ -87427,147 +87158,13 @@ tisp_awb_param_array_set0x90:
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000034040 origin=fragment_seed original=tisp_awb_dn_params_refresh */
 uint32_t tisp_awb_dn_params_refresh(uint32_t a0)
 {
-    if (READ_ONCE(t40_vawb_live))
-        return t40_vawb_dn_params_refresh(a0);
-    uint32_t *local_10 = 0;
-    uint32_t local_14 = 0;
-    uint32_t *local_18 = 0;
-    uint32_t local_1c = 0;
-    uint32_t *a1 = 0;
-    uintptr_t *a2 = 0;
-    uint32_t ra = 0;
-    uintptr_t *s0 = 0;
-    uintptr_t *s1 = 0;
-    uint32_t *s2 = 0;
-    uint32_t t9 = 0;
-    uintptr_t *v0 = 0;
-    uint32_t *v1 = 0;
-
-    /* fragment 0: Prologue */
-    /* function prologue: stack frame and callee-saved register setup */
-
-    /* fragment 1: ConstantLoad */
-    s1 = ((char *)&pstMainAwbOri);
-
-    /* fragment 2: StackAccess */
-    local_10 = s0;
-    local_1c = ra;
-    local_18 = s2;
-    a2 = a0;
-
-    /* fragment 3: Branch */
-    s0 = s1;
-    if (a0 == 0) { goto tisp_awb_dn_params_refresh0x30; }
-
-    /* fragment 4: CallSetup */
-    s0 = (uintptr_t *)&pstSecAwbOri;
-    s0 = (uintptr_t *)((uintptr_t)s0 + 15668);   /* T40-PTRSTEP: byte add (OEM addiu) */
-
-tisp_awb_dn_params_refresh0x30:
-    /* fragment 5: CallSetup */
-    s2 = (uintptr_t)a2 & 255;
-    *(uint8_t *)((char *)(*(uint32_t *)((char *)(s0) + 400)) + 0) = 0;
-    *(uint8_t *)((char *)(*(uint32_t *)((char *)(s0) + 404)) + 0) = 1;
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)tisp_awb_params_transmit)((uintptr_t)s0, (uintptr_t)a2 & 255); /* jalr target resolved by relocation */
-
-    /* fragment 6: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)tisp_awb_params_refresh)(a0); /* jalr target resolved by relocation */
-
-    /* fragment 7: MemoryAccess */
-    v0 = *(uint32_t *)((char *)s1 + 476);
-    v0 = *(uint8_t *)((char *)v0 + 0);
-
-    /* fragment 8: Branch */
-    if (v0 != 0) { goto tisp_awb_dn_params_refresh0xb4; }
-
-    /* fragment 9: Epilogue */
-    /* function epilogue: restore registers and return */
-
-    /* fragment 10: Arithmetic */
-    a1 = s2;
-    a0 = s0;
-
-    /* fragment 11: Epilogue */
-    /* function epilogue: restore registers and return */
-
-    /* fragment 12: ConstantLoad */
-    t9 = 0x0;
-
-    /* fragment 13: Unknown */
-    /* unmatched fragment 13 (Unknown): no deterministic matcher for Unknown */
-    /* asm: 340ec:	03200408 	jr.hb	t9 */
-
-    /* fragment 14: Arithmetic */
-    /* unmatched fragment 14 (Arithmetic): arithmetic fragment did not contain supported register operations */
-    /* asm: 340f0:	27bd0020 	addiu	sp,sp,32 */
-
-tisp_awb_dn_params_refresh0xb4:
-    /* fragment 15: Epilogue */
-    /* function epilogue: restore registers and return */
-
-    return (uint32_t)v0;
+    return READ_ONCE(t40_vawb_live) ? t40_vawb_dn_params_refresh(a0) : 0;
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000034108 origin=fragment_seed original=tisp_awb_tgain_update */
 int32_t tisp_awb_tgain_update(uint32_t a0, uint32_t a1, uint32_t a2)
 {
-    if (READ_ONCE(t40_vawb_live))
-        return t40_vawb_tgain_update(a0, a1, a2);
-    uint32_t local_14 = 0;
-    uint32_t *local_18 = 0;
-    uint32_t local_1c = 0;
-    uint32_t ra = 0;
-    uintptr_t *s0 = 0;
-    uint32_t *s1 = 0;
-    uint32_t t9 = 0;
-    uintptr_t *v0 = 0;
-
-    /* fragment 0: Prologue */
-    /* function prologue: stack frame and callee-saved register setup */
-
-    /* fragment 1: Branch */
-    if (a0 != 0) { goto tisp_awb_tgain_update0x60; }
-
-    /* fragment 2: CallSetup */
-    s0 = (uintptr_t *)&pstMainAwbOri;
-    s0 = (uintptr_t *)((uintptr_t)s0 + 16180);   /* T40-PTRSTEP: byte add (OEM addiu) */
-
-tisp_awb_tgain_update0x1c:
-    /* fragment 3: CallSetup */
-    s1 = a0 & 255;
-    *(uint32_t *)((char *)(*(uint32_t *)((char *)(s0) + 468)) + 0) = a2;
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)tisp_awb_set_regional_threshold)((uintptr_t)s0, a0 & 255, a2); /* jalr target resolved by relocation */
-
-    /* fragment 4: Epilogue */
-    /* function epilogue: restore registers and return */
-
-    /* fragment 5: Arithmetic */
-    a1 = s1;
-    a0 = s0;
-
-    /* fragment 6: Epilogue */
-    /* function epilogue: restore registers and return */
-
-    /* fragment 7: ConstantLoad */
-    t9 = 0x0;
-
-    /* fragment 8: Unknown */
-    /* unmatched fragment 8 (Unknown): no deterministic matcher for Unknown */
-    /* asm: 34160:	03200408 	jr.hb	t9 */
-
-    /* fragment 9: Arithmetic */
-    /* unmatched fragment 9 (Arithmetic): arithmetic fragment did not contain supported register operations */
-    /* asm: 34164:	27bd0020 	addiu	sp,sp,32 */
-
-tisp_awb_tgain_update0x60:
-    /* fragment 10: Arithmetic */
-    s0 = (uintptr_t *)&pstSecAwbOri;
-
-    /* fragment 11: Branch */
-    s0 = (uintptr_t *)((char *)&pstSecAwbOri);
-    goto tisp_awb_tgain_update0x1c;
-
-    return 0;
+    return READ_ONCE(t40_vawb_live) ? t40_vawb_tgain_update(a0, a1, a2) : 0;
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000034174 origin=fragment_seed original=tisp_awb_get_global_statis */
@@ -88014,16 +87611,7 @@ void* tisp_awb_main_sel_en(uint32_t a0)
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000034aac origin=fragment_seed original=tisp_awb_main_ev_update */
 int32_t tisp_awb_main_ev_update(uint32_t a0)
 {
-    if (READ_ONCE(t40_vawb_live))
-        return t40_vawb_main_ev_update(a0);
-    /* Hand translation of OEM 0x354cc: *(pstMainAwbOri[116]) = ev >> 10; tisp_awb_ev_update_Ywgt(&pstMainAwbOri);
-     * tail call tisp_awb_set_lum_th_freq(&pstMainAwbOri, 0).  The lift wrote through video_input_cmd_buf+0x50 and
-     * passed &isp_memopt (MT65 Oops at +0x3c once event 8 ran). */
-    uint32_t *p = (uint32_t *)(uintptr_t)pstMainAwbOri[116];
-    if (!regtrace_is_kernel_ptr(p)) { static unsigned int n; if (n++ < 2) printk(KERN_INFO "tx_isp_t40_recovered: awb_main_ev_update: pstMainAwbOri[116]=%p not initialised\n", p); return 0; }
-    *p = (uint32_t)(uintptr_t)a0 >> 10;
-    tisp_awb_ev_update_Ywgt((void *)&pstMainAwbOri);
-    return (int32_t)tisp_awb_set_lum_th_freq((uintptr_t)&pstMainAwbOri, 0);
+    return READ_ONCE(t40_vawb_live) ? t40_vawb_main_ev_update(a0) : 0;
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000034af4 origin=fragment_seed original=tisp_awb_sec_face_pos */

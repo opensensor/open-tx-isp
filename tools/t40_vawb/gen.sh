@@ -1,5 +1,5 @@
 #!/bin/bash
-# Regenerate driver/t40/tx_isp_t40_vawb_gen.inc (vendor AWB, t40_vawb=1, plus the CT/EV colour
+# Regenerate driver/t40/tx_isp_t40_vawb_gen.inc (the CT/EV colour
 # chains, t40_ct_chains=1) and tests/t40_vct/vct_init_gen.inc (host-only OEM CCM/BCSH/LSC init).
 #   gen.sh <OEM tx-isp-t40.ko with symbols (Eufy T8416 firmware)> <mipsel-linux-objdump>
 # The reference module is not part of this repository.
