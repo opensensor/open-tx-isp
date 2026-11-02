@@ -61958,7 +61958,15 @@ tx_isp_unlocked_ioctl0x23d0:
     /* fragment 624: CallSetup */
     s0 = (uintptr_t)s0 << 2;
     s0 = (uintptr_t *)((uintptr_t)s0 + (uintptr_t)&ae_info_mine);
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)private_kfree)(*(uint32_t *)((char *)(s0) + 0)); /* jalr target resolved by relocation */
+    /* #65: free once. A second close ioctl (libimp issues one more after a worker that did not leave on the cancel) freed the
+     * same info block twice (slub: Object already free); take the pointer, clear the slot, kfree(NULL) is a no-op. */
+    {
+        uint32_t info_ptr = *(uint32_t *)((char *)(s0) + 0);
+
+        *(uint32_t *)((char *)(s0) + 0) = 0;
+        if (info_ptr)
+            v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)private_kfree)(info_ptr); /* jalr target resolved by relocation */
+    }
 
     /* fragment 625: Branch */
     s0 = 0;
@@ -62106,6 +62114,9 @@ tx_isp_unlocked_ioctl0x2734:
     /* function epilogue: restore registers and return */
 
     /* fragment 660: CallSetup */
+    /* #65: like the AE close above: the channel is word 1 of the 8-byte user argument (the lift used 0), range checked */
+    s0 = (uintptr_t *)(uintptr_t)(*__p_24);
+    if ((uintptr_t)s0 > 1) { s0 = (uintptr_t *)(uintptr_t)-EINVAL; goto tx_isp_unlocked_ioctl0x834; }
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)tisp_awb_algo_deinit)(s0); /* jalr target resolved by relocation */
 
     /* fragment 661: CallSetup */
@@ -62114,7 +62125,15 @@ tx_isp_unlocked_ioctl0x2734:
     /* fragment 662: CallSetup */
     s0 = (uintptr_t)s0 << 2;
     s0 = (uintptr_t *)((uintptr_t)s0 + (uintptr_t)&awb_info_mine);
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)private_kfree)(*(uint32_t *)((char *)(s0) + 0)); /* jalr target resolved by relocation */
+    /* #65: free once. A second close ioctl (libimp issues one more after a worker that did not leave on the cancel) freed the
+     * same info block twice (slub: Object already free); take the pointer, clear the slot, kfree(NULL) is a no-op. */
+    {
+        uint32_t info_ptr = *(uint32_t *)((char *)(s0) + 0);
+
+        *(uint32_t *)((char *)(s0) + 0) = 0;
+        if (info_ptr)
+            v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)private_kfree)(info_ptr); /* jalr target resolved by relocation */
+    }
 
     /* fragment 663: Branch */
     s0 = 0;
