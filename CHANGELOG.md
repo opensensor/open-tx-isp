@@ -4,10 +4,10 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
-## 2026-11-02, T23 lifted-code triage against the vendor T23 module (Lu-Fi/openimp#189 pass 5, host and compile only, NOT yet camera-tested)
+## 2026-11-02, T23 lifted-code triage against the vendor T23 module (Lu-Fi/openimp#189 pass 5, host and compile, camera-tested on T23 for the default path only)
 
 - Compared with the vendor ISVP-T23-1.3.0 `tx-isp-t23.ko` (local Ghidra project, nothing vendor copied): `ispcore_core_ops_ioctl` is now a hand-written event walk (`tx_isp_t23_core_ioctl.h`, host test `tx_isp_t23_core_ioctl_test`; the lifted version had no third argument and walked the sub-device table with typed-pointer strides), `jz_isp_ccm` (lost `movz` and skip branch, index/offset registers retyped) and `tisp_ae_mean_update` (offset registers retyped). The latter two run only with the module parameters `source_core_start=0`.
-- Scanner: the indented closing brace of `printf` made every prototype below it a reachability root; fixed, so `open` now means reachable. The 22 reachable T23 entries were triaged (3 fixed, 19 dead because the hand-written layer replaces them or nothing dispatches them), unlinked entries are `dead`. Open: camera proof of the three fixes (see the #189 comment).
+- Scanner: the indented closing brace of `printf` made every prototype below it a reachability root; fixed, so `open` now means reachable. The 22 reachable T23 entries were triaged (3 fixed, 19 dead because the hand-written layer replaces them or nothing dispatches them), unlinked entries are `dead`. Camera (T23, default image, full OTA): apitest all areas PASS 420 / FAIL 11 (previous image, same session: 399 / 32; no function worse), 6/6 module reload cycles, RTSP, stream and day/night cycles clean, oops 0. `jz_isp_ccm` / `tisp_ae_mean_update` are reached only with the bring-up parameter `source_core_start=0`; that mode resets the camera within seconds on this tree and on its parent alike, so those two fixes have no camera-verified effect.
 
 ## 2026-11-01, T40 lost tail calls / lost ALU in lifted code, camera proof (Lu-Fi/openimp#189 pass 4, camera-tested on T40; T41 proc open left as a shim)
 
