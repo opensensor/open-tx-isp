@@ -119,8 +119,15 @@ section anchors on.
   event and API bodies). They are still referenced at run time: the OEM event
   callbacks are registered unconditionally in `tisp_stream_on`, the CCM/CSC
   API keeps the documented `t40_csc_unsafe` path, gamma Set/Get runs the
-  lifted bodies (hit by apitest), and the old ADR/AWB fallbacks sit behind
-  documented switches. They go with the C rewrite of their chains.
+  lifted bodies (hit by apitest), and the old ADR fallback sits behind a
+  documented switch. They go with the C rewrite of their chains.
+- AWB (#85, 2026-11-02): the whole vendor AWB chain is plain C
+  (`tx_isp_t40_awb_*.inc`) and the `t40_vawb=0` old lifted path is gone;
+  `tx_isp_t40_vawb_gen.inc` 12370 -> 3798 lines (only the CT/EV colour chains
+  are still mechanically translated). Against next 838f2b84 (`build_local.sh`
+  build): `.text` 584,612 -> 479,680, stripped ko 1,015,228 -> 901,488, xz
+  -9e 287,380 -> 261,044, `.bss` -176 bytes (tele-gain state, removed
+  parameter variables), `.data` unchanged.
 
 ## Log prefixes (T23, T41)
 
