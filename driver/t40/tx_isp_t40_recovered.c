@@ -11068,12 +11068,11 @@ static const unsigned char __attribute__((aligned(4))) stMainCcmInterOri_lit[228
     0x00, 0x00, 0x00, 0x00
 };
 
+#include "tx_isp_t40_ccm_conv.h"
+
 static int32_t tisp_ccm_params_transmit_lit(uint32_t a0_in, uint32_t a1_in, uint32_t a2_in);
 static int32_t tisp_ccm_params_refresh_lit(uint32_t a0_in, uint32_t a1_in, uint32_t a2_in);
-static int32_t tisp_ccm_reg2par_lit(uint32_t a0_in, uint32_t a1_in);
-static int32_t tisp_ccm_parameter_convert_lit(uint32_t a0_in);
 static uint32_t tisp_ct_ccm_interpolation_lit(uint32_t a0_in);
-static int32_t tisp_ccm_para2reg_lit(uint32_t a0_in, uint32_t a1_in);
 static int32_t tisp_ccm_lut_parameter_lit(uint32_t a0_in, uint32_t a1_in, uint32_t a2_in);
 static int32_t tisp_ccm_ev_ct_update_lit(uint32_t a0_in, uint32_t a1_in);
 static int32_t cm_control_lit(uint32_t a0_in, uint32_t a1_in, uint32_t a2_in);
@@ -11092,123 +11091,13 @@ static int32_t cm_control_lit(uint32_t a0_in, uint32_t a1_in, uint32_t a2_in);
 #define REGCALL_tisp_ccm_lut_parameter(a, b, c, d) \
     ((uint32_t)tisp_ccm_lut_parameter_lit((a), (b), (c)))
 #define REGCALL_tisp_ccm_para2reg(a, b, c, d) \
-    ((uint32_t)tisp_ccm_para2reg_lit((a), (b)))
+    t40_ccm_para2reg((uint32_t *)(uintptr_t)(a), (const uint32_t *)(uintptr_t)(b))
 #define REGCALL_tisp_ccm_parameter_convert(a, b, c, d) \
-    ((uint32_t)tisp_ccm_parameter_convert_lit((a)))
+    t40_ccm_parameter_convert((uintptr_t)(a))
 #define REGCALL_tisp_ccm_reg2par(a, b, c, d) \
-    ((uint32_t)tisp_ccm_reg2par_lit((a), (b)))
+    t40_ccm_reg2par((uint32_t *)(uintptr_t)(a), (const uint32_t *)(uintptr_t)(b))
 #define REGCALL_tisp_ct_ccm_interpolation(a, b, c, d) \
     ((uint32_t)tisp_ct_ccm_interpolation_lit((a)))
-
-static int32_t tisp_ccm_reg2par_lit(uint32_t a0_in, uint32_t a1_in)
-{
-    uint32_t r_v0 = 0, r_v1 = 0;
-    uint32_t r_t0 = 0, r_t1 = 0, r_t2 = 0, r_t3 = 0, r_t4 = 0, r_t5 = 0;
-    uint32_t r_t6 = 0, r_t7 = 0, r_t8 = 0, r_t9 = 0;
-    uint32_t r_s0 = 0, r_s1 = 0, r_s2 = 0, r_s3 = 0, r_s4 = 0, r_s5 = 0;
-    uint32_t r_s6 = 0, r_s7 = 0, r_s8 = 0, r_ra = 0, r_at = 0;
-    uint32_t mips_lo = 0, mips_hi = 0, mips_cond = 0;
-    uint32_t r_a0 = a0_in;
-    uint32_t r_a1 = a1_in;
-    uint32_t r_a2 = 0;
-    uint32_t r_a3 = 0;
-    uint8_t mips_stack[448] __attribute__((aligned(8)));
-    uint32_t r_sp = (uint32_t)(uintptr_t)(mips_stack + 384);
-
-    (void)r_at; (void)r_ra; (void)r_t8; (void)mips_lo; (void)mips_hi; (void)r_sp;
-    (void)mips_cond;
-    r_v1 = r_a1 + 0x24U;
-L_6f918:
-    r_v0 = *(uint32_t *)(uintptr_t)(r_a1 + 0);
-    r_a2 = (r_v0 < (uint32_t)8192) ? 1U : 0U;
-    mips_cond = (r_a2 != 0) ? 1U : 0U;
-    /* nop */
-    if (mips_cond) goto L_6f92c;
-    r_v0 = r_v0 + -0x4000U;
-L_6f92c:
-    r_a1 = r_a1 + 0x4U;
-    *(uint32_t *)(uintptr_t)(r_a0 + 0) = (uint32_t)r_v0;
-    mips_cond = (r_a1 != r_v1) ? 1U : 0U;
-    r_a0 = r_a0 + 0x4U;
-    if (mips_cond) goto L_6f918;
-    /* nop */
-    goto fn_exit;
-fn_exit:
-    return (int32_t)r_v0;
-}
-
-static int32_t tisp_ccm_para2reg_lit(uint32_t a0_in, uint32_t a1_in)
-{
-    uint32_t r_v0 = 0, r_v1 = 0;
-    uint32_t r_t0 = 0, r_t1 = 0, r_t2 = 0, r_t3 = 0, r_t4 = 0, r_t5 = 0;
-    uint32_t r_t6 = 0, r_t7 = 0, r_t8 = 0, r_t9 = 0;
-    uint32_t r_s0 = 0, r_s1 = 0, r_s2 = 0, r_s3 = 0, r_s4 = 0, r_s5 = 0;
-    uint32_t r_s6 = 0, r_s7 = 0, r_s8 = 0, r_ra = 0, r_at = 0;
-    uint32_t mips_lo = 0, mips_hi = 0, mips_cond = 0;
-    uint32_t r_a0 = a0_in;
-    uint32_t r_a1 = a1_in;
-    uint32_t r_a2 = 0;
-    uint32_t r_a3 = 0;
-    uint8_t mips_stack[448] __attribute__((aligned(8)));
-    uint32_t r_sp = (uint32_t)(uintptr_t)(mips_stack + 384);
-
-    (void)r_at; (void)r_ra; (void)r_t8; (void)mips_lo; (void)mips_hi; (void)r_sp;
-    (void)mips_cond;
-    r_v1 = r_a1 + 0x24U;
-L_6fbf0:
-    r_v0 = *(uint32_t *)(uintptr_t)(r_a1 + 0);
-    mips_cond = ((int32_t)r_v0 >= 0) ? 1U : 0U;
-    /* nop */
-    if (mips_cond) goto L_6fc00;
-    r_v0 = r_v0 & 0x3fffU;
-L_6fc00:
-    r_a1 = r_a1 + 0x4U;
-    *(uint32_t *)(uintptr_t)(r_a0 + 0) = (uint32_t)r_v0;
-    mips_cond = (r_a1 != r_v1) ? 1U : 0U;
-    r_a0 = r_a0 + 0x4U;
-    if (mips_cond) goto L_6fbf0;
-    /* nop */
-    goto fn_exit;
-fn_exit:
-    return (int32_t)r_v0;
-}
-
-static int32_t tisp_ccm_parameter_convert_lit(uint32_t a0_in)
-{
-    uint32_t r_v0 = 0, r_v1 = 0;
-    uint32_t r_t0 = 0, r_t1 = 0, r_t2 = 0, r_t3 = 0, r_t4 = 0, r_t5 = 0;
-    uint32_t r_t6 = 0, r_t7 = 0, r_t8 = 0, r_t9 = 0;
-    uint32_t r_s0 = 0, r_s1 = 0, r_s2 = 0, r_s3 = 0, r_s4 = 0, r_s5 = 0;
-    uint32_t r_s6 = 0, r_s7 = 0, r_s8 = 0, r_ra = 0, r_at = 0;
-    uint32_t mips_lo = 0, mips_hi = 0, mips_cond = 0;
-    uint32_t r_a0 = a0_in;
-    uint32_t r_a1 = 0;
-    uint32_t r_a2 = 0;
-    uint32_t r_a3 = 0;
-    uint8_t mips_stack[448] __attribute__((aligned(8)));
-    uint32_t r_sp = (uint32_t)(uintptr_t)(mips_stack + 384);
-
-    (void)r_at; (void)r_ra; (void)r_t8; (void)mips_lo; (void)mips_hi; (void)r_sp;
-    (void)mips_cond;
-    r_sp = r_sp + -0x18U;
-    *(uint32_t *)(uintptr_t)(r_sp + 20) = (uint32_t)r_ra;
-    r_a3 = r_a0;
-    r_a1 = *(uint32_t *)(uintptr_t)(r_a0 + 80);
-    r_t9 = (uint32_t)(uintptr_t)&tisp_ccm_reg2par; /* HI16 tisp_ccm_reg2par */
-    r_t9 = (uint32_t)(uintptr_t)&tisp_ccm_reg2par;
-    r_a0 = *(uint32_t *)(uintptr_t)(r_a0 + 48);
-    r_v0 = (uint32_t)REGCALL_tisp_ccm_reg2par(r_a0, r_a1, r_a2, r_a3);
-    r_a1 = *(uint32_t *)(uintptr_t)(r_a3 + 84);
-    r_a0 = *(uint32_t *)(uintptr_t)(r_a3 + 52);
-    r_v0 = (uint32_t)REGCALL_tisp_ccm_reg2par(r_a0, r_a1, r_a2, r_a3);
-    r_a1 = *(uint32_t *)(uintptr_t)(r_a3 + 88);
-    r_ra = *(uint32_t *)(uintptr_t)(r_sp + 20);
-    r_a0 = *(uint32_t *)(uintptr_t)(r_a3 + 56);
-    r_sp = r_sp + 0x18U;
-    r_v0 = (uint32_t)REGCALL_tisp_ccm_reg2par(r_a0, r_a1, r_a2, r_a3); goto fn_exit;
-fn_exit:
-    return (int32_t)r_v0;
-}
 
 static uint32_t tisp_ct_ccm_interpolation_lit(uint32_t a0_in)
 {

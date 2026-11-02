@@ -4,6 +4,11 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-02 (evening), T40 CCM leaf converters in C (Lu-Fi/openimp#85, Unicorn-checked against the vendor module)
+
+- `tisp_ccm_reg2par`, `tisp_ccm_para2reg` and `tisp_ccm_parameter_convert` are plain C (`tx_isp_t40_ccm_conv.h`); the three literal mips2c bodies are gone. No behaviour change.
+- Proof: `tools/ko_emu/diff_ccm_conv.py` runs the OEM instructions of the vendor `tx-isp-t40.ko` in Unicorn against the header on edge-weighted random matrices (3000 calls each, 0 mismatches; four one-character mutations are caught); `tests/t40_ccm_conv_host.sh` is part of `make check` (SKIP without `T40_OEM_KO`). `.text` -64 bytes, `.data`/`.bss` identical.
+
 ## 2026-11-02 (later), T40 AWB init / EV / per-frame chain in C, last translated AWB function gone, `t40_vawb=0` fallback removed (Lu-Fi/openimp#85 step D, host bit-exact, Unicorn-checked, camera-tested on T40)
 
 - The remaining AWB functions are plain C: `tx_isp_t40_awb_init.inc` (`tisp_awb_params_transmit`, `params_refresh`, `set_hardware_param`, `dn_params_refresh`, `main_ev_update`, `ev_update_Ywgt`) and `tx_isp_t40_awb_main.inc` (`tisp_awb_long_par_update`, `spec_calculate`, `main_process`). The mechanically translated AWB code is gone (`tx_isp_t40_vawb_gen.inc` 5948 -> 3798 lines, only the CT/EV colour chains remain). The 128-entry context pointer table is two offset tables, the parameter block copies are a table. The dual-sensor tele branch of the OEM process is not taken with one sensor and is gone.
