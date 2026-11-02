@@ -9,6 +9,9 @@
 # LA_REF=<git ref>: tisp_awb_long_alogrithm C (tx_isp_t40_awb_long.inc) vs the translated OEM code of
 # that ref (the last one that generated it, e.g. 316259cb) on every call; FUZZL=seed varies its state.
 # (Not together with FUZZ: that one re-randomises the ct_detect inputs on each of the two calls.)
+# GR_REF=<git ref>: the C gain / threshold chain (tx_isp_t40_awb_gain.inc: set_gain, set_regional_threshold, set_lum_th_freq,
+# tgain_update, simple_intp, set_awb_trig, AE mean; tx_isp_t40_awb_stats.inc: get_statistics, sat_weight) vs the translated OEM code of that ref (the last one that generated it,
+# e.g. 308cfe4b) on every call, register writes + state + faults compared; FUZZP=seed [FUZZN=calls] runs the fuzz loop.
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd); D=${T40_DRV_DIR:-$HERE/../driver/t40}; W=$(mktemp -d); trap 'rm -rf $W' EXIT
 sed -n '/^#include "tx_isp_t40_vawb_gen.inc"/q;p' $D/tx_isp_t40_vawb.h > $W/top.h
@@ -31,6 +34,20 @@ if [ -n "$LA_REF" ]; then
 	sed $SED $W/laref_fns.inc >> $W/laref.inc
 	grep -q "^u64 noinline vlref_tisp_awb_long_alogrithm" $W/laref.inc || { echo "LA_REF $LA_REF has no translated long_alogrithm"; exit 2; }
 fi
+if [ -n "$GR_REF" ]; then
+	# reference: the translated OEM gain / threshold closure of $GR_REF, renamed vgr_*
+	FNS="tisp_awb_set_gain tisp_awb_gain_reg fix_point_mult2_32 tisp_awb_calc_tele_gain tisp_awb_calc_div_sqrt_distance
+	     tisp_awb_set_regional_threshold tisp_awb_set_lum_th_freq tisp_awb_tgain_update tisp_simple_intp_int16
+	     tisp_ae_main_mean_update tisp_ae_sec_mean_update system_reg_set_awb_trig tisp_awb_get_statistics tisp_awb_sat_weight"
+	git -C $HERE/.. show $GR_REF:driver/t40/tx_isp_t40_vawb_gen.inc > $W/grref_all.inc
+	: > $W/grref.inc
+	for f in $FNS; do echo "u64 vgr_$f(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);" >> $W/grref.inc; done
+	for f in $FNS; do awk -v f="$f" '!p && $0 ~ "^u64 noinline vawb_" f "\\(" {p=1} p {print} p && /^}/ {exit}' $W/grref_all.inc; done > $W/grref_fns.inc
+	SED=; for f in $FNS; do SED="$SED -e s/\\bvawb_$f\\b/vgr_$f/g"; done
+	sed $SED $W/grref_fns.inc >> $W/grref.inc
+	grep -q "^u64 noinline vgr_tisp_awb_set_gain" $W/grref.inc || { echo "GR_REF $GR_REF has no translated set_gain"; exit 2; }
+	XDEFG="-DGR_REF_INC=\"$W/grref.inc\""
+fi
 # the C fix-point helpers of the driver (used by tx_isp_t40_awb_ctd.inc)
 for f in fix_point_div_32 fix_point_div fix_point_mult2_32 fix_point_mult3_32; do
 	awk -v f="$f" '!p && $0 ~ "^int(32|64)_t " f "\\(" && $0 !~ /;$/ {p=1} p {print} p && /^}/ {exit}' $D/tx_isp_t40_recovered.c
@@ -51,6 +68,7 @@ if [ -n "$CTD_REF" ]; then
 	XDEF="$XDEF -DCTD_REF_INC=\"$W/ref.inc\""
 fi
 sed -e 's/^static const u8 vawb_rodata\(\[[0-9]*\]\) __aligned(8)/static u8 vawb_rodata\1 __aligned(8) VD/' ${GEN:-$D/tx_isp_t40_vawb_gen.inc} > $W/gen.inc
+XDEF="$XDEF $XDEFG"
 ${VCC:-gcc} ${VOPT:--O1} ${XCFLAGS:--g0} -falign-functions=16 ${VPIE--no-pie -fno-pie} -w -fno-strict-aliasing ${VLD--Wl,--section-start=.vdata=0x30000000} \
 	-DVAWB_TOP="\"$W/top.h\"" -DVAWB_INC="\"$W/gen.inc\"" -DCFIX_INC="\"$W/cfix.inc\"" \
 	-DCTD_INC="\"$D/tx_isp_t40_awb_ctd.inc\"" -I$D $XDEF $HERE/t40_vawb/vawb_host.c -o $W/vawb_host

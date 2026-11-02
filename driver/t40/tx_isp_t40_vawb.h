@@ -42,7 +42,6 @@ static u32 *const vawb_tawb_custom_en_host __attribute__((unused)) = vawb_tawb_c
 static u32 vawb_awb_num;
 static u32 vawb_peter_test_count[2];
 static u32 vawb_converge_tele_gain = 0x00010001U;              /* OEM .data 0x2bf14 */
-static u32 vawb_wide_tele_awb_gain[3] = { 0x04000400U, 0x04000400U, 0x04000400U }; /* .data 0x2c0c8 */
 /* awb_wide_tele_para: OEM main_init copies awb_wide_tele_para_t8416 (module
  * param a_awb_params default "T8416", .data 0x2c038).  [0] = enable, [1] = the
  * channel that gets the tele gain, [6] = 0 -> event 13 takes the CT of the
@@ -99,7 +98,7 @@ static noinline bool vawb_st_wild(u32 a, u32 pc)
 	    a - (u32)(uintptr_t)vawb_tawb_custom_en < 8U || a - (u32)(uintptr_t)&vawb_awb_num < 4U ||
 	    a - (u32)(uintptr_t)vawb_peter_test_count < 8U || a - (u32)(uintptr_t)&vawb_converge_tele_gain < 4U ||
 	    a - (u32)(uintptr_t)vawb_wide_tele_para < sizeof(vawb_wide_tele_para) ||
-	    a - (u32)(uintptr_t)vawb_wide_tele_awb_gain < 12U || a - (u32)(uintptr_t)vawb_argarea < sizeof(vawb_argarea))
+	    a - (u32)(uintptr_t)vawb_argarea < sizeof(vawb_argarea))
 		return false;
 	if (vawb_wild++ < 12)
 		printk(KERN_WARNING "t40: vawb wild store %#x pc=%#x (skipped)\n", a, pc);
@@ -303,7 +302,9 @@ static u64 vawb_s_tisp_awb_ct_detect(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
 	return (u64)tisp_awb_ct_detect(a0, a1, a2);
 }
 
+#include "tx_isp_t40_awb_stats.inc"
 #include "tx_isp_t40_awb_long.inc"
+#include "tx_isp_t40_awb_gain.inc"
 #include "tx_isp_t40_vawb_gen.inc"
 
 
@@ -447,7 +448,7 @@ static int t40_vawb_main_init(uint32_t a0, uint32_t a1)
 	if (vawb_ok(ctx[119], 0) && !*(uint8_t *)(uintptr_t)ctx[119]) {
 		VAWB_CTL(vawb_tisp_awb_set_hardware_param, (u32)(uintptr_t)ctx, 0, 0);
 		VAWB_STEP(4);
-		VAWB_CTL(vawb_tisp_awb_set_gain, (u32)(uintptr_t)ctx, 0, 0);
+		VAWB_CTL(vawb_s_tisp_awb_set_gain, (u32)(uintptr_t)ctx, 0, 0);
 	}
 	VAWB_STEP(5);
 	(void)system_irq_func_set(3, (int32_t)(uintptr_t)&tisp_awb_main_interrupt_static);
@@ -467,7 +468,7 @@ static void t40_vawb_get_statistics(uintptr_t addr)
 		printk(KERN_WARNING "t40: vawb stats irq %u\n", vawb_irqs);
 	VAWB_TOP();
 	vawb_last_addr = (u32)addr;
-	vawb_tisp_awb_get_statistics((u32)addr, (u32)(uintptr_t)pstMainAwbOri, 0, 0, VAWB_CSP);
+	vawb_s_tisp_awb_get_statistics((u32)addr, (u32)(uintptr_t)pstMainAwbOri, 0, 0, VAWB_CSP);
 }
 
 /* state dump for host replay (tests/t40_vawb_host.sh): echo 1 > t40_vawb_dump_req, then read
@@ -649,6 +650,6 @@ static int32_t t40_vawb_main_ev_update(uint32_t a0)
 static int32_t t40_vawb_tgain_update(uint32_t a0, uint32_t a1, uint32_t a2)
 {
 	VAWB_TOP();
-	return (int32_t)vawb_tisp_awb_tgain_update(a0, a1, a2, 0, VAWB_CSP);
+	return (int32_t)vawb_s_tisp_awb_tgain_update(a0, a1, a2, 0, VAWB_CSP);
 }
 #endif
