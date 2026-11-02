@@ -768,6 +768,13 @@ ISP digital gain is 1x there. `SetModule_Ratio` defog -> literal `tisp_s_defog_r
   `tests/t40_mdns_chain_host.sh` (`make -C tests check`, SKIP without `T40_OEM_KO` + `T40_CC`): the OEM instructions of the vendor module vs the C built for
   mipsel in Unicorn (tools/ko_emu/diff_mdns_chain.py), identical memory, register writes, ramps and last gain, plus one-token mutations that must be detected.
 
+## YSP (luma sharpen) chain in C, YDNS checked (2026-11-02, #85)
+- `tx_isp_t40_ysp_chain.h` replaces the literal mips2c `tisp_ysp_wdr_en` (105-entry pointer table, two offset sets), `tisp_ysp_intp` (96 table-driven interpolations),
+  `tisp_ysp_noref_reg_cfg`, `tisp_ysp_ref_reg_cfg` (eight-value ramps with end value caps, pair clamps, packed lane words) and `tisp_ysp_reg_trig`; the entry
+  points in `tx_isp_t40_recovered.c` are thin wrappers. Blocks keep the OEM layout (par 3432, comb 420, intp 146 bytes). Host check:
+  `tests/t40_ysp_chain_host.sh` (tools/ko_emu/diff_ysp_chain.py), OEM instructions vs the C in Unicorn. The hand-written YDNS functions have the same kind of check
+  (`tests/t40_ydns_host.sh`, tools/ko_emu/diff_ydns.py); it found the logical-vs-arithmetic gain shift and the no-op `tisp_ydns_intp_reg_refresh`.
+
 ## DMSC day/night (2026-10-24, `t40_dmsc_follow`)
 - Default profile 1: DMSC (0xa000..0xa27c) uses the OEM chain (plain C since 2026-11-02, `tx_isp_t40_dmsc_chain.h`, checked against the OEM instructions in Unicorn) at night only (active bank, total gain incl. ISP
   digital gain, re-interpolated per frame). The day block (static table + OEM init) is saved on the switch and written
