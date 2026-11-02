@@ -16,6 +16,7 @@
 #include "tx_isp_t23_subdev.h"
 #include "tx_isp_t23_crumbs.h"
 #include "tx_isp_t23_scratch.h"
+#include "tx_isp_t23_core_ioctl.h"
 #include "tx_isp_t23_msca_geom.h"
 #define TX_LS_STORAGE
 #include "include/tx_isp_t23_load_stats.h"
@@ -19123,7 +19124,7 @@ int32_t ispcore_link_setup(void);
 int32_t isp_pre_frame_dequeue(void);
 int32_t isp_ch1_frame_dequeue_delay(void);
 static int32_t ispcore_frame_channel_dqbuf(void *arg1, int32_t arg2);
-int32_t ispcore_core_ops_ioctl(uintptr_t a0, uint32_t a1);
+int32_t ispcore_core_ops_ioctl(uintptr_t a0, uint32_t a1, uintptr_t a2);
 static int32_t isp_fw_process(void);
 static int32_t ispcore_frame_channel_streamoff(int32_t *arg1);
 static int32_t dump_isp_info_open(uint32_t a0, uint32_t a1);
@@ -55741,8 +55742,9 @@ int32_t jz_isp_ccm(void)
     uint32_t local_60 = 0;
     uint32_t local_64 = 0;
     uint32_t *a0 = 0;
-    uintptr_t *a1 = 0;
-    uintptr_t *a2 = 0;
+    /* a1 / a2 are byte offsets / loop indices of the EV table walk, not typed pointers (#189: `a2 + 1` stepped 4, `a1 + 4` stepped 16) */
+    uintptr_t a1 = 0;
+    uintptr_t a2 = 0;
     uint32_t *a3 = 0;
     uint32_t ra = 0;
     uintptr_t *s0 = 0;
@@ -55780,6 +55782,8 @@ int32_t jz_isp_ccm(void)
     v1 = a1 < a0;
     v0 = (uintptr_t)(uintptr_t)a0 - (uintptr_t)a1;
     a1 = (uintptr_t)a1 - (uintptr_t)a0;
+    /* stock `movz v0, a1, v1` (lost by the lift): |ev - ccm_ev|, not a wrapped difference (#189) */
+    if (v1 == 0) { v0 = a1; }
     v1 = *(uint32_t *)((char *)s1 + 8);
     v0 = v1 < v0;
 
@@ -55928,14 +55932,19 @@ jz_isp_ccm0x148:
     v1 = a0 < a1;
     v0 = (uintptr_t)(uintptr_t)a1 - (uintptr_t)a0;
     a0 = (uintptr_t)a0 - (uintptr_t)a1;
+    /* stock `movz v0, a0, v1` and the skip branch (both lost by the lift): the CT interpolation only runs
+     * when ccm_real == 1 or |ct_now - ct_old| > thr (#189) */
+    if (v1 == 0) { v0 = a0; }
     v1 = *(uint32_t *)((char *)s1 + 16);
     v0 = v1 < v0;
     a1 = *(uint32_t *)((char *)s1 + 20);
+    if (v0 == 0) { goto jz_isp_ccm0x19c; }
 
 jz_isp_ccm0x190:
     /* fragment 35: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)tiziano_ct_ccm_interpolation)(*(uint32_t *)((char *)((char *)&ccm_ct_value_now)), *(uint32_t *)((char *)(s1) + 16)); /* jalr target resolved by relocation */
 
+jz_isp_ccm0x19c:
     /* fragment 36: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)cm_control)(&ccm_parameter_itp, *(uint32_t *)((char *)(s1) + 20), &local_34); /* jalr target resolved by relocation */
 
@@ -79376,12 +79385,13 @@ tisp_ae1_expt0x53c:
 int32_t tisp_ae_mean_update(uintptr_t a0, uintptr_t a1)
 {
     uint32_t *a2 = 0;
-    uintptr_t *a3 = 0;
+    /* a3 / t3 / t4 are a count, a byte offset and a byte address (#189: `t3 + v1` scaled v1 by 4, `t4 + 4` stepped 16) */
+    uintptr_t a3 = 0;
     uintptr_t *t0 = 0;
     uint32_t t1 = 0;
     uint32_t t2 = 0;
-    uint32_t *t3 = 0;
-    uintptr_t *t4 = 0;
+    uintptr_t t3 = 0;
+    uintptr_t t4 = 0;
     uint32_t t5 = 0;
     uint32_t *t6 = 0;
     uintptr_t *v0 = 0;
@@ -97826,263 +97836,19 @@ static int32_t ispcore_frame_channel_dqbuf(void *arg1, int32_t arg2)
 	return 0;
 }
 
-/* WHOLE_DRIVER_CANDIDATE fn_00000000000685d8 origin=fragment_seed original=ispcore_core_ops_ioctl */
-int32_t ispcore_core_ops_ioctl(uintptr_t a0, uint32_t a1)
+/*
+ * ispcore_core_ops_ioctl: vendor-equivalent event walk (tx_isp_t23_core_ioctl.h, host test
+ * tests/tx_isp_t23_core_ioctl_test.c).  The lifted fragment version had two arguments (the third was
+ * a zero local) and walked the sub-device table with typed-pointer strides (#189).
+ */
+int32_t ispcore_core_ops_ioctl(uintptr_t a0, uint32_t a1, uintptr_t a2)
 {
-    uint32_t *local_14 = 0;
-    uint32_t *local_18 = 0;
-    uint32_t local_1c = 0;
-    uint32_t local_20 = 0;
-    uint32_t local_24 = 0;
-    uint32_t local_28 = 0;
-    uint32_t local_2c = 0;
-    uint32_t local_30 = 0;
-    uint32_t local_34 = 0;
-    uintptr_t *a2 = 0;
-    uint32_t *a3 = 0;
-    uint32_t ra = 0;
-    uint32_t *s0 = 0;
-    uint32_t *s1 = 0;
-    uintptr_t *s2 = 0;
-    uint32_t *s3 = 0;
-    uintptr_t *s4 = 0;
-    uint32_t *s5 = 0;
-    uint32_t *s6 = 0;
-    uint32_t s7 = 0;
-    uintptr_t *v0 = 0;
+    int own_failed;
+    int ret = t23_core_ioctl((void *)a0, a1, (void *)a2, &own_failed);
 
-    /* fragment 0: Prologue */
-    /* function prologue: stack frame and callee-saved register setup */
-
-    /* fragment 1: Arithmetic */
-    v0 = 16777216;
-
-    /* fragment 2: StackAccess */
-    local_24 = s4;
-    local_20 = s3;
-    local_18 = s1;
-    local_34 = ra;
-    local_30 = s7;
-    local_2c = s6;
-    local_28 = s5;
-    local_1c = s2;
-    local_14 = s0;
-    s1 = a0;
-    s3 = a1;
-
-    /* fragment 3: Branch */
-    s4 = a2;
-    if (a1 == v0) { goto ispcore_core_ops_ioctl0x78; }
-
-    /* fragment 4: Arithmetic */
-    v0 = v0 + 1;
-
-    /* fragment 5: Unknown */
-    /* unmatched fragment 5 (Unknown): no deterministic matcher for Unknown */
-    /* asm: 68618:	54a2001f 	bnel	a1,v0,68698 <ispcore_core_ops_ioctl+0xc0> */
-
-    /* fragment 6: Arithmetic */
-    s0 = 0;
-
-    /* fragment 7: Unknown */
-    /* unmatched fragment 7 (Unknown): no deterministic matcher for Unknown */
-    /* asm: 68620:	50800023 	beqzl	a0,686b0 <ispcore_core_ops_ioctl+0xd8> */
-
-    /* fragment 8: Arithmetic */
-    s0 = -19;
-
-    /* fragment 9: MemoryAccess */
-    v0 = *(uint32_t *)((char *)a0 + 196);
-    v0 = *(uint32_t *)((char *)v0 + 12);
-
-    /* fragment 10: Unknown */
-    /* unmatched fragment 10 (Unknown): no deterministic matcher for Unknown */
-    /* asm: 68630:	54400003 	bnezl	v0,68640 <ispcore_core_ops_ioctl+0x68> */
-
-    /* fragment 11: MemoryAccess */
-    v0 = *(uint32_t *)((char *)v0 + 4);
-
-    /* fragment 12: Branch */
-    s0 = -515;
-    goto ispcore_core_ops_ioctl0xc0;
-
-    /* fragment 13: Branch */
-    a1 = a2;
-    if (v0 != 0) { goto ispcore_core_ops_ioctl0xa0; }
-
-    /* fragment 14: Branch */
-    s0 = -515;
-    goto ispcore_core_ops_ioctl0xc0;
-
-ispcore_core_ops_ioctl0x78:
-    /* fragment 15: Branch */
-    s0 = -19;
-    if (a0 == 0) { goto ispcore_core_ops_ioctl0xd8; }
-
-    /* fragment 16: MemoryAccess */
-    v0 = *(uint32_t *)((char *)a0 + 196);
-    v0 = *(uint32_t *)((char *)v0 + 0);
-
-    /* fragment 17: Branch */
-    s0 = -515;
-    if (v0 == 0) { goto ispcore_core_ops_ioctl0xc0; }
-
-    /* fragment 18: MemoryAccess */
-    v0 = *(uint32_t *)((char *)v0 + 4);
-
-    /* fragment 19: Branch */
-    s5 = 16777216;
-    if (v0 == 0) { goto ispcore_core_ops_ioctl0xc4; }
-
-    /* fragment 20: CallSetup */
-    a1 = *(uint32_t *)((char *)a2 + 0);
-
-ispcore_core_ops_ioctl0xa0:
-    /* fragment 21: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)isp_printf)(a0); /* jalr target resolved by relocation */
-
-    /* fragment 22: Branch */
-    s0 = v0;
-    if (v0 == 0) { goto ispcore_core_ops_ioctl0xc0; }
-
-    /* fragment 23: Arithmetic */
-    v0 = -515;
-
-    /* fragment 24: Branch */
-    a2 = 0;
-    if (s0 != v0) { goto ispcore_core_ops_ioctl0xdc; }
-
-    /* fragment 25: Arithmetic */
-    s0 = -515;
-
-ispcore_core_ops_ioctl0xc0:
-    /* fragment 26: Arithmetic */
-    s5 = 16777216;
-
-ispcore_core_ops_ioctl0xc4:
-    /* fragment 27: Arithmetic */
-    s2 = s1 + 56;
-    s6 = -515;
-    s1 = s1 + 120;
-
-    /* fragment 28: Branch */
-    s7 = s5 + 1;
-    goto ispcore_core_ops_ioctl0x104;
-
-ispcore_core_ops_ioctl0xd8:
-    /* fragment 29: CallSetup */
-    a2 = 0;
-
-ispcore_core_ops_ioctl0xdc:
-    /* fragment 30: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t, uintptr_t))(uintptr_t)isp_printf)(2, &LC0, a2 + 6604, 1223); /* jalr target resolved by relocation */
-
-    /* fragment 31: Branch */
-    goto ispcore_core_ops_ioctl0x1a4;
-
-ispcore_core_ops_ioctl0x104:
-    /* fragment 32: MemoryAccess */
-    a0 = *(uint32_t *)((char *)s2 + 0);
-
-    /* fragment 33: Unknown */
-    /* unmatched fragment 33 (Unknown): no deterministic matcher for Unknown */
-    /* asm: 686e0:	50800020 	beqzl	a0,68764 <ispcore_core_ops_ioctl+0x18c> */
-
-    /* fragment 34: Arithmetic */
-    s2 = s2 + 4;
-
-    /* fragment 35: Unknown */
-    /* unmatched fragment 35 (Unknown): no deterministic matcher for Unknown */
-    /* asm: 686e8:	5275000d 	beql	s3,s5,68720 <ispcore_core_ops_ioctl+0x148> */
-
-    /* fragment 36: MemoryAccess */
-    v0 = *(uint32_t *)((char *)a0 + 196);
-
-    /* fragment 37: Branch */
-    if (s3 != s7) { goto ispcore_core_ops_ioctl0x170; }
-
-    /* fragment 38: MemoryAccess */
-    v0 = *(uint32_t *)((char *)a0 + 196);
-    v0 = *(uint32_t *)((char *)v0 + 12);
-
-    /* fragment 39: Unknown */
-    /* unmatched fragment 39 (Unknown): no deterministic matcher for Unknown */
-    /* asm: 68700:	54400003 	bnezl	v0,68710 <ispcore_core_ops_ioctl+0x138> */
-
-    /* fragment 40: MemoryAccess */
-    v0 = *(uint32_t *)((char *)v0 + 4);
-
-    /* fragment 41: Branch */
-    s0 = -515;
-    goto ispcore_core_ops_ioctl0x188;
-
-    /* fragment 42: Branch */
-    a1 = s4;
-    if (v0 != 0) { goto ispcore_core_ops_ioctl0x164; }
-
-    /* fragment 43: Branch */
-    s0 = -515;
-    goto ispcore_core_ops_ioctl0x188;
-
-    /* fragment 44: MemoryAccess */
-    v0 = *(uint32_t *)((char *)v0 + 0);
-
-    /* fragment 45: Branch */
-    s0 = -515;
-    if (v0 == 0) { goto ispcore_core_ops_ioctl0x188; }
-
-    /* fragment 46: CallSetup */
-    v0 = *(uint32_t *)((char *)v0 + 4);
-    s2 = s2 + 4;
-    a1 = *(uint32_t *)((char *)s4 + 0);
-
-ispcore_core_ops_ioctl0x164:
-    /* fragment 47: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)isp_printf)(a0); /* jalr target resolved by relocation */
-
-    /* fragment 48: Arithmetic */
-    s0 = v0;
-
-ispcore_core_ops_ioctl0x170:
-    /* fragment 49: Unknown */
-    /* unmatched fragment 49 (Unknown): no deterministic matcher for Unknown */
-    /* asm: 68748:	52000006 	beqzl	s0,68764 <ispcore_core_ops_ioctl+0x18c> */
-
-    /* fragment 50: Arithmetic */
-    s2 = s2 + 4;
-
-    /* fragment 51: Unknown */
-    /* unmatched fragment 51 (Unknown): no deterministic matcher for Unknown */
-    /* asm: 68750:	52160003 	beql	s0,s6,68760 <ispcore_core_ops_ioctl+0x188> */
-
-    /* fragment 52: Arithmetic */
-    s0 = -515;
-
-    /* fragment 53: Branch */
-    goto ispcore_core_ops_ioctl0x1a4;
-
-ispcore_core_ops_ioctl0x188:
-    /* fragment 54: Arithmetic */
-    s2 = s2 + 4;
-
-    /* fragment 55: Unknown */
-    /* unmatched fragment 55 (Unknown): no deterministic matcher for Unknown */
-    /* asm: 68764:	5651ffde 	bnel	s2,s1,686e0 <ispcore_core_ops_ioctl+0x108> */
-
-    /* fragment 56: MemoryAccess */
-    a0 = *(uint32_t *)((char *)s2 + 0);
-    v0 = -515;
-    v0 = (uintptr_t)s0 ^ (uintptr_t)v0;
-    ra = local_34;
-
-ispcore_core_ops_ioctl0x1a4:
-    /* fragment 57: Arithmetic */
-    v0 = s0;
-
-    /* fragment 58: Epilogue */
-    /* function epilogue: restore registers and return */
-
-    return 0;
+    if (own_failed)
+        ((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t, uintptr_t))isp_printf)((uintptr_t)(2), (uintptr_t)("%s %d Failed to ioctl!\n"), (uintptr_t)("ispcore_core_ops_ioctl"), (uintptr_t)(1223));
+    return ret;
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_00000000000687a8 origin=fragment_seed original=isp_fw_process */

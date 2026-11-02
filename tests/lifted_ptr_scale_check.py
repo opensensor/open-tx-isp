@@ -260,7 +260,10 @@ def live_set(rec, others):
         if m and i+1<len(lines) and lines[i+1]=='{':
             j=i+1
             while j<len(lines) and lines[j]!='}': j+=1
-            funcs[m.group(1)]=("\n".join(lines[i:j+1]), lines[i-1].startswith('/* WHOLE_DRIVER_CANDIDATE'))
+            # a function whose closing brace is indented (t23 printf) swallows the following col-0 prototypes / EXPORT_SYMBOL
+            # lines up to the next `}`: they are declarations, not calls, so they must not make their targets reachable
+            body=[l for k,l in enumerate(lines[i:j+1]) if k==0 or not (re.match(r'^[A-Za-z_][\w \*]*\(.*\);\s*$',l) or l.startswith('EXPORT_SYMBOL'))]
+            funcs[m.group(1)]=("\n".join(body), lines[i-1].startswith('/* WHOLE_DRIVER_CANDIDATE'))
             span.append((i,j)); i=j
         i+=1
     inf=set()
