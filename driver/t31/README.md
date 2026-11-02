@@ -284,3 +284,7 @@ The modules can be loaded, unloaded and exercised without a camera in the `ingen
 ## Module parameter `isp_memopt`
 
 `isp_memopt` selects the smaller ISP memory layout (the MDNS allocation is `0x2f8740`, which fits `rmem=22M`). Default `1`; `isp_memopt=0` loads the larger OEM layout. Device-tested with `1` on the T31L and the T31X (sc4336p).
+
+## Module parameter `isp_bypass_graph`
+
+`isp_bypass_graph=1` enables the vendor ISP bypass graph (OEM `IMP_ISP_Tuning_SetISPBypass(DISABLE)`: link config 1, the ISP core is skipped and frame channel 0 delivers the sensor's raw frame from the VIC MDMA as `RG12`, 1920x1080 = 4147200 bytes on the sc2336 board). Default `0`: the link ioctls only store the configuration index, nothing else changes. Use order (as the OEM sample): create the channel, SetISPBypass(DISABLE), set the RAW format, enable the channel; after SetISPBypass(ENABLE) the raw channel delivers no more frames and has to be recreated (OEM behaviour). Device-tested on the T31L (sc2336); nothing consumes it yet.
