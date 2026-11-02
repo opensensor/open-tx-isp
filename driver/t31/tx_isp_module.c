@@ -2642,7 +2642,15 @@ static void frame_channel_bootstrap_slot(struct frame_channel_device *fcd,
     }
 
     fcd->channel_num = channel_num;
-    fcd->miscdev.minor = minor;
+    /* The minor belongs to the misc core once the node is registered.
+     * frame_channel_open() also reaches here for the FS node
+     * /dev/framechanN, whose minor differs from this channel's own
+     * "framechanN" node; writing it into a registered miscdev made
+     * misc_deregister() destroy the wrong device at rmmod and leave
+     * /sys/class/misc/framechanN behind (next insmod: misc_register
+     * -EEXIST, the vendor module oopses in its error path). */
+    if (!fcd->miscdev.this_device)
+        fcd->miscdev.minor = minor;
 }
 
 /* Make every lock and wait object of a channel valid; module init, before
