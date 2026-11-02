@@ -21295,83 +21295,51 @@ block_834:
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000000c08 origin=fragment_seed original=ispvic_frame_channel_qbuf */
 int ispvic_frame_channel_qbuf(void *arg1, int arg2, int **arg3)
 {
-    uint32_t *local_10 = 0;
-    uintptr_t *s0 = 0;
-    uintptr_t *s1 = 0;
-    uintptr_t s2 = (uintptr_t)arg2;
-    uintptr_t *v0 = 0;
-    uintptr_t v1 = 0;
-    uintptr_t a0 = (uintptr_t)arg1;
-    uintptr_t *a1 = 0;
-    uintptr_t *a2 = 0;
-    uintptr_t *a3 = 0;
+    /* #189: OEM layout (vendor 1.3.0 compared): sd + 0xd4 = vic device; byte offsets (the lift typed them as
+     * uintptr_t * and scaled them x4); free list head +0x1f8, bank head +0x200, bank-busy list +0x208,
+     * dma register array +0xb8, busy counter +0x21c.  The lift lost the second pop_buffer_fifo (bank node). */
+    uintptr_t sd = (uintptr_t)arg1;
+    uintptr_t vic = 0;
+    uintptr_t node = (uintptr_t)arg2;
+    uintptr_t qlist, banks, buf, bank, tail;
+    unsigned long flags = 0;
+    const char *msg;
 
-    s0 = 0;
-    if (a0 == 0) { goto ispvic_frame_channel_qbuf_0x2c; }
+    if (sd != 0 && sd < 0xfffff001UL)
+        vic = *(uintptr_t *)(sd + 0xd4);
+    qlist = vic + 0x1f8;
+    banks = vic + 0x200;
 
-    v0 = a0 < (uintptr_t *)(-4095);
-    if (v0 != 0) {
-        s0 = *(uintptr_t *)((char *)a0 + 212);
+    __private_spin_lock_irqsave((spinlock_t *)qlist, &flags);
+
+    /* list_add_tail(node, qlist) */
+    tail = *(uintptr_t *)(vic + 0x1fc);
+    *(uintptr_t *)(vic + 0x1fc) = node;
+    *(uintptr_t *)(node + 0) = qlist;
+    *(uintptr_t *)(node + 4) = tail;
+    *(uintptr_t *)(tail + 0) = node;
+
+    if (*(uintptr_t *)banks == banks) {
+        msg = "bank no free\n";
+    } else if (*(uintptr_t *)qlist == qlist) {
+        msg = "qbuffer null\n";
+    } else {
+        buf = (uintptr_t)pop_buffer_fifo((int32_t *)qlist);
+        bank = (uintptr_t)pop_buffer_fifo((int32_t *)banks);
+        *(uintptr_t *)(bank + 8) = *(uintptr_t *)(buf + 8);
+        *(uintptr_t *)(*(uintptr_t *)(vic + 0xb8) + (*(uint32_t *)(bank + 16) + 0xc6) * 4) = *(uintptr_t *)(buf + 8);
+        /* list_add_tail(bank, busy list at +0x208) */
+        tail = *(uintptr_t *)(vic + 0x20c);
+        *(uintptr_t *)(vic + 0x20c) = bank;
+        *(uintptr_t *)(bank + 0) = vic + 0x208;
+        *(uintptr_t *)(bank + 4) = tail;
+        *(uintptr_t *)(tail + 0) = bank;
+        *(uint32_t *)(vic + 0x21c) += 1;
+        msg = 0;
     }
-
-ispvic_frame_channel_qbuf_0x2c:
-    s1 = s0 + 504;
-    local_10 = 0;
-    __private_spin_lock_irqsave(s0 + 504, (uintptr_t)&local_10);
-
-    v0 = *(uintptr_t *)((char *)s0 + 508);
-    *(uintptr_t *)((char *)s0 + 508) = s2;
-    *(uintptr_t *)((char *)s2 + 0) = s1;
-    *(uintptr_t *)((char *)s2 + 4) = v0;
-    *(uintptr_t *)((char *)v0 + 0) = s2;
-
-    v0 = *(uintptr_t *)((char *)s0 + 512);
-    a2 = s0 + 512;
-
-    if (a2 == v0) {
-        a1 = (uint32_t *)"bank no free\n";
-        goto ispvic_frame_channel_qbuf_0xe8;
-    }
-
-    v0 = *(uintptr_t *)((char *)s0 + 504);
-    if (s1 == v0) {
-        a1 = (uint32_t *)"qbuffer null\n";
-        goto ispvic_frame_channel_qbuf_0xe8;
-    }
-
-    a0 = s1;
-    a1 = (uint32_t *)pop_buffer_fifo;
-    a0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))a1)(a0);
-    a3 = a0;
-    a1 = *(void (**)(uintptr_t))((char *)a3 + 8);
-    v1 = *(uintptr_t *)((char *)a0 + 16);
-    *(uintptr_t *)((char *)a0 + 8) = a1;
-    a0 = *(uintptr_t *)((char *)s0 + 184);
-    v1 = v1 + 198;
-    v1 = v1 << 2;
-    v1 = a0 + v1;
-    *(uintptr_t *)((char *)v1 + 0) = a1;
-
-    v1 = *(uintptr_t *)((char *)s0 + 524);
-    a0 = s0 + 520;
-    *(uintptr_t *)((char *)s0 + 524) = a3;
-    *(uintptr_t *)((char *)a3 + 0) = a0;
-    *(uintptr_t *)((char *)a3 + 4) = v1;
-    *(uintptr_t *)((char *)v1 + 0) = a3;
-
-    v0 = *(uintptr_t *)((char *)s0 + 540);
-    v0 = v0 + 1;
-    *(uintptr_t *)((char *)s0 + 540) = v0;
-    goto ispvic_frame_channel_qbuf_0x100;
-
-ispvic_frame_channel_qbuf_0xe8:
-    ((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))isp_printf)((uintptr_t)(0), (uintptr_t)((const char *)a1), (uintptr_t)(s0 + 512));
-
-ispvic_frame_channel_qbuf_0x100:
-    a1 = local_10;
-    private_spin_unlock_irqrestore((spinlock_t *)0, 0);
-
-    v0 = 0;
+    if (msg)
+        isp_printf(0, msg);
+    private_spin_unlock_irqrestore((spinlock_t *)qlist, flags);
     return 0;
 }
 
@@ -21796,61 +21764,19 @@ tisp_vic_mmap0x1cc:
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000001398 origin=fragment_seed original=tx_isp_vic_activate_subdev */
 int tx_isp_vic_activate_subdev(struct tx_isp_subdev *sd)
 {
-    uintptr_t ra;
-    uintptr_t *s0;
-    uintptr_t *s1;
-    uint32_t *v0;
-    uint32_t v1;
+    /* #189: OEM (vendor 1.3.0 compared): vic device = *(sd + 0xd4), mutex at +0x134, state at +0x12c
+     * (1 -> 2).  The lift typed the mutex as s0 + 0x134 words and stored its own register frame behind itself. */
+    uintptr_t vic;
 
-    v0 = -22;
-    if (sd == 0) { goto out_err; }
-
-    v1 = (uintptr_t)sd < 0xfffff001;
-    if (v1 == 0) { goto out_err; }
-
-    ra = (uintptr_t)&ra;
-    s1 = (int32_t *)&s1;
-    s0 = (uintptr_t *)&s0;
-
-    ra = (uintptr_t)__builtin_return_address(0);
-    s1 = 0;
-    s0 = 0;
-
-    s0 = *(uintptr_t *)((char *)sd + 0xd4);
-
-    v0 = -22;
-    if (s0 == 0) { goto out_err; }
-
-    v1 = (uintptr_t)s0 < 0xfffff001;
-    if (v1 == 0) { goto out_err; }
-
-    s1 = s0 + 0x134;
-    private_mutex_lock((struct mutex *)s1);
-
-    v1 = *(uint32_t *)((char *)s0 + 0x12c);
-    v0 = 1;
-    if (v1 != v0) { goto skip_store; }
-
-    v0 = 2;
-    *(uint32_t *)((char *)s0 + 0x12c) = v0;
-
-skip_store:
-    private_mutex_unlock((struct mutex *)s1);
-
-    v0 = 0;
-    goto out_restore;
-
-out_err:
-    /* v0 already set to -22 */
-
-out_restore:
-    ra = *(uintptr_t *)((char *)&ra + 28);
-    s1 = *(uintptr_t *)((char *)&s1 + 24);
-    s0 = *(uintptr_t *)((char *)&s0 + 20);
-    *(uintptr_t *)((char *)&ra + 28) = ra;
-    *(uintptr_t *)((char *)&s1 + 24) = s1;
-    *(uintptr_t *)((char *)&s0 + 20) = s0;
-
+    if (sd == 0 || (uintptr_t)sd >= 0xfffff001UL)
+        return -22;
+    vic = *(uintptr_t *)((char *)sd + 0xd4);
+    if (vic == 0 || vic >= 0xfffff001UL)
+        return -22;
+    private_mutex_lock((struct mutex *)(vic + 0x134));
+    if (*(uint32_t *)(vic + 0x12c) == 1)
+        *(uint32_t *)(vic + 0x12c) = 2;
+    private_mutex_unlock((struct mutex *)(vic + 0x134));
     return 0;
 }
 
@@ -24285,76 +24211,44 @@ int64_t isp_vic_interrupt_service_routine(uintptr_t a0, uint32_t a1)
 /* WHOLE_DRIVER_CANDIDATE fn_00000000000038dc origin=fragment_seed original=tx_isp_subdev_pipo */
 int64_t tx_isp_subdev_pipo(uintptr_t a0, uintptr_t a1)
 {
-    uintptr_t *s0 = 0;
-    uintptr_t *s1 = 0;
-    uintptr_t *s2 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t v1 = 0;
-    uint32_t *i = 0;
-    uintptr_t *p = 0;
-    uintptr_t *old = 0;
-    uint32_t raw_pipe;
+    /* #189: OEM (vendor 1.3.0 compared): byte offsets into the vic device (*(a0 + 0xd4)); the pipe ops table
+     * pointer is stored in the module global raw_pipe (a local copy shadowed it); lists at +0x1f8 / +0x200 /
+     * +0x208, 5 bank nodes of 28 bytes from +0x16c, dma register array +0xb8. */
+    uintptr_t vic = 0, qlist, banks, busy, node, tail;
+    uint32_t i;
 
-    if (a0 == 0) {
-        goto skip_load;
-    }
-    if ((uint32_t)a0 < 0xfffff001) {
-        s0 = *(uintptr_t *)((char *)a0 + 0xd4);
-    } else {
-        s0 = 0;
-    }
-
-skip_load:
-    *(uint32_t *)((char *)s0 + 0x210) = 1;
+    if (a0 != 0 && a0 < 0xfffff001UL)
+        vic = *(uintptr_t *)(a0 + 0xd4);
+    *(uint32_t *)(vic + 0x210) = 1;
     raw_pipe = a1;
-
     if (a1 == 0) {
-        *(uint32_t *)((char *)s0 + 0x218) = 0;
-        goto done;
+        *(uint32_t *)(vic + 0x218) = 0;
+        return 0;
     }
-
-    s1 = a0;
-    s2 = s0 + 0x200;
-    *(uint32_t *)((char *)s0 + 0x208) = s0 + 0x208;
-    *(uint32_t *)((char *)s0 + 0x20c) = s0 + 0x208;
-    *(uint32_t *)((char *)s0 + 0x1f8) = s0 + 0x1f8;
-    *(uint32_t *)((char *)s0 + 0x1fc) = s0 + 0x1f8;
-    *(uint32_t *)((char *)s0 + 0x200) = s2;
-    *(uint32_t *)((char *)s0 + 0x204) = s2;
-    private_spin_lock_init(s0 + 0x1f8);
-    *(uint32_t *)((char *)s0 + 0x204) = s2;
-
-    v1 = raw_pipe;
-    v0 = (uintptr_t *)&ispvic_frame_channel_qbuf;
-    *(uint32_t *)((char *)v1 + 0) = v0;
-
-    v0 = raw_pipe;
-    v1 = (uintptr_t)&ispvic_frame_channel_clearbuf;
-    *(uint32_t *)((char *)v0 + 8) = v1;
-
-    v1 = (uintptr_t)&ispvic_frame_channel_s_stream;
-    *(uint32_t *)((char *)v0 + 12) = v1;
-    *(uint32_t *)((char *)v0 + 16) = s1;
-
-    i = 0;
-    p = (uintptr_t *)(s0 + 0x16c);
-
-    do {
-        *(uint32_t *)((char *)p + 16) = i;
-        old = *(uintptr_t **)((char *)s0 + 0x204);
-        *(uintptr_t **)((char *)s0 + 0x204) = p;
-        *(uintptr_t **)(p + 1) = old;
-        *(uintptr_t **)p = s0 + 0x200;
-        *(uintptr_t **)old = p;
-        v0 = ((uintptr_t)i + 0xc6) << 2;
-        i = (void *)(uintptr_t)((uintptr_t)i + (1));
-        (void)0;
-        p = (uintptr_t *)(p + 7);
-    } while (i != 5);
-
-    *(uint32_t *)((char *)s0 + 0x218) = 1;
-
-done:
+    qlist = vic + 0x1f8;
+    banks = vic + 0x200;
+    busy = vic + 0x208;
+    *(uintptr_t *)(vic + 0x208) = busy;
+    *(uintptr_t *)(vic + 0x20c) = busy;
+    *(uintptr_t *)(vic + 0x1f8) = qlist;
+    *(uintptr_t *)(vic + 0x1fc) = qlist;
+    *(uintptr_t *)(vic + 0x200) = banks;
+    *(uintptr_t *)(vic + 0x204) = banks;
+    private_spin_lock_init((spinlock_t *)qlist);
+    *(uintptr_t *)(raw_pipe + 0) = (uintptr_t)&ispvic_frame_channel_qbuf;
+    *(uintptr_t *)(raw_pipe + 8) = (uintptr_t)&ispvic_frame_channel_clearbuf;
+    *(uintptr_t *)(raw_pipe + 12) = (uintptr_t)&ispvic_frame_channel_s_stream;
+    *(uintptr_t *)(raw_pipe + 16) = a0;
+    for (i = 0, node = vic + 0x16c; i != 5; i++, node += 28) {
+        *(uint32_t *)(node + 16) = i;
+        tail = *(uintptr_t *)(vic + 0x204);
+        *(uintptr_t *)(vic + 0x204) = node;
+        *(uintptr_t *)(node + 4) = tail;
+        *(uintptr_t *)(node + 0) = banks;
+        *(uintptr_t *)(tail + 0) = node;
+        *(uint32_t *)(*(uintptr_t *)(vic + 0xb8) + (i + 0xc6) * 4) = 0;
+    }
+    *(uint32_t *)(vic + 0x218) = 1;
     return 0;
 }
 
