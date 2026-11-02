@@ -128,6 +128,16 @@ section anchors on.
   build): `.text` 584,612 -> 479,680, stripped ko 1,015,228 -> 901,488, xz
   -9e 287,380 -> 261,044, `.bss` -176 bytes (tele-gain state, removed
   parameter variables), `.data` unchanged.
+- CCM chain, CLM and ISR literals (#85, 2026-11-02): the CCM chain
+  (`tx_isp_t40_ccm_chain.h`) is plain C, checked against the OEM instructions
+  in Unicorn (`tests/t40_ccm_chain_host.sh`). The ISR literal
+  (`tx_isp_t40_isr_lit.inc`, parameters `enable_oem_isr_lit`,
+  `oem_isr_lit_cut`, `oem_isr_lit_count`) and the mips2c CLM chain with its two
+  default tables (parameters `clm_stage_limit`, `clm_defer_trig`) are removed:
+  0 instructions of them ran in a QEMU instruction trace over the full apitest
+  plus the streamer workload, and both were only reachable through those
+  default-off parameters. Same build: `.text` 483,576 -> 475,332, `.data`
+  97,408 -> 90,864, `.bss` 730,336 -> 730,000.
 
 ## Log prefixes (T23, T41)
 

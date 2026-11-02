@@ -69,12 +69,11 @@ static u64 vawb_x_private_spin_unlock_irqrestore(u32 a0, u32 a1, u32 a2, u32 a3,
 		spin_unlock_irqrestore(&lsc_lit_banks[bank].lock, (unsigned long)a1);
 	return 0;
 }
-/* OEM tisp_clm_ct_update(bank, _, ct, a1, fnum lo/hi on the stack) -> the driver's literal CLM (VAE_STOP) */
+/* OEM tisp_clm_ct_update: the driver's CLM is the one-shot start-up in tx_isp_t40_clm_lit.inc (no CT follow-up state), so nothing to do here */
 static u64 vawb_s_tisp_clm_ct_update(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
 {
-	if (!regtrace_enable_clm || !stMainClmOuter_lit)
-		return 0;
-	return (u32)tisp_clm_ct_update_lit(a0, a1, a2, a3, vawb_lw(csp, 7));
+	(void)a0; (void)a1; (void)a2; (void)a3; (void)csp;
+	return 0;
 }
 
 /* OEM tisp_main_init 0x1da5c..0x1dae8: TOP word from the day bank.  sel = tisp_par_info[0x74] == 1

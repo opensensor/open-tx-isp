@@ -552,8 +552,6 @@ insmod /tmp/tx_isp_t40_recovered.ko \
 	t40_profile_direct_vic_feed="$T40_PROFILE_DIRECT_VIC_FEED" \
 	t40_profile_no_direct_irq_defaults=1 \
 	t40_profile_isp_irq_passthrough=1 \
-	enable_oem_isr_lit="${ENABLE_OEM_ISR_LIT:-0}" \
-	oem_isr_lit_cut="${OEM_ISR_LIT_CUT:-0}" \
 	t40_profile_force_vic_mdma_qbuf_ring="$T40_PROFILE_FORCE_VIC_MDMA_QBUF_RING" \
 	t40_profile_no_direct_addr_source="$T40_PROFILE_NO_DIRECT_ADDR_SOURCE" \
 	force_local_frame_streamoff="$FORCE_LOCAL_FRAME_STREAMOFF" \
@@ -599,8 +597,6 @@ insmod /tmp/tx_isp_t40_recovered.ko \
 	dmsc_stock_overlay_mask="$DMSC_STOCK_OVERLAY_MASK" \
 	bcsh_mode="$BCSH_MODE" \
 	enable_clm="$ENABLE_CLM" \
-	clm_stage_limit="$CLM_STAGE_LIMIT" \
-	clm_defer_trig="$CLM_DEFER_TRIG" \
 	clm_ct="$CLM_CT" \
 	enable_mdns="$ENABLE_MDNS" \
 	enable_sdns="$ENABLE_SDNS" \
