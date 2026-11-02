@@ -17,8 +17,7 @@ CC ?= gcc
 OUT ?= build
 ROOT := ../..
 SDK := $(ROOT)/external/ingenic-sdk/3.10.14/isp/t20
-CALIB ?= $(firstword $(wildcard $(T20FW_CALIB) \
-	/mnt/NVMe/git/thingino-out/wyze_cam2_t20x_jxf23_rtl8189ftv-192.168.10.107/target/usr/share/sensor/jxf23.bin))
+CALIB ?= $(firstword $(wildcard $(T20FW_CALIB)))
 VARIANTS ?= O0 Os
 REF ?= O0
 

@@ -1425,7 +1425,7 @@ Under `/sys/devices/.../<device>/`:
 | Parameter | Default | Purpose |
 |-----------|---------|---------|
 | `print_level` | ISP_WARN_LEVEL | Logging verbosity |
-| `isp_ch0_pre_dequeue_time` | (varies) | Legacy timing ABI; T31 Raptor uses 0 with two-buffer DMA-done delivery |
+| `isp_ch0_pre_dequeue_time` | (varies) | Legacy timing ABI; T31 the application uses 0 with two-buffer DMA-done delivery |
 | `isp_memopt` | (varies) | Memory optimization flags |
 | `isp_day_night_switch_drop_frame_num` | (varies) | Frame drop on mode switch |
 

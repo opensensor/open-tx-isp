@@ -64,7 +64,7 @@ The per-SoC wrappers preserve their existing ABI and endpoint policy:
   acceptance and zero-returning line-offset bodies are no longer linked.
 - T23 retains its recovered unsuffixed/64-bit multiply bodies. Moving those
   symbols into the adapter reproducibly made `rvd` exit during startup on two
-  clean boots, while rebuilding the committed local boundary restored Raptor
+  clean boots, while rebuilding the committed local boundary restored the application
   and produced the exact accepted module hash.
 
 `tests/tx_isp_math_test.c` covers boundary behavior, OEM interpolation
@@ -202,7 +202,7 @@ the private payload to 96 bytes even though `_IOWR` and the OEM userspace
 contract require 112. Replacing only that nested descriptor with the shared
 wire type restores the original offsets while keeping T31's normalization,
 event dispatch, and hardware policy local. Two device boots delivered
-full-rate 1080p and 360p streams with clean kernel/Raptor/Android logs.
+full-rate 1080p and 360p streams with clean kernel/the application/Android logs.
 
 T23 asserts its recovered local structure against the common size. T41 uses
 the common word names in its live set/get-format path while retaining its
@@ -295,7 +295,7 @@ made the final pad's private-pointer initialization overrun the allocation.
 The callback is removed, private/size assertions enforce the wire ABI, and an
 explicit compatibility word after the embedded channel pad preserves the
 already-established `isp_channel` tail offsets. A one-shot GC2053 boot bound
-one sensor, kept Raptor and the ISP interrupts live, and decoded 358 main
+one sensor, kept the application and the ISP interrupts live, and decoded 358 main
 frames in 12 seconds without a kernel fault.
 
 `driver/common/tx_isp_subdev.c` now owns the name/type/index graph search used
@@ -346,7 +346,7 @@ artifact byte-identical, and fail-safe boots left the new T23/T41 modules
 active. Both registered one sensor, accepted forced day mode, and advanced ISP
 interrupts. Six-second 1080p decodes produced 149 T23, 148 untouched-control
 T31, and 151 T41 frames; T41 early logs show repeated resolved remote
-callbacks returning zero. Kernel, system, and Raptor logs contain no driver
+callbacks returning zero. Kernel, system, and the application logs contain no driver
 faults. The scene was darkening during a storm, so the cycle validates
 dispatch and transport rather than comparative image quality.
 
@@ -434,7 +434,7 @@ ten logical objects:
 ## Device Validation
 
 Every staged module was loaded through the one-shot fail-safe hook, exercised
-through the real Raptor consumer, and checked with stream captures plus
+through the real the application consumer, and checked with stream captures plus
 kernel and service diagnostics. The persistent module is restored and
 verified after each controlled experiment.
 
@@ -526,4 +526,4 @@ need to shape the eventual common interface.
    ordering remain explicit per-SoC behavior.
 7. Connect one generation-local MMAP capture adapter to the landed common
    queue core, beginning with T41 format/capability enumeration and keeping
-   private Raptor ownership mutually exclusive with `/dev/video*`.
+   private the application ownership mutually exclusive with `/dev/video*`.

@@ -329,7 +329,7 @@ reconnects and a 120-second decode (2968 video frames, no decoder/timestamp/
 timeout warnings). Native AWB rejected no frames, and all scalar-block error
 counters remained zero. Exact-Q10 manual gains held while estimation continued;
 auto resumed and the security profile was restored. Sensor calibration, Neo
-audio and saved Raptor configuration remained unchanged. The unarmed next
+audio and saved the application configuration remained unchanged. The unarmed next
 boot returned to the persistent stack before the stock one-shot was applied.
 
 In the stationary indoor comparison, native/stock hardware red gains were

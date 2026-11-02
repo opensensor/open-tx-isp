@@ -1,12 +1,12 @@
 #!/bin/bash
-# t41_isr_run.sh <tag> <ko> [chart.raw16] [ip]   (no reboot; restore via modprobe)
+# t41_isr_run.sh <tag> <ko> [chart.raw16] <ip>   (OUT=dir, default ./out/isr-<tag>)   (no reboot; restore via modprobe)
 # 1. reload <ko> from /tmp with t41_isr_dispatch=1, timps up (ch0+ch1)
 # 2. MINUTES (default 10) of normal operation: snapshots ch0/ch1 every minute,
 #    dmesg oops/warn scan, irq table counters, TMO worker counters
 # 3. optional RAW inject (chart) with the dispatch active
 # 4. restore the installed module
-TAG=$1; KO=$2; CHART=$3; IP=${4:-192.168.10.34}; MINUTES=${MINUTES:-10}
-OUT=${OUT:-/mnt/NVMe/git/rdwrapper/bilder-1019/isr-$TAG}; mkdir -p $OUT
+TAG=$1; KO=$2; CHART=$3; IP=${4:?usage: t41_isr_run.sh <tag> <ko> [chart.raw16] <camera-ip>}; MINUTES=${MINUTES:-10}
+OUT=${OUT:-./out/isr-$TAG}; mkdir -p $OUT
 [ -S /run/user/1000/ssh-cam.sock ] && export SSH_AUTH_SOCK=/run/user/1000/ssh-cam.sock
 SSH="ssh -o BatchMode=yes -o ConnectTimeout=8 -o ServerAliveInterval=3 -o ServerAliveCountMax=4 root@$IP"
 P=/sys/module/tx_isp_t41/parameters

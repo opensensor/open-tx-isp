@@ -1,11 +1,11 @@
 #!/bin/bash
-# t41_inject_run.sh <tag> <ko> <chart.raw16> [ip]
+# t41_inject_run.sh <tag> <ko> <chart.raw16> <ip>   (OUT=dir, default ./out/rawinject-<tag>)
 # Proof of concept: load the raw-inject ko from /tmp, start the streamer,
 # push the synthetic Bayer chart into DDR and feed it through the ISP
 # (RAW RDMA), grab snapshots, then restore the installed ko.
 # Needs: tools/rawchart/rawchart.py chart (sensor size/Bayer/bits), timps.
-TAG=$1; KO=$2; CHART=$3; IP=${4:-192.168.10.34}
-OUT=${OUT:-/mnt/NVMe/git/rdwrapper/bilder-1019/rawinject-$TAG}; mkdir -p $OUT
+TAG=$1; KO=$2; CHART=$3; IP=${4:?usage: t41_inject_run.sh <tag> <ko> <chart.raw16> <camera-ip>}
+OUT=${OUT:-./out/rawinject-$TAG}; mkdir -p $OUT
 [ -S /run/user/1000/ssh-cam.sock ] && export SSH_AUTH_SOCK=/run/user/1000/ssh-cam.sock
 SSH="ssh -o BatchMode=yes -o ConnectTimeout=8 -o ServerAliveInterval=3 -o ServerAliveCountMax=4 root@$IP"
 LINES=${LINES:-0}; DTYPE=${DTYPE:-0}; N=${N:-4}

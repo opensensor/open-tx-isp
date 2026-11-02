@@ -51,7 +51,7 @@ path. GIB now retains the black-level range compensation, and WB startup
 uses calibration instead of a captured daylight pair. Each new arithmetic
 boundary matches 10,000 synthetic OEM-oracle cases on QEMU and physical T41.
 
-The V4L2 HAL also hid SPS inside one aggregate IDR descriptor, so Raptor's
+The V4L2 HAL also hid SPS inside one aggregate IDR descriptor, so the application's
 existing VUI correction did not run. The fixed HAL exposes individual NALs:
 both stock/open now declare the ISP's full-range BT.601. Earlier measurements
 decoded as limited BT.709 exaggerated the open shadow deficit and hue error.
@@ -169,7 +169,7 @@ A subsequent persistent-stage reconnect also reproduced an **audio** warning
 15360 -> 15350. This is distinct from video output-time-base quantization.
 Raw RTP was monotonic in a separate capture; independently rebased audio and
 video origins disagree when their RTCP reports synchronize the tracks.
-Raptor's [per-client timeline fix](https://github.com/matteius/raptor/commit/227a5bf)
+The application's per-client timeline fix
 corrects this separately using a shared capture origin. Six TCP debug runs
 and three TCP plus three UDP reconnects passed without backward PTS or
 timestamp warnings; an RTP-Info/RTCP probe found both origins within 3 ms.
@@ -265,7 +265,7 @@ the companion `t41-stack-20260907/iq/` work directory. `stock-final/frame.png`
 and `open-final/frame.png` are the final nearby-in-time pair. The read-only
 ROI script measures fixed paper/bark patches, not calibrated Delta-E.
 
-Two additional observations are not fixed here: Raptor acknowledges pipeline
+Two additional observations are not fixed here: the application acknowledges pipeline
 startup after a stock frame-source allocation failure because it ignores
 `fs_enable_channel`'s return; stock and open startup/attachment logging must
 be distinguished from steady-state decoder faults. Stock AWB-global values

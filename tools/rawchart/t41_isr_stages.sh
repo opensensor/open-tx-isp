@@ -6,7 +6,7 @@
 #   restore                        rmmod/modprobe the installed module
 # Samples: AE (IT/again/gain/mean/zone/meter_err), isp-m0 irq rate (fps),
 # tmo/lce counters, dispatch counts, oops scan, snapshots ch0/ch1 each minute.
-IP=${IP:-192.168.10.34}; OUT=${OUT:-/mnt/NVMe/git/rdwrapper/bilder-1019/isr-stages}; mkdir -p $OUT
+IP=${IP:?set IP=<camera-ip>}; OUT=${OUT:-./out/isr-stages}; mkdir -p $OUT
 [ -S /run/user/1000/ssh-cam.sock ] && export SSH_AUTH_SOCK=/run/user/1000/ssh-cam.sock
 SSH="ssh -o BatchMode=yes -o ConnectTimeout=8 -o ServerAliveInterval=3 -o ServerAliveCountMax=4 root@$IP"
 P=/sys/module/tx_isp_t41/parameters

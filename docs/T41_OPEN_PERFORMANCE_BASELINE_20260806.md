@@ -11,7 +11,7 @@ before performance optimization or V4L2 implementation work.
 - sensor: OS04D10 (`chip_id=0x530444`), active at 2560x1440 and configured 25 fps
 - stream: main H.264, 8,000,000 bit/s CBR, GOP 25, configured 25 fps
 - clients: no RTSP or WebRTC clients
-- transport: OpenIMP to Raptor shared-memory ring
+- transport: OpenIMP to the application shared-memory ring
 - warm-up: 30 seconds
 - measurement: 120 seconds scheduled, 122.280 seconds actual, 12 windows
 - collection interval: 10 seconds
@@ -66,7 +66,7 @@ These are activity counters, not frame rates. Their aggregate ISP rate was
 
 ## Correctness finding
 
-The sensor procfs state, Raptor stream status, and ring header all advertised
+The sensor procfs state, the application stream status, and ring header all advertised
 25 fps, but the producer sequence delivered 12.496 fps. A direct `ringdump`
 check independently showed alternating frame timestamp gaps of approximately
 52 ms and 108 ms and an average near 12.9 fps over a short sample. The 2.5K

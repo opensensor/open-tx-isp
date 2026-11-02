@@ -22,7 +22,7 @@ T31-Kamera mit thingino erreicht. Sie prüft den Branch
 
 - **Nichts flashen.** Kein `sysupgrade`, kein Schreiben auf mtd.
 - **Nichts unter `/etc` schreiben**, auch nicht indirekt. `POST /control`
-  schreibt geänderte Werte nach `/etc/timps.conf` zurück. Deshalb läuft timps in
+  schreibt geänderte Werte nach `<app-config>` zurück. Deshalb läuft the application in
   diesen Tests mit einer Kopie der Konfiguration in `/tmp` (Abschnitt 3).
   `/etc/modules.d/*` wird nur gelesen.
 - Auf der Kamera nur nach `/tmp` schreiben.
@@ -66,19 +66,19 @@ uname -r; lsmod
 cat /etc/modules.d/20-isp /etc/modules.d/30-sensor* 2>/dev/null
 M=$(find /lib/modules -name 'tx-isp-t31.ko' | head -1); echo $M
 grep -c "new subdevice management system" $M   # >0: geflasht ist open-tx-isp
-md5sum /etc/timps.conf /etc/modules.d/* > /tmp/etc.md5
+md5sum <app-config> /etc/modules.d/* > /tmp/etc.md5
 grep -E "MemFree|Slab" /proc/meminfo > /tmp/mem.before
 which curl wget devmem
 ```
 
-Voraussetzung: Die Kamera läuft schon mit open-tx-isp und dem OpenIMP-timps
-(`/usr/bin/timpsd`). Ist `grep -c` 0, läuft der Hersteller-Treiber. Dann
+Voraussetzung: Die Kamera läuft schon mit open-tx-isp und dem OpenIMP-based application
+(`/usr/bin/appd`). Ist `grep -c` 0, läuft der Hersteller-Treiber. Dann
 abbrechen und dem Menschen melden.
 
 ## 2. Streamer stoppen, Testmodul laden (Kamera)
 
 ```sh
-/etc/init.d/S95timps stop; sleep 2; pidof timpsd && echo "timpsd läuft noch"
+/etc/init.d/<app-init> stop; sleep 2; pidof appd && echo "appd läuft noch"
 lsmod                                 # "Used by" von tx_isp_t31 prüfen
 set -- $(cat /etc/modules.d/30-sensor*); SENSOR_MOD=$1
 rmmod $SENSOR_MOD
@@ -95,22 +95,22 @@ dmesg | tail -30
 Tag/Nacht-Wechsel eingefroren hat. Lässt sich ein Modul nicht entladen
 (`in use`, Hänger), neu starten und das Ergebnis melden.
 
-## 3. timps mit Konfigurationskopie starten (Kamera)
+## 3. The application mit Konfigurationskopie starten (Kamera)
 
 ```sh
-cp /etc/timps.conf /tmp/timps-test.conf
-start_timps() { timpsd -c /tmp/timps-test.conf >/tmp/timps.log 2>&1 & sleep 8; }
-stop_timps()  { kill -TERM $(pidof timpsd) 2>/dev/null
-                for i in 1 2 3 4 5 6 7 8 9 10; do pidof timpsd >/dev/null || return 0; sleep 1; done
-                echo "timpsd beendet sich nicht"; return 1; }
+cp <app-config> /tmp/app-test.conf
+start_app() { appd -c /tmp/app-test.conf >/tmp/app.log 2>&1 & sleep 8; }
+stop_app()  { kill -TERM $(pidof appd) 2>/dev/null
+                for i in 1 2 3 4 5 6 7 8 9 10; do pidof appd >/dev/null || return 0; sleep 1; done
+                echo "appd beendet sich nicht"; return 1; }
 bytes() { curl -s -m ${1:-5} -o /dev/null -w '%{size_download}\n' http://127.0.0.1:8880/stream.mp4; }
 post()  { curl -s -X POST http://127.0.0.1:8880/control -d "$1"; echo; }
-start_timps; bytes 5          # deutlich > 100000 erwartet
+start_app; bytes 5          # deutlich > 100000 erwartet
 ```
 
 Anfragen von `127.0.0.1` brauchen kein Token. Fehlt `curl`, geht
 `timeout 5 wget -q -O - http://127.0.0.1:8880/stream.mp4 | wc -c`. Startet
-`timpsd` so nicht, `/etc/init.d/S95timps` lesen (nicht ändern) und die fehlenden
+`appd` so nicht, `/etc/init.d/<app-init>` lesen (nicht ändern) und die fehlenden
 Vorbereitungen von Hand in `/tmp` nachbauen.
 
 dmesg-Prüfung nach jedem Test:
@@ -134,9 +134,9 @@ zeigt in Bit n, ob Kanal n noch arbeitet.
 ### T1: Start/Stopp-Schleife (20 Runden)
 
 ```sh
-stop_timps
+stop_app
 for r in $(seq 20); do
-  start_timps; b=$(bytes 5); stop_timps
+  start_app; b=$(bytes 5); stop_app
   echo "runde $r bytes=$b 9804=$(devmem 0x13309804 32) 9808=$(devmem 0x13309808 32)"
 done
 check T1
@@ -144,17 +144,17 @@ check T1
 
 Erwartung: jede Runde deutlich mehr als 100000 Bytes. Nach dem Stopp sind in
 `0x13309804` die Bits 0..2 null. In `T1.dmesg` stehen keine FAIL-Treffer. Beendet
-timps die Sitzung sauber (DisableSensor, DelSensor), steht pro Runde einmal
+The application die Sitzung sauber (DisableSensor, DelSensor), steht pro Runde einmal
 `Sensor release: ISP core quiet after N ms` (N ist typisch zwei
 Frame-Perioden, etwa 80 bei 25 fps). Fehlt der Marker,
-ruft timps DelSensor nicht auf. Das ist kein Fehler, aber im Bericht notieren.
+ruft the application DelSensor nicht auf. Das ist kein Fehler, aber im Bericht notieren.
 Einzelne `has no ACTIVE QBUF slot` direkt nach einem Start sind Altlasten aus
 dem Done-FIFO. Viele davon oder welche mitten im Lauf sind ein Befund.
 
 ### T2: Tag/Nacht-Schleife (20 Wechsel, Stream läuft)
 
 ```sh
-start_timps
+start_app
 curl -s -m 260 -o /dev/null -w 'dauer-client %{size_download}\n' http://127.0.0.1:8880/stream.mp4 > /tmp/t2.client &
 for r in $(seq 10); do
   post '{"image":{"running_mode":1}}'; sleep 5; echo "nacht $r $(bytes 3)"
@@ -168,32 +168,32 @@ Erwartung: Jeder kurze Abruf liefert Daten (grob die Bitrate mal 3 s). Der
 Dauer-Client bricht nicht ab und liefert über die ganze Laufzeit Daten. Vor dem
 Fix fror der Stream mit `drop_frame_num=6` beim ersten Wechsel ohne
 dmesg-Meldung ein. Zum Schluss `running_mode` auf den Wert aus
-`/tmp/timps-test.conf` zurücksetzen. Das Bild bei Nacht nicht beurteilen, ohne
+`/tmp/app-test.conf` zurücksetzen. Das Bild bei Nacht nicht beurteilen, ohne
 Zustimmung werden keine Bilder angesehen.
 
 ### T3: `kill -9` des Streamers (10 Runden)
 
 ```sh
 for r in $(seq 10); do
-  pidof timpsd >/dev/null || start_timps
+  pidof appd >/dev/null || start_app
   curl -s -m 20 -o /dev/null http://127.0.0.1:8880/stream.mp4 & sleep 5
-  kill -9 $(pidof timpsd); sleep 1
+  kill -9 $(pidof appd); sleep 1
   echo "runde $r 9804=$(devmem 0x13309804 32)"
-  wait; start_timps; echo "neu $r $(bytes 5)"
+  wait; start_app; echo "neu $r $(bytes 5)"
 done
-stop_timps; check T3
+stop_app; check T3
 ```
 
 Erwartung: Nach `kill -9` sind die Bits 0..2 von `0x13309804` null, in dmesg
 stehen `Stopping streaming on release` und `stopped channel`. Der neu gestartete
-timps liefert jedes Mal Daten. Bekannte Grenze: Nach `kill -9` laufen Sensor,
+The application liefert jedes Mal Daten. Bekannte Grenze: Nach `kill -9` laufen Sensor,
 VIC und MDNS weiter, weil kein DisableSensor kommt. Das ist nicht Gegenstand
 dieses Tests.
 
 ### T4: Snapshot parallel zum Stream (30 Abrufe)
 
 ```sh
-start_timps
+start_app
 curl -s -m 120 -o /dev/null -w 'client %{size_download}\n' http://127.0.0.1:8880/stream.mp4 > /tmp/t4.client &
 for r in $(seq 30); do
   curl -s -m 5 -o /tmp/s.jpg http://127.0.0.1:8880/snapshot.jpg
@@ -224,11 +224,11 @@ zweite `open()` die Slot-Tabelle des laufenden Streams gelöscht.
 
 ### T6: Leerlauf-Kick (Tag/Nacht ohne Client)
 
-timps schaltet chn0 bei einem `running_mode`-POST ohne Client für ~500 ms ein
+The application schaltet chn0 bei einem `running_mode`-POST ohne Client für ~500 ms ein
 und wieder aus (EnableChn/DisableChn). Das ist ein häufiger Zyklus:
 
 ```sh
-sleep 20      # chn0 muss im Leerlauf aus sein: "disabled (idle)" in /tmp/timps.log oder logread
+sleep 20      # chn0 muss im Leerlauf aus sein: "disabled (idle)" in /tmp/app.log oder logread
 for r in $(seq 20); do post '{"image":{"running_mode":1}}'; sleep 3; post '{"image":{"running_mode":0}}'; sleep 3; done
 echo "danach $(bytes 5)"
 check T6
@@ -239,7 +239,7 @@ Erwartung: keine FAIL-Treffer, danach liefert der Stream sofort Daten.
 ### T7: Speicher
 
 ```sh
-stop_timps
+stop_app
 grep -E "MemFree|Slab" /proc/meminfo; cat /tmp/mem.before
 ```
 
@@ -249,12 +249,12 @@ einmalige Unterschied durch das Laden des Testmoduls ist normal.
 ## 5. Aufräumen
 
 ```sh
-stop_timps
+stop_app
 md5sum -c /tmp/etc.md5          # alles "OK", /etc ist unverändert
-reboot                          # lädt die geflashten Module, startet S95timps
+reboot                          # lädt die geflashten Module, startet <app-init>
 ```
 
-Nach dem Neustart `pidof timpsd` und `bytes 5` prüfen.
+Nach dem Neustart `pidof appd` und `bytes 5` prüfen.
 
 ## 6. Bericht an den Menschen
 
@@ -297,13 +297,13 @@ Nach dem Neustart `pidof timpsd` und `bytes 5` prüfen.
   eigenen OpenIMP-Build, er gehört nicht zu diesen Tests.
 - Die Y/UV-Atomarität zeigt sich nur als seltene Farbvertauschung zwischen zwei
   Frames. Ohne Bildprüfung ist sie hier nicht nachweisbar.
-- Der Bypass-Pfad (`ISP_CTRL_BYPASS`) wird von timps nicht benutzt.
+- Der Bypass-Pfad (`ISP_CTRL_BYPASS`) wird von the application nicht benutzt.
 
 ## Latenz-Messung (Branch `claude/t31-isp-latency`)
 
 Dieser Abschnitt misst, ob der Latenz-Branch die langen Phasen mit
 abgeschalteten Interrupts beseitigt. Er baut auf den Abschnitten 0 bis 3 auf
-(Regeln, Modul laden, `start_timps`, `stop_timps`, `bytes`, `post`, `check`).
+(Regeln, Modul laden, `start_app`, `stop_app`, `bytes`, `post`, `check`).
 Verglichen werden zwei Module mit gleicher Kamera, Szene und Konfiguration:
 
 - **alt**: Stand `claude/t31-isp-all` (Commit `999a62b`)
@@ -393,11 +393,11 @@ gemessen wird:
 
 ```sh
 KO=/tmp/tx-isp-alt.ko      # zweiter Durchlauf: /tmp/tx-isp-neu.ko
-/etc/init.d/S95timps stop; sleep 2
+/etc/init.d/<app-init> stop; sleep 2
 set -- $(cat /etc/modules.d/30-sensor*); rmmod $1; rmmod tx_isp_t31
 set -- $(cat /etc/modules.d/20-isp); shift; insmod $KO "$@"
 set -- $(cat /etc/modules.d/30-sensor*); modprobe "$@"
-dmesg -c >/dev/null; start_timps; bytes 5
+dmesg -c >/dev/null; start_app; bytes 5
 ```
 
 Höchstens zwei, drei Modulwechsel pro Neustart (Speicherverlust beim Entladen,
@@ -436,7 +436,7 @@ In `L2.dmesg` pro Wechsel eine Zeile `Day/night mode updated: 0` bzw. `: 1`
 (etwa 24). FAIL-Treffer sind zusätzlich zu Abschnitt 3:
 `T31 day/night switch failed`, `T31 day/night apply failed`.
 
-Danach `running_mode` auf den Wert aus `/tmp/timps-test.conf` zurücksetzen.
+Danach `running_mode` auf den Wert aus `/tmp/app-test.conf` zurücksetzen.
 
 ### L3: Frame-Abstände (nur mit Zustimmung)
 
@@ -457,7 +457,7 @@ awk 'NR>1 { d = ($1 - p) * 1000; if (d > m) m = d; s += d; n++;
      END { printf "n=%d mittel=%.2f ms max=%.2f ms lange=%d\n", n, s/n, m, big }' /tmp/pts.txt
 ```
 
-Pfad (`video0.rtsp_path`) und Zugangsdaten aus der timps-Konfiguration nehmen. `25` durch die
+Pfad (`video0.rtsp_path`) und Zugangsdaten aus der Anwendungskonfiguration nehmen. `25` durch die
 Bildrate von `video0.fps` ersetzen. Erwartung: Bei alt ist die Streuung um die
 Wechsel sichtbar größer als bei neu. Mittelwert und Frame-Zahl bleiben gleich.
 
