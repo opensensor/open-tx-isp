@@ -69,6 +69,8 @@ static void cancel_work_sync(struct work_struct *w)
 static void tisp_awb_pm_get_regsize(void) {}
 static void tisp_awb_pm_suspend(void) {}
 static void tisp_awb_pm_resume(void) {}
+static unsigned int algo_wakes;   /* custom AWB library (#195): one wake-up per processed frame */
+static void t41_awb_algo_wake(void) { ++algo_wakes; }
 #include "../driver/t41/tx_isp_t41_awb_runtime.inc"
 static void pump(void)
 {
@@ -132,6 +134,7 @@ int main(void)
     assert(t41_native_awb_deinit(0)==-EBUSY && allocations==2);
     for (i=0;i<100;++i) { registers[0x18050/4]=i&3; t41_native_awb_queue(); pump(); assert(!t41_native_awb_error); }
     assert(t41_native_awb_frames==100 && !t41_native_awb_dropped);
+    assert(algo_wakes==100);   /* #195: the custom AWB library is woken once per processed frame */
     {
         static unsigned char zone[2700]; unsigned int z;
         assert(!t41_native_awb_control(0,T41_AWB_ZONE,zone,sizeof(zone),1));

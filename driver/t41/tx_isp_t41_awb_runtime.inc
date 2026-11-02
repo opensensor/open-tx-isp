@@ -2,6 +2,7 @@
 #ifdef REGTRACE_KERNEL_TREE_BUILD
 #include "tx_isp_t41_awb_frame.h"
 #include "tx_isp_t41_awb_zone_report.h"
+static void t41_awb_algo_wake(void);   /* custom AWB library (#195), tx_isp_t41_awb_algo.h */
 struct t41_awb_runtime {
     struct t41_awb_owned saved, candidate;
     uint32_t info[7];
@@ -265,6 +266,7 @@ failed:
     /* A malformed frame never publishes gains, but must not stall capture. */
     if (READ_ONCE(t41_native_awb_live)) system_reg_write(0x18000,1);
     t41_native_awb_error=ret;
+    t41_awb_algo_wake();   /* custom AWB library (#195): one wake-up per processed frame, a frame without new gains too */
 done:
     mutex_unlock(&t41_native_awb_lock);
 }
