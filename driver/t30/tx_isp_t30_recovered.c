@@ -42818,48 +42818,17 @@ int32_t awb_temperature(void *arg1, int32_t arg2, char arg3, int32_t *arg4)
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000022570 origin=fragment_seed original=awb_roi */
 int32_t awb_roi(uintptr_t a0, uint32_t a1, uint32_t a2, uintptr_t a3)
 {
-    uint32_t ra = 0;
-    uint32_t t9 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t v1 = 0;
-
-    /* fragment 0: Arithmetic */
-    a2 = a2 & 255;
-
-    /* fragment 1: Branch */
-    v1 = a0;
-    if (a2 != 0) { goto awb_roi0x1c; }
-
-    /* fragment 2: ConstantLoad */
-    t9 = 0x1fd50;
-
-    /* fragment 3: IndirectTailCall */
-    /* unmatched fragment 3 (IndirectTailCall): indirect tail call target register t9 has no known symbol */
-    /* asm: 22584:	03200008 	jr	t9 */
-    /* asm: 22588:	00e03021 	move	a2,a3 */
-
-awb_roi0x1c:
-    /* fragment 4: Arithmetic */
-    a0 = 1;
-
-    /* fragment 5: Branch */
-    v0 = 2;
-    if (a2 != a0) { goto awb_roi0x34; }
-
-    /* fragment 6: MemoryAccess */
-    v0 = *(uint32_t *)((char *)v1 + 3804);
-    *(uint32_t *)((char *)a3 + 0) = v0;
-    v0 = 0;
-
-awb_roi0x34:
-    /* fragment 7: Epilogue */
-    /* function epilogue: restore registers and return */
-
-    /* fragment 8: Unknown */
-    /* unmatched fragment 8 (Unknown): no deterministic matcher for Unknown */
-    /* asm: 225a8:	00000000 	nop */
-
-    return 0;
+    /* #189: OEM 0x22570: mode 0 (set) is a tail call of awb_roi.part.2(a0, a1, a3) (`jr t9` with the `move a2,a3` delay
+     * slot; the lift dropped it, so the ROI was never applied and the function returned 0); mode 1 (get) reads
+     * the ROI word at +3804 and returns 0; any other mode returns 2 (the lift returned 0 for all). */
+    a2 &= 255;
+    if (a2 == 0)
+        return awb_roi_part_2((void *)a0, (int32_t)a1, (int32_t *)a3);
+    if (a2 == 1) {
+        *(uint32_t *)a3 = *(uint32_t *)((char *)a0 + 3804);
+        return 0;
+    }
+    return 2;
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_00000000000225ac origin=model_output original=awb_range_low */
