@@ -4,6 +4,11 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-02: T31 frame channel open no longer rewrites a registered misc minor (`claude/t31-reload-minor`; QEMU repro + fix, T31X sc4336p reload x6)
+
+- **T31: rmmod left `/sys/class/misc/framechan0`/`framechan1` behind.** `frame_channel_open()` binds the FS node `/dev/framechanN` (its own misc minor) to the shared `frame_channels[N]` by name and `frame_channel_prepare()` then wrote that node's minor into `frame_channels[N].miscdev.minor` while the `framechanN` misc device was registered under another minor. At unload `misc_deregister()` destroyed the device with the wrong minor and the `framechanN` sysfs device stayed (its dynamic minor bit leaked too). Every later insmod then failed `misc_register("framechan0")` with -EEXIST: ours tolerated it (core frame channel nodes missing), the vendor tx-isp-t31 oopses in its error path (misc_deregister of an unregistered device, NULL+4) and the camera rebooted. On cameras where `/dev/framechanN` points at the FS node (the streamer opens it at boot), every unload leaked. Fix: the minor is only written while the miscdev is not registered.
+- QEMU (T31L image, stock ko): opening the FS node changes the core minors 51/50 to 55/54 and rmmod leaves framechan0/1; fixed ko: minors unchanged, nothing left after 2 load/open/unload rounds, the vendor ko then loads (rc 0, no misc error). T31X sc4336p: 6 unload/reload cycles of the fixed ko with the streamer running 15 s per cycle: all rc 0, snapshot 200 every cycle, 0 oops, no new leftover nodes (the two nodes leaked by the stock ko at boot remain until the image carries the fix).
+
 ## 2026-11-02 (evening), T40 CCM leaf converters in C (Lu-Fi/openimp#85, Unicorn-checked against the vendor module)
 
 - `tisp_ccm_reg2par`, `tisp_ccm_para2reg` and `tisp_ccm_parameter_convert` are plain C (`tx_isp_t40_ccm_conv.h`); the three literal mips2c bodies are gone. No behaviour change.
