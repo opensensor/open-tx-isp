@@ -10,7 +10,7 @@
 # that ref (the last one that generated it, e.g. 316259cb) on every call; FUZZL=seed varies its state.
 # (Not together with FUZZ: that one re-randomises the ct_detect inputs on each of the two calls.)
 # GR_REF=<git ref>: the C gain / threshold chain (tx_isp_t40_awb_gain.inc: set_gain, set_regional_threshold, set_lum_th_freq,
-# tgain_update, simple_intp, set_awb_trig, AE mean) vs the translated OEM code of that ref (the last one that generated it,
+# tgain_update, simple_intp, set_awb_trig, AE mean; tx_isp_t40_awb_stats.inc: get_statistics, sat_weight) vs the translated OEM code of that ref (the last one that generated it,
 # e.g. 308cfe4b) on every call, register writes + state + faults compared; FUZZP=seed [FUZZN=calls] runs the fuzz loop.
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd); D=${T40_DRV_DIR:-$HERE/../driver/t40}; W=$(mktemp -d); trap 'rm -rf $W' EXIT
@@ -38,7 +38,7 @@ if [ -n "$GR_REF" ]; then
 	# reference: the translated OEM gain / threshold closure of $GR_REF, renamed vgr_*
 	FNS="tisp_awb_set_gain tisp_awb_gain_reg fix_point_mult2_32 tisp_awb_calc_tele_gain tisp_awb_calc_div_sqrt_distance
 	     tisp_awb_set_regional_threshold tisp_awb_set_lum_th_freq tisp_awb_tgain_update tisp_simple_intp_int16
-	     tisp_ae_main_mean_update tisp_ae_sec_mean_update system_reg_set_awb_trig"
+	     tisp_ae_main_mean_update tisp_ae_sec_mean_update system_reg_set_awb_trig tisp_awb_get_statistics tisp_awb_sat_weight"
 	git -C $HERE/.. show $GR_REF:driver/t40/tx_isp_t40_vawb_gen.inc > $W/grref_all.inc
 	: > $W/grref.inc
 	for f in $FNS; do echo "u64 vgr_$f(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);" >> $W/grref.inc; done

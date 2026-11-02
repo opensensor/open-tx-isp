@@ -302,6 +302,7 @@ static u64 vawb_s_tisp_awb_ct_detect(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
 	return (u64)tisp_awb_ct_detect(a0, a1, a2);
 }
 
+#include "tx_isp_t40_awb_stats.inc"
 #include "tx_isp_t40_awb_long.inc"
 #include "tx_isp_t40_awb_gain.inc"
 #include "tx_isp_t40_vawb_gen.inc"
@@ -467,7 +468,7 @@ static void t40_vawb_get_statistics(uintptr_t addr)
 		printk(KERN_WARNING "t40: vawb stats irq %u\n", vawb_irqs);
 	VAWB_TOP();
 	vawb_last_addr = (u32)addr;
-	vawb_tisp_awb_get_statistics((u32)addr, (u32)(uintptr_t)pstMainAwbOri, 0, 0, VAWB_CSP);
+	vawb_s_tisp_awb_get_statistics((u32)addr, (u32)(uintptr_t)pstMainAwbOri, 0, 0, VAWB_CSP);
 }
 
 /* state dump for host replay (tests/t40_vawb_host.sh): echo 1 > t40_vawb_dump_req, then read

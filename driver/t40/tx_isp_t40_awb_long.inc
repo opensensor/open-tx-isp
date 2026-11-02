@@ -26,8 +26,6 @@
  * (the OEM traps there; never seen with real statistics).
  */
 
-u64 vawb_tisp_awb_sat_weight(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
-
 #define T40_LA_P32(i) ((u32 *)(uintptr_t)ctx[i])
 #define T40_LA_P16(i) ((u16 *)(uintptr_t)ctx[i])
 #define T40_LA_P8(i)  ((u8 *)(uintptr_t)ctx[i])
@@ -90,7 +88,6 @@ static void t40_awb_long_alg(u32 a0, u32 a1)
 {
 	const u32 *ctx = (const u32 *)(uintptr_t)a0;
 	u32 loc[6];	/* OEM frame +32..+52: ct flags[2], targets r/b, ct_detect gains r/b */
-	u32 area[8];	/* outgoing o32 argument area of the sat_weight call */
 	const u16 *v4;
 	u32 *s6, *t39, *t40, *t41, *t42, *t43, *t44;
 	u32 s1, s3, sh, unity, rows, cols, thr, s0, vp1, vp2, vp3, c0, c1, c2, c3, c4, c5;
@@ -245,8 +242,7 @@ static void t40_awb_long_alg(u32 a0, u32 a1)
 
 	/* (6) saturation weight (writes the four gains at loc[2..5]) */
 	if ((u32)(*T40_LA_P16(24) - 1U) < 2U) {
-		area[4] = ctx[45]; area[5] = (u32)(uintptr_t)&loc[2]; area[6] = a0;
-		vawb_tisp_awb_sat_weight(ctx[39], ctx[40], ctx[41], ctx[42], (u32)(uintptr_t)area);
+		t40_awb_sat_weight(T40_LA_P32(39), T40_LA_P32(40), T40_LA_P32(41), T40_LA_P32(42), T40_LA_P32(45), &loc[2], ctx);
 	}
 
 	/* (7) unchanged scene: keep the last result */

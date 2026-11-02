@@ -31,12 +31,6 @@
 #define T40_AG_P16(i) ((u16 *)(uintptr_t)ctx[i])
 #define T40_AG_P8(i)  ((u8 *)(uintptr_t)ctx[i])
 
-static u32 t40_ag_divu(u32 x, u32 y, u32 pc)
-{
-	if (unlikely(!y)) { vawb_fault_note(0, pc); return 0; }
-	return x / y;
-}
-
 /* every pointer of ctx[] the functions use must be a valid (aligned kernel) address, as the guarded loads require */
 static bool t40_ag_ctx_ok(const u32 *ctx)
 {
@@ -185,8 +179,8 @@ static void t40_ag_set_gain(const u32 *ctx, u32 ch)
 	} else if (mode == 9) {		/* manual scale: (value + 64) / 64 */
 		const u16 *ov = T40_AG_P16(122);
 
-		gr = (u32)((s32)(ov[0] + 64U) * (s32)gr) >> 6;
-		gb = (u32)((s32)(ov[1] + 64U) * (s32)gb) >> 6;
+		gr = (ov[0] + 64U) * gr >> 6;
+		gb = (ov[1] + 64U) * gb >> 6;
 	}
 
 	/* colour temperature zone: hot / mid / cold gain offset pair, re-selected after a 200 K move or when forced */

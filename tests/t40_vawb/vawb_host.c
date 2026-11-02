@@ -122,6 +122,7 @@ static noinline int64_t harness_ctd_call(uintptr_t a0, uintptr_t a1, uint32_t a2
 #define vawb_s_tisp_awb_set_regional_threshold vgr_c_regional
 #define vawb_s_tisp_awb_set_lum_th_freq vgr_c_lum
 #define vawb_s_tisp_awb_tgain_update vgr_c_tgain
+#define vawb_s_tisp_awb_get_statistics vgr_c_stats
 #endif
 #include VAWB_TOP
 #ifdef GR_REF_INC
@@ -129,10 +130,12 @@ static noinline int64_t harness_ctd_call(uintptr_t a0, uintptr_t a1, uint32_t a2
 #undef vawb_s_tisp_awb_set_regional_threshold
 #undef vawb_s_tisp_awb_set_lum_th_freq
 #undef vawb_s_tisp_awb_tgain_update
+#undef vawb_s_tisp_awb_get_statistics
 static u64 vawb_s_tisp_awb_set_gain(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 static u64 vawb_s_tisp_awb_set_regional_threshold(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 static u64 vawb_s_tisp_awb_set_lum_th_freq(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 static u64 vawb_s_tisp_awb_tgain_update(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
+static u64 vawb_s_tisp_awb_get_statistics(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 static u32 vawb_wide_tele_awb_gain[3] VD = { 0x04000400U, 0x04000400U, 0x04000400U };	/* the OEM state of the reference only */
 #endif
 #ifdef LA_REF_INC
@@ -332,7 +335,7 @@ static u64 vawb_s_tisp_awb_long_alogrithm(u32 a0, u32 a1, u32 a2, u32 a3, u32 cs
  * FUZZP=seed runs the fuzz loop (FUZZN calls of each, default 20000).
  */
 #include GR_REF_INC
-static unsigned long gr_n[8], gr_bad[8];
+static unsigned long gr_n[10], gr_bad[10];
 static u32 gr_x;
 #define GRR() (gr_x ^= gr_x << 13, gr_x ^= gr_x >> 17, gr_x ^= gr_x << 5, gr_x)
 static u32 gr_ae_loc[2] VD;	/* the OEM mean update's two local outputs (*a0, *a1): the callers discard them, the C version does not compute them */
@@ -416,6 +419,20 @@ static u64 vawb_s_tisp_awb_tgain_update(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
 {
 	return gr_cmp(3, "tgain_update", vgr_tisp_awb_tgain_update, vgr_c_tgain, a0, a1, a2, a3, csp);
 }
+static u64 vawb_s_tisp_awb_get_statistics(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
+{
+	return gr_cmp(8, "get_statistics", vgr_tisp_awb_get_statistics, vgr_c_stats, a0, a1, a2, a3, csp);
+}
+/* sat_weight has no shim in the driver (the C long_alogrithm calls it directly): o32 stack arguments sat plane, gain pair, ctx */
+static u64 gr_c_sat(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
+{
+	const u32 *arg = (const u32 *)(uintptr_t)csp;
+
+	t40_awb_sat_weight((const u32 *)(uintptr_t)a0, (const u32 *)(uintptr_t)a1, (const u32 *)(uintptr_t)a2, (const u32 *)(uintptr_t)a3,
+			   (u32 *)(uintptr_t)arg[4], (const u32 *)(uintptr_t)arg[5], (const u32 *)(uintptr_t)arg[6]);
+	return 0;
+}
+static u32 gr_sat_area[8] VD, gr_sat_gain[2] VD;
 /* adapters for the pieces without a shim of their own (direct comparison) */
 static u64 gr_c_intp(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp) { return t40_ag_intp(a0, a1, (const u16 *)(uintptr_t)a2); }
 static u64 gr_c_trig(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp) { t40_ag_trig(a0, a1); return 0; }
@@ -463,6 +480,23 @@ static void gr_fuzz_ctx(void)
 		if ((GRR() & 15) == 0) g[3] = 0;
 	}
 }
+static void gr_fuzz_stats(void)
+{
+	u32 *c = pstMainAwbOri, i, k;
+	u8 *cfg = (u8 *)(uintptr_t)c[0];
+
+	cfg[94] = GRR() % 3 == 0; cfg[96] = GRR() % 6;
+	*(u16 *)(cfg + 2) = 1 + GRR() % 15; *(u16 *)(cfg + 6) = 1 + GRR() % 15;
+	for (i = 0; i < 0x10000 / 4; i++) ((u32 *)stats)[i] = GRR();
+	for (k = 59; k <= 98; k++) for (i = 0; i < 225; i++) ((u32 *)(uintptr_t)c[k])[i] = GRR();
+	for (k = 39; k <= 42; k++) for (i = 0; i < 225; i++) ((u32 *)(uintptr_t)c[k])[i] = (GRR() % 9 == 0) ? 0 : gr_val(GRR() & 1 ? 1U << 26 : 3000);
+	for (i = 0; i < 225; i++) ((u32 *)(uintptr_t)c[45])[i] = GRR();
+	*(u32 *)(uintptr_t)c[1] = gr_val(2000);
+	*(u16 *)(uintptr_t)c[24] = GRR() % 4;
+	((u16 *)(uintptr_t)c[3])[0] = 8 + GRR() % 10;
+	gr_sat_gain[0] = gr_val(1U << (GRR() % 16)); gr_sat_gain[1] = gr_val(1U << (GRR() % 16));
+	gr_sat_area[4] = c[45]; gr_sat_area[5] = (u32)(uintptr_t)gr_sat_gain; gr_sat_area[6] = (u32)(uintptr_t)c;
+}
 /* fuzz loop: FUZZP=seed [FUZZN=calls] */
 static void gr_direct(void)
 {
@@ -477,6 +511,12 @@ static void gr_direct(void)
 		VAWB_TOP();
 		gr_fuzz_ctx();
 		memcpy(pstSecAwbOri, pstMainAwbOri, 512);
+		if (i % 11 == 8) gr_fuzz_stats();
+		if (i % 11 == 8) { gr_cmp(8, "get_statistics", vgr_tisp_awb_get_statistics, vgr_c_stats, (u32)(uintptr_t)stats, (u32)(uintptr_t)c, 0, 0, VAWB_CSP); }
+		if (i % 11 == 9) {
+			gr_fuzz_stats();
+			gr_cmp(9, "sat_weight", vgr_tisp_awb_sat_weight, gr_c_sat, c[39], c[40], c[41], c[42], (u32)(uintptr_t)gr_sat_area);
+		}
 		switch (i % 7) {
 		case 0: vawb_s_tisp_awb_set_gain((u32)(uintptr_t)c, GRR() & 1, 0, 0, VAWB_CSP); break;
 		case 1: vawb_s_tisp_awb_set_regional_threshold((u32)(uintptr_t)c, GRR() & 1, 0, 0, VAWB_CSP); break;
@@ -489,11 +529,11 @@ static void gr_direct(void)
 		}
 	}
 	}
-	printf("gain_chain C vs OEM: %lu calls, %lu differ (set_gain %lu/%lu regional %lu/%lu lum_th_freq %lu/%lu tgain %lu/%lu intp %lu/%lu trig %lu/%lu ae_mean %lu/%lu %lu/%lu)\n",
-	       gr_n[0] + gr_n[1] + gr_n[2] + gr_n[3] + gr_n[4] + gr_n[5] + gr_n[6] + gr_n[7],
-	       gr_bad[0] + gr_bad[1] + gr_bad[2] + gr_bad[3] + gr_bad[4] + gr_bad[5] + gr_bad[6] + gr_bad[7],
+	printf("gain_chain C vs OEM: %lu calls, %lu differ (set_gain %lu/%lu regional %lu/%lu lum_th_freq %lu/%lu tgain %lu/%lu intp %lu/%lu trig %lu/%lu ae_mean %lu/%lu %lu/%lu statistics %lu/%lu sat_weight %lu/%lu)\n",
+	       gr_n[0] + gr_n[1] + gr_n[2] + gr_n[3] + gr_n[4] + gr_n[5] + gr_n[6] + gr_n[7] + gr_n[8] + gr_n[9],
+	       gr_bad[0] + gr_bad[1] + gr_bad[2] + gr_bad[3] + gr_bad[4] + gr_bad[5] + gr_bad[6] + gr_bad[7] + gr_bad[8] + gr_bad[9],
 	       gr_n[0], gr_bad[0], gr_n[1], gr_bad[1], gr_n[2], gr_bad[2], gr_n[3], gr_bad[3], gr_n[4], gr_bad[4], gr_n[5], gr_bad[5],
-	       gr_n[6], gr_bad[6], gr_n[7], gr_bad[7]);
+	       gr_n[6], gr_bad[6], gr_n[7], gr_bad[7], gr_n[8], gr_bad[8], gr_n[9], gr_bad[9]);
 }
 #endif
 
@@ -525,7 +565,7 @@ static void run(void)
 	}
 	for (f = 0; f < (u32)g_frames; f++) {
 		VAWB_TOP();
-		vawb_tisp_awb_get_statistics((u32)(uintptr_t)stats, (u32)(uintptr_t)c, 0, 0, VAWB_CSP);
+		vawb_s_tisp_awb_get_statistics((u32)(uintptr_t)stats, (u32)(uintptr_t)c, 0, 0, VAWB_CSP);
 		if (g_trace && f == 0) { vawb_tn = 0; vawb_tarmed = 1; }
 		VAWB_TOP();
 		vawb_tisp_awb_main_process(0, 0, 0, 0, VAWB_CSP);

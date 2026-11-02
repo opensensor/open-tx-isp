@@ -9,7 +9,7 @@
 #     tisp_awb_ct_detect (tx_isp_t40_awb_long.inc / _ctd.inc) against the translated OEM code on every call
 #     (synthetic bank + zero .data, several fuzz seeds; FUZZT = generated ct_detect tables), the gain / threshold chain
 #     (tx_isp_t40_awb_gain.inc: set_gain, regional_threshold, lum_th_freq, tgain_update, simple_intp, set_awb_trig, AE mean)
-#     with GR_REF=308cfe4b FUZZP (register writes, state, faults), plus a one-character mutation of each C function that must be
+#     and the statistics unpack / saturation weight (tx_isp_t40_awb_stats.inc) with GR_REF=308cfe4b FUZZP (register writes, state, faults), plus a one-character mutation of each C function that must be
 #     detected; with T40_TUNING_BIN + T40_OEM_DATA (objcopy -O binary --only-section=.data of the OEM tx-isp-t40.ko)
 #     the same replays also run on the real bin;
 #  4. optional: T40_AWB_DUMPS="<device dump>..." replayed with both references (0 differ, 0 B vs device).
@@ -47,9 +47,11 @@ M=$W/mut; mkdir -p $M; cp "$HERE"/../driver/t40/*.inc "$HERE"/../driver/t40/*.h 
 sed -i '0,/cnt1--/s//cnt1-=2/' $M/tx_isp_t40_awb_long.inc
 sed -i '0,/for (i = 0; i < 14; i++)/s//for (i = 0; i < 13; i++)/' $M/tx_isp_t40_awb_ctd.inc
 sed -i -e '0,/diff >= 200/s//diff >= 201/' -e '0,/cfg\[45\] << 24/s//cfg[45] << 23/' -e '0,/ov\[0\] + 64U/s//ov[0] + 63U/' -e '0,/q << 10/s//q << 9/' $M/tx_isp_t40_awb_gain.inc
+sed -i -e '0,/0x3ffc00U/s//0x3ff800U/' -e '0,/a + b + n, 3,/s//a + b + n, 4,/' $M/tx_isp_t40_awb_stats.inc
 cmp -s $M/tx_isp_t40_awb_long.inc "$HERE"/../driver/t40/tx_isp_t40_awb_long.inc && { echo "t40_bitexact_host: mutation 1 did not apply"; rc=1; }
 cmp -s $M/tx_isp_t40_awb_ctd.inc "$HERE"/../driver/t40/tx_isp_t40_awb_ctd.inc && { echo "t40_bitexact_host: mutation 2 did not apply"; rc=1; }
 cmp -s $M/tx_isp_t40_awb_gain.inc "$HERE"/../driver/t40/tx_isp_t40_awb_gain.inc && { echo "t40_bitexact_host: mutation 3 did not apply"; rc=1; }
+cmp -s $M/tx_isp_t40_awb_stats.inc "$HERE"/../driver/t40/tx_isp_t40_awb_stats.inc && { echo "t40_bitexact_host: mutation 4 did not apply"; rc=1; }
 out=$(awb_run $M LA_REF=316259cb FUZZL=1 100); awb_count "$out"
 [ "$n" -gt 0 ] && echo "vawb mutation long_alogrithm: detected ($n DIFF lines)" || { echo "t40_bitexact_host: FAIL mutation long_alogrithm not detected"; rc=1; }
 out=$(awb_run $M CTD_REF=f2c180f7 "FUZZ=2 FUZZM=2 FUZZT=2" 100); awb_count "$out"
