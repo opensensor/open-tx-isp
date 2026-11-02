@@ -74,9 +74,12 @@ static u8 stats[0x10000] __aligned(16) VD;
 static u32 nreg;
 static u32 reg4004, reg4008;
 static void private_complete(u32 c) { }
+struct reglog { u32 a, v; };
+static struct reglog *reglog_p; static u32 reglog_n;	/* GR_REF: write log of the call under test */
 static int system_reg_write(u32 a, u32 v)
 {
 	nreg++;
+	if (reglog_p) { if (reglog_n < 64) { reglog_p[reglog_n].a = a; reglog_p[reglog_n].v = v; } reglog_n++; }
 	if (a == 0x4004) reg4004 = v;
 	if (a == 0x4008) reg4008 = v;
 	return 0;
@@ -114,7 +117,24 @@ static noinline int64_t harness_ctd_call(uintptr_t a0, uintptr_t a1, uint32_t a2
 #ifdef LA_REF_INC
 #define vawb_s_tisp_awb_long_alogrithm vawb_s_la_c
 #endif
+#ifdef GR_REF_INC
+#define vawb_s_tisp_awb_set_gain vgr_c_set_gain
+#define vawb_s_tisp_awb_set_regional_threshold vgr_c_regional
+#define vawb_s_tisp_awb_set_lum_th_freq vgr_c_lum
+#define vawb_s_tisp_awb_tgain_update vgr_c_tgain
+#endif
 #include VAWB_TOP
+#ifdef GR_REF_INC
+#undef vawb_s_tisp_awb_set_gain
+#undef vawb_s_tisp_awb_set_regional_threshold
+#undef vawb_s_tisp_awb_set_lum_th_freq
+#undef vawb_s_tisp_awb_tgain_update
+static u64 vawb_s_tisp_awb_set_gain(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
+static u64 vawb_s_tisp_awb_set_regional_threshold(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
+static u64 vawb_s_tisp_awb_set_lum_th_freq(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
+static u64 vawb_s_tisp_awb_tgain_update(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
+static u32 vawb_wide_tele_awb_gain[3] VD = { 0x04000400U, 0x04000400U, 0x04000400U };	/* the OEM state of the reference only */
+#endif
 #ifdef LA_REF_INC
 #undef vawb_s_tisp_awb_long_alogrithm
 static u64 vawb_s_tisp_awb_long_alogrithm(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
@@ -302,6 +322,182 @@ static u64 vawb_s_tisp_awb_long_alogrithm(u32 a0, u32 a1, u32 a2, u32 a3, u32 cs
 
 #define VAWB_CSP ((u32)(uintptr_t)vawb_argarea)
 #define VAWB_TOP() (vawb_loop_n = 0)
+#ifdef GR_REF_INC
+/*
+ * GR_REF: the C gain / threshold chain (tx_isp_t40_awb_gain.inc) against the translated OEM code of the git
+ * ref on the same state.  Every call of set_gain / set_regional_threshold / set_lum_th_freq / tgain_update
+ * (from the translated chain or from the fuzz loop) and the direct fuzz of simple_intp, set_awb_trig and the
+ * AE mean run both versions; compared: the register write sequence, the fault counter and every byte of
+ * the state the functions can reach (inter, outer, both context tables, both AE contexts and their buffers).
+ * FUZZP=seed runs the fuzz loop (FUZZN calls of each, default 20000).
+ */
+#include GR_REF_INC
+static unsigned long gr_n[8], gr_bad[8];
+static u32 gr_x;
+#define GRR() (gr_x ^= gr_x << 13, gr_x ^= gr_x >> 17, gr_x ^= gr_x << 5, gr_x)
+static u32 gr_ae_loc[2] VD;	/* the OEM mean update's two local outputs (*a0, *a1): the callers discard them, the C version does not compute them */
+static u32 gr_ae_geo[2][4] __aligned(4) VD, gr_ae_sum[2][16 * 16] VD, gr_ae_ev[2][4] VD, gr_ae_out[2][2] VD;
+#define GR_NREG 10
+static struct { void *p; u32 n; } gr_reg[GR_NREG];
+static u8 gr_s0[0x20000], gr_s1[0x20000], gr_s2[0x20000];
+static struct reglog gr_l1[64], gr_l2[64], gr_lbuf[64];
+static void gr_regions(void)
+{
+	gr_reg[0].p = inter; gr_reg[0].n = 60328;
+	gr_reg[1].p = outer; gr_reg[1].n = 4752;
+	gr_reg[2].p = pstMainAwbOri; gr_reg[2].n = 512;
+	gr_reg[3].p = pstSecAwbOri; gr_reg[3].n = 512;
+	gr_reg[4].p = pstMainAeOri_storage; gr_reg[4].n = 0x164;
+	gr_reg[5].p = pstSecAeOri_storage; gr_reg[5].n = 0x164;
+	gr_reg[6].p = gr_ae_geo; gr_reg[6].n = sizeof(gr_ae_geo);
+	gr_reg[7].p = gr_ae_sum; gr_reg[7].n = sizeof(gr_ae_sum);
+	gr_reg[8].p = gr_ae_ev; gr_reg[8].n = sizeof(gr_ae_ev);
+	gr_reg[9].p = gr_ae_out; gr_reg[9].n = sizeof(gr_ae_out);
+}
+static void gr_save(u8 *d) { u32 i, o = 0; for (i = 0; i < GR_NREG; i++) { memcpy(d + o, gr_reg[i].p, gr_reg[i].n); o += gr_reg[i].n; } }
+static void gr_load(const u8 *d) { u32 i, o = 0; for (i = 0; i < GR_NREG; i++) { memcpy(gr_reg[i].p, d + o, gr_reg[i].n); o += gr_reg[i].n; } }
+static void gr_ae_setup(void)
+{
+	u32 k;
+	u8 *ae[2] = { pstMainAeOri_storage, pstSecAeOri_storage };
+
+	for (k = 0; k < 2; k++) {
+		u32 *a = (u32 *)ae[k];
+		a[71] = (u32)(uintptr_t)gr_ae_geo[k]; a[34] = (u32)(uintptr_t)gr_ae_sum[k];
+		a[11] = (u32)(uintptr_t)gr_ae_ev[k]; a[68] = (u32)(uintptr_t)gr_ae_out[k];
+		((u16 *)gr_ae_geo[k])[1] = 3; ((u16 *)gr_ae_geo[k])[3] = 4; gr_ae_ev[k][2] = 1024 + 64 * k;
+	}
+}
+/* run the reference and the C version on one state: fn_ref returns, fn_c is the C adapter */
+typedef u64 (*gr_fn)(u32, u32, u32, u32, u32);
+static u64 gr_cmp(int id, const char *name, gr_fn fn_ref, gr_fn fn_c, u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
+{
+	u32 f0, fr, fc, n1, n2, i, r, bad = 0, first = ~0U, at = 0;
+	u64 rv;
+
+	gr_regions();
+	gr_save(gr_s0);
+	reglog_p = gr_l1; reglog_n = 0; f0 = vawb_faults;
+	rv = fn_ref(a0, a1, a2, a3, csp);
+	fr = vawb_faults - f0; n1 = reglog_n;
+	gr_save(gr_s1);
+	gr_load(gr_s0);
+	reglog_p = gr_l2; reglog_n = 0; f0 = vawb_faults;
+	(void)fn_c(a0, a1, a2, a3, csp);
+	fc = vawb_faults - f0; n2 = reglog_n; reglog_p = 0;
+	gr_save(gr_s2);
+	gr_n[id]++;
+	for (i = 0; i < sizeof(gr_s2); i++) if (gr_s1[i] != gr_s2[i]) { bad++; if (first == ~0U) first = i; }
+	if (n1 != n2) bad++;
+	else for (r = 0; r < n1 && r < 64; r++) if (gr_l1[r].a != gr_l2[r].a || gr_l1[r].v != gr_l2[r].v) { bad++; at = r; break; }
+	if (fr != fc) bad++;
+	if (bad) {
+		if (gr_bad[id]++ < 10)
+			printf("GR DIFF %s call %lu: state %u B (first %#x) regs ref %u C %u (first diff %u) faults ref %u C %u\n", name, gr_n[id], bad,
+			       first, n1, n2, at, fr, fc);
+		if (n1 == n2 && at < n1 && gr_bad[id] <= 10)
+			printf("   reg %u: ref %#x=%#x C %#x=%#x\n", at, gr_l1[at].a, gr_l1[at].v, gr_l2[at].a, gr_l2[at].v);
+	}
+	return rv;
+}
+static u64 vawb_s_tisp_awb_set_gain(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
+{
+	return gr_cmp(0, "set_gain", vgr_tisp_awb_set_gain, vgr_c_set_gain, a0, a1, a2, a3, csp);
+}
+static u64 vawb_s_tisp_awb_set_regional_threshold(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
+{
+	return gr_cmp(1, "regional_threshold", vgr_tisp_awb_set_regional_threshold, vgr_c_regional, a0, a1, a2, a3, csp);
+}
+static u64 vawb_s_tisp_awb_set_lum_th_freq(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
+{
+	return gr_cmp(2, "lum_th_freq", vgr_tisp_awb_set_lum_th_freq, vgr_c_lum, a0, a1, a2, a3, csp);
+}
+static u64 vawb_s_tisp_awb_tgain_update(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
+{
+	return gr_cmp(3, "tgain_update", vgr_tisp_awb_tgain_update, vgr_c_tgain, a0, a1, a2, a3, csp);
+}
+/* adapters for the pieces without a shim of their own (direct comparison) */
+static u64 gr_c_intp(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp) { return t40_ag_intp(a0, a1, (const u16 *)(uintptr_t)a2); }
+static u64 gr_c_trig(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp) { t40_ag_trig(a0, a1); return 0; }
+static u64 gr_c_aemain(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp) { t40_ag_ae_mean(pstMainAeOri_storage); return 0; }
+static u64 gr_c_aesec(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp) { t40_ag_ae_mean(pstSecAeOri_storage); return 0; }
+static u64 gr_cmp_ret(int id, const char *name, gr_fn fn_ref, gr_fn fn_c, u32 a0, u32 a1, u32 a2)
+{
+	u64 r1 = gr_cmp(id, name, fn_ref, fn_c, a0, a1, a2, 0, VAWB_CSP), r2 = fn_c(a0, a1, a2, 0, VAWB_CSP);
+
+	if (id == 4 && ((u32)r1 != (u32)r2) && gr_bad[id]++ < 10)
+		printf("GR DIFF %s result: ref %#x C %#x\n", name, (u32)r1, (u32)r2);
+	return r1;
+}
+static u32 gr_val(u32 mx) { u32 k = GRR() % 8; return k == 0 ? 0 : k == 1 ? mx : GRR() % (mx + 1); }
+static void gr_fuzz_ctx(void)
+{
+	u32 *c = pstMainAwbOri, i, k;
+	u16 *p3 = (u16 *)(uintptr_t)c[3], *tbl = (u16 *)(uintptr_t)c[34], *cfg = (u16 *)(uintptr_t)c[0], *ov = (u16 *)(uintptr_t)c[122];
+
+	p3[0] = 8 + GRR() % 10; p3[1] = 1 + GRR() % 12;
+	((u32 *)(uintptr_t)c[9])[0] = gr_val(8192); ((u32 *)(uintptr_t)c[9])[1] = gr_val(8192);
+	((u32 *)(uintptr_t)c[5])[4] = gr_val(1U << (GRR() % 16)); ((u32 *)(uintptr_t)c[5])[5] = gr_val(1U << (GRR() % 16));
+	for (i = 0; i < 8; i++) ((u32 *)(uintptr_t)c[36])[i] = gr_val(3000);
+	if (GRR() & 1) ((u32 *)(uintptr_t)c[36])[6] = ((u32 *)(uintptr_t)c[36])[7];
+	k = 1500 + GRR() % 14000;
+	*(u32 *)(uintptr_t)c[7] = k;
+	*(u32 *)(uintptr_t)c[56] = (GRR() & 1) ? k + GRR() % 500 - 250 : gr_val(16000);
+	if ((GRR() & 7) == 0) *(u32 *)(uintptr_t)c[56] = k;
+	((u32 *)(uintptr_t)c[58])[0] = gr_val(5000); ((u32 *)(uintptr_t)c[58])[1] = gr_val(5000);
+	*(u8 *)(uintptr_t)c[118] = GRR() % 3 == 0; *(u8 *)(uintptr_t)c[119] = GRR() % 4 == 0;
+	*(u8 *)(uintptr_t)c[120] = GRR() % 12; *(u32 *)(uintptr_t)c[121] = gr_val(16000);
+	ov[0] = gr_val(0xffff); ov[1] = gr_val(0xffff);
+	for (i = 0; i < 4; i++) ((u16 *)(uintptr_t)c[124])[i] = GRR();
+	*(u32 *)(uintptr_t)c[117] = ((GRR() % 14) << 16) | (u32)gr_val(0xffff);
+	for (i = 0; i < 121; i++) tbl[i] = (GRR() % 5 == 0 && i) ? tbl[i - 1] : gr_val(GRR() & 1 ? 0xffff : 4095);
+	for (i = 34; i < 46; i++) cfg[i] = GRR();
+	for (k = 0; k < 2; k++) {
+		u16 *g = (u16 *)gr_ae_geo[k];
+		u32 *e = gr_ae_ev[k];
+
+		g[1] = GRR() % 17; g[3] = GRR() % 16;
+		for (i = 0; i < 256; i++) gr_ae_sum[k][i] = gr_val(1U << (GRR() % 28));
+		e[2] = gr_val(1U << (GRR() % 20)); gr_ae_out[k][0] = GRR();
+		if ((GRR() & 15) == 0) g[1] = 0;
+		if ((GRR() & 15) == 0) g[3] = 0;
+	}
+}
+/* fuzz loop: FUZZP=seed [FUZZN=calls] */
+static void gr_direct(void)
+{
+	u32 *c = pstMainAwbOri, n = getenv("FUZZN") ? atoi(getenv("FUZZN")) : 20000, i;
+	u16 *tbl;
+
+	if (getenv("FUZZP")) {
+	gr_x = atoi(getenv("FUZZP")) * 2654435761U | 1;
+	memcpy(pstSecAwbOri, pstMainAwbOri, 512);
+	tbl = (u16 *)(uintptr_t)c[34];
+	for (i = 0; i < n; i++) {
+		VAWB_TOP();
+		gr_fuzz_ctx();
+		memcpy(pstSecAwbOri, pstMainAwbOri, 512);
+		switch (i % 7) {
+		case 0: vawb_s_tisp_awb_set_gain((u32)(uintptr_t)c, GRR() & 1, 0, 0, VAWB_CSP); break;
+		case 1: vawb_s_tisp_awb_set_regional_threshold((u32)(uintptr_t)c, GRR() & 1, 0, 0, VAWB_CSP); break;
+		case 2: vawb_s_tisp_awb_set_lum_th_freq((u32)(uintptr_t)c, GRR() & 1, 0, 0, VAWB_CSP); break;
+		case 3: vawb_s_tisp_awb_tgain_update((GRR() % 6 == 0) ? 256 + (GRR() & 1) : GRR() & 1, GRR(), GRR() % 14 << 16 | (u32)gr_val(0xffff), 0, VAWB_CSP); break;
+		case 4: gr_cmp_ret(4, "simple_intp", vgr_tisp_simple_intp_int16, gr_c_intp, GRR() % 14, gr_val(0xffff), (u32)(uintptr_t)(tbl + GRR() % 100)); break;
+		case 5: gr_cmp(5, "set_awb_trig", vgr_system_reg_set_awb_trig, gr_c_trig, GRR() % 5, GRR() % 3, 0, 0, VAWB_CSP); break;
+		default: if (GRR() & 1) gr_cmp(6, "ae_main_mean", vgr_tisp_ae_main_mean_update, gr_c_aemain, (u32)(uintptr_t)&gr_ae_loc[0], (u32)(uintptr_t)&gr_ae_loc[1], 0, 0, VAWB_CSP);
+			else gr_cmp(7, "ae_sec_mean", vgr_tisp_ae_sec_mean_update, gr_c_aesec, (u32)(uintptr_t)&gr_ae_loc[0], (u32)(uintptr_t)&gr_ae_loc[1], 0, 0, VAWB_CSP);
+		}
+	}
+	}
+	printf("gain_chain C vs OEM: %lu calls, %lu differ (set_gain %lu/%lu regional %lu/%lu lum_th_freq %lu/%lu tgain %lu/%lu intp %lu/%lu trig %lu/%lu ae_mean %lu/%lu %lu/%lu)\n",
+	       gr_n[0] + gr_n[1] + gr_n[2] + gr_n[3] + gr_n[4] + gr_n[5] + gr_n[6] + gr_n[7],
+	       gr_bad[0] + gr_bad[1] + gr_bad[2] + gr_bad[3] + gr_bad[4] + gr_bad[5] + gr_bad[6] + gr_bad[7],
+	       gr_n[0], gr_bad[0], gr_n[1], gr_bad[1], gr_n[2], gr_bad[2], gr_n[3], gr_bad[3], gr_n[4], gr_bad[4], gr_n[5], gr_bad[5],
+	       gr_n[6], gr_bad[6], gr_n[7], gr_bad[7]);
+}
+#endif
+
+
 static ucontext_t mainctx, runctx;
 static int g_frames = 50, g_trace;
 static u32 g_r, g_g, g_b;
@@ -309,11 +505,14 @@ static void run(void)
 {
 	u32 *c = pstMainAwbOri, f, i;
 
+#ifdef GR_REF_INC
+	gr_ae_setup();
+#endif
 	vawb_tisp_awb_params_transmit((u32)(uintptr_t)c, 0, 0, 0, VAWB_CSP);
 	*(u16 *)(uintptr_t)c[49] = 3840; *(u16 *)((uintptr_t)c[49] + 2) = 2160;
 	vawb_tisp_awb_params_refresh((u32)(uintptr_t)c, 0, tparamsN[0] + 4288, 0, VAWB_CSP);
 	vawb_tisp_awb_set_hardware_param((u32)(uintptr_t)c, 0, 0, 0, VAWB_CSP);
-	vawb_tisp_awb_set_gain((u32)(uintptr_t)c, 0, 0, 0, VAWB_CSP);
+	vawb_s_tisp_awb_set_gain((u32)(uintptr_t)c, 0, 0, 0, VAWB_CSP);
 	printf("init faults=%u ct=%u g9=%u,%u reg=%#x,%#x frz=%u\n", vawb_faults, *(u32 *)(uintptr_t)c[7],
 	       ((u32 *)(uintptr_t)c[9])[0], ((u32 *)(uintptr_t)c[9])[1], reg4004, reg4008, *(u8 *)(uintptr_t)c[119]);
 	vawb_tisp_awb_main_ev_update(3000U << 10, 0, 0, 0, VAWB_CSP);
@@ -346,6 +545,9 @@ static void run(void)
 #endif
 #ifdef LA_REF_INC
 	printf("long_alogrithm C vs OEM: %lu calls, %lu differ\n", la_n, la_bad);
+#endif
+#ifdef GR_REF_INC
+	gr_direct();
 #endif
 }
 

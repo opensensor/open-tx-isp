@@ -18,12 +18,15 @@ ADAPT="system_reg_read div64_u64 __lshrdi3 __ashldi3"
 # the translated per-frame AWB work, issue 133) is the driver's C translation tx_isp_t40_awb_ctd.inc,
 # bit-exact with the OEM code (tests/t40_vawb/vawb_host.c ctd mode).  tisp_awb_long_alogrithm (the
 # per-frame zone pass that calls ct_detect) is the C translation tx_isp_t40_awb_long.inc (LA_REF mode,
-# issue 133); its callee tisp_awb_sat_weight stays translated (root below).
+# issue 133); its callee tisp_awb_sat_weight stays translated (root below).  tisp_awb_set_gain, tisp_awb_tgain_update,
+# tisp_awb_set_regional_threshold and tisp_awb_set_lum_th_freq (with gain_reg, simple_intp, the AE mean update and
+# system_reg_set_awb_trig) are the C translation tx_isp_t40_awb_gain.inc (GR_REF mode, issue 85); the OEM tele-gain
+# branch of set_gain (single sensor: never taken) is gone.
 VAE_IN=$W VAE_OUT=$W/gen.inc VAE_DATA=$HERE/data.json VAE_TRACE="${VAE_TRACE:-}" \
-VAE_ADAPT="$ADAPT" VAE_STOP="tisp_clm_ct_update tisp_awb_ct_detect tisp_awb_long_alogrithm" python3 -I "$HERE/asm2c.py" \
+VAE_ADAPT="$ADAPT" VAE_STOP="tisp_clm_ct_update tisp_awb_ct_detect tisp_awb_long_alogrithm tisp_awb_set_gain tisp_awb_tgain_update tisp_awb_set_regional_threshold tisp_awb_set_lum_th_freq" python3 -I "$HERE/asm2c.py" \
 	tisp_awb_main_process tisp_awb_get_statistics tisp_awb_params_transmit tisp_awb_params_refresh \
-	tisp_awb_set_hardware_param tisp_awb_set_gain tisp_awb_dn_params_refresh tisp_awb_main_ev_update \
-	tisp_awb_tgain_update tisp_awb_sat_weight \
+	tisp_awb_set_hardware_param tisp_awb_dn_params_refresh tisp_awb_main_ev_update \
+	tisp_awb_sat_weight \
 	tisp_ct_update tisp_ccm_main_ct_update tisp_ccm_main_ev_update tisp_ccm_ev_ct_update \
 	tisp_lsc_ct_update tisp_lsc_real_write_lut tisp_bcsh_main_ct_update tisp_bcsh_main_ev_update \
 	tisp_bcsh_ct_update tisp_bcsh_ev_update 2> $W/gen.err
