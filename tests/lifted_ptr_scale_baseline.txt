@@ -3,6 +3,7 @@
 # #189 pass 4 (T40 tailcall/argc triage, host/compile first, then the Eufy and the Cinnado camera): scanner cuts a two-line `return c ?\n x : 0;` hard return (func_adr_reg_write_* are shadowed by hand code); T40 reachability = events 6..13 skipped (t40_ev_updates=0), REGCALL_* mdns -> *_lit, VIC MDMA never enabled, tisp_deinit skipped; fixed: system_reg_write_af, tisp_s_module_control (lost `and` mask + mdns trig tail), tisp_ae_s_comp (hand translation), tisp_csc_set_attr, tisp_dmsc_params_refresh; camera proof (Eufy, apitest 398/0, t40dev equal to the previous image, 6/6 reload cycles, ModuleControl word readback follows the toggled bits, AF register 0x1a038/0x1a238 reads 0xC8F1 on the old and the new image so the stored value itself is not distinguishable on that board, AeComp and contrast numbers equal): reached by that code path, no visible effect change; tisp_s_fixed_contrast_attr is a SHIM again: its restored tail tisp_bcsh_set_mjpeg_contrast runs the dead lifted tisp_bcsh_ev_update (NULL state) and oopsed on the camera in apitest SetFixedContraster; T41: video_input_cmd_open stays a shim (its fops have no .read/.release, a read is -EIO; with the tail and the seq trio restored the proc file printed garbage because video_input_cmd_show uses wrong string labels), tisp_suspend_all / tisp_resume_all dead (PM, tpm_cb unresolved). Known scanner limit: only the first `jr t9` of a function is reported; the only T40 functions with two tails are vic_mdma_irq_function1/2 (checked by hand).
 # #189 T23 pass 5 (vendor ISVP-T23-1.3.0 tx-isp-t23.ko compared, Ghidra project proj/t23, host/compile first, then the T23 camera): reachability fix (the indented closing brace of printf made every prototype below it a root; `open` entries now are real ones); fixed: ispcore_core_ops_ioctl (hand-written event walk tx_isp_t23_core_ioctl.h, 3rd argument was a zero local, sub-device table walked with typed strides), jz_isp_ccm (lost movz and skip branch, typed index/offset registers), tisp_ae_mean_update (typed offset registers); the other 19 reachable entries are dead (no dispatcher / hand-written replacement, see notes); unlinked entries are dead. Camera proof (T23 Jooan A6M, default image, open-tx-isp fae5518d + OpenIMP 055950aa, full OTA): module load OK, snapshot 200, oops 0; apitest all areas PASS 420 / FAIL 11 / N/A 13 / SKIP 25 against PASS 399 / FAIL 32 / N/A 13 / SKIP 25 on the previous image taken minutes earlier (no function got worse, 19 got better, most likely through the newer OpenIMP libimp and not attributed to pass 5; the 11 remaining FAILs were FAILs before too: 10 *_Sec getters without a second sensor and SetScalerLv), night-mode isp+cases run FAIL 11 (the same set), RTSP pulls and 3 timps stop/start cycles clean, 6 running_mode day/night switches via the streamer clean, 6/6 sensor+ISP module reload cycles with oops 0 and slab/vmalloc flat. Reached by that code path (module links and runs with the new code): ispcore_core_ops_ioctl (no sender of events 0x1000000/0x1000001 exists in the live code, so no visible effect expected and none seen). jz_isp_ccm and tisp_ae_mean_update run only with source_core_start=0 (a bring-up parameter, built in only with TX_ISP_T23_BRINGUP_PARAMS=y): with that parameter the camera oopsed/reset within seconds of the first apitest on the bring-up-params ko of this tree (3 of 3 tries) AND on the ko of the parent commit (1 of 1), so that mode is not usable on this board before or after pass 5; the CCM registers 0x5004..0x5020 and the AWB lum threshold 0xb038 read back the same values as on the default image (nothing writes them in that mode), so the CCM/AE fixes have NO verified effect and stay unproven by a camera (they stay safe because the default path never reaches them).
 # #189 T40 layout pass (vendor tx-isp-t40.ko compared with objdump -dr and headless Ghidra, host: tools/ko_emu/diff_vic_isr.py + diff_fmt_table.py + tests/t40_vic_layout_check.py; Eufy runtime swap): isp_vic_interrupt_service_routine fixed (class layout resolved): the 75 VIC interrupt counters (OEM .bss vic_err = 3 x 25) are the real object vic_irq_cnt[3][25] (they were bumped at `&isp_memopt + 72 words + K` inside unrelated .bss objects such as pstMainAeOri_storage), status registers are integers (the VIC device counters stepped by 4), bit tests 16..30 restored (`ext` was dropped by the lift: the counters bumped on ANY status bit), bit 31 test is signed, every exit returns 1; /proc/jz/isp/isp-w02 (OEM isp_vic_frd_show) prints the block. ispcore_core_ops_init: only the stray format-table read is fixed (t40_isp_output_fmt), the rest of that function stays open (see its entries). Unused pads vic_err/data_b441c/data_b4480 (96 KB of .bss) removed; .data/.rodata layout unchanged. Scanner status `layout` is now unused.
+# #189 T40 triage 2 (the remaining `open` T40 entries, T41 has none): 71 reachable-or-not register-lift functions had their register locals (a0..a3 s0..s7 t0..t9 v0 v1 declared `uintptr_t *` / `uint32_t *`) retyped to plain `uintptr_t`, i.e. the OEM byte arithmetic is no longer scaled x4 (tools: retype of the declarations only; objdump evidence, e.g. tisp_ae_api_set_exp_list `addiu ..,64` -> `16`, tisp_set_fps `addiu v1,s1,1600` -> `400`); real device-reachable bugs of that kind: tisp_s_ae_scence_attr / tisp_g_ae_scence_attr (value +1 / -1 stepped by 4, comp test on a pointer), tisp_set_fps (deflicker flag read at the wrong tattr slot), tisp_ae_api_set_exp_list (4 instead of 16 ladder slots, wrong strides), tisp_ae_ev_start_set, tisp_blc_write_reg (register 0x..+44 words), tisp_clm_real_write_lut (register constants), tx_isp_fs_probe (word read at odd address instead of lbu +5), tisp_lce_clr_ram1 (`s1 = 0x5` instead of 0x50000), tisp_csc_get_attr (read the state at a stray isp_memopt anchor, now t40_csc_state), lost tail calls in tisp_lce_clr_ram0 / tisp_lce_curve_init_default. NOT retyped: every function whose big offsets hang on a `&symbol` anchor (status layout: a type fix would only move the stray access; needs a real object like vic_irq_cnt), and the lifted chains that the image skips by parameter (ADR t40_adr_on=Y, LSC/DMSC/GIB lit, mdns *_lit, tisp_deinit/slake skipped): shim/dead with the parameter named. Former shim entries csi_phy_start and ispvic_frame_channel_s_stream are fixed by the retype. Still open: frame_chan_event, ispcore_core_ops_init.
 t23 JZ_Isp_Awb ctr 6 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
 t23 JZ_Isp_Awb loop 8 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
 t23 JZ_Isp_Awb step 9 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
@@ -249,11 +250,11 @@ t40 Tisp_lce_soft loop 7 unreach
 t40 Tisp_lce_soft off 9 unreach
 t40 Tisp_lce_soft step 19 unreach
 t40 Tisp_lce_soft var 5 unreach
-t40 Tiziano_adr_fpga ctr 58 open
-t40 Tiziano_adr_fpga loop 43 open
-t40 Tiziano_adr_fpga off 17 open
-t40 Tiziano_adr_fpga step 88 open
-t40 Tiziano_adr_fpga var 11 open
+t40 Tiziano_adr_fpga ctr 58 shim #189 T40 triage 2: t40_adr_on=Y on the image (hand ADR, tx_isp_t40_adr.h, bit-exact); the lifted ADR chain (tisp_adr_main_process -> tiziano_adr_algorithm -> Tiziano_adr_fpga) runs only with t40_adr_on=0 and still carries typed-pointer strides, isp_memopt/__param_str anchors and (stat_calc) an odd-address store at +0x487 where the OEM index is 0x488: rewrite before that mode is enabled
+t40 Tiziano_adr_fpga loop 43 shim #189 T40 triage 2: t40_adr_on=Y on the image (hand ADR, tx_isp_t40_adr.h, bit-exact); the lifted ADR chain (tisp_adr_main_process -> tiziano_adr_algorithm -> Tiziano_adr_fpga) runs only with t40_adr_on=0 and still carries typed-pointer strides, isp_memopt/__param_str anchors and (stat_calc) an odd-address store at +0x487 where the OEM index is 0x488: rewrite before that mode is enabled
+t40 Tiziano_adr_fpga off 17 shim #189 T40 triage 2: t40_adr_on=Y on the image (hand ADR, tx_isp_t40_adr.h, bit-exact); the lifted ADR chain (tisp_adr_main_process -> tiziano_adr_algorithm -> Tiziano_adr_fpga) runs only with t40_adr_on=0 and still carries typed-pointer strides, isp_memopt/__param_str anchors and (stat_calc) an odd-address store at +0x487 where the OEM index is 0x488: rewrite before that mode is enabled
+t40 Tiziano_adr_fpga step 88 shim #189 T40 triage 2: t40_adr_on=Y on the image (hand ADR, tx_isp_t40_adr.h, bit-exact); the lifted ADR chain (tisp_adr_main_process -> tiziano_adr_algorithm -> Tiziano_adr_fpga) runs only with t40_adr_on=0 and still carries typed-pointer strides, isp_memopt/__param_str anchors and (stat_calc) an odd-address store at +0x487 where the OEM index is 0x488: rewrite before that mode is enabled
+t40 Tiziano_adr_fpga var 11 shim #189 T40 triage 2: t40_adr_on=Y on the image (hand ADR, tx_isp_t40_adr.h, bit-exact); the lifted ADR chain (tisp_adr_main_process -> tiziano_adr_algorithm -> Tiziano_adr_fpga) runs only with t40_adr_on=0 and still carries typed-pointer strides, isp_memopt/__param_str anchors and (stat_calc) an odd-address store at +0x487 where the OEM index is 0x488: rewrite before that mode is enabled
 t40 Tiziano_wdr_deghost_fpga ctr 12 unreach
 t40 Tiziano_wdr_deghost_fpga loop 16 unreach
 t40 Tiziano_wdr_deghost_fpga off 40 unreach
@@ -266,11 +267,6 @@ t40 Tiziano_wdr_fusion_fpga off 24 unreach
 t40 Tiziano_wdr_fusion_fpga step 124 unreach
 t40 Tiziano_wdr_fusion_fpga var 46 unreach
 t40 Tzn_Msca_CpuRead tailcall 1 unreach
-t40 csi_phy_start ctr 2 shim #189 confirmed (typed ptr loop bound, never terminates); skipped at runtime by hand-written regtrace_t40_csi_stream_direct; fix before enabling the lifted CSI path
-t40 csi_phy_start loop 3 shim #189 confirmed (typed ptr loop bound, never terminates); skipped at runtime by hand-written regtrace_t40_csi_stream_direct; fix before enabling the lifted CSI path
-t40 csi_phy_start off 8 shim #189 confirmed (typed ptr loop bound, never terminates); skipped at runtime by hand-written regtrace_t40_csi_stream_direct; fix before enabling the lifted CSI path
-t40 csi_phy_start step 5 shim #189 confirmed (typed ptr loop bound, never terminates); skipped at runtime by hand-written regtrace_t40_csi_stream_direct; fix before enabling the lifted CSI path
-t40 csi_phy_start var 1 open
 t40 defog_count_weight35abc ctr 1 unreach
 t40 defog_count_weight35abc loop 3 unreach
 t40 defog_count_weight35abc off 6 unreach
@@ -279,26 +275,19 @@ t40 defog_count_weight35abc tailcall 1 unreach
 t40 defog_count_weight35abc var 8 unreach
 t40 dump_csi_reg tailcall 1 unreach
 t40 fix_point_intp off 2 unreach
-t40 frame_chan_event loop 2 open
-t40 frame_chan_event off 8 open
-t40 frame_chan_event step 13 open
-t40 frame_chan_event var 1 open
+t40 frame_chan_event loop 2 open #189 T40 triage 2: NOT touched - pad event handler with real channel-struct offsets AND an isp_memopt+1528 anchor, needs its own OEM pass (a retype alone would move the anchor access)
+t40 frame_chan_event off 8 open #189 T40 triage 2: NOT touched - pad event handler with real channel-struct offsets AND an isp_memopt+1528 anchor, needs its own OEM pass (a retype alone would move the anchor access)
+t40 frame_chan_event step 13 open #189 T40 triage 2: NOT touched - pad event handler with real channel-struct offsets AND an isp_memopt+1528 anchor, needs its own OEM pass (a retype alone would move the anchor access)
+t40 frame_chan_event var 1 open #189 T40 triage 2: NOT touched - pad event handler with real channel-struct offsets AND an isp_memopt+1528 anchor, needs its own OEM pass (a retype alone would move the anchor access)
 t40 frame_channel_reqbufs loop 1 unreach
 t40 frame_channel_reqbufs off 3 unreach
 t40 frame_channel_reqbufs step 5 unreach
 t40 frame_channel_vidioc_get_fmt step 2 unreach
-t40 fs_slake_module step 3 open
-t40 func_adr_map_curve1 step 1 open
+t40 func_adr_map_curve1 step 1 shim #189 T40 triage 2: t40_adr_on=Y on the image (hand ADR, tx_isp_t40_adr.h, bit-exact); the lifted ADR chain (tisp_adr_main_process -> tiziano_adr_algorithm -> Tiziano_adr_fpga) runs only with t40_adr_on=0 and still carries typed-pointer strides, isp_memopt/__param_str anchors and (stat_calc) an odd-address store at +0x487 where the OEM index is 0x488: rewrite before that mode is enabled
 t40 func_adr_pars_display step 2 unreach
 t40 func_gam_x2y ctr 1 unreach
 t40 func_gam_x2y loop 1 unreach
 t40 func_gam_x2y step 2 unreach
-t40 func_local_info step 1 open
-t40 func_map_y_filter_sp ctr 1 open
-t40 func_map_y_filter_sp loop 5 open
-t40 func_map_y_filter_sp off 1 open
-t40 func_map_y_filter_sp step 10 open
-t40 func_map_y_filter_sp var 2 open
 t40 func_matrix_check_short step 3 unreach
 t40 func_subsection_light loop 2 unreach
 t40 func_subsection_light step 6 unreach
@@ -309,14 +298,10 @@ t40 isp_framesource_show ctr 1 unreach
 t40 isp_framesource_show loop 1 unreach
 t40 isp_framesource_show off 5 unreach
 t40 isp_framesource_show step 11 unreach
-t40 isp_i2c_new_subdev_board off 1 open
-t40 isp_info_show_isra_4 ctr 3 open
-t40 isp_info_show_isra_4 loop 6 open
-t40 isp_info_show_isra_4 off 2 open
-t40 isp_info_show_isra_4 step 8 open
-t40 isp_main_pre_frame_dequeue step 1 open
-t40 isp_mbus_to_bayer_isra_0 off 2 open
-t40 isp_mbus_to_bayer_isra_0 step 19 open
+t40 isp_info_show_isra_4 ctr 3 layout #189 T40 triage 2: debug proc show, reads at &isp_memopt + 22004.. (stray anchor, print only)
+t40 isp_info_show_isra_4 loop 6 layout #189 T40 triage 2: debug proc show, reads at &isp_memopt + 22004.. (stray anchor, print only)
+t40 isp_info_show_isra_4 off 2 layout #189 T40 triage 2: debug proc show, reads at &isp_memopt + 22004.. (stray anchor, print only)
+t40 isp_info_show_isra_4 step 8 layout #189 T40 triage 2: debug proc show, reads at &isp_memopt + 22004.. (stray anchor, print only)
 t40 isp_mem_init off 1 unreach
 t40 isp_save_cmd_set off 2 unreach
 t40 isp_save_cmd_set step 6 unreach
@@ -325,15 +310,10 @@ t40 isp_vic_cmd_set loop 4 unreach #189: no caller; vic cmd path is hand-written
 t40 isp_vic_cmd_set off 3 unreach #189: no caller; vic cmd path is hand-written
 t40 isp_vic_cmd_set step 9 unreach #189: no caller; vic cmd path is hand-written
 t40 isp_vic_cmd_set var 2 unreach
-t40 ispcore_core_ops_init loop 4 open #189 layout pass: the per-channel format table is the real const object t40_isp_output_fmt now (OEM isp_output_fmt, the stray &sclk_name-7384 is gone); the remaining hits are the same typed-register byte arithmetic (v0/v1/a2/a3/s0 are uintptr_t*/uint32_t*: channel index and +216 stride, the cpu0_status register addresses, the sensor-name copy) and are not compared with the OEM yet
-t40 ispcore_core_ops_init off 5 open #189 layout pass: the per-channel format table is the real const object t40_isp_output_fmt now (OEM isp_output_fmt, the stray &sclk_name-7384 is gone); the remaining hits are the same typed-register byte arithmetic (v0/v1/a2/a3/s0 are uintptr_t*/uint32_t*: channel index and +216 stride, the cpu0_status register addresses, the sensor-name copy) and are not compared with the OEM yet
-t40 ispcore_core_ops_init step 9 open #189 layout pass: the per-channel format table is the real const object t40_isp_output_fmt now (OEM isp_output_fmt, the stray &sclk_name-7384 is gone); the remaining hits are the same typed-register byte arithmetic (v0/v1/a2/a3/s0 are uintptr_t*/uint32_t*: channel index and +216 stride, the cpu0_status register addresses, the sensor-name copy) and are not compared with the OEM yet
-t40 ispcore_core_ops_init var 2 open
-t40 ispcore_core_ops_ioctl ctr 1 open
-t40 ispcore_core_ops_ioctl loop 5 open
-t40 ispcore_core_ops_ioctl off 4 open
-t40 ispcore_core_ops_ioctl step 3 open
-t40 ispcore_frame_channel_streamoff off 1 open
+t40 ispcore_core_ops_init loop 4 open #189 T40 triage 2: unchanged - the remaining typed registers are mixed with __param_str_isp_dual_buf+9820 anchors; needs its own OEM comparison (see the layout pass note)
+t40 ispcore_core_ops_init off 5 open #189 T40 triage 2: unchanged - the remaining typed registers are mixed with __param_str_isp_dual_buf+9820 anchors; needs its own OEM comparison (see the layout pass note)
+t40 ispcore_core_ops_init step 9 open #189 T40 triage 2: unchanged - the remaining typed registers are mixed with __param_str_isp_dual_buf+9820 anchors; needs its own OEM comparison (see the layout pass note)
+t40 ispcore_core_ops_init var 2 open #189 T40 triage 2: unchanged - the remaining typed registers are mixed with __param_str_isp_dual_buf+9820 anchors; needs its own OEM comparison (see the layout pass note)
 t40 ispcore_pad_event_handle ctr 25 shim #189: replaced at runtime by hand-written regtrace_ispcore_pad_event_handle (installed by tx_isp_core_probe); lifted body unreferenced
 t40 ispcore_pad_event_handle loop 47 shim #189: replaced at runtime by hand-written regtrace_ispcore_pad_event_handle (installed by tx_isp_core_probe); lifted body unreferenced
 t40 ispcore_pad_event_handle off 8 shim #189: replaced at runtime by hand-written regtrace_ispcore_pad_event_handle (installed by tx_isp_core_probe); lifted body unreferenced
@@ -344,17 +324,10 @@ t40 ispcore_video_s_stream ctr 1 shim OEM 0xd8 channel stride vs lifted x4 strid
 t40 ispcore_video_s_stream loop 3 shim OEM 0xd8 channel stride vs lifted x4 stride never meets 1296 (stream-off loop); core skipped by regtrace_slot_is_core
 t40 ispcore_video_s_stream off 6 shim OEM 0xd8 channel stride vs lifted x4 stride never meets 1296 (stream-off loop); core skipped by regtrace_slot_is_core
 t40 ispcore_video_s_stream step 2 shim OEM 0xd8 channel stride vs lifted x4 stride never meets 1296 (stream-off loop); core skipped by regtrace_slot_is_core
-t40 ispint_adr_16 step 3 open
-t40 ispvic_frame_channel_clearbuf off 2 open
-t40 ispvic_frame_channel_s_stream ctr 2 shim #189 confirmed (x4 register offsets 0xc00 for 0x300, endless channel loop); skipped at runtime by hand-written regtrace_vic_frame_mdma_stream
-t40 ispvic_frame_channel_s_stream loop 5 shim #189 confirmed (x4 register offsets 0xc00 for 0x300, endless channel loop); skipped at runtime by hand-written regtrace_vic_frame_mdma_stream
-t40 ispvic_frame_channel_s_stream off 5 shim #189 confirmed (x4 register offsets 0xc00 for 0x300, endless channel loop); skipped at runtime by hand-written regtrace_vic_frame_mdma_stream
-t40 ispvic_frame_channel_s_stream step 5 shim #189 confirmed (x4 register offsets 0xc00 for 0x300, endless channel loop); skipped at runtime by hand-written regtrace_vic_frame_mdma_stream
-t40 ispvic_frame_channel_s_stream var 2 open
-t40 ispvic_frame_get_raw loop 1 open
-t40 ispvic_frame_get_raw off 5 open
-t40 ispvic_frame_get_raw step 1 open
-t40 ispvic_frame_get_raw var 3 open
+t40 ispvic_frame_get_raw loop 1 layout #189 T40 triage 2: the vic device pointer is read from &mips_dma_map_ops (stray anchor) and the function is only reached through vic_sensor_ops_ioctl cases the live build does not send
+t40 ispvic_frame_get_raw off 5 layout #189 T40 triage 2: the vic device pointer is read from &mips_dma_map_ops (stray anchor) and the function is only reached through vic_sensor_ops_ioctl cases the live build does not send
+t40 ispvic_frame_get_raw step 1 layout #189 T40 triage 2: the vic device pointer is read from &mips_dma_map_ops (stray anchor) and the function is only reached through vic_sensor_ops_ioctl cases the live build does not send
+t40 ispvic_frame_get_raw var 3 layout #189 T40 triage 2: the vic device pointer is read from &mips_dma_map_ops (stray anchor) and the function is only reached through vic_sensor_ops_ioctl cases the live build does not send
 t40 lce_head_tail_search step 2 unreach
 t40 lce_hist_filter_and_judge loop 2 unreach
 t40 lce_hist_filter_and_judge off 1 unreach
@@ -389,7 +362,7 @@ t40 private_i2c_unregister_device tailcall 1 dead #189 T40: no symbol in the lin
 t40 private_reset_tx_isp_module loop 1 unreach
 t40 private_reset_tx_isp_module off 1 unreach
 t40 private_reset_tx_isp_module step 1 unreach
-t40 regtrace_t40_tuning_copy_ae_stats var 1 open
+t40 regtrace_t40_tuning_copy_ae_stats var 1 ok #189 T40 triage 2: hand-written; the typed pointers are real u32 arrays indexed in elements
 t40 sensor_alloc_integration_time var 1 unreach
 t40 sensor_alloc_integration_time_short var 1 unreach
 t40 sensor_set_integration_time var 1 unreach
@@ -397,18 +370,12 @@ t40 table_intp step 1 unreach
 t40 tisp_adr_dn_params_refresh step 1 unreach
 t40 tisp_adr_dn_params_refresh tailcall 1 unreach
 t40 tisp_adr_dn_params_refresh var 2 unreach
-t40 tisp_adr_main_deinit off 1 open
 t40 tisp_adr_main_deinit tailcall 1 shim #189 T40: reached only from the lifted tisp_deinit, which is skipped by default (skip_tisp_deinit=1); the lifted body locks &isp_memopt and loses the tail mutex_unlock(adr_mlock); ADR is torn down by t40_adr_cleanup. Fix both before skip_tisp_deinit=0
-t40 tisp_adr_main_process step 1 open
 t40 tisp_adr_sec_process step 1 unreach
-t40 tisp_ae_api_get_exp_list step 1 open
-t40 tisp_ae_api_set_exp_list step 1 open
+t40 tisp_ae_api_get_exp_list step 1 ok #189 T40 triage 2: hand-written; the typed pointers are real u32 arrays indexed in elements
 t40 tisp_ae_dn_params_refresh step 5 unreach
 t40 tisp_ae_dn_params_refresh tailcall 1 unreach
-t40 tisp_ae_ev_start_set step 1 open
-t40 tisp_ae_main_mean_update step 2 open
 t40 tisp_ae_main_s_min step 1 unreach
-t40 tisp_ae_sec_mean_update step 2 open
 t40 tisp_ae_sec_s_min step 1 unreach
 t40 tisp_ae_short_alogrithm tailcall 1 unreach
 t40 tisp_af_alogrithm ctr 1 unreach
@@ -419,73 +386,39 @@ t40 tisp_af_dn_params_refresh step 2 unreach
 t40 tisp_af_get_attr step 1 unreach
 t40 tisp_af_get_metric step 1 unreach
 t40 tisp_af_main_interrupt_static step 1 unreach
-t40 tisp_af_param_array_set step 1 open
-t40 tisp_af_params_refresh off 3 open
-t40 tisp_af_params_refresh step 5 open
-t40 tisp_af_params_refresh var 1 open
+t40 tisp_af_param_array_set step 1 layout #189 T40 triage 2: AF context at &isp_memopt + 15044 / &pstMainAfOri + 15212 (stray anchors); AF params go through t40_tisp_set_par / hand code
 t40 tisp_af_sec_interrupt_static step 1 unreach
-t40 tisp_af_set_attr step 2 open
+t40 tisp_af_set_attr step 2 layout #189 T40 triage 2: AF context at &isp_memopt + 15044 / &pstMainAfOri + 15212 (stray anchors); AF params go through t40_tisp_set_par / hand code
 t40 tisp_af_set_attr_refresh step 2 unreach
-t40 tisp_af_set_hardware_param off 49 open
-t40 tisp_awb_dn_params_refresh tailcall 1 unreach
 t40 tisp_awb_sec_ev_update tailcall 1 dead #189 T40: reached only through the lifted tisp events 6..13 (tisp_main_long_tgain_update / ev_update, skipped by default: t40_ev_updates=0) and the lifted module inits (enable_tisp_main_init_color_inits=0); the live EV/CT chains are the hand-written t40_vawb / t40_bcsh / t40_vct code. Lost tail call confirmed against libt40-firmware, not fixed
 t40 tisp_awb_sec_face_pos var 2 unreach
-t40 tisp_awb_tgain_update tailcall 1 dead #189 T40: reached only through the lifted tisp events 6..13 (tisp_main_long_tgain_update / ev_update, skipped by default: t40_ev_updates=0) and the lifted module inits (enable_tisp_main_init_color_inits=0); the live EV/CT chains are the hand-written t40_vawb / t40_bcsh / t40_vct code. Lost tail call confirmed against libt40-firmware, not fixed
 t40 tisp_bcsh_Tccm_Comp2Orig tailcall 1 dead #189 T40: reached only through the lifted tisp events 6..13 (tisp_main_long_tgain_update / ev_update, skipped by default: t40_ev_updates=0) and the lifted module inits (enable_tisp_main_init_color_inits=0); the live EV/CT chains are the hand-written t40_vawb / t40_bcsh / t40_vct code. Lost tail call confirmed against libt40-firmware, not fixed
-t40 tisp_bcsh_Tccm_RGBYUV ctr 2 open
-t40 tisp_bcsh_Tccm_RGBYUV loop 2 open
-t40 tisp_bcsh_Tccm_RGBYUV off 1 open
-t40 tisp_bcsh_Tccm_RGBYUV step 9 open
-t40 tisp_bcsh_Tccm_RGBYUV var 2 open
-t40 tisp_bcsh_Toffset_RGB2YUV step 3 open
 t40 tisp_bcsh_brightness tailcall 1 unreach
 t40 tisp_bcsh_contrast tailcall 1 unreach
-t40 tisp_bcsh_csc_attr step 1 open
+t40 tisp_bcsh_csc_attr step 1 layout #189 T40 triage 2: BCSH/CCM control blocks at pstSecBcshOri+18240 / pstMainCcmOri+19080 ... (stray anchors); the ioctl entries are hand-written in front (T40-CCM-SET, T40-CSC-BCSH)
 t40 tisp_bcsh_ct_update tailcall 1 dead #189 T40: reached only through the lifted tisp events 6..13 (tisp_main_long_tgain_update / ev_update, skipped by default: t40_ev_updates=0) and the lifted module inits (enable_tisp_main_init_color_inits=0); the live EV/CT chains are the hand-written t40_vawb / t40_bcsh / t40_vct code. Lost tail call confirmed against libt40-firmware, not fixed
 t40 tisp_bcsh_ev_set_parameter tailcall 1 dead #189 T40: reached only through the lifted tisp events 6..13 (tisp_main_long_tgain_update / ev_update, skipped by default: t40_ev_updates=0) and the lifted module inits (enable_tisp_main_init_color_inits=0); the live EV/CT chains are the hand-written t40_vawb / t40_bcsh / t40_vct code. Lost tail call confirmed against libt40-firmware, not fixed
-t40 tisp_bcsh_ev_update off 2 open
 t40 tisp_bcsh_ev_update tailcall 1 dead #189 T40: reached only through the lifted tisp events 6..13 (tisp_main_long_tgain_update / ev_update, skipped by default: t40_ev_updates=0) and the lifted module inits (enable_tisp_main_init_color_inits=0); the live EV/CT chains are the hand-written t40_vawb / t40_bcsh / t40_vct code. Lost tail call confirmed against libt40-firmware, not fixed (the lifted tail call is tisp_bcsh_ev_set_parameter(ctx, ch))
-t40 tisp_bcsh_ev_update var 5 open
-t40 tisp_bcsh_ev_update_TransitParam loop 1 open
-t40 tisp_bcsh_ev_update_TransitParam step 3 open
-t40 tisp_bcsh_ev_update_TransitParam var 1 open
-t40 tisp_bcsh_param_array_set step 1 open
+t40 tisp_bcsh_param_array_set step 1 layout #189 T40 triage 2: BCSH/CCM control blocks at pstSecBcshOri+18240 / pstMainCcmOri+19080 ... (stray anchors); the ioctl entries are hand-written in front (T40-CCM-SET, T40-CSC-BCSH)
 t40 tisp_bcsh_s_hue step 2 unreach
 t40 tisp_bcsh_saturation tailcall 1 dead #189 T40: reached only from the lifted tisp_set_saturation; SetSaturation runs the hand-written regtrace_isp_m0_apply_saturation / t40_bcsh_ev_update
-t40 tisp_bcsh_set_attr step 3 open
+t40 tisp_bcsh_set_attr step 3 layout #189 T40 triage 2: BCSH/CCM control blocks at pstSecBcshOri+18240 / pstMainCcmOri+19080 ... (stray anchors); the ioctl entries are hand-written in front (T40-CCM-SET, T40-CSC-BCSH)
 t40 tisp_bcsh_set_offset_rgb step 1 unreach
-t40 tisp_blc_ag_interp step 1 open
-t40 tisp_blc_calc_digital_gain off 1 open
-t40 tisp_blc_calc_digital_gain step 1 open
+t40 tisp_blc_ag_interp step 1 layout #189 T40 triage 2: s_blc_again at &s_blc_again - 16464 (stray anchor); reached only in WDR short-frame updates
 t40 tisp_blc_print_tool_para step 9 unreach
-t40 tisp_blc_write_reg off 2 open
-t40 tisp_ccm_param_array_set step 1 open
-t40 tisp_ccm_set_attr step 3 open
+t40 tisp_ccm_param_array_set step 1 layout #189 T40 triage 2: BCSH/CCM control blocks at pstSecBcshOri+18240 / pstMainCcmOri+19080 ... (stray anchors); the ioctl entries are hand-written in front (T40-CCM-SET, T40-CSC-BCSH)
+t40 tisp_ccm_set_attr step 3 layout #189 T40 triage 2: BCSH/CCM control blocks at pstSecBcshOri+18240 / pstMainCcmOri+19080 ... (stray anchors); the ioctl entries are hand-written in front (T40-CCM-SET, T40-CSC-BCSH)
 t40 tisp_channel_main_attr_set step 2 unreach
 t40 tisp_channel_main_attr_set var 1 unreach
 t40 tisp_channel_sec_attr_set step 2 unreach
 t40 tisp_channel_sec_attr_set var 1 unreach
-t40 tisp_clm_ct_interp loop 4 open
-t40 tisp_clm_ct_interp off 2 open
-t40 tisp_clm_ct_interp step 8 open
-t40 tisp_clm_ct_update var 2 open
-t40 tisp_clm_init step 6 open
-t40 tisp_clm_real_write_lut ctr 1 open
-t40 tisp_clm_real_write_lut loop 1 open
-t40 tisp_clm_real_write_lut off 16 open
-t40 tisp_clm_real_write_lut step 5 open
-t40 tisp_clm_real_write_lut var 1 open
 t40 tisp_clm_wdr_en step 15 unreach
-t40 tisp_csc_get_attr step 1 open
-t40 tisp_csc_set_attr off 1 open
 t40 tisp_day_or_night_s_ctrl loop 3 unreach
 t40 tisp_day_or_night_s_ctrl step 2 unreach
 t40 tisp_day_or_night_s_ctrl var 4 unreach
 t40 tisp_defog_dn_params_refresh off 7 unreach
 t40 tisp_defog_dn_params_refresh step 1 unreach
 t40 tisp_defog_ev_update tailcall 1 dead #189 T40: reached only through the lifted tisp events 6..13 (tisp_main_long_tgain_update / ev_update, skipped by default: t40_ev_updates=0) and the lifted module inits (enable_tisp_main_init_color_inits=0); the live EV/CT chains are the hand-written t40_vawb / t40_bcsh / t40_vct code. Lost tail call confirmed against libt40-firmware, not fixed
-t40 tisp_defog_get_data_part_0 loop 1 open
-t40 tisp_defog_get_data_part_0 step 2 open
 t40 tisp_defog_img_filter25 ctr 2 unreach
 t40 tisp_defog_img_filter25 loop 5 unreach
 t40 tisp_defog_img_filter25 step 8 unreach
@@ -508,9 +441,6 @@ t40 tisp_defog_update_reg_para2 ctr 2 unreach
 t40 tisp_defog_update_reg_para2 loop 3 unreach
 t40 tisp_defog_update_reg_para2 off 5 unreach
 t40 tisp_defog_update_reg_para2 step 5 unreach
-t40 tisp_defog_update_trans_k loop 1 open
-t40 tisp_defog_update_trans_k off 1 open
-t40 tisp_defog_update_trans_k step 2 open
 t40 tisp_defog_wdr_choose_para off 30 unreach
 t40 tisp_defog_wdr_choose_para step 1 unreach
 t40 tisp_defog_wdr_en off 1 unreach
@@ -525,25 +455,12 @@ t40 tisp_defog_write_reg_para3 off 2 unreach
 t40 tisp_defog_write_reg_para3 step 5 unreach
 t40 tisp_defog_write_reg_para3 tailcall 1 unreach
 t40 tisp_dmsc_dn_params_refresh tailcall 1 unreach
-t40 tisp_dmsc_wdr_en off 463 open
-t40 tisp_dmsc_wdr_en step 2 open
 t40 tisp_dpc_all_reg_refresh tailcall 1 unreach
 t40 tisp_dpc_intp_reg_refresh tailcall 1 unreach
 t40 tisp_dpc_ref_reg_cfg unal 5 unreach
-t40 tisp_g_ae_scence_attr ctr 2 open
-t40 tisp_g_ae_scence_attr loop 1 open
-t40 tisp_g_ae_scence_attr step 3 open
 t40 tisp_g_ae_step tailcall 1 unreach
 t40 tisp_g_defog_str_internal step 1 unreach
 t40 tisp_gamma_dn_params_refresh step 1 unreach
-t40 tisp_gamma_ev_update var 1 open
-t40 tisp_gamma_init step 2 open
-t40 tisp_gamma_interp_by_ev step 1 open
-t40 tisp_gamma_real_write_lut off 12 open
-t40 tisp_gamma_real_write_lut step 2 open
-t40 tisp_gamma_strength_transform loop 1 open
-t40 tisp_gamma_strength_transform off 2 open
-t40 tisp_gamma_strength_transform step 2 open
 t40 tisp_gamma_wdr_en step 5 unreach
 t40 tisp_get_ae_tgain tailcall 1 unreach
 t40 tisp_gib_print_real_para step 4 unreach
@@ -564,15 +481,6 @@ t40 tisp_hldc_dn_params_refresh tailcall 1 unreach
 t40 tisp_lce_awdr_to_used loop 1 unreach
 t40 tisp_lce_awdr_to_used step 1 unreach
 t40 tisp_lce_awdr_to_used tailcall 1 unreach
-t40 tisp_lce_clr_ram0 loop 1 open
-t40 tisp_lce_clr_ram0 step 4 open
-t40 tisp_lce_clr_ram0 tailcall 1 dead #189 T40: no symbol in the linked module; LCE RAM clear is the hand-written t40_lce code
-t40 tisp_lce_clr_ram1 step 2 open
-t40 tisp_lce_curve_init_default ctr 1 open
-t40 tisp_lce_curve_init_default loop 2 open
-t40 tisp_lce_curve_init_default off 5 open
-t40 tisp_lce_curve_init_default step 3 open
-t40 tisp_lce_curve_init_default tailcall 1 dead #189 T40: no symbol in the linked module (only referenced from the lifted tisp_lce_top_change_state, address unused)
 t40 tisp_lce_get_data loop 3 unreach
 t40 tisp_lce_get_data off 15 unreach
 t40 tisp_lce_get_data step 6 unreach
@@ -584,43 +492,31 @@ t40 tisp_lce_seco_process step 1 unreach
 t40 tisp_lce_tgain_update tailcall 1 dead #189 T40: reached only through the lifted tisp events 6..13 (tisp_main_long_tgain_update / ev_update, skipped by default: t40_ev_updates=0) and the lifted module inits (enable_tisp_main_init_color_inits=0); the live EV/CT chains are the hand-written t40_vawb / t40_bcsh / t40_vct code. Lost tail call confirmed against libt40-firmware, not fixed
 t40 tisp_lce_tool_to_awdr off 55 unreach
 t40 tisp_lce_tool_to_awdr step 2 unreach
-t40 tisp_lce_top_change_state off 1 open
+t40 tisp_lce_top_change_state off 1 layout #189 T40 triage 2: lce_data_refresh_flag[ch] is written at &lce_data_refresh_flag + 17288 (stray anchor) and the OEM tail call tisp_lce_curve_init_default is still lost (falls into the main/sec branch); guarded by T40-LCE-TOP-GUARD, hand LCE (t40_lce_on=Y) owns the state
 t40 tisp_lce_top_change_state tailcall 1 shim #189 T40: lost tail call tisp_lce_curve_init_default(ch) (+ the flag store in its delay slot); the function returns at once unless the lifted LCE tool_para exists (T40-LCE-TOP-GUARD: hand LCE active), and the typed-pointer step in its flag address is open as well
 t40 tisp_lce_wdr_en tailcall 1 unreach
-t40 tisp_lce_write_all_reg loop 1 open
-t40 tisp_lce_write_all_reg off 3 open
-t40 tisp_lce_write_all_reg step 3 open
 t40 tisp_lsc_hvflip tailcall 1 ok #189 T40: confirmed lost tail call tisp_lsc_mirror_flip(a0..a3, arg4); the callee is a REGTRACE_KERNEL_TREE_BUILD stub returning 0 (LSC flip is the hand-written lsc_lit code), so restoring it changes nothing
-t40 tisp_lsc_init step 1 open
-t40 tisp_lsc_interp_by_gain step 1 open
-t40 tisp_lsc_real_write_lut off 3 open
-t40 tisp_lsc_real_write_lut step 4 open
+t40 tisp_lsc_init step 1 shim #189 T40 triage 2: enable_lsc_lit=Y on the image (hand LSC); lifted LSC init only with enable_lsc_lit=0, anchors &sclk_name - 16492 / &isp_memopt + 16880
+t40 tisp_lsc_interp_by_gain step 1 shim #189 T40 triage 2: enable_lsc_lit=Y on the image (hand LSC); lifted LSC init only with enable_lsc_lit=0, anchors &sclk_name - 16492 / &isp_memopt + 16880
 t40 tisp_lsc_upside_down_lut var 1 unreach
-t40 tisp_lsc_write_reg off 2 open
-t40 tisp_lsc_write_reg step 2 open
 t40 tisp_main_day_night_mode_ctl tailcall 1 unreach
 t40 tisp_mdns_all_reg_refresh tailcall 1 dead #189 T40: no symbol; REGCALL_* routes MDNS to the *_lit literal translation
 t40 tisp_mdns_intp_reg_refresh tailcall 1 unreach
-t40 tisp_mdns_par_refresh step 1 open
+t40 tisp_mdns_par_refresh step 1 shim #189 T40 triage 2: see mdns
 t40 tisp_mdns_par_refresh tailcall 1 dead #189 T40: no symbol; REGCALL_* routes MDNS to the *_lit literal translation
-t40 tisp_mdns_par_refresh var 1 open
+t40 tisp_mdns_par_refresh var 1 shim #189 T40 triage 2: see mdns
 t40 tisp_mdns_reg_cfg argc 15 dead #189 T40: no symbol; REGCALL_tisp_mdns_reg_cfg routes to tisp_mdns_reg_cfg_lit (literal translation)
-t40 tisp_mdns_reg_cfg off 15 open
-t40 tisp_mdns_reg_cfg step 5 open
+t40 tisp_mdns_reg_cfg off 15 shim #189 T40 triage 2: REGCALL_* mdns go to the *_lit chain (enable_mdns=Y); the lifted mdns chain is skipped, it still has typed offsets, the &sclk_name - 14136 anchor, lost tail calls and one-argument system_reg_write
+t40 tisp_mdns_reg_cfg step 5 shim #189 T40 triage 2: REGCALL_* mdns go to the *_lit chain (enable_mdns=Y); the lifted mdns chain is skipped, it still has typed offsets, the &sclk_name - 14136 anchor, lost tail calls and one-argument system_reg_write
 t40 tisp_mdns_reg_cfg tailcall 1 dead #189 T40: no symbol; REGCALL_tisp_mdns_reg_cfg routes to tisp_mdns_reg_cfg_lit (literal translation)
-t40 tisp_mdns_reg_cfg var 3 open
-t40 tisp_mdns_reg_cfg_equation_dif off 1 open
-t40 tisp_mdns_reg_cfg_equation_smp var 4 open
+t40 tisp_mdns_reg_cfg var 3 shim #189 T40 triage 2: REGCALL_* mdns go to the *_lit chain (enable_mdns=Y); the lifted mdns chain is skipped, it still has typed offsets, the &sclk_name - 14136 anchor, lost tail calls and one-argument system_reg_write
+t40 tisp_mdns_reg_cfg_equation_dif off 1 shim #189 T40 triage 2: REGCALL_* mdns go to the *_lit chain (enable_mdns=Y); the lifted mdns chain is skipped, it still has typed offsets, the &sclk_name - 14136 anchor, lost tail calls and one-argument system_reg_write
+t40 tisp_mdns_reg_cfg_equation_smp var 4 shim #189 T40 triage 2: REGCALL_* mdns go to the *_lit chain (enable_mdns=Y); the lifted mdns chain is skipped, it still has typed offsets, the &sclk_name - 14136 anchor, lost tail calls and one-argument system_reg_write
 t40 tisp_mdns_reg_trig tailcall 1 dead #189 T40: no symbol; REGCALL_tisp_mdns_reg_trig routes to tisp_mdns_reg_trig_lit
 t40 tisp_mdns_start tailcall 1 dead #189 T40: no symbol; REGCALL_tisp_mdns_start routes to tisp_mdns_start_lit
 t40 tisp_mdns_wdr_en off 162 unreach
 t40 tisp_mdns_wdr_en step 3 unreach
-t40 tisp_s_ae_scence_attr loop 2 open
-t40 tisp_s_ae_scence_attr step 5 open
 t40 tisp_s_ae_step tailcall 1 unreach
-t40 tisp_s_autozoom_control loop 1 open
-t40 tisp_s_autozoom_control off 2 open
-t40 tisp_s_autozoom_control step 1 open
 t40 tisp_s_defog_ratio loop 1 unreach
 t40 tisp_s_defog_ratio off 3 unreach
 t40 tisp_s_defog_ratio step 3 unreach
@@ -647,47 +543,40 @@ t40 tisp_s_mdns_ratio off 1 unreach
 t40 tisp_s_mdns_ratio step 2 unreach
 t40 tisp_s_mdns_ratio tailcall 1 unreach
 t40 tisp_s_mdns_ratio var 2 unreach
-t40 tisp_s_statis_config_attr off 1 open
+t40 tisp_s_statis_config_attr off 1 ok #189 T40 triage 2: `s3 = s0 + 20` is a dead store (int* arg element step, s3 never read)
 t40 tisp_sdns_wdr_en off 248 unreach
 t40 tisp_sdns_wdr_en step 2 unreach
-t40 tisp_sec_init loop 6 open
-t40 tisp_sec_init step 1 open
-t40 tisp_set_csc_version step 1 open
-t40 tisp_set_fps off 1 open
-t40 tisp_slake_all step 2 open
+t40 tisp_set_csc_version step 1 ok #189 T40 triage 2: the stray `isp_memopt + 21344 words` store is only compiled in behind t40_c2_stray (bisect switch, default 0); the real state is t40_csc_state
+t40 tisp_slake_all step 2 dead #189 T40 triage 2: t40_rmmod_skip_slake=Y on the image; also lost tail (OEM frees the WDR buffers) and isp_memopt+6816 anchors
 t40 tisp_slake_all tailcall 1 shim #189 T40: confirmed lost tail call tisp_wdr_process_deinit() (WDR buffers only, linear sensors never allocate them); the lifted callee frees private_kfree(NULL) pointers: rewrite it before restoring the tail
 t40 tisp_tstp_mark1_func off 2 unreach
 t40 tisp_tstp_mark1_func step 8 unreach
 t40 tisp_wdr_default_reg_refresh step 1 unreach
 t40 tisp_wdr_degweight_ev off 1 unreach
 t40 tisp_wdr_degweight_ev var 1 unreach
-t40 tisp_wdr_direct_reg_refresh loop 1 open
-t40 tisp_wdr_direct_reg_refresh off 5 open
-t40 tisp_wdr_direct_reg_refresh step 3 open
+t40 tisp_wdr_direct_reg_refresh loop 1 layout #189 T40 triage 2: WDR context at &deghost_en + 16932 / &isp_memopt + 16932 / &ev_wdr_s + 16960 (stray anchors); the linear sensor image never runs the WDR paths
+t40 tisp_wdr_direct_reg_refresh off 5 layout #189 T40 triage 2: WDR context at &deghost_en + 16932 / &isp_memopt + 16932 / &ev_wdr_s + 16960 (stray anchors); the linear sensor image never runs the WDR paths
+t40 tisp_wdr_direct_reg_refresh step 3 layout #189 T40 triage 2: WDR context at &deghost_en + 16932 / &isp_memopt + 16932 / &ev_wdr_s + 16960 (stray anchors); the linear sensor image never runs the WDR paths
 t40 tisp_wdr_dn_params_refresh tailcall 1 unreach
 t40 tisp_wdr_getVar step 2 unreach
 t40 tisp_wdr_get_lum_s off 4 unreach
 t40 tisp_wdr_get_lum_s step 2 unreach
 t40 tisp_wdr_get_lum_s var 2 unreach
 t40 tisp_wdr_interplate var 1 unreach
-t40 tisp_wdr_log2 ctr 1 open
-t40 tisp_wdr_log2 loop 1 open
-t40 tisp_wdr_log2 off 1 open
-t40 tisp_wdr_log2 step 2 open
 t40 tisp_wdr_main_init off 2 unreach
 t40 tisp_wdr_main_init step 2 unreach
 t40 tisp_wdr_main_init tailcall 1 unreach
 t40 tisp_wdr_main_process loop 1 unreach
 t40 tisp_wdr_main_process step 2 unreach
 t40 tisp_wdr_paixu step 2 unreach
-t40 tisp_wdr_param_array_get step 1 open
-t40 tisp_wdr_param_array_set_intel off 1 open
-t40 tisp_wdr_param_array_set_intel step 1 open
+t40 tisp_wdr_param_array_get step 1 layout #189 T40 triage 2: WDR context at &deghost_en + 16932 / &isp_memopt + 16932 / &ev_wdr_s + 16960 (stray anchors); the linear sensor image never runs the WDR paths
+t40 tisp_wdr_param_array_set_intel off 1 layout #189 T40 triage 2: WDR context at &deghost_en + 16932 / &isp_memopt + 16932 / &ev_wdr_s + 16960 (stray anchors); the linear sensor image never runs the WDR paths
+t40 tisp_wdr_param_array_set_intel step 1 layout #189 T40 triage 2: WDR context at &deghost_en + 16932 / &isp_memopt + 16932 / &ev_wdr_s + 16960 (stray anchors); the linear sensor image never runs the WDR paths
 t40 tisp_wdr_params_used_refresh off 1 unreach
 t40 tisp_wdr_quicksort off 2 unreach
 t40 tisp_wdr_quicksort step 3 unreach
-t40 tisp_wdr_sec_short_ev_update step 1 open
-t40 tisp_wdr_sec_short_tgain_update step 1 open
+t40 tisp_wdr_sec_short_ev_update step 1 layout #189 T40 triage 2: WDR context at &deghost_en + 16932 / &isp_memopt + 16932 / &ev_wdr_s + 16960 (stray anchors); the linear sensor image never runs the WDR paths
+t40 tisp_wdr_sec_short_tgain_update step 1 layout #189 T40 triage 2: WDR context at &deghost_en + 16932 / &isp_memopt + 16932 / &ev_wdr_s + 16960 (stray anchors); the linear sensor image never runs the WDR paths
 t40 tisp_wdr_seco_init off 2 unreach
 t40 tisp_wdr_seco_init step 1 unreach
 t40 tisp_wdr_seco_init tailcall 1 unreach
@@ -704,44 +593,27 @@ t40 tiziano_adr_5x5_init step 3 unreach
 t40 tiziano_adr_5x5_init var 4 unreach
 t40 tiziano_adr_5x5_out loop 1 unreach
 t40 tiziano_adr_5x5_out step 5 unreach
-t40 tiziano_adr_algorithm ctr 1 open
-t40 tiziano_adr_algorithm loop 1 open
-t40 tiziano_adr_algorithm off 6 open
-t40 tiziano_adr_algorithm step 3 open
-t40 tiziano_adr_ev_func ctr 2 open
-t40 tiziano_adr_ev_func loop 2 open
-t40 tiziano_adr_ev_func step 6 open
-t40 tiziano_adr_ev_func var 1 open
+t40 tiziano_adr_ev_func ctr 2 shim #189 T40 triage 2: t40_adr_on=Y on the image (hand ADR, tx_isp_t40_adr.h, bit-exact); the lifted ADR chain (tisp_adr_main_process -> tiziano_adr_algorithm -> Tiziano_adr_fpga) runs only with t40_adr_on=0 and still carries typed-pointer strides, isp_memopt/__param_str anchors and (stat_calc) an odd-address store at +0x487 where the OEM index is 0x488: rewrite before that mode is enabled
+t40 tiziano_adr_ev_func loop 2 shim #189 T40 triage 2: t40_adr_on=Y on the image (hand ADR, tx_isp_t40_adr.h, bit-exact); the lifted ADR chain (tisp_adr_main_process -> tiziano_adr_algorithm -> Tiziano_adr_fpga) runs only with t40_adr_on=0 and still carries typed-pointer strides, isp_memopt/__param_str anchors and (stat_calc) an odd-address store at +0x487 where the OEM index is 0x488: rewrite before that mode is enabled
+t40 tiziano_adr_ev_func step 6 shim #189 T40 triage 2: t40_adr_on=Y on the image (hand ADR, tx_isp_t40_adr.h, bit-exact); the lifted ADR chain (tisp_adr_main_process -> tiziano_adr_algorithm -> Tiziano_adr_fpga) runs only with t40_adr_on=0 and still carries typed-pointer strides, isp_memopt/__param_str anchors and (stat_calc) an odd-address store at +0x487 where the OEM index is 0x488: rewrite before that mode is enabled
+t40 tiziano_adr_ev_func var 1 shim #189 T40 triage 2: t40_adr_on=Y on the image (hand ADR, tx_isp_t40_adr.h, bit-exact); the lifted ADR chain (tisp_adr_main_process -> tiziano_adr_algorithm -> Tiziano_adr_fpga) runs only with t40_adr_on=0 and still carries typed-pointer strides, isp_memopt/__param_str anchors and (stat_calc) an odd-address store at +0x487 where the OEM index is 0x488: rewrite before that mode is enabled
 t40 tiziano_adr_sec_interrupt_static loop 1 unreach
 t40 tiziano_adr_sec_interrupt_static step 8 unreach
-t40 tiziano_adr_stat_calc unal 1 open
+t40 tiziano_adr_stat_calc unal 1 shim #189 T40 triage 2: t40_adr_on=Y on the image (hand ADR, tx_isp_t40_adr.h, bit-exact); the lifted ADR chain (tisp_adr_main_process -> tiziano_adr_algorithm -> Tiziano_adr_fpga) runs only with t40_adr_on=0 and still carries typed-pointer strides, isp_memopt/__param_str anchors and (stat_calc) an odd-address store at +0x487 where the OEM index is 0x488: rewrite before that mode is enabled
 t40 tiziano_load_custom step 23 unreach
 t40 tiziano_save_to_local var 4 unreach
 t40 tx_isp_create_graph_and_nodes loop 1 unreach
 t40 tx_isp_create_graph_and_nodes step 9 unreach
-t40 tx_isp_csi_activate_subdev off 1 open
-t40 tx_isp_csi_activate_subdev step 2 open
-t40 tx_isp_csi_slake_subdev step 2 open
-t40 tx_isp_fs_probe unal 3 open
+t40 tx_isp_csi_slake_subdev step 2 ok #189 T40 triage 2: decompiler-style typed arrays (int*/s32 elements), the steps are element steps by design
 t40 tx_isp_probe loop 1 unreach
 t40 tx_isp_probe off 3 unreach
 t40 tx_isp_probe step 3 unreach
 t40 tx_isp_reg_set step 1 unreach
 t40 tx_isp_reg_set var 3 unreach
-t40 tx_isp_sensor_release_sensor step 1 open
-t40 tx_isp_subdev_pipo var 3 open
-t40 tx_isp_vic_slake_subdev step 1 open
-t40 tx_isp_vic_start var 4 open
-t40 tx_isp_video_s_stream step 1 open
-t40 tx_isp_vin_init ctr 1 open
-t40 tx_isp_vin_init loop 2 open
-t40 tx_isp_vin_init step 1 open
-t40 tx_isp_vin_init var 1 open
-t40 tx_isp_vin_reset loop 2 open
-t40 tx_isp_vin_reset step 1 open
+t40 tx_isp_subdev_pipo var 3 layout #189 T40 triage 2: base is the address of ispvic_frame_channel_s_stream + 840 (stray, a function label used as data); VIC pipo chain has no live sender
+t40 tx_isp_vic_slake_subdev step 1 ok #189 T40 triage 2: decompiler-style typed arrays (int*/s32 elements), the steps are element steps by design
+t40 tx_isp_video_s_stream step 1 ok #189 T40 triage 2: decompiler-style typed arrays (int*/s32 elements), the steps are element steps by design
 t40 u3bw step 1 unreach
-t40 vic_core_ops_ioctl off 1 open
-t40 vic_core_ops_ioctl_1 off 1 open
 t40 vic_mdma_enable off 19 unreach
 t40 vic_mdma_enable step 1 unreach
 t40 vic_mdma_enable var 11 unreach
@@ -751,7 +623,7 @@ t40 vic_mdma_irq_function2 tailcall 1 dead #189 T40: both lost tails (isp_printf
 t40 vic_mdma_irq_function2 var 3 dead #189 T40: VIC MDMA irq path, MDMA never enabled (vic_mdma_enable unreachable)
 t40 vic_mdma_sec_enable step 1 unreach
 t40 vic_mdma_sec_enable var 2 unreach
-t40 vic_sensor_ops_ioctl off 1 open
+t40 vic_sensor_ops_ioctl off 1 ok #189 T40 triage 2: decompiler-style typed arrays (int*/s32 elements), the steps are element steps by design
 t40 video_input_cmd_set loop 4 unreach
 t40 video_input_cmd_set off 4 unreach
 t40 video_input_cmd_set step 8 unreach

@@ -34479,14 +34479,14 @@ int64_t ispvic_frame_channel_clearbuf(uintptr_t a0, uint32_t a1)
     uint32_t local_1c = 0;
     uint32_t *local_20 = 0;
     uint32_t *local_24 = 0;
-    uint32_t *a2 = 0;
-    uint32_t *a3 = 0;
+    uintptr_t a2 = 0;
+    uintptr_t a3 = 0;
     uint32_t ra = 0;
-    uintptr_t *s0 = 0;
-    uint32_t *s1 = 0;
-    uint32_t *s2 = 0;
-    uintptr_t *v0 = 0;
-    uint32_t *v1 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t s2 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Branch */
     if (a0 == 0) { goto ispvic_frame_channel_clearbuf0x14; }
@@ -34596,22 +34596,22 @@ int64_t ispvic_frame_channel_s_stream(uintptr_t a0, uint32_t a1, uint32_t a2)
     uint32_t local_44 = 0;
     uint32_t local_48 = 0;
     uint32_t local_4c = 0;
-    uintptr_t *a3 = 0;
+    uintptr_t a3 = 0;
     uint32_t ra = 0;
-    uintptr_t *s0 = 0;
-    uint32_t *s1 = 0;
-    uint32_t *s2 = 0;
-    uintptr_t *s3 = 0;
-    uintptr_t *s4 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t s2 = 0;
+    uintptr_t s3 = 0;
+    uintptr_t s4 = 0;
     uint32_t s5 = 0;
     uint32_t s6 = 0;
     uint32_t s7 = 0;
     uintptr_t s8 = 0;
     uintptr_t t0 = 0;
-    uint32_t *t1 = 0;
-    uint32_t *t2 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    uintptr_t t1 = 0;
+    uintptr_t t2 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Branch */
     if (a0 == 0) { goto ispvic_frame_channel_s_stream0x14; }
@@ -35181,13 +35181,13 @@ int64_t tx_isp_vic_start(uintptr_t a0, uint32_t a1)
     uint32_t local_54 = 0;
     uint32_t local_58 = 0;
     uint32_t local_5c = 0;
-    uint32_t *a2 = 0;
-    uint32_t *a3 = 0;
+    uintptr_t a2 = 0;
+    uintptr_t a3 = 0;
     uint32_t ra = 0;
-    uintptr_t *s0 = 0;
+    uintptr_t s0 = 0;
     uintptr_t s1 = 0;
-    uint32_t *s2 = 0;
-    uintptr_t *s3 = 0;
+    uintptr_t s2 = 0;
+    uintptr_t s3 = 0;
     uintptr_t s4 = 0;
     uintptr_t s5 = 0;
     uintptr_t s6 = 0;
@@ -41536,10 +41536,10 @@ tx_isp_subdev_pipo0x1d4:
 int64_t vic_core_ops_ioctl(uintptr_t a0, uint32_t a1, uintptr_t a2)
 {
     uint32_t local_14 = 0;
-    uint32_t *a3 = 0;
+    uintptr_t a3 = 0;
     uint32_t ra = 0;
-    uintptr_t *v0 = 0;
-    uint32_t *v1 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Arithmetic */
     a3 = 16777216;
@@ -41631,10 +41631,10 @@ int32_t vic_core_ops_ioctl_1(uintptr_t a0, uint32_t a1, uintptr_t a2) __asm__("v
 int32_t vic_core_ops_ioctl_1(uintptr_t a0, uint32_t a1, uintptr_t a2)
 {
     uint32_t local_14 = 0;
-    uint32_t *a3 = 0;
+    uintptr_t a3 = 0;
     uint32_t ra = 0;
-    uintptr_t *v0 = 0;
-    uint32_t *v1 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Arithmetic */
     a3 = 16777216;
@@ -41847,13 +41847,13 @@ int64_t tx_isp_vin_init(uintptr_t a0, uintptr_t a1)
     uint32_t local_14 = 0;
     uint32_t *local_18 = 0;
     uint32_t local_1c = 0;
-    uint32_t *a2 = 0;
-    uint32_t *a3 = 0;
+    uintptr_t a2 = 0;
+    uintptr_t a3 = 0;
     uint32_t ra = 0;
-    uint32_t *s0 = 0;
-    uintptr_t *s1 = 0;
-    uintptr_t *v0 = 0;
-    uint32_t *v1 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -42674,11 +42674,11 @@ video_input_cmd_set0x484:
 int64_t tx_isp_vin_reset(uintptr_t a0, uintptr_t a1)
 {
     uint32_t local_14 = 0;
-    uint32_t *a2 = 0;
-    uint32_t *a3 = 0;
+    uintptr_t a2 = 0;
+    uintptr_t a3 = 0;
     uint32_t ra = 0;
-    uintptr_t *v0 = 0;
-    uint32_t *v1 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -43050,12 +43050,12 @@ int32_t isp_i2c_new_subdev_board(uint32_t a0, uintptr_t a1, uint32_t a2)
     uint32_t local_1c = 0;
     uint32_t *local_20 = 0;
     uint32_t *local_24 = 0;
-    uint32_t *a3 = 0;
+    uintptr_t a3 = 0;
     uint32_t ra = 0;
-    uintptr_t *s0 = 0;
-    uintptr_t *s1 = 0;
-    uintptr_t *v0 = 0;
-    uint32_t *v1 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -44555,21 +44555,21 @@ int64_t csi_phy_start(uintptr_t a0, uint32_t a1)
     uint32_t local_4c = 0;
     uint32_t local_50 = 0;
     uint32_t local_54 = 0;
-    uint32_t *a2 = 0;
-    uint32_t *a3 = 0;
+    uintptr_t a2 = 0;
+    uintptr_t a3 = 0;
     uint32_t ra = 0;
-    uintptr_t *s0 = 0;
-    uintptr_t *s1 = 0;
-    uintptr_t *s2 = 0;
-    uintptr_t *s3 = 0;
-    uint32_t *s4 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t s2 = 0;
+    uintptr_t s3 = 0;
+    uintptr_t s4 = 0;
     uint32_t s5 = 0;
     uint32_t s6 = 0;
     uintptr_t s7 = 0;
     uint32_t s8 = 0;
     uint32_t t0 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -45331,15 +45331,15 @@ int64_t tx_isp_csi_activate_subdev(uintptr_t a0)
     uint32_t *local_24 = 0;
     uint32_t local_28 = 0;
     uint32_t local_2c = 0;
-    uint32_t *a1 = 0;
+    uintptr_t a1 = 0;
     uint32_t ra = 0;
-    uintptr_t *s0 = 0;
-    uintptr_t *s1 = 0;
-    uintptr_t *s2 = 0;
-    uint32_t *s3 = 0;
-    uint32_t *s4 = 0;
-    uintptr_t *v0 = 0;
-    uint32_t *v1 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t s2 = 0;
+    uintptr_t s3 = 0;
+    uintptr_t s4 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Branch */
     if (a0 != 0) { goto tx_isp_csi_activate_subdev0x34; }
@@ -55162,7 +55162,7 @@ int tx_isp_fs_probe(struct platform_device *pdev)
                     *(void **)((char *)s0_1 + 0x2c8) = s2_1;
                     *(uint32_t *)((char *)s0_1 + 0x2cc) = v0_13;
 
-                    if (*(uint32_t *)((char *)s2_1 + 5) == 0) {
+                    if (*(uint8_t *)((char *)s2_1 + 5) == 0) {   /* #189: OEM lbu +5 (the lift read a word at an odd address: any non-zero byte at +5..+8 counted) */
                         *(uint32_t *)((char *)s0_1 + 0x2e4) = 0;
                         fp_1 += 1;
                         continue;
@@ -55213,8 +55213,8 @@ label_f2b8:
             *(uint32_t *)((char *)v0 + 0x10c) = (uint32_t)v0;
         }
     } else {
-        var_34_1 = *(uint32_t *)((char *)s5_1 + 3);
-        var_38_1 = *(uint32_t *)((char *)s5_1 + 2);
+        var_34_1 = *(uint8_t *)((char *)s5_1 + 3);   /* #189: OEM lbu (printed in the error message only) */
+        var_38_1 = *(uint8_t *)((char *)s5_1 + 2);
         isp_printf(2, "[%s %d] Failed to init isp module(%d.%d)\n", "tx_isp_fs_probe", __LINE__, 0, 0);
         result = 0xfffffff4;
         private_kfree(v0);
@@ -55663,16 +55663,16 @@ int32_t fs_slake_module(uintptr_t a0)
     uint32_t *local_24 = 0;
     uint32_t local_28 = 0;
     uint32_t local_2c = 0;
-    uint32_t *a1 = 0;
+    uintptr_t a1 = 0;
     uint32_t ra = 0;
-    uintptr_t *s0 = 0;
-    uintptr_t *s1 = 0;
-    uint32_t *s2 = 0;
-    uint32_t *s3 = 0;
-    uint32_t *s4 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t s2 = 0;
+    uintptr_t s3 = 0;
+    uintptr_t s4 = 0;
     uint32_t s5 = 0;
-    uintptr_t *v0 = 0;
-    uint32_t *v1 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Branch */
     v0 = -22;
@@ -57622,14 +57622,14 @@ int32_t tx_isp_sensor_release_sensor(uintptr_t a0, uint32_t a1)
     uint32_t local_8c = 0;
     uint32_t *local_90 = 0;
     uint32_t *local_94 = 0;
-    uint32_t *a2 = 0;
-    uint32_t *a3 = 0;
+    uintptr_t a2 = 0;
+    uintptr_t a3 = 0;
     uint32_t ra = 0;
-    uintptr_t *s0 = 0;
-    uint32_t *s1 = 0;
-    uint32_t *s2 = 0;
-    uint32_t *s3 = 0;
-    uintptr_t *v0 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t s2 = 0;
+    uintptr_t s3 = 0;
+    uintptr_t v0 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -72468,22 +72468,22 @@ int64_t tisp_sec_init(uintptr_t a0, uint32_t a1)
     uint32_t local_9c = 0;
     uint32_t local_a0 = 0;
     uint32_t local_a4 = 0;
-    uint32_t *a2 = 0;
-    uint32_t *a3 = 0;
+    uintptr_t a2 = 0;
+    uintptr_t a3 = 0;
     uint32_t ra = 0;
-    uintptr_t *s0 = 0;
-    uintptr_t *s1 = 0;
-    uintptr_t *s2 = 0;
-    uint32_t *s3 = 0;
-    uint32_t *s4 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t s2 = 0;
+    uintptr_t s3 = 0;
+    uintptr_t s4 = 0;
     uintptr_t s5 = 0;
     uint32_t s6 = 0;
     uint32_t s7 = 0;
     uint32_t s8 = 0;
     uint32_t t0 = 0;
-    uint32_t *t1 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    uintptr_t t1 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -79753,15 +79753,15 @@ int64_t tisp_ae_sepc_area(uint32_t a0, uintptr_t a1)
 int64_t tisp_ae_main_mean_update(uintptr_t a0, uintptr_t a1)
 {
     uint32_t __lg = REGTRACE_LOOPGUARD_BUDGET;
-    uintptr_t *a2 = 0;
-    uint32_t *a3 = 0;
+    uintptr_t a2 = 0;
+    uintptr_t a3 = 0;
     uint32_t ra = 0;
     uint32_t t0 = 0;
-    uint32_t *t1 = 0;
-    uintptr_t *t2 = 0;
-    uint32_t *t3 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    uintptr_t t1 = 0;
+    uintptr_t t2 = 0;
+    uintptr_t t3 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: ConstantLoad */
     v1 = ((char *)&pstMainAeOri);
@@ -80298,8 +80298,8 @@ int32_t* tisp_ae_ev_start_set(uint32_t a0, uint32_t a1, uint32_t a2)
 {
     uint32_t __lg = REGTRACE_LOOPGUARD_BUDGET;
     uint32_t ra = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Branch */
     v0 = (uintptr_t *)&isp_memopt;
@@ -80735,15 +80735,15 @@ uint32_t tisp_ae_g_scene_luma(uint32_t a0, uintptr_t a1)
 int64_t tisp_ae_sec_mean_update(uintptr_t a0, uintptr_t a1)
 {
     uint32_t __lg = REGTRACE_LOOPGUARD_BUDGET;
-    uintptr_t *a2 = 0;
-    uint32_t *a3 = 0;
+    uintptr_t a2 = 0;
+    uintptr_t a3 = 0;
     uint32_t ra = 0;
     uint32_t t0 = 0;
-    uint32_t *t1 = 0;
-    uintptr_t *t2 = 0;
-    uint32_t *t3 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    uintptr_t t1 = 0;
+    uintptr_t t2 = 0;
+    uintptr_t t3 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: ConstantLoad */
     v1 = ((char *)&pstSecAeOri);
@@ -81736,11 +81736,11 @@ int32_t tisp_ae_api_set_exp_list(uint32_t a0, uint32_t a1, uintptr_t a2)
 {
     uint32_t __lg = REGTRACE_LOOPGUARD_BUDGET;
     uint32_t local_14 = 0;
-    uintptr_t *a3 = 0;
+    uintptr_t a3 = 0;
     uint32_t ra = 0;
     uint32_t t0 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -82183,16 +82183,16 @@ int64_t tisp_af_params_refresh(uintptr_t a0, uint32_t a1, uint32_t a2)
     uint32_t local_1c = 0;
     uint32_t *local_20 = 0;
     uint32_t *local_24 = 0;
-    uintptr_t *a3 = 0;
+    uintptr_t a3 = 0;
     uint32_t ra = 0;
-    uint32_t *s0 = 0;
-    uint32_t *s1 = 0;
-    uint32_t *s2 = 0;
-    uintptr_t *s3 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t s2 = 0;
+    uintptr_t s3 = 0;
     uint32_t t0 = 0;
-    uint32_t *t1 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    uintptr_t t1 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -82635,30 +82635,30 @@ int64_t tisp_af_set_hardware_param(uintptr_t a0, uint32_t a1)
     uint32_t local_11c = 0;
     uint32_t local_120 = 0;
     uint32_t *local_124 = 0;
-    uint32_t *a2 = 0;
-    uint32_t *a3 = 0;
+    uintptr_t a2 = 0;
+    uintptr_t a3 = 0;
     uint32_t ra = 0;
-    uint32_t *s0 = 0;
-    uint32_t *s1 = 0;
-    uintptr_t *s2 = 0;
-    uintptr_t *s3 = 0;
-    uintptr_t *s4 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t s2 = 0;
+    uintptr_t s3 = 0;
+    uintptr_t s4 = 0;
     uintptr_t s5 = 0;
     uintptr_t s6 = 0;
     uintptr_t s7 = 0;
     uintptr_t s8 = 0;
     uintptr_t t0 = 0;
-    uintptr_t *t1 = 0;
-    uintptr_t *t2 = 0;
-    uintptr_t *t3 = 0;
-    uintptr_t *t4 = 0;
-    uintptr_t *t5 = 0;
-    uintptr_t *t6 = 0;
+    uintptr_t t1 = 0;
+    uintptr_t t2 = 0;
+    uintptr_t t3 = 0;
+    uintptr_t t4 = 0;
+    uintptr_t t5 = 0;
+    uintptr_t t6 = 0;
     uintptr_t t7 = 0;
-    uintptr_t *t8 = 0;
+    uintptr_t t8 = 0;
     uint32_t t9 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -89175,18 +89175,18 @@ int32_t tisp_lsc_real_write_lut(uint32_t a0)
     uint32_t local_34 = 0;
     uint32_t local_38 = 0;
     uint32_t local_3c = 0;
-    uint32_t *a1 = 0;
+    uintptr_t a1 = 0;
     uint32_t ra = 0;
-    uintptr_t *s0 = 0;
-    uint32_t *s1 = 0;
-    uintptr_t *s2 = 0;
-    uint32_t *s3 = 0;
-    uint32_t *s4 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t s2 = 0;
+    uintptr_t s3 = 0;
+    uintptr_t s4 = 0;
     uint32_t s5 = 0;
     uint32_t s6 = 0;
     uint32_t s7 = 0;
     uint32_t s8 = 0;
-    uintptr_t *v0 = 0;
+    uintptr_t v0 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -89319,18 +89319,18 @@ int64_t tisp_lsc_write_reg(uint32_t a0)
     uint32_t *local_24 = 0;
     uint32_t local_28 = 0;
     uint32_t local_2c = 0;
-    uint32_t *a1 = 0;
-    uintptr_t *a2 = 0;
-    uint32_t *a3 = 0;
+    uintptr_t a1 = 0;
+    uintptr_t a2 = 0;
+    uintptr_t a3 = 0;
     uint32_t ra = 0;
-    uint32_t *s0 = 0;
-    uint32_t *s1 = 0;
-    uintptr_t *s2 = 0;
-    uintptr_t *s3 = 0;
-    uint32_t *s4 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t s2 = 0;
+    uintptr_t s3 = 0;
+    uintptr_t s4 = 0;
     uint32_t s5 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -91263,16 +91263,16 @@ tisp_blc_ag_interp0x248:
 /* WHOLE_DRIVER_CANDIDATE fn_000000000003917c origin=fragment_seed original=tisp_blc_calc_digital_gain */
 int64_t tisp_blc_calc_digital_gain(uint32_t a0, uint32_t a1)
 {
-    uintptr_t *a2 = 0;
-    uintptr_t *a3 = 0;
+    uintptr_t a2 = 0;
+    uintptr_t a3 = 0;
     uint32_t ra = 0;
     uint32_t t0 = 0;
-    uint32_t *t1 = 0;
-    uint32_t *t2 = 0;
-    uint32_t *t3 = 0;
-    uint32_t *t4 = 0;
-    uintptr_t *v0 = 0;
-    uint32_t *v1 = 0;
+    uintptr_t t1 = 0;
+    uintptr_t t2 = 0;
+    uintptr_t t3 = 0;
+    uintptr_t t4 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Branch */
     v0 = (uintptr_t *)&blc_seco_hard_para;
@@ -91447,15 +91447,15 @@ int64_t tisp_blc_write_reg(uint32_t a0, uint32_t a1, uint32_t a2)
     uint32_t local_28 = 0;
     uint32_t local_2c = 0;
     uint32_t ra = 0;
-    uint32_t *s0 = 0;
-    uint32_t *s1 = 0;
-    uintptr_t *s2 = 0;
-    uint32_t *s3 = 0;
-    uintptr_t *s4 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t s2 = 0;
+    uintptr_t s3 = 0;
+    uintptr_t s4 = 0;
     uint32_t s5 = 0;
     uint32_t s6 = 0;
-    uintptr_t *v0 = 0;
-    uint32_t *v1 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -92362,13 +92362,13 @@ int32_t tisp_wdr_maxFun(uint32_t a0, uint32_t a1)
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000039da0 origin=fragment_seed original=tisp_wdr_log2 */
 int32_t tisp_wdr_log2(uint32_t a0)
 {
-    uint32_t *a1 = 0;
-    uint32_t *a2 = 0;
-    uint32_t *a3 = 0;
+    uintptr_t a1 = 0;
+    uintptr_t a2 = 0;
+    uintptr_t a3 = 0;
     uint32_t ra = 0;
     uint32_t t0 = 0;
-    uintptr_t *v0 = 0;
-    uint32_t *v1 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Arithmetic */
     a1 = 2;
@@ -104153,10 +104153,10 @@ int32_t tisp_dmsc_intp(uint32_t a0, uint32_t a1)
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000046cc8 origin=fragment_seed original=tisp_dmsc_wdr_en */
 int64_t tisp_dmsc_wdr_en(uint32_t a0, uint32_t a1)
 {
-    uint32_t *a2 = 0;
+    uintptr_t a2 = 0;
     uint32_t ra = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Branch */
     v0 = (uintptr_t *)&sec_dmsc_comb;
@@ -107494,20 +107494,20 @@ int32_t tisp_gamma_real_write_lut(uint32_t a0)
     uint32_t local_44 = 0;
     uint32_t local_48 = 0;
     uint32_t local_4c = 0;
-    uint32_t *a1 = 0;
-    uint32_t *a2 = 0;
+    uintptr_t a1 = 0;
+    uintptr_t a2 = 0;
     uint32_t ra = 0;
-    uint32_t *s0 = 0;
-    uint32_t *s1 = 0;
-    uintptr_t *s2 = 0;
-    uint32_t *s3 = 0;
-    uint32_t *s4 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t s2 = 0;
+    uintptr_t s3 = 0;
+    uintptr_t s4 = 0;
     uint32_t s5 = 0;
     uint32_t s6 = 0;
     uintptr_t s7 = 0;
     uint32_t s8 = 0;
-    uintptr_t *v0 = 0;
-    uint32_t *v1 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -107715,19 +107715,19 @@ int32_t tisp_gamma_strength_transform(uint32_t a0)
     uint32_t local_2c = 0;
     uint32_t local_30 = 0;
     uint32_t local_34 = 0;
-    uint32_t *a1 = 0;
-    uint32_t *a2 = 0;
+    uintptr_t a1 = 0;
+    uintptr_t a2 = 0;
     uint32_t ra = 0;
-    uint32_t *s0 = 0;
-    uintptr_t *s1 = 0;
-    uintptr_t *s2 = 0;
-    uint32_t *s3 = 0;
-    uint32_t *s4 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t s2 = 0;
+    uintptr_t s3 = 0;
+    uintptr_t s4 = 0;
     uintptr_t s5 = 0;
     uint32_t s6 = 0;
     uint32_t s7 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: ConstantLoad */
     v0 = ((char *)&gamma_para);
@@ -107813,14 +107813,14 @@ int64_t tisp_gamma_interp_by_ev(uint32_t a0, uint32_t a1, uint32_t a2, uint32_t 
     uint32_t *local_10 = 0;
     uint32_t ra = 0;
     uintptr_t t0 = 0;
-    uintptr_t *t1 = 0;
-    uintptr_t *t2 = 0;
-    uint32_t *t3 = 0;
-    uint32_t *t4 = 0;
-    uint32_t *t5 = 0;
-    uint32_t *t6 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    uintptr_t t1 = 0;
+    uintptr_t t2 = 0;
+    uintptr_t t3 = 0;
+    uintptr_t t4 = 0;
+    uintptr_t t5 = 0;
+    uintptr_t t6 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: ConstantLoad */
     v0 = ((char *)&gamma_para);
@@ -107961,13 +107961,13 @@ int32_t tisp_gamma_ev_update(uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3,
     uint32_t local_40 = 0;
     uint32_t local_44 = 0;
     uint32_t ra = 0;
-    uintptr_t *s0 = 0;
-    uint32_t *s1 = 0;
-    uint32_t *s2 = 0;
-    uint32_t *s3 = 0;
-    uint32_t *s4 = 0;
-    uintptr_t *v0 = 0;
-    uint32_t *v1 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t s2 = 0;
+    uintptr_t s3 = 0;
+    uintptr_t s4 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Arithmetic */
     v0 = a3 << 22;
@@ -108275,19 +108275,19 @@ int32_t tisp_gamma_init(uint32_t a0)
     uint32_t local_2c = 0;
     uint32_t local_30 = 0;
     uint32_t local_34 = 0;
-    uint32_t *a1 = 0;
-    uint32_t *a2 = 0;
-    uint32_t *a3 = 0;
+    uintptr_t a1 = 0;
+    uintptr_t a2 = 0;
+    uintptr_t a3 = 0;
     uint32_t ra = 0;
-    uintptr_t *s0 = 0;
-    uint32_t *s1 = 0;
-    uint32_t *s2 = 0;
-    uint32_t *s3 = 0;
-    uint32_t *s4 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t s2 = 0;
+    uintptr_t s3 = 0;
+    uintptr_t s4 = 0;
     uintptr_t s5 = 0;
     uintptr_t s6 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -112268,17 +112268,17 @@ Tisp_lce_soft0xe3c:
 /* WHOLE_DRIVER_CANDIDATE fn_000000000004b4d8 origin=fragment_seed original=tisp_lce_clr_ram0 */
 int32_t tisp_lce_clr_ram0(void)
 {
-    int32_t *v0 = 0;
+    uintptr_t v0 = 0;
     uint32_t *local_10 = 0;
     uint32_t local_14 = 0;
     uint32_t *local_18 = 0;
     uint32_t local_1c = 0;
-    uint32_t *a0 = 0;
-    uint32_t *a1 = 0;
+    uintptr_t a0 = 0;
+    uintptr_t a1 = 0;
     uint32_t ra = 0;
-    uint32_t *s0 = 0;
-    uint32_t *s1 = 0;
-    uint32_t *s2 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t s2 = 0;
     uint32_t t9 = 0;
 
     /* fragment 0: Prologue */
@@ -112325,24 +112325,26 @@ tisp_lce_clr_ram00x38:
     /* unmatched fragment 10 (Arithmetic): arithmetic fragment did not contain supported register operations */
     /* asm: 4b54c:	27bd0020 	addiu	sp,sp,32 */
 
+    /* stock tail call: system_reg_write(0x501c0, 0x59f0102) (#189: the lift dropped the `jr t9`; the OEM ends the RAM clear by re-arming the LCE stat RAM control word) */
+    (void)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)system_reg_write)(a0, a1);
     return 0;
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_000000000004b550 origin=model_output original=tisp_lce_clr_ram1 */
 int32_t tisp_lce_clr_ram1(void)
 {
-    int32_t *s2 = 1440;
-    int32_t *s1 = 0x5;
-    int32_t *s0 = 0x0;
-    
+    /* #189: OEM lui s1,5 (0x50000) and plain byte register offsets (0x501d0 control, 0x501d4 data); the lift kept `s1 = 0x5` as a
+     * typed pointer (pointer arithmetic scaled x4, the first write went to 0x5 + 464 * 4) */
+    uintptr_t s1 = 0x50000;
+    uintptr_t s2 = 1440;
+
     system_reg_write(s1 + 464, 257);
-    
+
     do {
-        s1 = s1 + 468;
-        system_reg_write(s1, 0);
+        system_reg_write(s1 + 468, 0);
         s2 = s2 - 1;
     } while (s2 != 0);
-    
+
     return system_reg_write(0x501d0, 0x59f0102);
 }
 
@@ -112429,18 +112431,18 @@ int32_t tisp_lce_write_all_reg(uint32_t a0)
     uint32_t local_2c = 0;
     uint32_t local_30 = 0;
     uint32_t local_34 = 0;
-    uint32_t *a1 = 0;
+    uintptr_t a1 = 0;
     uint32_t ra = 0;
-    uint32_t *s0 = 0;
-    uint32_t *s1 = 0;
-    uint32_t *s2 = 0;
-    uint32_t *s3 = 0;
-    uint32_t *s4 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t s2 = 0;
+    uintptr_t s3 = 0;
+    uintptr_t s4 = 0;
     uintptr_t s5 = 0;
     uint32_t s6 = 0;
     uint32_t s7 = 0;
     uint32_t s8 = 0;
-    uintptr_t *v0 = 0;
+    uintptr_t v0 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -112749,16 +112751,16 @@ int32_t tisp_lce_curve_init_default(uint32_t a0)
     uint32_t local_1c = 0;
     uint32_t *local_20 = 0;
     uint32_t *local_24 = 0;
-    uint32_t *a1 = 0;
-    uint32_t *a2 = 0;
+    uintptr_t a1 = 0;
+    uintptr_t a2 = 0;
     uint32_t ra = 0;
-    uint32_t *s0 = 0;
-    uint32_t *s1 = 0;
-    uint32_t *s2 = 0;
-    uint32_t *s3 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t s2 = 0;
+    uintptr_t s3 = 0;
     uint32_t t9 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -112866,6 +112868,9 @@ tisp_lce_curve_init_default0xc0:
     /* fragment 28: Arithmetic */
     /* unmatched fragment 28 (Arithmetic): arithmetic fragment did not contain supported register operations */
     /* asm: 4bad0:	27bd0028 	addiu	sp,sp,40 */
+    /* stock tail call: memcpy(s0 + 11828, s2, 1024) (#189: the lift dropped the `jr t9` (t9 = memcpy), so the last 1 KB copy never ran and the code fell through into the sec/main branch below) */
+    memcpy((void *)a0, (void *)a1, (size_t)a2);
+    return 0;
 
 tisp_lce_curve_init_default0x150:
     /* fragment 29: Arithmetic */
@@ -114818,11 +114823,11 @@ int32_t* tisp_defog_get_data_part_0(uintptr_t a0) __asm__("tisp_defog_get_data.p
 #endif
 int32_t* tisp_defog_get_data_part_0(uintptr_t a0)
 {
-    uintptr_t *a1 = 0;
-    uint32_t *a2 = 0;
+    uintptr_t a1 = 0;
+    uintptr_t a2 = 0;
     uint32_t ra = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Arithmetic */
     v1 = (int32_t *)&defog_main_soft_para;
@@ -116635,16 +116640,16 @@ uint32_t tisp_defog_update_trans_k(uint32_t a0)
     uint32_t local_34 = 0;
     uint32_t local_38 = 0;
     uint32_t local_3c = 0;
-    uint32_t *a1 = 0;
-    uint32_t *a2 = 0;
-    uint32_t *a3 = 0;
+    uintptr_t a1 = 0;
+    uintptr_t a2 = 0;
+    uintptr_t a3 = 0;
     uint32_t ra = 0;
-    uintptr_t *s0 = 0;
-    uintptr_t *s1 = 0;
-    uint32_t *s2 = 0;
-    uintptr_t *s3 = 0;
-    uintptr_t *v0 = 0;
-    uint32_t *v1 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t s2 = 0;
+    uintptr_t s3 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -121902,12 +121907,12 @@ int32_t tisp_adr_main_deinit(void)
     uint32_t local_14 = 0;
     uint32_t *local_18 = 0;
     uint32_t local_1c = 0;
-    uint32_t *a0 = 0;
+    uintptr_t a0 = 0;
     uint32_t ra = 0;
-    uint32_t *s0 = 0;
-    uintptr_t *s1 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
     uint32_t t9 = 0;
-    uintptr_t *v0 = 0;
+    uintptr_t v0 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -123756,7 +123761,7 @@ int32_t tiziano_adr_stat_calc(int32_t arg1)
         i_2 = data_a890c;
     
     int32_t *a0_2 = 0;
-    int32_t *a2 = 0;
+    uintptr_t a2 = 0;
     int32_t a1_2 = data_a8968[arg1] * data_a8960[arg1] / 4;
     
     if (a1_2 < 0x1400)
@@ -125415,17 +125420,17 @@ int32_t func_local_info(uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3, uint
     uint32_t local_34 = 0;
     uint32_t local_48 = 0;
     uint32_t ra = 0;
-    uint32_t *s0 = 0;
-    uint32_t *s1 = 0;
-    uint32_t *s2 = 0;
-    uint32_t *s3 = 0;
-    uint32_t *s4 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t s2 = 0;
+    uintptr_t s3 = 0;
+    uintptr_t s4 = 0;
     uint32_t s5 = 0;
     uint32_t s6 = 0;
     uint32_t s7 = 0;
     uint32_t s8 = 0;
-    uintptr_t *v0 = 0;
-    uint32_t *v1 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -127962,11 +127967,11 @@ int64_t ispint_adr_16(uint32_t a0, uintptr_t a1, uintptr_t a2, uint32_t a3)
 {
     uint32_t ra = 0;
     uint32_t t0 = 0;
-    uintptr_t *t1 = 0;
-    uint32_t *t2 = 0;
-    uint32_t *t3 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    uintptr_t t1 = 0;
+    uintptr_t t2 = 0;
+    uintptr_t t3 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Arithmetic */
     v0 = a3 << 1;
@@ -128218,29 +128223,29 @@ int64_t func_map_y_filter_sp(uintptr_t a0, uintptr_t a1, uint32_t a2)
     uint32_t local_188 = 0;
     uint32_t local_18c = 0;
     uint32_t local_198 = 0;
-    uintptr_t *a3 = 0;
+    uintptr_t a3 = 0;
     uint32_t ra = 0;
-    uint32_t *s0 = 0;
-    uint32_t *s1 = 0;
-    uint32_t *s2 = 0;
-    uintptr_t *s3 = 0;
-    uintptr_t *s4 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t s2 = 0;
+    uintptr_t s3 = 0;
+    uintptr_t s4 = 0;
     uintptr_t s5 = 0;
     uint32_t s6 = 0;
     uintptr_t s7 = 0;
     uintptr_t s8 = 0;
     uint32_t t0 = 0;
-    uintptr_t *t1 = 0;
-    uintptr_t *t2 = 0;
-    uintptr_t *t3 = 0;
-    uint32_t *t4 = 0;
-    uint32_t *t5 = 0;
-    uint32_t *t6 = 0;
+    uintptr_t t1 = 0;
+    uintptr_t t2 = 0;
+    uintptr_t t3 = 0;
+    uintptr_t t4 = 0;
+    uintptr_t t5 = 0;
+    uintptr_t t6 = 0;
     uint32_t t7 = 0;
-    uint32_t *t8 = 0;
+    uintptr_t t8 = 0;
     uint32_t t9 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -131743,19 +131748,19 @@ int32_t tiziano_adr_algorithm(uint32_t a0)
     uint32_t local_4c = 0;
     uint32_t local_50 = 0;
     uint32_t local_54 = 0;
-    uint32_t *a1 = 0;
-    uint32_t *a2 = 0;
-    uint32_t *a3 = 0;
+    uintptr_t a1 = 0;
+    uintptr_t a2 = 0;
+    uintptr_t a3 = 0;
     uint32_t ra = 0;
-    uintptr_t *s0 = 0;
-    uintptr_t *s1 = 0;
-    uintptr_t *s2 = 0;
-    uint32_t *s3 = 0;
-    uintptr_t *s4 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t s2 = 0;
+    uintptr_t s3 = 0;
+    uintptr_t s4 = 0;
     uint32_t s5 = 0;
     uint32_t s6 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -131949,14 +131954,14 @@ int32_t tisp_adr_main_process(void)
     uint32_t local_14 = 0;
     uint32_t *local_18 = 0;
     uint32_t local_1c = 0;
-    uint32_t *a0 = 0;
-    uint32_t *a1 = 0;
-    uint32_t *a2 = 0;
+    uintptr_t a0 = 0;
+    uintptr_t a1 = 0;
+    uintptr_t a2 = 0;
     uint32_t ra = 0;
-    uintptr_t *s0 = 0;
-    uint32_t *s1 = 0;
-    uintptr_t *v0 = 0;
-    uint32_t *v1 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -142200,9 +142205,9 @@ int32_t tisp_bcsh_Toffset_RGB2YUV(uintptr_t a0, uintptr_t a1, uintptr_t a2)
     uint32_t local_28 = 0;
     uint32_t local_2c = 0;
     uint32_t ra = 0;
-    uintptr_t *s0 = 0;
-    uintptr_t *v0 = 0;
-    uint32_t *v1 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -142265,29 +142270,29 @@ int64_t tisp_bcsh_ev_update_TransitParam(uintptr_t a0, uintptr_t a1)
     uint32_t local_64 = 0;
     uint32_t local_68 = 0;
     uint32_t local_6c = 0;
-    uint32_t *a2 = 0;
-    uint32_t *a3 = 0;
+    uintptr_t a2 = 0;
+    uintptr_t a3 = 0;
     uint32_t ra = 0;
-    uint32_t *s0 = 0;
-    uintptr_t *s1 = 0;
-    uintptr_t *s2 = 0;
-    uintptr_t *s3 = 0;
-    uintptr_t *s4 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t s2 = 0;
+    uintptr_t s3 = 0;
+    uintptr_t s4 = 0;
     uintptr_t s5 = 0;
     uintptr_t s6 = 0;
     uintptr_t s7 = 0;
     uintptr_t s8 = 0;
     uint32_t t0 = 0;
-    uint32_t *t1 = 0;
-    uint32_t *t2 = 0;
-    uint32_t *t3 = 0;
-    uint32_t *t4 = 0;
-    uint32_t *t5 = 0;
-    uint32_t *t6 = 0;
+    uintptr_t t1 = 0;
+    uintptr_t t2 = 0;
+    uintptr_t t3 = 0;
+    uintptr_t t4 = 0;
+    uintptr_t t5 = 0;
+    uintptr_t t6 = 0;
     uint32_t t7 = 0;
-    uint32_t *t8 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    uintptr_t t8 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -143374,30 +143379,30 @@ int32_t tisp_bcsh_ev_update(uintptr_t a0, uintptr_t a1)
     uint32_t local_3c = 0;
     uint32_t local_40 = 0;
     uint32_t local_44 = 0;
-    uintptr_t *a2 = 0;
-    uintptr_t *a3 = 0;
+    uintptr_t a2 = 0;
+    uintptr_t a3 = 0;
     uintptr_t ra = 0;
-    uintptr_t *s0 = 0;
-    uintptr_t *s1 = 0;
-    uintptr_t *s2 = 0;
-    uintptr_t *s3 = 0;
-    uint32_t *s4 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t s2 = 0;
+    uintptr_t s3 = 0;
+    uintptr_t s4 = 0;
     uintptr_t s5 = 0;
     uintptr_t s6 = 0;
     uintptr_t s7 = 0;
     uintptr_t s8 = 0;
     uintptr_t t0 = 0;
-    uintptr_t *t1 = 0;
-    uintptr_t *t2 = 0;
-    uint32_t *t3 = 0;
-    uint32_t *t4 = 0;
-    uintptr_t *t5 = 0;
-    uintptr_t *t6 = 0;
+    uintptr_t t1 = 0;
+    uintptr_t t2 = 0;
+    uintptr_t t3 = 0;
+    uintptr_t t4 = 0;
+    uintptr_t t5 = 0;
+    uintptr_t t6 = 0;
     uintptr_t t7 = 0;
-    uintptr_t *t8 = 0;
+    uintptr_t t8 = 0;
     uintptr_t t9 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -144845,23 +144850,23 @@ int64_t tisp_bcsh_Tccm_RGBYUV(uintptr_t a0, uintptr_t a1, uintptr_t a2, uintptr_
     uint32_t local_18c = 0;
     uint32_t local_1a0 = 0;
     uint32_t ra = 0;
-    uint32_t *s0 = 0;
-    uint32_t *s1 = 0;
-    uintptr_t *s2 = 0;
-    uint32_t *s3 = 0;
-    uintptr_t *s4 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t s2 = 0;
+    uintptr_t s3 = 0;
+    uintptr_t s4 = 0;
     uintptr_t s5 = 0;
     uintptr_t s6 = 0;
     uint32_t s7 = 0;
     uintptr_t s8 = 0;
     uintptr_t t0 = 0;
-    uint32_t *t1 = 0;
-    uint32_t *t2 = 0;
-    uint32_t *t3 = 0;
-    uint32_t *t5 = 0;
-    uint32_t *t6 = 0;
-    uintptr_t *v0 = 0;
-    uint32_t *v1 = 0;
+    uintptr_t t1 = 0;
+    uintptr_t t2 = 0;
+    uintptr_t t3 = 0;
+    uintptr_t t5 = 0;
+    uintptr_t t6 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -149576,27 +149581,27 @@ int32_t tisp_clm_real_write_lut(uintptr_t a0)
     uint32_t local_6c = 0;
     uint32_t local_70 = 0;
     uint32_t local_74 = 0;
-    uint32_t *a1 = 0;
-    uint32_t *a2 = 0;
-    uintptr_t *a3 = 0;
+    uintptr_t a1 = 0;
+    uintptr_t a2 = 0;
+    uintptr_t a3 = 0;
     uint32_t ra = 0;
-    uint32_t *s0 = 0;
-    uint32_t *s1 = 0;
-    uintptr_t *s2 = 0;
-    uintptr_t *s3 = 0;
-    uint32_t *s4 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t s2 = 0;
+    uintptr_t s3 = 0;
+    uintptr_t s4 = 0;
     uint32_t s5 = 0;
     uint32_t s6 = 0;
     uint32_t s7 = 0;
     uint32_t s8 = 0;
     uint32_t t0 = 0;
-    uint32_t *t1 = 0;
-    uint32_t *t2 = 0;
-    uint32_t *t3 = 0;
-    uint32_t *t4 = 0;
-    uint32_t *t5 = 0;
-    uintptr_t *v0 = 0;
-    uint32_t *v1 = 0;
+    uintptr_t t1 = 0;
+    uintptr_t t2 = 0;
+    uintptr_t t3 = 0;
+    uintptr_t t4 = 0;
+    uintptr_t t5 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -149902,23 +149907,23 @@ int64_t tisp_clm_ct_interp(uint32_t a0, uint32_t a1, uint32_t a2)
     uint32_t local_2c = 0;
     uint32_t local_30 = 0;
     uint32_t local_34 = 0;
-    uint32_t *a3 = 0;
+    uintptr_t a3 = 0;
     uint32_t ra = 0;
-    uint32_t *s0 = 0;
-    uintptr_t *s1 = 0;
-    uintptr_t *s2 = 0;
-    uintptr_t *s3 = 0;
-    uintptr_t *s4 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t s2 = 0;
+    uintptr_t s3 = 0;
+    uintptr_t s4 = 0;
     uint32_t s5 = 0;
     uintptr_t s6 = 0;
     uintptr_t s7 = 0;
     uint32_t s8 = 0;
     uint32_t t0 = 0;
-    uint32_t *t1 = 0;
-    uint32_t *t2 = 0;
-    uint32_t *t3 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    uintptr_t t1 = 0;
+    uintptr_t t2 = 0;
+    uintptr_t t3 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -150198,11 +150203,11 @@ int32_t tisp_clm_ct_update(uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3, u
     uint32_t local_30 = 0;
     uint32_t local_34 = 0;
     uint32_t ra = 0;
-    uint32_t *s0 = 0;
-    uint32_t *s1 = 0;
-    uint32_t *s2 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t s2 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -150456,18 +150461,18 @@ int32_t tisp_clm_init(uintptr_t a0)
     uint32_t *local_24 = 0;
     uint32_t local_28 = 0;
     uint32_t local_2c = 0;
-    uint32_t *a1 = 0;
-    uint32_t *a2 = 0;
+    uintptr_t a1 = 0;
+    uintptr_t a2 = 0;
     uint32_t ra = 0;
-    uintptr_t *s0 = 0;
-    uint32_t *s1 = 0;
-    uint32_t *s2 = 0;
-    uint32_t *s3 = 0;
-    uint32_t *s4 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t s2 = 0;
+    uintptr_t s3 = 0;
+    uintptr_t s4 = 0;
     uintptr_t s5 = 0;
     uintptr_t s6 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -152821,17 +152826,17 @@ int32_t tisp_csc_set_attr(uint32_t a0, uintptr_t a1)
     uint32_t *local_24 = 0;
     uint32_t local_28 = 0;
     uint32_t local_2c = 0;
-    uint32_t *a2 = 0;
+    uintptr_t a2 = 0;
     uint32_t ra = 0;
-    uintptr_t *s0 = 0;
-    uint32_t *s1 = 0;
-    uint32_t *s2 = 0;
-    uint32_t *s3 = 0;
-    uint32_t *s4 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t s2 = 0;
+    uintptr_t s3 = 0;
+    uintptr_t s4 = 0;
     uint32_t s5 = 0;
     uint32_t t9 = 0;
-    uintptr_t *v0 = 0;
-    uint32_t *v1 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: MemoryAccess */
     v0 = *(uint32_t *)((char *)a1 + 0);
@@ -152950,61 +152955,10 @@ tisp_csc_set_attr0x1c:
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000071678 origin=fragment_seed original=tisp_csc_get_attr */
 int32_t tisp_csc_get_attr(uint32_t a0, uint32_t a1)
 {
-    uint32_t *local_10 = 0;
-    uint32_t local_70 = 0;
-    uint32_t local_74 = 0;
-    uint32_t local_78 = 0;
-    uint32_t local_7c = 0;
-    uint32_t *a2 = 0;
-    uint32_t ra = 0;
-    uintptr_t *s0 = 0;
-    uint32_t *s1 = 0;
-    uint32_t *s2 = 0;
-    uintptr_t *v0 = 0;
-    uint32_t *v1 = 0;
-
-    /* fragment 0: Prologue */
-    /* function prologue: stack frame and callee-saved register setup */
-
-    /* fragment 1: Arithmetic */
-    s0 = 92;
-    v1 = a0 * (uintptr_t)s0;
-    v0 = (uintptr_t *)&isp_memopt;
-    v0 = v0 + 21344;
-
-    /* fragment 2: StackAccess */
-    local_78 = s2;
-    local_74 = s1;
-    local_7c = ra;
-    s1 = (uintptr_t *)&memcpy;
-    s2 = a1;
-    s1 = s1;
-    a2 = 92;
-    s0 = (uintptr_t)v1 + (uintptr_t)v0;
-    v1 = *(uint32_t *)((char *)s0 + 0);
-    v0 = 4;
-
-    /* fragment 3: Branch */
-    a1 = s0;
-    if (v1 == v0) { goto tisp_csc_get_attr0x6c; }
-
-    /* fragment 4: CallSetup */
-    v0 = (uintptr_t *)memset((void *)(uintptr_t)&local_10, 0, a2); /* jalr target resolved by relocation */
-
-    /* fragment 5: CallSetup */
-    v0 = *(uint32_t *)((char *)s0 + 0);
-    a2 = 92;
-    a1 = (uint32_t *)&local_10;
-    local_10 = v0;
-
-tisp_csc_get_attr0x6c:
-    /* fragment 6: CallSetup */
-    v0 = (uintptr_t *)memcpy((void *)(uintptr_t)s2, (void *)(uintptr_t)a1, a2); /* jalr target resolved by relocation */
-
-    /* fragment 7: Epilogue */
-    /* function epilogue: restore registers and return */
-
-    return 0;
+    /* #189: OEM reads csc_state[a0] (92 bytes, mode word at +0; a mode != 4 copies only the mode word, the rest zero).
+     * The lift read it at `&isp_memopt + 21344 words + a0 * 92` (stray anchor); the state is the real object
+     * t40_csc_state now (the setter writes it), shared with the hand-written getter above. */
+    return t40_csc_attr_get(a0, (uint8_t *)(uintptr_t)a1);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000071704 origin=fragment_seed original=tisp_yuv_input_set_csc_version */
@@ -153875,13 +153829,13 @@ int64_t tisp_set_fps(uint32_t a0, uint32_t a1)
     uint32_t local_8c = 0;
     uint32_t *local_90 = 0;
     uint32_t *local_94 = 0;
-    uint32_t *a2 = 0;
-    uint32_t *a3 = 0;
+    uintptr_t a2 = 0;
+    uintptr_t a3 = 0;
     uint32_t ra = 0;
-    uint32_t *s0 = 0;
-    uintptr_t *s1 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -154833,12 +154787,12 @@ int64_t tisp_s_antiflick(uint32_t a0, uintptr_t a1, uint32_t a2)
 int64_t tisp_s_autozoom_control(uint32_t a0, uintptr_t a1)
 {
     uint32_t local_14 = 0;
-    uint32_t *a2 = 0;
-    uint32_t *a3 = 0;
+    uintptr_t a2 = 0;
+    uintptr_t a3 = 0;
     uint32_t ra = 0;
     uint32_t t0 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -155582,12 +155536,12 @@ int64_t tisp_s_ae_scence_attr(uint32_t a0, uintptr_t a1)
     uint32_t local_14 = 0;
     uint32_t *local_18 = 0;
     uint32_t local_1c = 0;
-    uint32_t *a2 = 0;
+    uintptr_t a2 = 0;
     uint32_t ra = 0;
-    uintptr_t *s0 = 0;
-    uint32_t *s1 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -155765,14 +155719,14 @@ int64_t tisp_g_ae_scence_attr(uint32_t a0, uintptr_t a1)
     uint32_t local_1c = 0;
     uint32_t *local_20 = 0;
     uint32_t *local_24 = 0;
-    uint32_t *a2 = 0;
-    uint32_t *a3 = 0;
+    uintptr_t a2 = 0;
+    uintptr_t a3 = 0;
     uint32_t ra = 0;
-    uintptr_t *s0 = 0;
-    uintptr_t *s1 = 0;
-    uint32_t *s2 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t s2 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -157228,14 +157182,14 @@ int32_t isp_main_pre_frame_dequeue(void)
     uint32_t local_3c = 0;
     uint32_t local_40 = 0;
     uint32_t local_44 = 0;
-    uintptr_t *a0 = 0;
-    uint32_t *a1 = 0;
-    uint32_t *a2 = 0;
+    uintptr_t a0 = 0;
+    uintptr_t a1 = 0;
+    uintptr_t a2 = 0;
     uint32_t ra = 0;
-    uintptr_t *s0 = 0;
-    uintptr_t *s1 = 0;
-    uintptr_t *v0 = 0;
-    uint32_t *v1 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -157468,18 +157422,18 @@ int64_t ispcore_frame_channel_streamoff(uintptr_t a0)
     uint32_t local_2c = 0;
     uint32_t local_30 = 0;
     uint32_t local_34 = 0;
-    uint32_t *a1 = 0;
-    uint32_t *a2 = 0;
+    uintptr_t a1 = 0;
+    uintptr_t a2 = 0;
     uint32_t ra = 0;
-    uintptr_t *s0 = 0;
-    uintptr_t *s1 = 0;
-    uintptr_t *s2 = 0;
-    uintptr_t *s3 = 0;
-    uintptr_t *s4 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t s2 = 0;
+    uintptr_t s3 = 0;
+    uintptr_t s4 = 0;
     uint32_t s5 = 0;
     uint32_t s6 = 0;
-    uintptr_t *v0 = 0;
-    uint32_t *v1 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -158175,13 +158129,13 @@ int64_t isp_mbus_to_bayer_isra_0(uintptr_t a0)
     uint32_t *local_18 = 0;
     uint32_t *local_20 = 0;
     uint32_t *local_24 = 0;
-    uint32_t *a1 = 0;
-    uint32_t *a2 = 0;
-    uint32_t *a3 = 0;
+    uintptr_t a1 = 0;
+    uintptr_t a2 = 0;
+    uintptr_t a3 = 0;
     uint32_t ra = 0;
-    uintptr_t *s0 = 0;
-    uintptr_t *v0 = 0;
-    uint32_t *v1 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -167860,18 +167814,18 @@ int64_t ispcore_core_ops_ioctl(uintptr_t a0, uint32_t a1, uintptr_t a2)
     uint32_t local_34 = 0;
     uint32_t local_38 = 0;
     uint32_t local_3c = 0;
-    uint32_t *a3 = 0;
+    uintptr_t a3 = 0;
     uint32_t ra = 0;
-    uint32_t *s0 = 0;
-    uintptr_t *s1 = 0;
-    uint32_t *s2 = 0;
-    uint32_t *s3 = 0;
-    uintptr_t *s4 = 0;
+    uintptr_t s0 = 0;
+    uintptr_t s1 = 0;
+    uintptr_t s2 = 0;
+    uintptr_t s3 = 0;
+    uintptr_t s4 = 0;
     uint32_t s5 = 0;
     uint32_t s6 = 0;
     uint32_t s7 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
+    uintptr_t v0 = 0;
+    uintptr_t v1 = 0;
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
