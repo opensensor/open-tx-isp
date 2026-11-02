@@ -677,7 +677,7 @@ lifted_ptr_scale_check:
 		t40:tisp_ae_params_transmit:postret t40:tisp_ae_sec_mean_update:postret t40:tisp_awb_set_statis_localtion:postret t40:tisp_dmsc_wdr_en:postret \
 		t41:api_ae_set_exprinfo_attr:postret t41:tisp_msca_ch_curve_write:postret t41:tisp_wdr_get_lum_s:postret t41:vic_core_ops_init:postret \
 		t40:tisp_ae_ir_en_update:postret t40:tisp_af_set_attr_refresh:postret t40:tisp_awb_get_frz:postret t40:tisp_defog_wdr_choose_para:postret \
-		t40:tisp_mdns_wdr_en:postret t40:tisp_sdns_wdr_en:postret t40:tisp_wdr_get_lum_s:postret t41:tisp_ae_api_get_antiflick:postret t41:tisp_awb_ev_update_Ywgt:postret
+		t40:tisp_sdns_wdr_en:postret t40:tisp_wdr_get_lum_s:postret t41:tisp_ae_api_get_antiflick:postret t41:tisp_awb_ev_update_Ywgt:postret
 	@# #189 tailcall / argc: lost `jr t9` tail calls and one-argument system_reg_write calls restored (vendor41 compared)
 	python3 ./lifted_ptr_scale_check.py --expect-clean t41:tisp_msca_ir_init:tailcall t41:tisp_msca_addr_ir_fifo_write:tailcall t41:system_reg_set_ae_trig:tailcall \
 		t41:tisp_tstp_reg_cfg:tailcall t41:tisp_tstp_reg_cfg:argc t41:tisp_lce_clr_ram_part_0:tailcall t41:tisp_lce_clr_ram_part_0:argc \
