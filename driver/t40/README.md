@@ -761,6 +761,13 @@ ISP digital gain is 1x there. `SetModule_Ratio` defog -> literal `tisp_s_defog_r
   Also called after the DN MDNS reload (OEM `tisp_mdns_dn_params_refresh` tail). Only the DPC ratio is still cached.
   Device: 28-35 MDNS registers change per ratio step (0/128/255); temporal noise 1.16 / 0.82 / 1.08.
 
+## MDNS (temporal denoise) chain in C (2026-11-02, #85)
+- `tx_isp_t40_mdns_chain.h` (+ the wrappers in `tx_isp_t40_mdns.inc`) replaces the literal mips2c MDNS functions (`tisp_mdns_reg_cfg_equation_smp/_dif`,
+  `reg_cfg`, `intp`, `wdr_en`, `func_en`, `start`, `reg_trig`, `all_reg_refresh`, `par_refresh`, `refresh`, `params_refresh`). The par / pointer-table / intp
+  blocks keep the OEM layout; the OEM's module-global ramp tables are private arrays. Division by zero (CPU: undefined) yields 0. Host check:
+  `tests/t40_mdns_chain_host.sh` (`make -C tests check`, SKIP without `T40_OEM_KO` + `T40_CC`): the OEM instructions of the vendor module vs the C built for
+  mipsel in Unicorn (tools/ko_emu/diff_mdns_chain.py), identical memory, register writes, ramps and last gain, plus one-token mutations that must be detected.
+
 ## DMSC day/night (2026-10-24, `t40_dmsc_follow`)
 - Default profile 1: DMSC (0xa000..0xa27c) uses the OEM chain (plain C since 2026-11-02, `tx_isp_t40_dmsc_chain.h`, checked against the OEM instructions in Unicorn) at night only (active bank, total gain incl. ISP
   digital gain, re-interpolated per frame). The day block (static table + OEM init) is saved on the switch and written
