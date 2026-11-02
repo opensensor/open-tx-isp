@@ -84402,7 +84402,7 @@ static uint32_t t40_gib_pair(const uint8_t *r, uint32_t hi, uint32_t lo, uint32_
 int32_t tisp_gib_write_reg(uint32_t s, uint32_t mode)
 {
 	uint8_t *r = T40_GIB_REAL(s);
-	uint32_t base = (s + 256U) << 7, d = s ? 0x50140U : 0x50170U;
+	uint32_t base = (s + 256U) << 7, d = s ? 0x50170U : 0x50140U;	/* OEM: main LUT block 0x50140, second 0x50170 */
 	int i;
 
 	if (!r)
