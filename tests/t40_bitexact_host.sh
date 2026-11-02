@@ -37,7 +37,7 @@ awb_run() { # <driver dir or ""> <ref env> <seed env> <frames>
 awb_count() { n=$(echo "$1" | grep -c "DIFF" || true); f=$(echo "$1" | grep -c "^f[0-9]* faults" || true)
 	calls=$(echo "$1" | sed -n 's/^[a-z_]* C vs OEM: \([0-9]*\) calls.*/\1/p' | head -1); calls=${calls:-0}; }
 t0=$(date +%s)
-for v in "LA_REF=316259cb FUZZL=1" "LA_REF=316259cb FUZZL=2" "LA_REF=316259cb FUZZL=3" "CTD_REF=f2c180f7 FUZZ=1 FUZZT=1" "CTD_REF=f2c180f7 FUZZ=2 FUZZM=2 FUZZT=2" "CTD_REF=f2c180f7 FUZZ=8 FUZZM=8 FUZZT=8" "CTD_REF=f2c180f7 FUZZ=10 FUZZM=10 FUZZT=10" "CTD_REF=f2c180f7 FUZZ=11 FUZZM=11 FUZZT=11" "GR_REF=308cfe4b FUZZP=1 FUZZN=30000" "GR_REF=308cfe4b FUZZP=2 FUZZN=30000" "GR_REF=308cfe4b FUZZP=3 FUZZN=30000"; do
+for v in "LA_REF=316259cb FUZZL=1" "LA_REF=316259cb FUZZL=2" "LA_REF=316259cb FUZZL=3" "CTD_REF=f2c180f7 FUZZ=1 FUZZT=1" "CTD_REF=f2c180f7 FUZZ=2 FUZZM=2 FUZZT=2" "CTD_REF=f2c180f7 FUZZ=8 FUZZM=8 FUZZT=8" "CTD_REF=f2c180f7 FUZZ=10 FUZZM=10 FUZZT=10" "CTD_REF=f2c180f7 FUZZ=11 FUZZM=11 FUZZT=11" "GR_REF=308cfe4b FUZZP=1 FUZZN=30000" "GR_REF=308cfe4b FUZZP=2 FUZZN=30000" "GR_REF=308cfe4b FUZZP=3 FUZZN=30000" "GR_REF=308cfe4b FUZZQ=1 FUZZN=40000" "GR_REF=308cfe4b FUZZQ=2 FUZZN=40000" "GR_REF=308cfe4b FUZZQ=3 FUZZN=40000"; do
 	out=$(awb_run "" "$(echo $v | cut -d' ' -f1)" "$(echo $v | cut -s -d' ' -f2-)" 100); awb_count "$out"
 	echo "vawb $v: $calls C-vs-OEM calls compared, $n DIFF lines"
 	[ "$n" = 0 ] && [ "$calls" -ge 20 ] || { echo "t40_bitexact_host: FAIL vawb $v"; rc=1; }
@@ -58,6 +58,17 @@ out=$(awb_run $M CTD_REF=f2c180f7 "FUZZ=2 FUZZM=2 FUZZT=2" 100); awb_count "$out
 [ "$n" -gt 0 ] && echo "vawb mutation ct_detect: detected ($n DIFF lines)" || { echo "t40_bitexact_host: FAIL mutation ct_detect not detected"; rc=1; }
 out=$(awb_run $M GR_REF=308cfe4b "FUZZP=1 FUZZN=30000" 20); awb_count "$out"
 [ "$n" -gt 0 ] && echo "vawb mutation gain chain: detected ($n DIFF lines)" || { echo "t40_bitexact_host: FAIL mutation gain chain not detected"; rc=1; }
+# one mutation at a time for the init / process chain: each must be seen by the fuzz
+for m in "init 0,/0x01010103U/s//0x01010102U/" "init 0,/outer + 94/s//outer + 92/" "init 0,/cfg\[19 + i\]/s//cfg[18 + i]/" "init 0,/(u32)p\[3\] << 28/s//(u32)p[3] << 27/" "init 0,/ev >= thr\[8\]/s//ev > thr[8]/" \
+	 "init 0,/{ 456, 36 }/s//{ 456, 35 }/" "main 0,/(hi - lo, 3,/s//(hi - lo, 4,/" "main 0,/base - 8/s//base - 12/" "main 0,/cur\[fo\[k\]\] << 16/s//cur[fo[k]] << 17/" "main 0,/m0 = pair46\[0\] \& 0xffff/s//m0 = pair46[0] \& 0xfffe/" \
+	 "main 0,/vawb_awb_num = n < 51U/s//vawb_awb_num = n < 50U/" "main 0,/ct3\[1\] = 0x10000U;/s//ct3[1] = 0x10001U;/" "main 0,/val |= /s//val ^= /"; do
+	[ -r "$HERE"/../driver/t40/tx_isp_t40_awb_${m%% *}.inc ] || continue
+	rm -rf $M/one; mkdir -p $M/one; cp "$HERE"/../driver/t40/*.inc "$HERE"/../driver/t40/*.h "$HERE"/../driver/t40/tx_isp_t40_recovered.c $M/one/
+	f=$M/one/tx_isp_t40_awb_${m%% *}.inc; sed -i -e "${m#* }" $f
+	cmp -s $f "$HERE"/../driver/t40/tx_isp_t40_awb_${m%% *}.inc && { echo "t40_bitexact_host: mutation '$m' did not apply"; rc=1; continue; }
+	out=$(awb_run $M/one GR_REF=308cfe4b "FUZZQ=1 FUZZN=6000" 20); awb_count "$out"
+	[ "$n" -gt 0 ] || { echo "t40_bitexact_host: FAIL mutation '$m' not detected"; rc=1; }
+done
 echo "vawb generated-input part: $(( $(date +%s) - t0 )) s"
 if [ -r "$DAT" ] && [ -r "$BIN" ]; then	# real vendor inputs (local only): same replays on the real tuning bin
 	for v in "LA_REF=316259cb FUZZL=1" "CTD_REF=f2c180f7 FUZZ=1 FUZZT=1" "GR_REF=308cfe4b FUZZP=1 FUZZN=30000"; do

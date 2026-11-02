@@ -13,16 +13,17 @@
 # tgain_update, simple_intp, set_awb_trig, AE mean; tx_isp_t40_awb_stats.inc: get_statistics, sat_weight) vs the translated OEM code of that ref (the last one that generated it,
 # e.g. 308cfe4b) on every call, register writes + state + faults compared; FUZZP=seed [FUZZN=calls] runs the fuzz loop.
 set -e
-HERE=$(cd "$(dirname "$0")" && pwd); D=${T40_DRV_DIR:-$HERE/../driver/t40}; W=$(mktemp -d); trap 'rm -rf $W' EXIT
+HERE=$(cd "$(dirname "$0")" && pwd); D=${T40_DRV_DIR:-$HERE/../driver/t40}; W=$(mktemp -d); trap '[ -n "$KEEPW" ] && echo "kept: $W" || rm -rf $W' EXIT
 sed -n '/^#include "tx_isp_t40_vawb_gen.inc"/q;p' $D/tx_isp_t40_vawb.h > $W/top.h
 sed -i -e 's/a >= 0x80000000U \&\& a < 0xfffff000U \&\& !(a \& align)/harness_ok(a, align)/' \
        -e 's/tg < 0x80000000U || (tg \& 3)/tg < 0x1000U || (tg \& 3)/' \
        -e "s/vawb_tbuf\[256\]/vawb_tbuf[65536]/" -e 's/^\(static u8 vawb_wide_tele_para\[144\]\)/\1 VD/' -e 's/^\(static u32 vawb_argarea\[16\]\)/\1 VD/' \
-       -e 's/^\(static u32 vawb_tawb_custom_en\[2\]\);/\1 VD;/' -e 's/^static u32 vawb_awb_num;/static u32 vawb_awb_num VD;/' \
+       -e 's/^\(static u32 vawb_tawb_custom_en\[2\]\);/\1 VD;/' -e 's/^static \(u8\|u32\) vawb_awb_num;/static \1 vawb_awb_num VD;/' \
        -e 's/^static u32 vawb_peter_test_count\[2\];/static u32 vawb_peter_test_count[2] VD;/' \
        -e 's/^static u32 vawb_converge_tele_gain = /static u32 vawb_converge_tele_gain VD = /' \
        -e 's/^static u32 vawb_wide_tele_awb_gain\[3\] = /static u32 vawb_wide_tele_awb_gain[3] VD = /' $W/top.h
 echo '#endif' >> $W/top.h
+TOPDEF=; grep -q "vawb_wide_tele_para" $W/top.h && TOPDEF=-DTOP_HAS_TELE	# the translated main_process of an older tree still reads the tele-gain state
 if [ -n "$LA_REF" ]; then
 	# reference: the translated OEM long_alogrithm closure of $LA_REF, renamed vlref_* (ct_detect: the C one)
 	FNS="tisp_awb_long_alogrithm tisp_awb_sat_weight fix_point_div fix_point_mult2_32"
@@ -38,7 +39,9 @@ if [ -n "$GR_REF" ]; then
 	# reference: the translated OEM gain / threshold closure of $GR_REF, renamed vgr_*
 	FNS="tisp_awb_set_gain tisp_awb_gain_reg fix_point_mult2_32 tisp_awb_calc_tele_gain tisp_awb_calc_div_sqrt_distance
 	     tisp_awb_set_regional_threshold tisp_awb_set_lum_th_freq tisp_awb_tgain_update tisp_simple_intp_int16
-	     tisp_ae_main_mean_update tisp_ae_sec_mean_update system_reg_set_awb_trig tisp_awb_get_statistics tisp_awb_sat_weight"
+	     tisp_ae_main_mean_update tisp_ae_sec_mean_update system_reg_set_awb_trig tisp_awb_get_statistics tisp_awb_sat_weight
+	     tisp_awb_params_transmit tisp_awb_params_refresh tisp_awb_set_hardware_param tisp_awb_dn_params_refresh
+	     tisp_awb_main_ev_update tisp_awb_ev_update_Ywgt tisp_awb_long_par_update tisp_awb_spec_calculate tisp_awb_main_process"
 	git -C $HERE/.. show $GR_REF:driver/t40/tx_isp_t40_vawb_gen.inc > $W/grref_all.inc
 	: > $W/grref.inc
 	for f in $FNS; do echo "u64 vgr_$f(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);" >> $W/grref.inc; done
@@ -68,7 +71,8 @@ if [ -n "$CTD_REF" ]; then
 	XDEF="$XDEF -DCTD_REF_INC=\"$W/ref.inc\""
 fi
 sed -e 's/^static const u8 vawb_rodata\(\[[0-9]*\]\) __aligned(8)/static u8 vawb_rodata\1 __aligned(8) VD/' ${GEN:-$D/tx_isp_t40_vawb_gen.inc} > $W/gen.inc
-XDEF="$XDEF $XDEFG"
+XDEF="$XDEF $XDEFG $TOPDEF"
+[ -r $D/tx_isp_t40_awb_main.inc ] && XDEF="$XDEF -DHAVE_AWB_MAIN"
 ${VCC:-gcc} ${VOPT:--O1} ${XCFLAGS:--g0} -falign-functions=16 ${VPIE--no-pie -fno-pie} -w -fno-strict-aliasing ${VLD--Wl,--section-start=.vdata=0x30000000} \
 	-DVAWB_TOP="\"$W/top.h\"" -DVAWB_INC="\"$W/gen.inc\"" -DCFIX_INC="\"$W/cfix.inc\"" \
 	-DCTD_INC="\"$D/tx_isp_t40_awb_ctd.inc\"" -I$D $XDEF $HERE/t40_vawb/vawb_host.c -o $W/vawb_host

@@ -305,6 +305,7 @@ static u64 vawb_s_tisp_awb_ct_detect(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
 #include "tx_isp_t40_awb_stats.inc"
 #include "tx_isp_t40_awb_long.inc"
 #include "tx_isp_t40_awb_gain.inc"
+#include "tx_isp_t40_awb_init.inc"
 #include "tx_isp_t40_vawb_gen.inc"
 
 
@@ -437,16 +438,16 @@ static int t40_vawb_main_init(uint32_t a0, uint32_t a1)
 	memset((void *)(uintptr_t)stMainAwbOuter, 0, 4752);
 	VAWB_STEP(1);
 	VAWB_TOP();
-	VAWB_CTL(vawb_tisp_awb_params_transmit, (u32)(uintptr_t)ctx, 0, 0);
+	VAWB_CTL(vawb_s_tisp_awb_params_transmit, (u32)(uintptr_t)ctx, 0, 0);
 	if (!vawb_ok(ctx[49], 1) || !tparamsN[0])
 		return -EFAULT;
 	*(uint16_t *)(uintptr_t)ctx[49] = (uint16_t)a0;
 	*(uint16_t *)((uintptr_t)ctx[49] + 2) = (uint16_t)a1;
 	VAWB_STEP(2);
-	VAWB_CTL(vawb_tisp_awb_params_refresh, (u32)(uintptr_t)ctx, 0, (u32)tparamsN[0] + 4288);
+	VAWB_CTL(vawb_s_tisp_awb_params_refresh, (u32)(uintptr_t)ctx, 0, (u32)tparamsN[0] + 4288);
 	VAWB_STEP(3);
 	if (vawb_ok(ctx[119], 0) && !*(uint8_t *)(uintptr_t)ctx[119]) {
-		VAWB_CTL(vawb_tisp_awb_set_hardware_param, (u32)(uintptr_t)ctx, 0, 0);
+		VAWB_CTL(vawb_s_tisp_awb_set_hardware_param, (u32)(uintptr_t)ctx, 0, 0);
 		VAWB_STEP(4);
 		VAWB_CTL(vawb_s_tisp_awb_set_gain, (u32)(uintptr_t)ctx, 0, 0);
 	}
@@ -590,7 +591,7 @@ static void t40_vawb_ev_follow(void)
 		return;
 	t40_vawb_ev_sent = ev;
 	VAWB_TOP();
-	vawb_tisp_awb_main_ev_update(ev, 0, 0, 0, VAWB_CSP);
+	t40_am_main_ev_update(ev);
 	if (t40_ct_chains) {	/* OEM event 8: tisp_ccm_main_ev_update + tisp_bcsh_main_ev_update */
 		t40_vct_ev_update(ev);
 		return;
@@ -640,12 +641,13 @@ static void t40_vawb_ct_follow_ct(u32 ct)
 static uint32_t t40_vawb_dn_params_refresh(uint32_t a0)
 {
 	VAWB_TOP();
-	return (uint32_t)VAWB_CTL(vawb_tisp_awb_dn_params_refresh, a0, 0, 0);
+	return (uint32_t)VAWB_CTL(vawb_s_tisp_awb_dn_params_refresh, a0, 0, 0);
 }
 static int32_t t40_vawb_main_ev_update(uint32_t a0)
 {
 	VAWB_TOP();
-	return (int32_t)vawb_tisp_awb_main_ev_update(a0, 0, 0, 0, VAWB_CSP);
+	t40_am_main_ev_update(a0);
+	return 0;
 }
 static int32_t t40_vawb_tgain_update(uint32_t a0, uint32_t a1, uint32_t a2)
 {

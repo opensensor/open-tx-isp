@@ -72,20 +72,43 @@ static u8 s_bcsh_mjpeg_mode_lit[2] VD, s_bcsh_mjpeg_y_range_low_lit[2] VD, s_bcs
 static u8 inter[0x10000] __aligned(16) VD, outer[0x2000] __aligned(16) VD, bank[0x19000] __aligned(16) VD;
 static u8 stats[0x10000] __aligned(16) VD;
 static u32 nreg;
-static u32 reg4004, reg4008;
-static void private_complete(u32 c) { }
 struct reglog { u32 a, v; };
 static struct reglog *reglog_p; static u32 reglog_n;	/* GR_REF: write log of the call under test */
+static void reglog_add(u32 a, u32 v)
+{
+	if (reglog_p) { if (reglog_n < 64) { reglog_p[reglog_n].a = a; reglog_p[reglog_n].v = v; } reglog_n++; }
+}
+static u32 reg4004, reg4008;
+static void private_complete(u32 c);
 static int system_reg_write(u32 a, u32 v)
 {
 	nreg++;
-	if (reglog_p) { if (reglog_n < 64) { reglog_p[reglog_n].a = a; reglog_p[reglog_n].v = v; } reglog_n++; }
+	reglog_add(a, v);
 	if (a == 0x4004) reg4004 = v;
 	if (a == 0x4008) reg4008 = v;
 	return 0;
 }
-static int system_reg_read(u32 a) { return 0; }
-static int tisp_event_push(u32 a, u32 b) { return 0; }
+/* register reads: a deterministic sequence per call under test (GR_REF resets it before each of the two runs), logged like writes */
+static u32 rd_x = 1; static int rd_fuzz;
+static int system_reg_read(u32 a)
+{
+	u32 v;
+
+	if (!rd_fuzz) return 0;
+	rd_x ^= rd_x << 13; rd_x ^= rd_x >> 17; rd_x ^= rd_x << 5;
+	v = (rd_x & 7) == 0 ? 0 : (rd_x & 8) ? rd_x & 0xff : rd_x >> 4;
+	reglog_add(0xA0000000U | a, v);
+	return v;
+}
+static void private_complete(u32 c) { reglog_add(0xC0000000U, c); }
+/* events: the fields the consumers read (id, payload) are logged */
+static int tisp_event_push(u32 a, u32 b)
+{
+	const u32 *ev = (const u32 *)(uintptr_t)b;
+
+	reglog_add(0xE0000000U | a, ev[2]); reglog_add(0xE1000000U, ev[4]); reglog_add(0xE2000000U, ev[5]);
+	return 0;
+}
 static int tisp_awb_main_interrupt_static(void) { return 0; }
 static long tisp_awb_main_process(void) { return 0; }
 static u8 *stk_lo;
@@ -123,6 +146,21 @@ static noinline int64_t harness_ctd_call(uintptr_t a0, uintptr_t a1, uint32_t a2
 #define vawb_s_tisp_awb_set_lum_th_freq vgr_c_lum
 #define vawb_s_tisp_awb_tgain_update vgr_c_tgain
 #define vawb_s_tisp_awb_get_statistics vgr_c_stats
+#define vawb_s_tisp_awb_params_transmit vgr_c_ptrans
+#define vawb_s_tisp_awb_params_refresh vgr_c_prefresh
+#define vawb_s_tisp_awb_set_hardware_param vgr_c_hwparam
+#define vawb_s_tisp_awb_dn_params_refresh vgr_c_dnrefresh
+#define vawb_s_tisp_awb_main_ev_update vgr_c_mainev
+#define vawb_s_tisp_awb_ev_update_Ywgt vgr_c_ywgt
+#ifdef HAVE_AWB_MAIN
+#define vawb_s_tisp_awb_long_par_update vgr_c_lparupd
+#endif
+#ifdef HAVE_AWB_MAIN
+#define vawb_s_tisp_awb_spec_calculate vgr_c_speccalc
+#endif
+#ifdef HAVE_AWB_MAIN
+#define vawb_s_tisp_awb_main_process vgr_c_mainproc
+#endif
 #endif
 #include VAWB_TOP
 #ifdef GR_REF_INC
@@ -131,11 +169,44 @@ static noinline int64_t harness_ctd_call(uintptr_t a0, uintptr_t a1, uint32_t a2
 #undef vawb_s_tisp_awb_set_lum_th_freq
 #undef vawb_s_tisp_awb_tgain_update
 #undef vawb_s_tisp_awb_get_statistics
+#undef vawb_s_tisp_awb_params_transmit
+#undef vawb_s_tisp_awb_params_refresh
+#undef vawb_s_tisp_awb_set_hardware_param
+#undef vawb_s_tisp_awb_dn_params_refresh
+#undef vawb_s_tisp_awb_main_ev_update
+#undef vawb_s_tisp_awb_ev_update_Ywgt
+#ifdef HAVE_AWB_MAIN
+#undef vawb_s_tisp_awb_long_par_update
+#endif
+#ifdef HAVE_AWB_MAIN
+#undef vawb_s_tisp_awb_spec_calculate
+#endif
+#ifdef HAVE_AWB_MAIN
+#undef vawb_s_tisp_awb_main_process
+#endif
 static u64 vawb_s_tisp_awb_set_gain(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 static u64 vawb_s_tisp_awb_set_regional_threshold(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 static u64 vawb_s_tisp_awb_set_lum_th_freq(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 static u64 vawb_s_tisp_awb_tgain_update(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 static u64 vawb_s_tisp_awb_get_statistics(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
+static u64 vawb_s_tisp_awb_params_transmit(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
+static u64 vawb_s_tisp_awb_params_refresh(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
+static u64 vawb_s_tisp_awb_set_hardware_param(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
+static u64 vawb_s_tisp_awb_dn_params_refresh(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
+static u64 vawb_s_tisp_awb_main_ev_update(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
+static u64 vawb_s_tisp_awb_ev_update_Ywgt(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
+#ifdef HAVE_AWB_MAIN
+static u64 vawb_s_tisp_awb_long_par_update(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
+#endif
+#ifdef HAVE_AWB_MAIN
+static u64 vawb_s_tisp_awb_spec_calculate(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
+#endif
+#ifdef HAVE_AWB_MAIN
+static u64 vawb_s_tisp_awb_main_process(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
+#endif
+#ifndef TOP_HAS_TELE
+static u8 vawb_wide_tele_para[144] VD; static u32 vawb_converge_tele_gain VD = 0x00010001U;
+#endif
 static u32 vawb_wide_tele_awb_gain[3] VD = { 0x04000400U, 0x04000400U, 0x04000400U };	/* the OEM state of the reference only */
 #endif
 #ifdef LA_REF_INC
@@ -324,6 +395,11 @@ static u64 vawb_s_tisp_awb_long_alogrithm(u32 a0, u32 a1, u32 a2, u32 a3, u32 cs
 #endif
 
 #define VAWB_CSP ((u32)(uintptr_t)vawb_argarea)
+#ifdef HAVE_AWB_MAIN
+#define MAINPROC vawb_s_tisp_awb_main_process
+#else
+#define MAINPROC vawb_tisp_awb_main_process
+#endif
 #define VAWB_TOP() (vawb_loop_n = 0)
 #ifdef GR_REF_INC
 /*
@@ -335,14 +411,15 @@ static u64 vawb_s_tisp_awb_long_alogrithm(u32 a0, u32 a1, u32 a2, u32 a3, u32 cs
  * FUZZP=seed runs the fuzz loop (FUZZN calls of each, default 20000).
  */
 #include GR_REF_INC
-static unsigned long gr_n[10], gr_bad[10];
-static u32 gr_x;
+static unsigned long gr_n[20], gr_bad[20];
+static u32 gr_x, rd_seed = 12345, gr_total;
 #define GRR() (gr_x ^= gr_x << 13, gr_x ^= gr_x >> 17, gr_x ^= gr_x << 5, gr_x)
 static u32 gr_ae_loc[2] VD;	/* the OEM mean update's two local outputs (*a0, *a1): the callers discard them, the C version does not compute them */
 static u32 gr_ae_geo[2][4] __aligned(4) VD, gr_ae_sum[2][16 * 16] VD, gr_ae_ev[2][4] VD, gr_ae_out[2][2] VD;
-#define GR_NREG 10
+#define GR_NREG 18
 static struct { void *p; u32 n; } gr_reg[GR_NREG];
-static u8 gr_s0[0x20000], gr_s1[0x20000], gr_s2[0x20000];
+static u8 gr_s0[0x40000], gr_s1[0x40000], gr_s2[0x40000];
+static u8 secinter[0x10000] __aligned(16) VD, secouter[0x2000] __aligned(16) VD, bank2[0x19000] __aligned(16) VD;
 static struct reglog gr_l1[64], gr_l2[64], gr_lbuf[64];
 static void gr_regions(void)
 {
@@ -356,8 +433,16 @@ static void gr_regions(void)
 	gr_reg[7].p = gr_ae_sum; gr_reg[7].n = sizeof(gr_ae_sum);
 	gr_reg[8].p = gr_ae_ev; gr_reg[8].n = sizeof(gr_ae_ev);
 	gr_reg[9].p = gr_ae_out; gr_reg[9].n = sizeof(gr_ae_out);
+	gr_reg[10].p = secinter; gr_reg[10].n = 60328;
+	gr_reg[11].p = secouter; gr_reg[11].n = 4752;
+	gr_reg[12].p = pstMainAwbCtDetectOri; gr_reg[12].n = sizeof(pstMainAwbCtDetectOri);
+	gr_reg[13].p = &vawb_awb_num; gr_reg[13].n = 1;
+	gr_reg[14].p = vawb_peter_test_count; gr_reg[14].n = sizeof(vawb_peter_test_count);
+	gr_reg[15].p = vawb_tawb_custom_en; gr_reg[15].n = 8;
+	gr_reg[16].p = awb_algo_comp; gr_reg[16].n = sizeof(awb_algo_comp);
+	gr_reg[17].p = &vawb_events_seen; gr_reg[17].n = sizeof(vawb_events_seen);
 }
-static void gr_save(u8 *d) { u32 i, o = 0; for (i = 0; i < GR_NREG; i++) { memcpy(d + o, gr_reg[i].p, gr_reg[i].n); o += gr_reg[i].n; } }
+static void gr_save(u8 *d) { u32 i, o = 0; for (i = 0; i < GR_NREG; i++) { memcpy(d + o, gr_reg[i].p, gr_reg[i].n); o += gr_reg[i].n; } gr_total = o; }
 static void gr_load(const u8 *d) { u32 i, o = 0; for (i = 0; i < GR_NREG; i++) { memcpy(gr_reg[i].p, d + o, gr_reg[i].n); o += gr_reg[i].n; } }
 static void gr_ae_setup(void)
 {
@@ -380,17 +465,21 @@ static u64 gr_cmp(int id, const char *name, gr_fn fn_ref, gr_fn fn_c, u32 a0, u3
 
 	gr_regions();
 	gr_save(gr_s0);
+	rd_fuzz = 1; rd_seed ^= rd_seed << 13; rd_seed ^= rd_seed >> 17; rd_seed ^= rd_seed << 5;
+	rd_x = rd_seed | 1;
 	reglog_p = gr_l1; reglog_n = 0; f0 = vawb_faults;
 	rv = fn_ref(a0, a1, a2, a3, csp);
 	fr = vawb_faults - f0; n1 = reglog_n;
 	gr_save(gr_s1);
 	gr_load(gr_s0);
+	rd_x = rd_seed | 1;
 	reglog_p = gr_l2; reglog_n = 0; f0 = vawb_faults;
 	(void)fn_c(a0, a1, a2, a3, csp);
 	fc = vawb_faults - f0; n2 = reglog_n; reglog_p = 0;
 	gr_save(gr_s2);
 	gr_n[id]++;
-	for (i = 0; i < sizeof(gr_s2); i++) if (gr_s1[i] != gr_s2[i]) { bad++; if (first == ~0U) first = i; }
+	if (memcmp(gr_s1, gr_s2, gr_total))
+		for (i = 0; i < gr_total; i++) if (gr_s1[i] != gr_s2[i]) { bad++; if (first == ~0U) first = i; }
 	if (n1 != n2) bad++;
 	else for (r = 0; r < n1 && r < 64; r++) if (gr_l1[r].a != gr_l2[r].a || gr_l1[r].v != gr_l2[r].v) { bad++; at = r; break; }
 	if (fr != fc) bad++;
@@ -423,6 +512,26 @@ static u64 vawb_s_tisp_awb_get_statistics(u32 a0, u32 a1, u32 a2, u32 a3, u32 cs
 {
 	return gr_cmp(8, "get_statistics", vgr_tisp_awb_get_statistics, vgr_c_stats, a0, a1, a2, a3, csp);
 }
+static u64 vawb_s_tisp_awb_params_transmit(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
+{ return gr_cmp(10, "params_transmit", vgr_tisp_awb_params_transmit, vgr_c_ptrans, a0, a1, a2, a3, csp); }
+static u64 vawb_s_tisp_awb_params_refresh(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
+{ return gr_cmp(11, "params_refresh", vgr_tisp_awb_params_refresh, vgr_c_prefresh, a0, a1, a2, a3, csp); }
+static u64 vawb_s_tisp_awb_set_hardware_param(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
+{ return gr_cmp(12, "set_hardware_param", vgr_tisp_awb_set_hardware_param, vgr_c_hwparam, a0, a1, a2, a3, csp); }
+static u64 vawb_s_tisp_awb_dn_params_refresh(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
+{ return gr_cmp(13, "dn_params_refresh", vgr_tisp_awb_dn_params_refresh, vgr_c_dnrefresh, a0, a1, a2, a3, csp); }
+static u64 vawb_s_tisp_awb_main_ev_update(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
+{ return gr_cmp(14, "main_ev_update", vgr_tisp_awb_main_ev_update, vgr_c_mainev, a0, a1, a2, a3, csp); }
+static u64 vawb_s_tisp_awb_ev_update_Ywgt(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
+{ return gr_cmp(15, "ev_update_Ywgt", vgr_tisp_awb_ev_update_Ywgt, vgr_c_ywgt, a0, a1, a2, a3, csp); }
+#ifdef HAVE_AWB_MAIN
+static u64 vawb_s_tisp_awb_long_par_update(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
+{ return gr_cmp(16, "long_par_update", vgr_tisp_awb_long_par_update, vgr_c_lparupd, a0, a1, a2, a3, csp); }
+static u64 vawb_s_tisp_awb_spec_calculate(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
+{ return gr_cmp(17, "spec_calculate", vgr_tisp_awb_spec_calculate, vgr_c_speccalc, a0, a1, a2, a3, csp); }
+static u64 vawb_s_tisp_awb_main_process(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
+{ return gr_cmp(18, "main_process", vgr_tisp_awb_main_process, vgr_c_mainproc, a0, a1, a2, a3, csp); }
+#endif
 /* sat_weight has no shim in the driver (the C long_alogrithm calls it directly): o32 stack arguments sat plane, gain pair, ctx */
 static u64 gr_c_sat(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
 {
@@ -497,12 +606,133 @@ static void gr_fuzz_stats(void)
 	gr_sat_gain[0] = gr_val(1U << (GRR() % 16)); gr_sat_gain[1] = gr_val(1U << (GRR() % 16));
 	gr_sat_area[4] = c[45]; gr_sat_area[5] = (u32)(uintptr_t)gr_sat_gain; gr_sat_area[6] = (u32)(uintptr_t)c;
 }
+
+/*
+ * Init / EV / process chain (tx_isp_t40_awb_init.inc, tx_isp_t40_awb_main.inc): FUZZQ=seed [FUZZN=calls].  Every field the
+ * functions read is randomised with the interesting values (0, 1, 2, boundaries) over-represented; the context pointer
+ * tables stay valid (params_transmit of each sensor restores them).
+ */
+#define PR_SRC(s) ((u8 *)(uintptr_t)(tparamsN[s] + 4288))
+static void pr_fill(void *p, u32 n) { u32 i; for (i = 0; i < n; i++) ((u8 *)p)[i] = GRR(); }
+static u32 pr_small(u32 n) { return n ? GRR() % n : 0; }
+static u32 pr_flag(void) { u32 k = GRR() % 8; return k < 3 ? 0 : k < 6 ? 1 : k == 6 ? 2 : GRR() & 255; }
+static void pr_fuzz(u32 sensor)
+{
+	u32 *c = sensor ? pstSecAwbOri : pstMainAwbOri, i, lo, hi;
+	u16 *cfg;
+	u8 *src = PR_SRC(sensor);
+
+	pr_fill(sensor ? secinter : inter, 60328); pr_fill(sensor ? secouter : outer, 4752);
+	pr_fill(src, 4752);
+	/* parameter source: the statistics window rows / columns small, flags as the tuning writes them */
+	((u16 *)src)[0] = pr_small(40); ((u16 *)src)[1] = pr_small(16); ((u16 *)src)[2] = pr_small(40); ((u16 *)src)[3] = pr_small(16);
+	cfg = (u16 *)(uintptr_t)c[0];
+	cfg[0] = pr_small(40); cfg[1] = pr_small(16); cfg[2] = pr_small(40); cfg[3] = pr_small(16);
+	((u16 *)(uintptr_t)c[49])[0] = pr_small(4000); ((u16 *)(uintptr_t)c[49])[1] = pr_small(3000);
+	*(u8 *)(uintptr_t)c[100] = pr_small(3) == 0; *(u8 *)(uintptr_t)c[101] = pr_small(3) == 0;
+	*(u8 *)(uintptr_t)c[118] = pr_small(3) == 0; *(u8 *)(uintptr_t)c[119] = pr_small(4) == 0;
+	*(u8 *)(uintptr_t)c[54] = GRR();
+	/* exposure thresholds (ctx[6], ctx[21]) and values */
+	lo = pr_small(4) ? pr_small(3000) : pr_small(10);
+	hi = lo + (pr_small(6) == 0 ? pr_small(3) : pr_small(600));
+	if (pr_small(16) == 0) hi = pr_small(3000);
+	if (pr_small(20) == 0) { lo = 0x7fffff00U + pr_small(512); hi = 0x7fffff00U + pr_small(512); }	/* straddle the signed boundary */
+	((u32 *)(uintptr_t)c[6])[0] = lo; ((u32 *)(uintptr_t)c[6])[1] = hi;
+	{
+		u32 *e = (u32 *)(uintptr_t)c[116], d3 = (hi - lo) / 3;
+		u32 pick = pr_small(16);
+
+		*e = pick == 0 ? lo : pick == 1 ? hi : pick == 2 ? lo + d3 : pick == 3 ? hi + d3 : pick == 4 ? lo - 1 : pick == 5 ? hi - 1 :
+		     pick == 6 ? hi + d3 - 1 : pick == 7 ? lo + d3 - 1 : pick == 8 ? GRR() : pick == 9 ? 0 : pick == 10 ? hi + pr_small(d3 + 1) : lo + pr_small(hi - lo + 1) + pr_small(2 * d3 + 3);
+	}
+	{
+		u32 *t = (u32 *)(uintptr_t)c[21], v = pr_small(100);
+
+		for (i = 0; i < 9; i++) { t[i] = v; v += pr_small(8) == 0 ? 0 : pr_small(2000); }
+		if (pr_small(8) == 0) for (i = 0; i < 9; i++) t[i] = GRR();
+		if (pr_small(3) == 0) *(u32 *)(uintptr_t)c[116] = t[pr_small(9)] + pr_small(3) - 1;
+		if (pr_small(8) == 0) *(u32 *)(uintptr_t)c[116] = pr_small(4) ? GRR() : t[8] + 1;
+		for (i = 0; i < 9; i++) ((u16 *)(uintptr_t)c[22])[i] = pr_small(5) == 0 ? ((u16 *)(uintptr_t)c[22])[i ? i - 1 : 0] : GRR();
+	}
+	((u16 *)(uintptr_t)c[3])[1] = pr_small(16);
+	((u32 *)(uintptr_t)c[18])[0] = pr_small(2) ? pr_small(3) : GRR(); ((u32 *)(uintptr_t)c[19])[0] = pr_small(2) ? pr_small(3) : GRR();
+	for (i = 0; i < 4; i++) { ((u32 *)(uintptr_t)c[15])[i] = pr_small(2) ? pr_small(5000) : GRR(); ((u32 *)(uintptr_t)c[16])[i] = pr_small(5000);
+				  ((u32 *)(uintptr_t)c[17])[i] = pr_small(2) ? pr_small(5000) : GRR(); }
+	((u32 *)(uintptr_t)c[18])[1] = pr_small(2) ? pr_small(70000) : GRR(); ((u32 *)(uintptr_t)c[19])[1] = pr_small(2) ? pr_small(70000) : GRR();
+	for (i = 0; i < 10; i++) ((u8 *)(uintptr_t)c[27])[i] = (i == 0 || i >= 5) ? pr_flag() : GRR();
+	((u8 *)(uintptr_t)c[50])[0] = pr_small(4) ? pr_small(3) : GRR(); ((u8 *)(uintptr_t)c[50])[1] = pr_small(4) ? pr_small(4) : GRR();
+	((u32 *)(uintptr_t)c[9])[0] = pr_small(2) ? pr_small(5000) : GRR(); ((u32 *)(uintptr_t)c[9])[1] = pr_small(2) ? pr_small(5000) : GRR();
+	for (i = 0; i < 32; i++) ((u16 *)(uintptr_t)c[29])[i] = pr_small(4) ? pr_small(900) : GRR();
+	for (i = 0; i < 32; i++) ((u16 *)(uintptr_t)c[30])[i] = pr_small(4) ? pr_small(900) : GRR();
+	*(u32 *)(uintptr_t)c[7] = 1500 + pr_small(14000);
+	if (pr_small(4) == 0) *(u32 *)(uintptr_t)c[7] = GRR();
+	vawb_tawb_custom_en[0] = pr_small(3) == 0; vawb_tawb_custom_en[1] = pr_small(3) == 0;
+	vawb_awb_num = pr_small(4) == 0 ? GRR() : pr_small(52);
+	vawb_peter_test_count[0] = GRR();
+}
+static void pr_fuzz_ae(void)
+{
+	/* the AE side of the regional threshold calls: reuse the gain-chain generator */
+	gr_fuzz_ctx();
+}
+static void pr_run(u32 n)
+{
+	u32 *cm = pstMainAwbOri, *cs = pstSecAwbOri, i, k;
+
+	stSecAwbInter = (u32)(uintptr_t)secinter; stSecAwbOuter = (u32)(uintptr_t)secouter; tparamsN[1] = (u32)(uintptr_t)bank2;
+	gr_ae_setup();
+	vawb_s_tisp_awb_params_transmit((u32)(uintptr_t)cm, 0, 0, 0, VAWB_CSP);
+	vawb_s_tisp_awb_params_transmit((u32)(uintptr_t)cs, 1, 0, 0, VAWB_CSP);
+	for (i = 0; i < n; i++) {
+		u32 sensor = GRR() % 5 == 0;
+		u32 *c = sensor ? cs : cm;
+
+		VAWB_TOP();
+		pr_fuzz(sensor);
+		if (!sensor || GRR() & 1) pr_fuzz_ae();
+		switch (i % 9) {
+		case 0:
+			for (k = 0; k < 128; k++) c[k] = GRR();
+			vawb_s_tisp_awb_params_transmit((u32)(uintptr_t)c, sensor ? (GRR() | 1) : 0, 0, 0, VAWB_CSP);
+			break;
+		case 1: vawb_s_tisp_awb_params_refresh((u32)(uintptr_t)c, sensor, tparamsN[sensor] + 4288, 0, VAWB_CSP); break;
+		case 2: vawb_s_tisp_awb_set_hardware_param((u32)(uintptr_t)c, sensor, 0, 0, VAWB_CSP); break;
+		case 3: vawb_s_tisp_awb_dn_params_refresh(sensor, 0, 0, 0, VAWB_CSP); break;
+		case 4: vawb_s_tisp_awb_main_ev_update(GRR() >> (GRR() % 20), 0, 0, 0, VAWB_CSP); break;
+		case 5: vawb_s_tisp_awb_ev_update_Ywgt((u32)(uintptr_t)cm, 0, 0, 0, VAWB_CSP); break;
+#ifdef HAVE_AWB_MAIN
+		case 6: vawb_s_tisp_awb_long_par_update((u32)(uintptr_t)cm, (u32)(uintptr_t)pstMainAwbCtDetectOri, stMainAwbInter, 0, VAWB_CSP); break;
+		case 7: vawb_s_tisp_awb_spec_calculate((u32)(uintptr_t)cm, GRR() & 1, 0, 0, VAWB_CSP); break;
+		default: vawb_s_tisp_awb_main_process(0, 0, 0, 0, VAWB_CSP);
+#else
+		default: break;
+#endif
+		}
+		if (sensor) {	/* a failed run of the pointer tables must not leak into the next call */
+			vawb_s_tisp_awb_params_transmit((u32)(uintptr_t)cs, 1, 0, 0, VAWB_CSP);
+		}
+		vawb_s_tisp_awb_params_transmit((u32)(uintptr_t)cm, 0, 0, 0, VAWB_CSP);
+	}
+	{
+		static const char *nm[] = { "transmit", "refresh", "hw_param", "dn_refresh", "main_ev", "ywgt", "long_par", "spec", "process" };
+		unsigned long tn = 0, tb = 0;
+
+		printf("init_process_chain C vs OEM:");
+		for (k = 0; k < 9; k++) { tn += gr_n[10 + k]; tb += gr_bad[10 + k]; printf(" %s %lu/%lu", nm[k], gr_n[10 + k], gr_bad[10 + k]); }
+		printf("\ninit_process_chain C vs OEM: %lu calls, %lu differ\n", tn, tb);
+	}
+}
 /* fuzz loop: FUZZP=seed [FUZZN=calls] */
 static void gr_direct(void)
 {
 	u32 *c = pstMainAwbOri, n = getenv("FUZZN") ? atoi(getenv("FUZZN")) : 20000, i;
 	u16 *tbl;
 
+	if (getenv("FUZZQ")) {
+		gr_x = atoi(getenv("FUZZQ")) * 2654435761U | 1;
+		pr_run(n);
+		return;
+	}
 	if (getenv("FUZZP")) {
 	gr_x = atoi(getenv("FUZZP")) * 2654435761U | 1;
 	memcpy(pstSecAwbOri, pstMainAwbOri, 512);
@@ -548,14 +778,14 @@ static void run(void)
 #ifdef GR_REF_INC
 	gr_ae_setup();
 #endif
-	vawb_tisp_awb_params_transmit((u32)(uintptr_t)c, 0, 0, 0, VAWB_CSP);
+	vawb_s_tisp_awb_params_transmit((u32)(uintptr_t)c, 0, 0, 0, VAWB_CSP);
 	*(u16 *)(uintptr_t)c[49] = 3840; *(u16 *)((uintptr_t)c[49] + 2) = 2160;
-	vawb_tisp_awb_params_refresh((u32)(uintptr_t)c, 0, tparamsN[0] + 4288, 0, VAWB_CSP);
-	vawb_tisp_awb_set_hardware_param((u32)(uintptr_t)c, 0, 0, 0, VAWB_CSP);
+	vawb_s_tisp_awb_params_refresh((u32)(uintptr_t)c, 0, tparamsN[0] + 4288, 0, VAWB_CSP);
+	vawb_s_tisp_awb_set_hardware_param((u32)(uintptr_t)c, 0, 0, 0, VAWB_CSP);
 	vawb_s_tisp_awb_set_gain((u32)(uintptr_t)c, 0, 0, 0, VAWB_CSP);
 	printf("init faults=%u ct=%u g9=%u,%u reg=%#x,%#x frz=%u\n", vawb_faults, *(u32 *)(uintptr_t)c[7],
 	       ((u32 *)(uintptr_t)c[9])[0], ((u32 *)(uintptr_t)c[9])[1], reg4004, reg4008, *(u8 *)(uintptr_t)c[119]);
-	vawb_tisp_awb_main_ev_update(3000U << 10, 0, 0, 0, VAWB_CSP);
+	vawb_s_tisp_awb_main_ev_update(3000U << 10, 0, 0, 0, VAWB_CSP);
 	for (i = 0; i < sizeof(stats) / 16; i++) {	/* 5 x 22-bit fields per 16-byte zone record */
 		u32 *w = (u32 *)(stats + i * 16), n = 200;
 		w[0] = (g_r & 0x3fffff) | (g_g << 22);
@@ -568,7 +798,10 @@ static void run(void)
 		vawb_s_tisp_awb_get_statistics((u32)(uintptr_t)stats, (u32)(uintptr_t)c, 0, 0, VAWB_CSP);
 		if (g_trace && f == 0) { vawb_tn = 0; vawb_tarmed = 1; }
 		VAWB_TOP();
-		vawb_tisp_awb_main_process(0, 0, 0, 0, VAWB_CSP);
+		MAINPROC(0, 0, 0, 0, VAWB_CSP);
+#ifdef LA_REF_INC	/* the C process calls its own long_alogrithm: run the comparing wrapper on the same context once per frame as well */
+		vawb_s_tisp_awb_long_alogrithm((u32)(uintptr_t)c, (u32)(uintptr_t)pstMainAwbCtDetectOri, 0, 0, VAWB_CSP);
+#endif
 		vawb_tarmed = 0;
 		if (f < 2) {
 			u16 *s123 = (u16 *)(uintptr_t)c[123]; u16 *s4 = (u16 *)(uintptr_t)c[4];
@@ -600,7 +833,7 @@ static void replay(void)
 	u8 *d = g_dump + 64;
 	u32 *dctx = (u32 *)(d + 60328 + 4752);
 
-	vawb_tisp_awb_params_transmit((u32)(uintptr_t)c, 0, 0, 0, VAWB_CSP);
+	vawb_s_tisp_awb_params_transmit((u32)(uintptr_t)c, 0, 0, 0, VAWB_CSP);
 	for (i = 0; i < 128; i++) {	/* same layout: device ctx[i] - dev base == host ctx[i] - host base */
 		u32 dv = dctx[i], hv = c[i], ok;
 		if (dv >= h[1] && dv < h[1] + 60328) ok = hv - (u32)(uintptr_t)inter == dv - h[1];
@@ -611,7 +844,7 @@ static void replay(void)
 	memcpy(inter, d, 60328); memcpy(outer, d + 60328, 4752);
 	vawb_tn = 0; vawb_tarmed = g_trace;
 	VAWB_TOP();
-	vawb_tisp_awb_main_process(0, 0, 0, 0, VAWB_CSP);
+	MAINPROC(0, 0, 0, 0, VAWB_CSP);
 	vawb_tarmed = 0;
 	if (getenv("REPS")) {	/* time per process on this state (CONSEC=1: carried on), result restored afterwards */
 		static u8 ri[60328], ro[4752];
@@ -623,7 +856,7 @@ static void replay(void)
 		for (r = 0; r < n; r++) {
 			if (!getenv("CONSEC")) { memcpy(inter, d, 60328); memcpy(outer, d + 60328, 4752); }
 			VAWB_TOP();
-			vawb_tisp_awb_main_process(0, 0, 0, 0, VAWB_CSP);
+			MAINPROC(0, 0, 0, 0, VAWB_CSP);
 		}
 		clock_gettime(CLOCK_MONOTONIC, &t1);
 		printf("REPS %d: %.1f us per process\n", n, ((t1.tv_sec - t0.tv_sec) * 1e9 + (t1.tv_nsec - t0.tv_nsec)) / 1e3 / n);
@@ -693,7 +926,7 @@ int main(int argc, char **argv)
 		if (!f || fread(buf, 1, sizeof(buf), f) != sizeof(buf)) { printf("dump short\n"); return 2; }
 		g_dump = buf; g_trace = argc > 3 ? atoi(argv[3]) : 0;
 		stMainAwbInter = (u32)(uintptr_t)inter; stMainAwbOuter = (u32)(uintptr_t)outer;
-		memcpy(vawb_wide_tele_para, vawb_wide_tele_para_t8416, 144); vawb_wide_tele_para[0] = 0;
+		
 		stk_lo = mmap(NULL, 0x40000, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_32BIT, -1, 0);
 		getcontext(&runctx);
 		runctx.uc_stack.ss_sp = stk_lo; runctx.uc_stack.ss_size = 0x40000; runctx.uc_link = &mainctx;
@@ -709,7 +942,7 @@ int main(int argc, char **argv)
 	if (argc > 7) g_trace = atoi(argv[7]);
 	stMainAwbInter = (u32)(uintptr_t)inter; stMainAwbOuter = (u32)(uintptr_t)outer;
 	tparamsN[0] = (u32)(uintptr_t)bank;
-	memcpy(vawb_wide_tele_para, vawb_wide_tele_para_t8416, 144); vawb_wide_tele_para[0] = 0;
+	
 	stk_lo = mmap(NULL, 0x40000, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_32BIT, -1, 0);
 	getcontext(&runctx);
 	runctx.uc_stack.ss_sp = stk_lo; runctx.uc_stack.ss_size = 0x40000; runctx.uc_link = &mainctx;
