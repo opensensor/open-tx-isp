@@ -20,5 +20,9 @@ awk '/^char \*tisp_awb_set_frz\(/,/^}/' "$f" | grep -q '_bss_start' && { echo "c
 grep -q 'regtrace_ae_sensor_apply_force_packed = (idx << 16) | (it_r & 0xffffU);' "$f" || { echo "check_t40_custom_algo_wake: tisp_ae_algo_handle must commit the result through regtrace_ae_sensor_apply_force_packed"; fail=1; }
 grep -q 'WRITE_ONCE(t40_awb_algo_manual, 1);' "$f" && grep -q 'WRITE_ONCE(t40_awb_algo_manual, 0);' "$f" || { echo "check_t40_custom_algo_wake: the custom AWB result must set the manual WB of the control plane and the unregister must undo it"; fail=1; }
 grep -q 'READ_ONCE(awb_algo_enable\[0\]) == 1' "$f" || { echo "check_t40_custom_algo_wake: held (manual/frozen) AWB must still complete awb_algo_comp for a custom library"; fail=1; }
+# review 2026-11-03 H1: channel 1 of the custom AWB uses the second completion (OEM awb_algo_comp + 16 for the wait and the sec
+# process wake-up; the lift lost the +16), and the AWB statistics IRQ wakes a custom library when the AWB init failed (M5)
+grep -q 'private_complete)((uintptr_t)awb_algo_comp + 16)' "$f" || { echo "check_t40_custom_algo_wake: tisp_awb_sec_process must complete awb_algo_comp + 16"; fail=1; }
+grep -q 't40_get_awb_algo_handle((uint32_t)(uintptr_t)s1, 1)' "$f" || { echo "check_t40_custom_algo_wake: the channel 1 AWB get-handle must go through t40_get_awb_algo_handle"; fail=1; }
 [ $fail = 0 ] && echo "check_t40_custom_algo_wake: ok"
 exit $fail

@@ -21093,6 +21093,10 @@ struct regtrace_t40_awb_custom_wire {
 
 static uint32_t t40_awb_set_ct, t40_awb_set_start_en, t40_awb_set_start[2];   /* H2: last SetAwbAttr ct / start (ch 0) */
 static int t40_awb_algo_manual;   /* #65: the custom AWB library set manual gains (undone at unregister) */
+/* M4 (review 2026-11-03): white balance mode and manual gains of the application before a custom AWB library took them over
+ * ({mode, rgain, bgain}); restored at unregister.  The vendor leaves the library's last gains in manual mode after the
+ * unregister (tisp_awb_algo_deinit_internal only clears tawb_custom_en): the application's own setting is restored here. */
+static uint32_t t40_awb_algo_saved[3];
 struct regtrace_t40_awb_attr_wire {
     uint32_t mode;
     struct regtrace_t40_awb_gain_wire gain;
@@ -21160,6 +21164,12 @@ static int regtrace_t40_tuning_set_awb_attr(uintptr_t user_ptr)
         return -ERANGE;
 
     mutex_lock(&regtrace_t40_running_mode_lock);
+    if (READ_ONCE(t40_awb_algo_manual)) {
+        /* M4: a custom AWB library holds the gains: the application's newest setting is what comes back at unregister */
+        t40_awb_algo_saved[0] = attr.mode;
+        t40_awb_algo_saved[1] = attr.mode == 1U ? rgain : 0U;
+        t40_awb_algo_saved[2] = attr.mode == 1U ? bgain : 0U;
+    }
     WRITE_ONCE(regtrace_awb_control_mode, attr.mode);
     WRITE_ONCE(regtrace_awb_control_frozen, attr.frozen != 0U);
     if (attr.mode == 1U) {
@@ -54196,6 +54206,158 @@ static uintptr_t t40_ae_algo_attr(uintptr_t core, uint32_t ch)
     return regtrace_is_kernel_ptr((void *)attr) ? attr : 0;
 }
 
+static uint32_t t40_ae_sensor_again_log2(uint32_t idx);   /* M3, below tisp_ae_algo_handle */
+
+/* H1 (review 2026-11-03): custom AE / AWB library state.  The OEM get-handle ioctls wait for the statistics completion, then
+ * use *_info_mine[idx] unchecked, while the close ioctl frees that block: a GET without an open library, a GET interrupted by a
+ * signal (the wait result was ignored) or a GET that returns after the close dereferenced NULL + 8 or a freed block, and the
+ * open re-initialised a wait queue a GET could still sit on.  Here:
+ *   - t40_algo_mutex guards the info slots: open, close, the result (SET) ioctls and the part of a GET between its wake-up and
+ *     copy_to_user hold it, so the block cannot be freed under a GET;
+ *   - the four completions are initialised once (zeroed .bss is not a valid wait queue) and an open only re-arms done = 0;
+ *   - a GET without an open library returns -EINVAL at once, an interrupted wait returns -ERESTARTSYS (the caller gets EINTR or
+ *     the call restarts, as for every interruptible kernel wait), a GET woken by the close returns -EINVAL;
+ *   - the close wakes every waiter of its channel (complete_all), so a library worker leaves its loop without a signal.
+ * The vendor module has the same unchecked code; this is a stability fix beyond the vendor (documented in CHANGELOG). */
+static DEFINE_MUTEX(t40_algo_mutex);
+static bool t40_algo_comp_ready;
+
+static struct completion *t40_algo_comp(int awb, uint32_t idx)
+{
+    return (struct completion *)((char *)(awb ? awb_algo_comp : ae_algo_comp) + idx * 16U);
+}
+
+static uint32_t *t40_algo_slot(int awb)
+{
+    return awb ? awb_info_mine : ae_info_mine;
+}
+
+/* t40_algo_mutex held */
+static void t40_algo_comps_init_locked(void)
+{
+    uint32_t k;
+
+    BUILD_BUG_ON(sizeof(struct completion) != 16U);
+    if (t40_algo_comp_ready)
+        return;
+    for (k = 0; k < T40_ALGO_IDX_COUNT; k++) {
+        init_completion(t40_algo_comp(0, k));
+        init_completion(t40_algo_comp(1, k));
+    }
+    t40_algo_comp_ready = true;
+}
+
+/* t40_algo_mutex held: a new library starts with no pending statistics; queued waiters (if any) stay valid */
+static void t40_algo_comp_arm_locked(int awb, uint32_t idx)
+{
+    struct completion *c;
+    unsigned long fl;
+
+    t40_algo_comps_init_locked();
+    c = t40_algo_comp(awb, idx);
+    spin_lock_irqsave(&c->wait.lock, fl);
+    c->done = 0;
+    spin_unlock_irqrestore(&c->wait.lock, fl);
+}
+
+/* t40_algo_mutex held: unregister (deinit already done by the caller): free the info block once and wake the waiters */
+static void t40_algo_release_locked(int awb, uint32_t idx)
+{
+    uint32_t *slot = t40_algo_slot(awb);
+    uint32_t info = slot[idx];
+
+    slot[idx] = 0;
+    if (info)
+        private_kfree(info);
+    if (t40_algo_comp_ready)
+        complete_all(t40_algo_comp(awb, idx));
+}
+
+/* GET: wait for the next statistics; on 0 the caller owns t40_algo_mutex and *info until t40_algo_get_end() */
+static int t40_algo_get_begin(int awb, uint32_t idx, char **info)
+{
+    uint32_t *slot = t40_algo_slot(awb);
+    int ret;
+
+    if (idx >= T40_ALGO_IDX_COUNT)
+        return -EINVAL;
+    mutex_lock(&t40_algo_mutex);
+    ret = slot[idx] ? 0 : -EINVAL;      /* no library registered: nothing would ever complete */
+    mutex_unlock(&t40_algo_mutex);
+    if (ret)
+        return ret;
+    ret = wait_for_completion_interruptible(t40_algo_comp(awb, idx));
+    if (ret)
+        return ret;
+    mutex_lock(&t40_algo_mutex);
+    *info = (char *)(uintptr_t)slot[idx];
+    if (*info == NULL) {                /* closed while waiting */
+        mutex_unlock(&t40_algo_mutex);
+        return -EINVAL;
+    }
+    return 0;
+}
+
+static void t40_algo_get_end(void)
+{
+    mutex_unlock(&t40_algo_mutex);
+}
+
+/* SET (library result): only while the library of that channel is registered (a late result after the close would take the
+ * white balance / exposure over again) */
+static int32_t t40_algo_result(int awb, uint32_t ch, uintptr_t req)
+{
+    int32_t ret;
+
+    if (ch >= T40_ALGO_IDX_COUNT)
+        return -EINVAL;
+    mutex_lock(&t40_algo_mutex);
+    if (!t40_algo_slot(awb)[ch])
+        ret = -EINVAL;
+    else
+        ret = awb ? tisp_awb_algo_handle(ch, req) : tisp_ae_algo_handle(ch, req);
+    mutex_unlock(&t40_algo_mutex);
+    return ret;
+}
+
+/* OEM 0x13128 (ch 0) / 0x15148 (ch 1): AWB get-handle.  The lift waited on the completion of channel 0 for both channels (the
+ * +16 of ch 1 was lost) and dropped the stores of the gains (info+8/12 from tisp_g_awb_attr) and of the global statistics
+ * (info+16..28) into the block. */
+static int32_t t40_get_awb_algo_handle(uint32_t user, uint32_t idx)
+{
+    uint32_t attr[32], gs[8];
+    char *info;
+    int ret = t40_algo_get_begin(1, idx, &info);
+
+    if (ret)
+        return ret;
+    memset(info + 8, 0, 2724);
+    memset(attr, 0, sizeof(attr));
+    memset(gs, 0, sizeof(gs));
+    tisp_g_awb_attr(idx, (uintptr_t)attr);
+    memcpy(info + 8, &attr[1], 4);
+    memcpy(info + 12, &attr[2], 4);
+    tisp_g_awb_global_statis_attr(idx, (uintptr_t)gs);
+    memcpy(info + 16, &gs[2], 4);
+    memcpy(info + 20, &gs[3], 4);
+    memcpy(info + 24, &gs[0], 4);
+    memcpy(info + 28, &gs[1], 4);
+    tisp_g_awb_statis_attr(idx, (uintptr_t)(info + 32));
+    if (idx == 0) {
+        /* #65: the gains the library is told about are the live ones (IMPISPAwbInfo.cur_r_gain / cur_b_gain); the OEM AWB
+         * context words are not what drives the picture in this driver */
+        uint32_t rg = READ_ONCE(regtrace_awb_grayworld_last_rgain), bg = READ_ONCE(regtrace_awb_grayworld_last_bgain);
+
+        memcpy(info + 8, &rg, 4);
+        memcpy(info + 12, &bg, 4);
+    }
+    ret = private_copy_to_user((int32_t)user, (int32_t)(uintptr_t)info, 2732) ? -14 : 0;
+    t40_algo_get_end();
+    if (ret)
+        isp_printf(2, "%s[%d] copy_to_user failed\n", __func__, idx ? 1701 : 1670);
+    return ret;
+}
+
 /* #agg51: tx_isp_get_ae_algo_handle{,_sec}.isra.25/26 re-translated from OEM 0x112bc / 0x11458.
  * The lift dropped the copy_to_user source and length (a1 = ae_info_mine[idx], a2 = 2002), passed the
  * 4-byte &local_18 as the exposure-info buffer (OEM: 224 bytes at sp+24 -> kernel stack overwrite),
@@ -54213,10 +54375,10 @@ static int32_t t40_get_ae_algo_handle(uintptr_t a0, uint32_t user, uint32_t idx)
     char *attr;
     int k;
 
-    private_wait_for_completion_interruptible((uintptr_t)((char *)ae_algo_comp + idx * 16));
-    info = (char *)(uintptr_t)ae_info_mine[idx];
-    if (info == NULL)           /* not opened (tx_isp_set_ae_algo_open): OEM would fault */
-        return -22;
+    int ret = t40_algo_get_begin(0, idx, &info);   /* H1: NULL / close race, interrupted wait */
+
+    if (ret)
+        return ret;
     memset(info + 8, 0, 1994);
     tisp_g_ae_statis_attr(idx, (uintptr_t)(info + 8));
     memset(ei, 0, sizeof(ei));
@@ -54225,7 +54387,7 @@ static int32_t t40_get_ae_algo_handle(uintptr_t a0, uint32_t user, uint32_t idx)
         /* #65: the exposure the library is told about is the one the sensor runs with now (the open driver's AE state; the OEM
          * ctrl words stay zero until the library has answered once, so a library never saw the real starting exposure) */
         ei[6] = regtrace_ae_soft_cur_it;
-        ei[7] = tisp_math_exp2(regtrace_gc4653_again_log2_gain(regtrace_ae_soft_cur_again), 16, 10);
+        ei[7] = tisp_math_exp2(t40_ae_sensor_again_log2(regtrace_ae_soft_cur_again), 16, 10);   /* M3: the sensor's gain */
         ei[8] = 1024;
         ei[9] = READ_ONCE(regtrace_ae_isp_dgain_cur);
     }
@@ -54240,11 +54402,11 @@ static int32_t t40_get_ae_algo_handle(uintptr_t a0, uint32_t user, uint32_t idx)
     w[13] = *(uint32_t *)(core + win_off[idx] - 4);
     for (k = 0; k < 14; k++)
         memcpy(info + 1946 + 4 * k, &w[k], 4);   /* swl/swr pairs: unaligned */
-    if (private_copy_to_user((int32_t)user, (int32_t)(uintptr_t)info, 2002) != 0) {
+    ret = private_copy_to_user((int32_t)user, (int32_t)(uintptr_t)info, 2002) ? -14 : 0;
+    t40_algo_get_end();
+    if (ret)
         isp_printf(2, "%s[%d] copy_to_user failed\n", __func__, idx ? 1500 : 1456);
-        return -14;
-    }
-    return 0;
+    return ret;
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000011d4c origin=fragment_seed original=tx_isp_get_ae_algo_handle.isra.25 */
@@ -54301,7 +54463,18 @@ int32_t tx_isp_set_ae_algo_open_isra_28(void* arg1, int32_t arg2)
     attr = t40_ae_algo_attr(core, ch);
     if (!attr)
         return -1;
+    /* H1: info block and armed completion exist before tisp_ae_algo_init enables the wake-up from the AE interrupt; a second
+     * open of a registered channel keeps its block (the OEM leaked the first one) */
+    mutex_lock(&t40_algo_mutex);
+    t40_algo_comp_arm_locked(0, ch);
+    if (!ae_info_mine[ch])
+        ae_info_mine[ch] = (uint32_t)(uintptr_t)kmalloc(2002, GFP_KERNEL);   /* OEM kmalloc_caches[11] (2 KB) */
+    if (!ae_info_mine[ch]) {
+        mutex_unlock(&t40_algo_mutex);
+        return -12;
+    }
     tisp_ae_algo_init(ch, 1, u);
+    mutex_unlock(&t40_algo_mutex);
     u[27] = *(uint32_t *)(slot + 384);                  /* sp+132 */
     u[3] = *(uint32_t *)(attr + 176);                   /* sp+36: integration time */
     u[4] = tisp_math_exp2(*(uint32_t *)(attr + 160), 16, 10);   /* sp+40: again */
@@ -54317,11 +54490,6 @@ int32_t tx_isp_set_ae_algo_open_isra_28(void* arg1, int32_t arg2)
     } else {
         u[6] = system_reg_read((ch + 256) << 7) & 0xffff;
     }
-    ae_info_mine[ch] = (uint32_t)(uintptr_t)kmem_cache_alloc(
-        (void *)(uintptr_t)(*(uint32_t *)((char *)&kmalloc_caches + 44)), 0x24000c0);
-    BUILD_BUG_ON(sizeof(struct completion) != 16U);
-    *(uint32_t *)((char *)ae_algo_comp + ch * 16) = 0;  /* completion.done */
-    __init_waitqueue_head((void *)((char *)ae_algo_comp + ch * 16 + 4), "&x->wait", 0);
     if (private_copy_to_user(arg2, (int32_t)(uintptr_t)u, sizeof(u)) != 0) {
         isp_printf(2, "[%s %d] [ %s:%d ] copy to user error\n", "tx_isp_set_ae_algo_open", 1601, "tx_isp_set_ae_algo_open", 1601);
         return -14;
@@ -54971,34 +55139,9 @@ tx_isp_unlocked_ioctl0x3b0:
     v0 = (uintptr_t *)&private_wait_for_completion_interruptible;
     if (_bc_a1_100) { goto tx_isp_unlocked_ioctl0xb0; }
 
-    /* fragment 101: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)private_wait_for_completion_interruptible)(&awb_algo_comp); /* jalr target resolved by relocation */
-
-    /* fragment 102: CallSetup */
-    v0 = (uintptr_t *)memset((void *)(uintptr_t)((*(uint32_t *)((char *)((char *)&awb_info_mine))) + 8), 0, 2724); /* jalr target resolved by relocation */
-
-    /* fragment 103: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)tisp_g_awb_attr)(0, __p_20); /* jalr target resolved by relocation */
-
-    /* fragment 104: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)tisp_g_awb_global_statis_attr)(0, __p_70); /* jalr target resolved by relocation */
-
-    /* fragment 105: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)tisp_g_awb_statis_attr)(0, (*(uint32_t *)((char *)((char *)&awb_info_mine))) + 32); /* jalr target resolved by relocation */
-
-    /* #65: the gains the library is told about are the live ones (IMPISPAwbInfo.cur_r_gain / cur_b_gain at info + 8 / + 12; the OEM
-     * words stay zero in this driver, so a library could not know the starting white balance) */
-    if (awb_info_mine[0]) {
-        *(uint32_t *)((char *)(uintptr_t)awb_info_mine[0] + 8) = READ_ONCE(regtrace_awb_grayworld_last_rgain);
-        *(uint32_t *)((char *)(uintptr_t)awb_info_mine[0] + 12) = READ_ONCE(regtrace_awb_grayworld_last_bgain);
-    }
-
-    /* fragment 106: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)private_copy_to_user)(s1, *(uint32_t *)((char *)((char *)&awb_info_mine)), 2732); /* jalr target resolved by relocation */
-
-    /* fragment 107: Branch */
-    s0 = 0;
-    if (v0 == 0) { goto tx_isp_unlocked_ioctl0x834; }
+    /* fragments 101..107: OEM 0x13128 AWB get-handle, channel 0 (H1: lock / NULL / interrupted wait, see t40_get_awb_algo_handle) */
+    s0 = (uintptr_t *)(long)t40_get_awb_algo_handle((uint32_t)(uintptr_t)s1, 0);
+    goto tx_isp_unlocked_ioctl0x834;
 
     /* fragment 108: CallSetup */
     (*__p_14) = 1670;
@@ -57145,7 +57288,7 @@ tx_isp_unlocked_ioctl0x2334:
     if (v1 != v0) { goto tx_isp_unlocked_ioctl0x834; }
 
     /* fragment 613: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)tisp_ae_algo_handle)((*__p_24), __p_20); /* jalr target resolved by relocation */
+    v0 = (uintptr_t *)(long)t40_algo_result(0, (uint32_t)(uintptr_t)(*__p_24), (uintptr_t)__p_20);   /* H1: only while registered */
 
     /* fragment 614: Branch */
     goto tx_isp_unlocked_ioctl0x838;
@@ -57185,50 +57328,21 @@ tx_isp_unlocked_ioctl0x23d0:
      * OEM does not range-check it before indexing ae_info_mine[]; only 0/1 exist. */
     s0 = (uintptr_t *)(uintptr_t)(*__p_24);
     if ((uintptr_t)s0 > 1) { s0 = (uintptr_t *)(uintptr_t)-EINVAL; goto tx_isp_unlocked_ioctl0x834; }
+    /* fragments 622..624 (H1): deinit, free the info block once (#65), wake a waiting GET, under t40_algo_mutex */
+    mutex_lock(&t40_algo_mutex);
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)tisp_ae_algo_deinit)(s0); /* jalr target resolved by relocation */
-
-    /* fragment 623: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)tisp_ae_algo_init)(s0, 0, 0); /* jalr target resolved by relocation */
-
-    /* fragment 624: CallSetup */
-    s0 = (uintptr_t)s0 << 2;
-    s0 = (uintptr_t *)((uintptr_t)s0 + (uintptr_t)&ae_info_mine);
-    /* #65: free once. A second close ioctl (libimp issues one more after a worker that did not leave on the cancel) freed the
-     * same info block twice (slub: Object already free); take the pointer, clear the slot, kfree(NULL) is a no-op. */
-    {
-        uint32_t info_ptr = *(uint32_t *)((char *)(s0) + 0);
-
-        *(uint32_t *)((char *)(s0) + 0) = 0;
-        if (info_ptr)
-            v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)private_kfree)(info_ptr); /* jalr target resolved by relocation */
-    }
+    t40_algo_release_locked(0, (uint32_t)(uintptr_t)s0);
+    mutex_unlock(&t40_algo_mutex);
 
     /* fragment 625: Branch */
     s0 = 0;
     goto tx_isp_unlocked_ioctl0x834;
 
 tx_isp_unlocked_ioctl0x2420:
-    /* fragment 626: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)private_wait_for_completion_interruptible)(&awb_algo_comp); /* jalr target resolved by relocation */
-
-    /* fragment 627: CallSetup */
-    v0 = (uintptr_t *)memset((void *)(uintptr_t)((*(uint32_t *)((char *)&awb_info_mine + 4)) + 8), 0, 2724); /* jalr target resolved by relocation */
-
-    /* fragment 628: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)tisp_g_awb_attr)(1, __p_20); /* jalr target resolved by relocation */
-
-    /* fragment 629: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)tisp_g_awb_global_statis_attr)(1, __p_70); /* jalr target resolved by relocation */
-
-    /* fragment 630: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)tisp_g_awb_statis_attr)(1, (*(uint32_t *)((char *)&awb_info_mine + 4)) + 32); /* jalr target resolved by relocation */
-
-    /* fragment 631: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)private_copy_to_user)(s1, *(uint32_t *)((char *)&awb_info_mine + 4), 2732); /* jalr target resolved by relocation */
-
-    /* fragment 632: Branch */
-    s0 = 0;
-    if (v0 == 0) { goto tx_isp_unlocked_ioctl0x834; }
+    /* fragments 626..632: OEM 0x15148 AWB get-handle, channel 1: waits on awb_algo_comp + 16 (the lift lost the +16) */
+    s0 = (uintptr_t *)(long)t40_get_awb_algo_handle((uint32_t)(uintptr_t)s1, 1);
+    goto tx_isp_unlocked_ioctl0x834;
 
     /* fragment 633: CallSetup */
     (*__p_14) = 1701;
@@ -57265,7 +57379,7 @@ tx_isp_unlocked_ioctl0x2594:
     if (v1 != v0) { goto tx_isp_unlocked_ioctl0x834; }
 
     /* fragment 641: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)tisp_awb_algo_handle)((*__p_24), __p_20); /* jalr target resolved by relocation */
+    v0 = (uintptr_t *)(long)t40_algo_result(1, (uint32_t)(uintptr_t)(*__p_24), (uintptr_t)__p_20);   /* H1: only while registered */
 
     /* fragment 642: Branch */
     goto tx_isp_unlocked_ioctl0x838;
@@ -57309,24 +57423,24 @@ tx_isp_unlocked_ioctl0x265c:
     /* fragment 651: Epilogue */
     /* function epilogue: restore registers and return */
 
-    /* fragment 652: CallSetup */
+    /* fragments 652..654: OEM 0x15384 lw s0,36(sp): the channel is word 1 of the user struct (the lift lost the load and used
+     * whatever s0 held).  H1: under t40_algo_mutex, the completion is armed BEFORE tisp_awb_algo_init enables the wake-up from
+     * the AWB step, a second open of a registered channel keeps its info block (the OEM leaked the first one), an allocation
+     * failure is reported (the library registers before the sensor is started, so the AWB engine may not be up yet; see
+     * tisp_awb_main_process for the wake-up when its init failed, M5). */
+    s0 = (uintptr_t *)(uintptr_t)(*__p_24);
+    if ((uintptr_t)s0 >= T40_ALGO_IDX_COUNT) { s0 = (uintptr_t *)(uintptr_t)-EINVAL; goto tx_isp_unlocked_ioctl0x834; }
+    mutex_lock(&t40_algo_mutex);
+    t40_algo_comp_arm_locked(1, (uint32_t)(uintptr_t)s0);
+    if (!awb_info_mine[(uintptr_t)s0])
+        awb_info_mine[(uintptr_t)s0] = (uint32_t)(uintptr_t)kmalloc(2732, GFP_KERNEL);   /* OEM kmalloc_caches[12] (4 KB) */
+    if (!awb_info_mine[(uintptr_t)s0]) {
+        mutex_unlock(&t40_algo_mutex);
+        s0 = (uintptr_t *)(uintptr_t)-ENOMEM;
+        goto tx_isp_unlocked_ioctl0x834;
+    }
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)tisp_awb_algo_init)(s0, 1, __p_20); /* jalr target resolved by relocation */
-
-    /* fragment 653: CallSetup */
-    v0 = (uintptr_t *)kmem_cache_alloc((void *)(uintptr_t)(*(uint32_t *)((char *)&kmalloc_caches + 48)), 37748736 + 192); /* jalr target resolved by relocation */
-
-    /* fragment 654: CallSetup */
-    /* T40-ALGO-COMP: OEM 0x13b94..0x13bd4: awb_info_mine[idx] is stored
-     * with the index BEFORE the shift; s0 = idx*16 is the byte offset of the
-     * completion in awb_algo_comp, its wait queue at +4. */
-    if ((uintptr_t)s0 < T40_ALGO_IDX_COUNT)
-        awb_info_mine[(uintptr_t)s0] = (uint32_t)(uintptr_t)v0;
-    s0 = (uintptr_t)s0 << 4;
-    if ((uintptr_t)s0 < sizeof(awb_algo_comp)) {
-        *(uint32_t *)((char *)awb_algo_comp + (uintptr_t)s0) = 0;
-        s0 = (uintptr_t *)((char *)s0 + 4);
-        __init_waitqueue_head((void *)((char *)awb_algo_comp + (uintptr_t)s0), (const char *)(uintptr_t)&LC10, (void *)(uintptr_t)0);
-    } /* jalr target resolved by relocation */
+    mutex_unlock(&t40_algo_mutex);
 
     /* fragment 655: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)private_copy_to_user)(s1, __p_20, 28); /* jalr target resolved by relocation */
@@ -57352,23 +57466,12 @@ tx_isp_unlocked_ioctl0x2734:
     /* #65: like the AE close above: the channel is word 1 of the 8-byte user argument (the lift used 0), range checked */
     s0 = (uintptr_t *)(uintptr_t)(*__p_24);
     if ((uintptr_t)s0 > 1) { s0 = (uintptr_t *)(uintptr_t)-EINVAL; goto tx_isp_unlocked_ioctl0x834; }
+    /* fragments 660..662 (H1): deinit, free the info block once (#65), wake a waiting GET, under t40_algo_mutex */
+    mutex_lock(&t40_algo_mutex);
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)tisp_awb_algo_deinit)(s0); /* jalr target resolved by relocation */
-
-    /* fragment 661: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)tisp_awb_algo_init)(s0, 0, 0); /* jalr target resolved by relocation */
-
-    /* fragment 662: CallSetup */
-    s0 = (uintptr_t)s0 << 2;
-    s0 = (uintptr_t *)((uintptr_t)s0 + (uintptr_t)&awb_info_mine);
-    /* #65: free once. A second close ioctl (libimp issues one more after a worker that did not leave on the cancel) freed the
-     * same info block twice (slub: Object already free); take the pointer, clear the slot, kfree(NULL) is a no-op. */
-    {
-        uint32_t info_ptr = *(uint32_t *)((char *)(s0) + 0);
-
-        *(uint32_t *)((char *)(s0) + 0) = 0;
-        if (info_ptr)
-            v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)private_kfree)(info_ptr); /* jalr target resolved by relocation */
-    }
+    t40_algo_release_locked(1, (uint32_t)(uintptr_t)s0);
+    mutex_unlock(&t40_algo_mutex);
 
     /* fragment 663: Branch */
     s0 = 0;
@@ -77412,6 +77515,26 @@ static inline void t40_ae_custom_event(uint32_t ch, uint32_t id, uint32_t val)
     ev[4] = val;
     tisp_event_push(ch, (uintptr_t)ev);
 }
+/* M3 (review 2026-11-03): the gain the SENSOR applies for AE ladder step idx.  The AE sensor-apply path sends the ladder
+ * value through the sensor's alloc_again (sensor attribute +0xc4, the OEM sensor_ctrl alloc_again), which floors it to the
+ * sensor's own gain table; the ladder value itself is GC4653's.  Without an alloc_again the ladder value is what is sent. */
+static uint32_t t40_ae_sensor_again_log2(uint32_t idx)
+{
+    uint32_t log2 = regtrace_gc4653_again_log2_gain(idx);
+
+    if (regtrace_t40_ae_sensor_alloc_again && regtrace_is_kernel_ptr(regtrace_sensor_subdev)) {
+        uintptr_t attr = regtrace_get_u32((uintptr_t)regtrace_sensor_subdev, 0x304);
+        uintptr_t fn = regtrace_is_kernel_ptr((void *)attr) ? regtrace_get_u32(attr, 0xc4) : 0;
+
+        if (regtrace_is_kernel_ptr((void *)fn)) {
+            unsigned int sensor_again = 0;
+
+            log2 = ((unsigned int (*)(unsigned int, unsigned char, unsigned int *))fn)(log2, 16, &sensor_again);
+        }
+    }
+    return log2;
+}
+
 int32_t tisp_ae_algo_handle(uintptr_t a0, uintptr_t a1)
 {
     const uint32_t ch = (uint32_t)a0;
@@ -77436,7 +77559,7 @@ int32_t tisp_ae_algo_handle(uintptr_t a0, uintptr_t a1)
          * range (the gain is scaled to keep the product, as the OEM does after alloc_it), analog gain to the nearest step of the gain
          * ladder (no digital gain on the sensor), the residual (request / applied gain) goes into the ISP digital gain. */
         uint32_t max_it = regtrace_t40_ae_max_it(), min_it = regtrace_ae_soft_min_it;
-        uint32_t maxidx = regtrace_t40_ae_max_again_index(), idx, best, k, d, bd = 0xffffffffU, dgmax = regtrace_t40_ae_isp_dgain_max_eff();
+        uint32_t maxidx = regtrace_t40_ae_max_again_index(), idx, best, k, dgmax = regtrace_t40_ae_isp_dgain_max_eff();
 
         it_r = in[4];
         if (max_it > min_it)
@@ -77444,15 +77567,16 @@ int32_t tisp_ae_algo_handle(uintptr_t a0, uintptr_t a1)
         if (in[4] != it_r && it_r)
             again = fix_point_div_32(10, fix_point_mult2_32(10, again, in[4] << 10), it_r << 10);
         v = tisp_log2_fixed_to_fixed(again << 6, 16, 16);
+        /* M3: the highest ladder step whose SENSOR gain does not exceed the request (the ISP digital gain below makes up the
+         * rest and cannot go under 1x: the nearest step above the request overshot the total gain), and the residual is
+         * computed from the gain the sensor applies, not from the GC4653 ladder value */
         best = 0;
         for (k = 0; k <= maxidx && k < 26U; k++) {
-            uint32_t g = regtrace_gc4653_again_log2_gain(k);
-
-            d = g > v ? g - v : v - g;
-            if (d < bd) { bd = d; best = k; }
+            if (t40_ae_sensor_again_log2(k) <= v)
+                best = k;
         }
         idx = best;
-        again_raw = tisp_math_exp2(regtrace_gc4653_again_log2_gain(idx), 16, 16);
+        again_raw = tisp_math_exp2(t40_ae_sensor_again_log2(idx), 16, 16);
         again_r = again_raw >> 6;
         dgain_r = 1024;
         v = fix_point_div_32(10, fix_point_mult2_32(10, in[5], in[6]), fix_point_mult2_32(10, again_r, dgain_r));
@@ -81967,8 +82091,15 @@ int32_t tisp_awb_main_interrupt_static(void)
         memset(ev, 0, sizeof(ev));
         ev[2] = 14;
         (void)tisp_event_push(0, (uintptr_t)ev);
-    } else if (regtrace_awb_irq_skip_logged++ < 4) {
-        printk(KERN_WARNING "tx_isp_t40_recovered: awb-irq skip: tispinfo stats vaddr unset (enable_tisp_main_init_tispinfo_dma?)\n");
+    } else {
+        if (regtrace_awb_irq_skip_logged++ < 4)
+            printk(KERN_WARNING "tx_isp_t40_recovered: awb-irq skip: tispinfo stats vaddr unset or AWB init failed (live=%d)\n",
+                   READ_ONCE(t40_vawb_live) ? 1 : 0);
+        /* M5 (review 2026-11-03): no AWB step runs (init failed: no event 14), so tisp_awb_main_process never completes
+         * awb_algo_comp.  A registered custom AWB library is still woken once per AWB statistics interrupt (empty
+         * statistics) instead of sleeping in its get-handle ioctl until a signal or the close. */
+        if (READ_ONCE(awb_algo_enable[0]) == 1)
+            private_complete((uintptr_t)&awb_algo_comp);
     }
 
     ctr = (uint32_t *)(uintptr_t)pstMainAwbOri[102];
@@ -82517,7 +82648,7 @@ int32_t tisp_awb_sec_process(void)
 
     /* fragment 6: CallSetup */
     regtrace_t40_awb_step = 4;   /* T40-AWB-STEP */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)private_complete)(&awb_algo_comp); /* jalr target resolved by relocation */
+    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)private_complete)((uintptr_t)awb_algo_comp + 16);   /* OEM 0x3461c: awb_algo_comp + 16 (channel 1; the lift lost the +16) */
 
     /* fragment 7: CallSetup */
     v0 = (uintptr_t *)&tisp_awb_set_gain;
@@ -83797,6 +83928,11 @@ int32_t tisp_awb_algo_handle(uint32_t a0, uintptr_t a1)
 
             if (a0 == 0 && rg && bg && rg <= 0x3fffU && bg <= 0x3fffU) {
                 mutex_lock(&regtrace_t40_running_mode_lock);
+                if (!READ_ONCE(t40_awb_algo_manual)) {   /* M4: first result: remember the application's white balance */
+                    t40_awb_algo_saved[0] = READ_ONCE(regtrace_awb_control_mode);
+                    t40_awb_algo_saved[1] = READ_ONCE(regtrace_awb_manual_rgain);
+                    t40_awb_algo_saved[2] = READ_ONCE(regtrace_awb_manual_bgain);
+                }
                 WRITE_ONCE(regtrace_awb_control_mode, 1U);
                 WRITE_ONCE(regtrace_awb_manual_rgain, rg);
                 WRITE_ONCE(regtrace_awb_manual_bgain, bg);
@@ -83835,13 +83971,26 @@ int32_t tisp_awb_algo_deinit_internal(int32_t arg1)
 
     if (*addr == 1)
         *addr = 0;
-    /* #65: unregistering gives the white balance back to the driver's automatic mode (the library's gains were a manual setting) */
+    /* #65 / M4: unregistering gives the white balance back to what the application had before the library took it over
+     * (automatic, or its manual gains); the library's gains were a manual setting of its own */
     if (!arg1 && READ_ONCE(t40_awb_algo_manual)) {
+        uint32_t mode = t40_awb_algo_saved[0], rg = t40_awb_algo_saved[1], bg = t40_awb_algo_saved[2];
+
         mutex_lock(&regtrace_t40_running_mode_lock);
         WRITE_ONCE(t40_awb_algo_manual, 0);
-        WRITE_ONCE(regtrace_awb_control_mode, 0U);
-        WRITE_ONCE(regtrace_awb_manual_rgain, 0U);
-        WRITE_ONCE(regtrace_awb_manual_bgain, 0U);
+        if (mode == 1U && rg && bg && rg <= 0x3fffU && bg <= 0x3fffU) {
+            WRITE_ONCE(regtrace_awb_control_mode, 1U);
+            WRITE_ONCE(regtrace_awb_manual_rgain, rg);
+            WRITE_ONCE(regtrace_awb_manual_bgain, bg);
+            WRITE_ONCE(regtrace_awb_grayworld_last_rgain, rg);
+            WRITE_ONCE(regtrace_awb_grayworld_last_bgain, bg);
+            if (!READ_ONCE(regtrace_running_mode))
+                regtrace_awb_grayworld_apply(rg, bg);
+        } else {
+            WRITE_ONCE(regtrace_awb_control_mode, 0U);
+            WRITE_ONCE(regtrace_awb_manual_rgain, 0U);
+            WRITE_ONCE(regtrace_awb_manual_bgain, 0U);
+        }
         mutex_unlock(&regtrace_t40_running_mode_lock);
     }
 
@@ -88202,63 +88351,18 @@ int32_t tisp_wdr_maxFun(uint32_t a0, uint32_t a1)
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000039da0 origin=fragment_seed original=tisp_wdr_log2 */
+/* OEM tisp_wdr_log2 (vendor tx-isp-t40.ko 0x3a7c0): the smallest k in 1..15 with (1 << k) >= a0 (signed compare, slt), 15 when
+ * there is none.  The lift ended in "return 0" (the result in v0 was dropped), so tisp_wdr_direct_reg_refresh and the WDR fusion
+ * stored 0 for every log2 field.  Unicorn-checked against the OEM instructions (tests/t40_wdr_log2_host.sh). */
 int32_t tisp_wdr_log2(uint32_t a0)
 {
-    uintptr_t a1 = 0;
-    uintptr_t a2 = 0;
-    uintptr_t a3 = 0;
-    uint32_t ra = 0;
-    uint32_t t0 = 0;
-    uintptr_t v0 = 0;
-    uintptr_t v1 = 0;
+    int32_t k;
 
-    /* fragment 0: Arithmetic */
-    a1 = 2;
-    a3 = 17;
-
-tisp_wdr_log20x8:
-    /* fragment 1: Arithmetic */
-    v0 = a1 - 1;
-    v1 = 1;
-
-    /* fragment 2: Branch */
-    a2 = 1;
-    goto tisp_wdr_log20x20;
-
-tisp_wdr_log20x18:
-    /* fragment 3: Arithmetic */
-    v1 = (uintptr_t)v1 << 1;
-    a2 = a2 + 1;
-
-tisp_wdr_log20x20:
-    /* fragment 4: Arithmetic */
-    t0 = a2 < a1;
-
-    /* fragment 5: Branch */
-    if (t0 != 0) { goto tisp_wdr_log20x18; }
-
-    /* fragment 6: Arithmetic */
-    v1 = v1 < a0;
-
-    /* fragment 7: Branch */
-    a1 = a1 + 1;
-    if (v1 == 0) { goto tisp_wdr_log20x44; }
-
-    /* fragment 8: Branch */
-    if (a1 != a3) { goto tisp_wdr_log20x8; }
-
-    /* fragment 9: Arithmetic */
-    v0 = 15;
-
-tisp_wdr_log20x44:
-    /* fragment 10: Epilogue */
-    /* function epilogue: restore registers and return */
-
-    /* fragment 11: Unknown */
-    /* unmatched fragment 11 (Unknown): no deterministic matcher for Unknown */
-    /* asm: 39de8:	00000000 	nop */
-
-    return 0;
+    for (k = 1; k < 16; k++) {
+        if (!((int32_t)(1U << k) < (int32_t)a0))
+            return k;
+    }
+    return 15;
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000039dec origin=fragment_seed original=tisp_wdr_degweight_ev */
@@ -95143,25 +95247,17 @@ tisp_wdr_direct_reg_refresh0x30:
     t1 = (uint32_t *)&tisp_wdr_log2;
     if (v1 != v0) { goto tisp_wdr_direct_reg_refresh0x278; }
 
-    /* fragment 6: CallSetup */
-    t2 = s0 + 26;
-    t3 = s0 + 36;
-    t4 = s0 + 34;
-    t1 = t1;
+    /* fragments 6..10: OEM 0x3eff8..0x3f024: byte offsets (addiu t2,s0,26 / t3,s0,36 / t4,s0,34, steps 2 and 1): the
+     * lift scaled them as uintptr_t * (+104/+144/+136, steps 8 and 4) and so read and wrote the wrong fields; four log2 of the
+     * u16 differences at +26..+34 go to the bytes +36..+39 */
+    {
+        char *p = (char *)s0;
+        int k;
 
-tisp_wdr_direct_reg_refresh0x60:
-    /* fragment 7: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)tisp_wdr_log2)((*(uint16_t *)((char *)(t2) + 2)) - (*(uint16_t *)((char *)(t2) + 0))); /* jalr target resolved by relocation */
-
-    /* fragment 8: Arithmetic */
-    t2 = t2 + 2;
-
-    /* fragment 9: MemoryAccess */
-    *(uint8_t *)((char *)t3 + 0) = v0;
-
-    /* fragment 10: Branch */
-    t3 = t3 + 1;
-    if (t4 != t2) { goto tisp_wdr_direct_reg_refresh0x60; }
+        for (k = 0; k < 4; k++)
+            *(uint8_t *)(p + 36 + k) = (uint8_t)tisp_wdr_log2((uint32_t)*(uint16_t *)(p + 28 + 2 * k) -
+                                                              (uint32_t)*(uint16_t *)(p + 26 + 2 * k));
+    }
 
     /* fragment 11: CallSetup */
     s5 = 268369920;
