@@ -52,7 +52,7 @@ static uint32_t tisp_simple_intp_int16(int32_t i, int32_t f, void *t)
     m = (m >> 16) + ((m >> 15) & 1);
     return a >= b ? a - m : a + m;
 }
-#include "../../../driver/t40/tx_isp_t40_dmsc_lit.inc"
+#include "../../../driver/t40/tx_isp_t40_dmsc.inc"
 static uint32_t dump[0x20000 / 4];
 static int g_argc; static char **g_argv;
 static int run(int argc, char **argv)

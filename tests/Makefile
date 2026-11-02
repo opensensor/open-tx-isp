@@ -3,7 +3,7 @@ CC ?= cc
 CFLAGS ?= -O2
 CFLAGS += -std=c99 -Wall -Wextra -Werror
 
-.PHONY: all check clean t40_vic_layout_check t40_lost_tail_host lifted_ptr_scale_check t40_hardcoded_anchor_check t30_storage_audit t30_fw_irq_gate t40_vct_host t40_af_stats_host t40_bcsh_dn_host t40_tstp_host t40_ccm_conv_host t40_ccm_chain_host t40_bitexact_host t40_callarg_check t41_sensor_barrier_check t40_hardcoded_anchor_check t40_clk_teardown_check t40_tstp_init_check t40_custom_algo_wake_check t41_custom_ae_check t41_af_gate_check lifted_ptr_scale_check
+.PHONY: all check clean t40_vic_layout_check t40_lost_tail_host lifted_ptr_scale_check t40_hardcoded_anchor_check t30_storage_audit t30_fw_irq_gate t40_vct_host t40_af_stats_host t40_bcsh_dn_host t40_tstp_host t40_ccm_conv_host t40_ccm_chain_host t40_dmsc_chain_host t40_bitexact_host t40_callarg_check t41_sensor_barrier_check t40_hardcoded_anchor_check t40_clk_teardown_check t40_tstp_init_check t40_custom_algo_wake_check t41_custom_ae_check t41_af_gate_check lifted_ptr_scale_check
 
 # Every host test binary.  A new test is registered with "TESTS += name"
 # (plus its build rule); `check` builds and runs all of them, keeps going
@@ -12,7 +12,7 @@ CFLAGS += -std=c99 -Wall -Wextra -Werror
 # so a test cannot be added and then silently never run.
 TESTS :=
 # Further check steps, run as "$(MAKE) <target>" after the binaries.
-CHECK_TARGETS := t40_vic_layout_check t30_storage_audit t30_fw_irq_gate t41_dfg_host t40_vct_host t40_af_stats_host t40_bcsh_dn_host t40_tstp_host t40_ccm_conv_host t40_ccm_chain_host t40_bitexact_host t40_callarg_check t41_sensor_barrier_check t40_hardcoded_anchor_check t40_clk_teardown_check t40_tstp_init_check t40_custom_algo_wake_check t41_custom_ae_check t41_af_gate_check lifted_ptr_scale_check t40_lost_tail_host
+CHECK_TARGETS := t40_vic_layout_check t30_storage_audit t30_fw_irq_gate t41_dfg_host t40_vct_host t40_af_stats_host t40_bcsh_dn_host t40_tstp_host t40_ccm_conv_host t40_ccm_chain_host t40_dmsc_chain_host t40_bitexact_host t40_callarg_check t41_sensor_barrier_check t40_hardcoded_anchor_check t40_clk_teardown_check t40_tstp_init_check t40_custom_algo_wake_check t41_custom_ae_check t41_af_gate_check lifted_ptr_scale_check t40_lost_tail_host
 # Sources that only run on the camera (not built on the host).
 TARGET_TESTS := $(basename $(wildcard t41_v4l2_*_test.c)) t41_antiflicker_ioctl_test
 TEST_TIMEOUT ?= 600
@@ -595,6 +595,10 @@ t40_ccm_conv_host:
 # T40 CCM chain (driver/t40/tx_isp_t40_ccm_chain.h, built for mipsel) vs the OEM instructions (Unicorn, needs T40_OEM_KO and T40_CC, else SKIP)
 t40_ccm_chain_host:
 	./t40_ccm_chain_host.sh
+
+# T40 DMSC chain (driver/t40/tx_isp_t40_dmsc_chain.h, built for mipsel) vs the OEM instructions (Unicorn, needs T40_OEM_KO and T40_CC, else SKIP)
+t40_dmsc_chain_host:
+	./t40_dmsc_chain_host.sh
 
 # T40 ADR C chain vs literal OEM + AWB long_alogrithm/ct_detect C vs translated OEM (needs T40_TUNING_BIN
 # [+ T40_OEM_DATA, T40_AWB_DUMPS], else SKIP)

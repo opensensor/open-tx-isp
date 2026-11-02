@@ -1,7 +1,7 @@
-# T40 DMSC literal chain: host check
+# T40 DMSC chain: host check
 
-Runs `driver/t40/tx_isp_t40_dmsc_lit.inc` on an x86-64 host (heap and the worker stack live below 4 GiB because
-the literal code keeps addresses in `uint32_t`). With only a bin it prints the main DMSC registers per bank and total
+Runs `driver/t40/tx_isp_t40_dmsc.inc` (the plain-C chain tx_isp_t40_dmsc_chain.h) on an x86-64 host (heap and the worker stack live below 4 GiB because
+the driver code keeps addresses in `uint32_t`). With only a bin it prints the main DMSC registers per bank and total
 gain. With a register dump (32768 words from 0x13300000, as `devmem` prints them) it compares 0xa000..0xa27c.
 
     ./run.sh sc830ai-t40.bin                          # table: day/night bank x gain

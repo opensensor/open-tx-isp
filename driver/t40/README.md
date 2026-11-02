@@ -571,7 +571,7 @@ The Bayer step is the colour fix. The driver defaulted to the GRBG phase of the 
 Rejected:
 - `t40_force_bypass=0x20001` (BLC off): U/V rise to 172.
 - `dmsc_stock_high_gain_overlay=1`: U/V rise to 142.
-- `enable_clm=1`: no change.
+- `enable_clm=1`: no change (the parameter and its plain-C start-up were removed on 2026-11-02, never reached by the QEMU apitest + stream workload).
 - `t40_quality_top40_override=0x7FD0000D` (vendor TOP word): black frame. Bit 18 (SDNS) is the cause, because its initialiser is not run.
 
 Recommended insmod line (since the defaults patch the best settings are the driver defaults):
@@ -762,7 +762,7 @@ ISP digital gain is 1x there. `SetModule_Ratio` defog -> literal `tisp_s_defog_r
   Device: 28-35 MDNS registers change per ratio step (0/128/255); temporal noise 1.16 / 0.82 / 1.08.
 
 ## DMSC day/night (2026-10-24, `t40_dmsc_follow`)
-- Default profile 1: DMSC (0xa000..0xa27c) uses the literal OEM chain at night only (active bank, total gain incl. ISP
+- Default profile 1: DMSC (0xa000..0xa27c) uses the OEM chain (plain C since 2026-11-02, `tx_isp_t40_dmsc_chain.h`, checked against the OEM instructions in Unicorn) at night only (active bank, total gain incl. ISP
   digital gain, re-interpolated per frame). The day block (static table + OEM init) is saved on the switch and written
   back with the trigger 0xa19c on the return (`t40_dmsc_day_restores` counts the restores). Host check:
   `tests/t40/dmsc_night_host` (bit-exact against the vendor night dump). `t40_dmsc_follow=0` = old static DMSC.
