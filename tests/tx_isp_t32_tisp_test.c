@@ -17,6 +17,7 @@
 #include "../driver/t32/tx_isp_t32_dpc.h"
 #include "../driver/t32/tx_isp_t32_gib.h"
 #include "../driver/t32/tx_isp_t32_ccm.h"
+#include "../driver/t32/tx_isp_t32_bcsh.h"
 #include "../driver/t32/tx_isp_t32_lce.h"
 #include "../driver/t32/tx_isp_t32_iq.h"
 #include "t32_trace.h"
@@ -262,6 +263,21 @@ int main(void)
 			r = t32_ccm_init(cc, bin + off + l, (u32)len - off - l, w);
 			CHECK(r == T32_CCM_WRITES);
 			vs_vendor("ccm", w, r);
+		}
+		{
+			static u8 bc[T32_BCSH_SEC_BYTES];
+			u32 cl = 0, co = t32_iq_section(bin, len, T32_IQ_SEC_CSC, &cl);
+
+			off = t32_iq_section(bin, len, T32_SEC_BCSH, &l);
+			CHECK(off && l == T32_BCSH_SEC_BYTES && co && cl >= T32_BCSH_CSC_BYTES);
+			memcpy(bc, bin + off, l);
+			r = t32_bcsh_init(bc, bin + off + l, (u32)len - off - l, bin + co, w);
+			CHECK(r == T32_BCSH_WRITES);
+			vs_vendor("bcsh", w, r);
+			/* refused: other exposure mode, other csc path */
+			memcpy(bc, bin + off, l);
+			bc[0x4b1] = 1;
+			CHECK(t32_bcsh_init(bc, bin + off + l, (u32)len - off - l, bin + co, w) == -1);
 		}
 		{
 			static u8 lc[T32_LCE_SEC_BYTES];

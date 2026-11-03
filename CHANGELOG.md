@@ -4,6 +4,12 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-03: T32 S4 step 8: tisp init block BCSH from the IQ bin (`claude/t32-s8`; host, QEMU T32, not on a camera)
+
+- One more block of the vendor's AddSensor tisp init as register writes at stream-on (`tx_isp_t32_bcsh.h`): BCSH (IQ bin section 19 with its knot payload and the colour space section 9; 49 writes: exposure-0 parameter set, the 5000 K matrix, saturation, contrast and brightness curves, hue rotation, register list, block id). Identical write for write to the vendor's AddSensor writes (cv8001 PRJ007 bin, 3840x2160; `tests/tx_isp_t32_tisp_test` with `T32_IQ_BIN` and the local `T32_ADD_TRACE`); with the earlier blocks 3347 of the ~5555 core-phase writes (60 %). Order at stream-on: CCM, BCSH, LCE as in the vendor.
+- Refused: section byte `+0x4b1` set, `+0x492` > 2, a colour space section on the other `+0x62`/`+0x63` path.
+- Not built (vendor tables or physical buffer state): tmo with its LUT ports (1733 writes), defog, AF, RDNS, gsm, `0xd040..0xd05c`.
+
 ## 2026-11-03: T40 lifted init/refresh twin source removed (#204 part 1; host + QEMU)
 
 - Deleted from `driver/t40/tx_isp_t40_recovered.c` (~2.2k lines): the garbage-collected lifted `tisp_dmsc_*` init/refresh/params/wdr twins, `tisp_gamma_init`, `tisp_bcsh_main_init`, `tisp_ccm_main_init`, `tisp_bcsh_params_transmit`, `tisp_ccm_params_transmit` and their dead callers (`tisp_day_or_night_s_ctrl`, `tisp_main_day_night_mode_ctl`, `tisp_bcsh_dn_params_refresh`, `tisp_ccm_dn_params_refresh`, the unreachable second-sensor tail of `tisp_sec_init`). They were not in the built module. Kept: `tisp_dmsc_main_deinit` / `tisp_dmsc_sec_*` (reachable via `skip_tisp_deinit=0`), AE classes C/D, gamma/WDR EV (parts 2 and 3).

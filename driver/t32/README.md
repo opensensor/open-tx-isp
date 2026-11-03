@@ -194,7 +194,7 @@ generation-shared come from the shared code instead:
   compression setup follows from it and the frame size. All three identical
   write for write to the vendor's AddSensor writes (cv8001 bin, 3840x2160): with
   step 5 and the front end, AE/AWB and MSCA blocks 3241 of 5555 (58 %). Not built:
-  tmo, RDNS, BCSH and AF need vendor-internal state tables the bin does not
+  tmo, RDNS and AF need vendor-internal state tables the bin does not
   carry (AF: its filter coefficient tables; BCSH/RDNS/tmo: smooth and
   default curves); defog and AF also write the physical address of a driver
   buffer.
@@ -209,6 +209,17 @@ generation-shared come from the shared code instead:
   driver allocates for it (work 0x26400 bytes, curve 0x5a00 bytes). Refused
   (vendor compiled-in defaults): CCM sections with byte `+0x35f` = 0 or
   `+0x38` = 1, LCE at 1920x1080 or with `+0x1fb` set. 3298 of 5555 (59 %).
+
+- **BCSH** (S4 step 8, same scheme): `tx_isp_t32_bcsh.h`, section 19 with its
+  colour temperature knots, plus the colour space section (9) that the
+  vendor's `tisp_csc_api_get` hands the block; 49 writes, identical to the
+  vendor's AddSensor writes (cv8001 bin, 3840x2160). Flow: parameter set from the
+  exposure-0 interpolation, the 5000 K matrix, saturation/contrast/brightness
+  curves and the hue rotation (sine table, matrix products), register list,
+  block id `0x0134dae2`. Brightness, contrast, saturation and hue start at 128
+  (neutral), nothing else is copied from the vendor's compiled-in defaults.
+  Refused: section byte `+0x4b1` set (other exposure keying), `+0x492` > 2,
+  a colour space section with the other `+0x62`/`+0x63` path. 3347 of 5555 (60 %).
 
 ## Not yet (S4+)
 

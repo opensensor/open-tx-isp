@@ -42,6 +42,7 @@
 #include "tx_isp_t32_dpc.h"
 #include "tx_isp_t32_gib.h"
 #include "tx_isp_t32_ccm.h"
+#include "tx_isp_t32_bcsh.h"
 #include "tx_isp_t32_lce.h"
 
 static void t32_bringup_ae_kick(void);
@@ -361,6 +362,15 @@ static void t32_tisp_init(void)
 			t32_tisp_flush("ccm", t32_ccm_init(cp, bin + off + len, bytes - off - len, tisp_w));
 			kfree(cp);
 		}
+	}
+	off = t32_iq_section(bin, bytes, T32_SEC_BCSH, &len);
+	if (off && len >= T32_BCSH_SEC_BYTES) {
+		u32 clen = 0, coff = t32_iq_section(bin, bytes, T32_IQ_SEC_CSC, &clen);
+		u8 *cp = kmemdup(bin + off, len, GFP_KERNEL);	/* the block clears ten bytes of its section */
+
+		if (cp && coff && clen >= T32_BCSH_CSC_BYTES)
+			t32_tisp_flush("bcsh", t32_bcsh_init(cp, bin + off + len, bytes - off - len, bin + coff, tisp_w));
+		kfree(cp);
 	}
 	off = t32_iq_section(bin, bytes, T32_SEC_LCE, &len);
 	if (off && len >= T32_LCE_SEC_BYTES && !t32_core_sensor_size(&width, &height))
