@@ -221,6 +221,13 @@ generation-shared come from the shared code instead:
   Refused: section byte `+0x4b1` set (other exposure keying), `+0x492` > 2,
   a colour space section with the other `+0x62`/`+0x63` path. 3347 of 5555 (60 %).
 
+- **Clocks** (S4 step 8): the driver gets the vendor module's clocks (`div_isp`,
+  `div_isps`, `div_ldc`, `gate_isp`, `div_ispa`, `div_vpu`, `gate_ivdc`,
+  `gate_csi`) at load, sets the platform rates, and at the first open of
+  `/dev/tx-isp` sets the parents, the working rates and enables them (the
+  last release disables them). Without the `gate_isp` enable the newer QEMU
+  (which gates the ISP clock) delivers no frames.
+
 ## Not yet (S4+)
 
 No tisp/3A, no IQ bin parsing (the bin's physical address is kept), no

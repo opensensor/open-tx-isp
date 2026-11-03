@@ -26,6 +26,7 @@
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
 #include <linux/platform_device.h>
+#include <linux/clk.h>
 
 #include "tx_isp_t32.h"
 #include "tx_isp_t32_abi.h"
@@ -569,14 +570,131 @@ static long t32_isp_ioctl(struct file *file, unsigned int cmd, unsigned long arg
 	return ret;
 }
 
+
+/* ------------------------------------------------------------------ */
+/* clocks: the vendor module's platform tables (ISP core, IVDC, CSI)   */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Probe sets the platform rate (isp_subdev_init_clks), the first open sets
+ * the parents and the working rates and enables everything
+ * (ispcore/ivdc/csi activate), the last release disables it again.  Rate
+ * 0: none set.  Without these the ISP clock gate (CLKGR0 bit 19) stays
+ * closed; the kernel gates unused clocks after boot.
+ */
+struct t32_clk {
+	const char *name;
+	unsigned long probe_rate;	/* platform table */
+	unsigned long rate;		/* activate: isp_clk, isp_clks, isp_clkl, isp_clka, isp_clkv */
+	struct clk *clk;
+};
+
+static struct t32_clk t32_clks[] = {
+	{ "div_isp", 200000000, 219000000 },
+	{ "div_isps", 476000000, 476000000 },
+	{ "div_ldc", 588000000, 588000000 },
+	{ "gate_isp" },
+	{ "div_ispa", 500000000, 500000000 },
+	{ "div_vpu", 500000000, 500000000 },
+	{ "gate_ivdc" },
+	{ "gate_csi" },
+};
+
+static const char *const t32_clk_parents[][2] = {
+	{ "mux_isp", "mpll" }, { "mux_isps", "mpll" }, { "mux_ldc", "mpll" },
+	{ "mux_ispa", "sclka" }, { "mux_vpu", "sclka" },
+};
+
+static unsigned int t32_clk_users;
+
+static void t32_clks_probe(void)
+{
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(t32_clks); i++) {
+		struct t32_clk *c = &t32_clks[i];
+
+		c->clk = clk_get(NULL, c->name);
+		if (IS_ERR(c->clk)) {
+			pr_warn("tx-isp-t32: clock %s not found\n", c->name);
+			c->clk = NULL;
+			continue;
+		}
+		if (c->probe_rate && clk_set_rate(c->clk, c->probe_rate))
+			pr_warn("tx-isp-t32: clock %s rate %lu not set\n", c->name, c->probe_rate);
+	}
+}
+
+static void t32_clks_put(void)
+{
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(t32_clks); i++) {
+		if (t32_clks[i].clk)
+			clk_put(t32_clks[i].clk);
+		t32_clks[i].clk = NULL;
+	}
+}
+
+static void t32_clks_activate(void)
+{
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(t32_clk_parents); i++) {
+		struct clk *mux = clk_get(NULL, t32_clk_parents[i][0]);
+		struct clk *par = clk_get(NULL, t32_clk_parents[i][1]);
+
+		if (!IS_ERR(mux) && !IS_ERR(par) && clk_set_parent(mux, par))
+			pr_warn("tx-isp-t32: %s parent not set\n", t32_clk_parents[i][0]);
+		if (!IS_ERR(par))
+			clk_put(par);
+		if (!IS_ERR(mux))
+			clk_put(mux);
+	}
+	for (i = 0; i < ARRAY_SIZE(t32_clks); i++) {
+		struct t32_clk *c = &t32_clks[i];
+
+		if (!c->clk)
+			continue;
+		if (c->rate && clk_get_rate(c->clk) != c->rate && clk_set_rate(c->clk, c->rate))
+			pr_warn("tx-isp-t32: clock %s rate %lu not set\n", c->name, c->rate);
+		if (clk_prepare_enable(c->clk))
+			pr_warn("tx-isp-t32: clock %s not enabled\n", c->name);
+	}
+}
+
+static void t32_clks_deactivate(void)
+{
+	unsigned int i;
+
+	for (i = ARRAY_SIZE(t32_clks); i-- > 0;) {
+		if (t32_clks[i].clk)
+			clk_disable_unprepare(t32_clks[i].clk);
+	}
+}
+
+static int t32_isp_open(struct inode *inode, struct file *file)
+{
+	mutex_lock(&core.lock);
+	if (!t32_clk_users++)
+		t32_clks_activate();
+	mutex_unlock(&core.lock);
+	return 0;
+}
+
 static int t32_isp_release(struct inode *inode, struct file *file)
 {
+	mutex_lock(&core.lock);
+	if (t32_clk_users && !--t32_clk_users)
+		t32_clks_deactivate();
+	mutex_unlock(&core.lock);
 	return 0;
 }
 
 static const struct file_operations t32_isp_fops = {
 	.owner = THIS_MODULE,
 	.unlocked_ioctl = t32_isp_ioctl,
+	.open = t32_isp_open,
 	.release = t32_isp_release,
 };
 
@@ -818,9 +936,12 @@ int tx_isp_t32_core_init(void)
 	mutex_init(&core.lock);
 	INIT_LIST_HEAD(&core.allocs);
 
+	t32_clks_probe();
 	ret = misc_register(&t32_isp_misc);
-	if (ret)
+	if (ret) {
+		t32_clks_put();
 		return ret;
+	}
 	ret = misc_register(&t32_m0_misc);
 	if (ret)
 		goto err_m0;
@@ -849,6 +970,7 @@ err_ivdc:
 	misc_deregister(&t32_m0_misc);
 err_m0:
 	misc_deregister(&t32_isp_misc);
+	t32_clks_put();
 	return ret;
 }
 
@@ -875,4 +997,5 @@ void tx_isp_t32_core_exit(void)
 	misc_deregister(&t32_ivdc_misc);
 	misc_deregister(&t32_m0_misc);
 	misc_deregister(&t32_isp_misc);
+	t32_clks_put();
 }
