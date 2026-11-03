@@ -92,10 +92,14 @@ TESTS += tx_isp_t32_mem_rcfg_test
 TESTS += tx_isp_t32_msca_curve_test
 TESTS += tx_isp_t32_lsc_test
 TESTS += tx_isp_t32_stats_test
+TESTS += tx_isp_t32_front_test
 
 tx_isp_t32_stats_test: tx_isp_t32_stats_test.c ../driver/t32/tx_isp_t32_stats.h ../driver/t32/tx_isp_t32_iq.h ../driver/t32/tx_isp_t32_lsc.h
 	$(CC) $(CFLAGS) -o $@ $<
 
+
+tx_isp_t32_front_test: tx_isp_t32_front_test.c ../driver/t32/tx_isp_t32_front.h ../driver/t32/tx_isp_t32_iq.h
+	$(CC) $(CFLAGS) -o $@ $<
 
 tx_isp_t32_lsc_test: tx_isp_t32_lsc_test.c ../driver/t32/tx_isp_t32_lsc.h ../driver/t32/tx_isp_t32_rcfg.h
 	$(CC) $(CFLAGS) -o $@ $<

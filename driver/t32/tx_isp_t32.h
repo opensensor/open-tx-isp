@@ -22,6 +22,7 @@ void tx_isp_subdev_deinit(void *sd);
 u32 t32_core_sensor_fps(void);
 int t32_core_sensor_size(u32 *w, u32 *h);
 int t32_core_iq_bin(const u8 **bin, u32 *bytes);
+int t32_core_sensor_mbus(u32 *code);
 int t32_core_sensor_expo(u32 packed);
 u32 t32_core_sensor_vts(void);
 

@@ -4,6 +4,12 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-03: T32 S4 step 4: front end (CSC, CSCCR, ISP top) from the IQ bin; IQ section offsets fixed (`claude/t32-s4z`; host, QEMU T32, not on a camera)
+
+- `tx_isp_t32_front.h`: flow of the vendor `tisp_csc_init` / `tisp_csccr_init` / `tisp_top_init` / `tisp_top_reg_cfg` as register writes, written at stream-on before the statistics engines. 25 of 25 writes identical to the vendor's AddSensor writes (cv8001 PRJ007 bin, 3840x2160 SRGGB10; `tests/tx_isp_t32_front_test` with `T32_IQ_BIN`). The matrix of the bin's mode comes from a six-mode table (BT.601/709/2020, full and limited range).
+- `tx_isp_t32_iq.h`: the section walk now counts the look-up table payloads the vendor's `tisp_bin_data_parse` copies after sections 7, 12, 13, 19 and 20 (their sizes come from a byte inside the section); sections 8 and up were at wrong offsets before. Sections 1, 2, 7 are unchanged.
+- QEMU T32 (debug kernel, `slub_debug=FZPU`, `maxcpus=1`, vendor libimp 2.2.0): 5 load/run/unload cycles, 3 channels 8/8 frames each, 0 oopses, no slab reports; the new writes appear in the stream-on phase with the vendor's values. The model does not execute the pipeline: picture effect needs a camera.
+
 ## 2026-11-03, T41 custom AE library is released when its client dies (an extra beyond the vendor; Lu-Fi/openimp#197)
 
 - **Extra beyond the vendor:** `tx_isp_release` unregisters the custom AE algorithm library of the file that registered it (`t41_ae_algo_release`, same steps as the close: `tisp_ae_algo_deinit`, `tisp_ae_algo_init(ch, 0, 0)`, info block freed once, waiters woken). Stock: a killed client leaves the library registered and the next open answers `EBUSY` until the module is reloaded. With no library registered nothing changes.

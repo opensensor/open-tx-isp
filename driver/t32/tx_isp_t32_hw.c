@@ -29,6 +29,7 @@
 #include "tx_isp_t32_lsc.h"
 #include "tx_isp_t32_stats.h"
 #include "tx_isp_t32_iq.h"
+#include "tx_isp_t32_front.h"
 
 static void t32_bringup_ae_kick(void);
 
@@ -190,6 +191,46 @@ static void t32_stats_init(void)
 	for (i = 0; i < n && i < T32_STATS_MAX_WRITES; i++)
 		isp_wr(w[i].reg, w[i].val);
 	t32_hw_stats.stats_inits++;
+}
+
+/*
+ * Front end (tx_isp_t32_front.h): CSC, CSCCR and the ISP top block from the
+ * IQ bin, in the vendor's AddSensor order, before the statistics engines.
+ */
+static void t32_front_init(void)
+{
+	struct t32_front_write w[T32_FRONT_MAX_WRITES];
+	const u8 *bin;
+	u32 bytes, width, height, code, off, len;
+	int bayer, r;
+	unsigned int n, i;
+
+	if (t32_core_iq_bin(&bin, &bytes) || t32_core_sensor_size(&width, &height) ||
+	    t32_core_sensor_mbus(&code))
+		return;
+	bayer = t32_mbus_to_bayer(code);
+	if (bayer < 0) {
+		isp_printf(1, "tx-isp-t32: sensor format 0x%x not handled by the front end\n", code);
+		return;
+	}
+	off = t32_iq_section(bin, bytes, T32_IQ_SEC_CSC, &len);
+	if (off && len >= T32_CSC_BYTES) {
+		n = t32_csc_init(bin + off, w);
+		for (i = 0; i < n; i++)
+			isp_wr(w[i].reg, w[i].val);
+	}
+	off = t32_iq_section(bin, bytes, T32_IQ_SEC_CSCCR, &len);
+	if (off && len >= T32_CSCCR_BYTES) {
+		r = t32_csccr_init(bin + off, w);
+		for (i = 0; r > 0 && i < (unsigned int)r; i++)
+			isp_wr(w[i].reg, w[i].val);
+	}
+	off = t32_iq_section(bin, bytes, T32_IQ_SEC_TOP, &len);
+	if (off && len >= T32_TOP_BYTES) {
+		n = t32_top_init(bin + off, width, height, (u32)bayer, w);
+		for (i = 0; i < n; i++)
+			isp_wr(w[i].reg, w[i].val);
+	}
 }
 
 /*
@@ -402,6 +443,7 @@ void t32_hw_stream_on(void)
 	isp_wr(T32_MSCADONE_EN, 0xffffffff);
 	isp_wr(T32_INT3_EN, 0xffffffff);
 	isp_wr(T32_INT4_EN, 0xffffffff);
+	t32_front_init();
 	t32_stats_init();
 	t32_hw_rcfg_run_stream_on();
 	isp_wr(0x002c, 2);

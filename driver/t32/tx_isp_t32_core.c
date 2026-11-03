@@ -767,6 +767,17 @@ int t32_core_iq_bin(const u8 **bin, u32 *bytes)
 	return -ENOENT;
 }
 
+/* the sensor's media bus code (input_mbus_fmt) of the running input */
+int t32_core_sensor_mbus(u32 *code)
+{
+	struct t32_vi *vi = &core.vi[0];
+
+	if (!vi->registered || !vi->input_on)
+		return -ENODEV;
+	*code = T32_AT(vi->sd, T32_SENSOR_VIDEO + T32_VIDEO_MBUS_CODE, u32);
+	return 0;
+}
+
 /* the MSCA input: the sensor picture of the running input */
 int t32_core_sensor_size(u32 *w, u32 *h)
 {

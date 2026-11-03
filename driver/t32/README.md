@@ -84,7 +84,7 @@ generation-shared come from the shared code instead:
   its HTS/VTS registers): ch0 1080p + ch1 640x360 + ch2 720p at 14.7 fps
   (sensor 15/1), `SetSensorFPS(10/1)` -> 9.9 fps, 5 reload cycles clean.
 
-## S4 (in progress): MSCA polyphase curves
+## S4 (in progress): MSCA polyphase curves, stream-on list, statistics, front end
 
 - At every channel start the driver loads the polyphase filter curves of all
   three channels through the MSCA shadow port (`tx_isp_t32_msca_curve.h`,
@@ -143,6 +143,21 @@ generation-shared come from the shared code instead:
   through the sensor's EXPO event (0x02000017). No AWB, no tuning. QEMU run
   s4h: 13 histogram interrupts, 5 steps, the sensor ioctl accepted each; proc
   shows steps, last mean and integration time.
+
+- **Front end: CSC, CSCCR, ISP top** (`tx_isp_t32_front.h`, flow of the vendor
+  `tisp_csc_init`, `tisp_csccr_init`, `tisp_top_init`, `tisp_top_reg_cfg`),
+  written at stream-on before the statistics engines: the colour conversion
+  matrix of the bin's mode (BT.601/709/2020, full/limited; the bin supplies
+  the mode, the vendor loads the matrix of the mode over its working copy),
+  the chroma range (mode 0..2), the ISP top size/bayer/enable registers
+  (sensor size, `isp_mbus_to_bayer` for 8/10/12-bit Bayer codes, control
+  bits from IQ section 0). 25 of 25 writes identical to the vendor's
+  AddSensor writes (cv8001 bin, 3840x2160, SRGGB10; host test with the bin).
+  The vendor writes them at AddSensor, the driver at stream-on (the bin and the
+  sensor mode are known there). IQ section offsets now include the look-up
+  table payloads the vendor's parse copies after sections 7, 12, 13, 19, 20
+  (not counted in the table lengths): sections 8 and up were at wrong
+  offsets before (none was used).
 
 ## Not yet (S4+)
 
