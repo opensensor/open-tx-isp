@@ -129957,9 +129957,7 @@ int tisp_s_wdr_en(char *arg1, int arg2, int arg3)
 
     v0_24 = (void *)(s0_1 & (int)data_2000);
 
-    if (v0_23 == 0) {
-
-    }
+    /* #204: the T40 DMSC WDR switch (lifted tisp_dmsc_wdr_en) was removed with the other twins */
 
     v0_25 = (s0_1 >> 0x11) & 1;
 

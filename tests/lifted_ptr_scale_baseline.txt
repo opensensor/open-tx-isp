@@ -404,9 +404,6 @@ t40 tisp_channel_main_attr_set var 1 unreach
 t40 tisp_channel_sec_attr_set step 2 unreach
 t40 tisp_channel_sec_attr_set var 1 unreach
 t40 tisp_clm_wdr_en step 15 unreach
-t40 tisp_day_or_night_s_ctrl loop 3 unreach
-t40 tisp_day_or_night_s_ctrl step 2 unreach
-t40 tisp_day_or_night_s_ctrl var 4 unreach
 t40 tisp_defog_dn_params_refresh off 7 unreach
 t40 tisp_defog_dn_params_refresh step 1 unreach
 t40 tisp_defog_ev_update tailcall 1 dead #189 T40: reached only through the lifted tisp events 6..13 (tisp_main_long_tgain_update / ev_update, skipped by default: t40_ev_updates=0) and the lifted module inits (enable_tisp_main_init_color_inits=0); the live EV/CT chains are the hand-written t40_vawb / t40_bcsh / t40_vct code. Lost tail call confirmed against libt40-firmware, not fixed
@@ -445,7 +442,6 @@ t40 tisp_defog_write_reg_para3 loop 1 unreach
 t40 tisp_defog_write_reg_para3 off 2 unreach
 t40 tisp_defog_write_reg_para3 step 5 unreach
 t40 tisp_defog_write_reg_para3 tailcall 1 unreach
-t40 tisp_dmsc_dn_params_refresh tailcall 1 unreach
 t40 tisp_dpc_all_reg_refresh tailcall 1 unreach
 t40 tisp_dpc_intp_reg_refresh tailcall 1 unreach
 t40 tisp_dpc_ref_reg_cfg unal 5 unreach
@@ -490,7 +486,6 @@ t40 tisp_lsc_hvflip tailcall 1 ok #189 T40: confirmed lost tail call tisp_lsc_mi
 t40 tisp_lsc_init step 1 shim #189 T40 triage 2: enable_lsc_lit=Y on the image (hand LSC); lifted LSC init only with enable_lsc_lit=0, anchors &sclk_name - 16492 / &isp_memopt + 16880
 t40 tisp_lsc_interp_by_gain step 1 shim #189 T40 triage 2: enable_lsc_lit=Y on the image (hand LSC); lifted LSC init only with enable_lsc_lit=0, anchors &sclk_name - 16492 / &isp_memopt + 16880
 t40 tisp_lsc_upside_down_lut var 1 unreach
-t40 tisp_main_day_night_mode_ctl tailcall 1 unreach
 t40 tisp_mdns_all_reg_refresh tailcall 1 dead #189 T40: no symbol; REGCALL_* routes MDNS to the *_lit literal translation
 t40 tisp_mdns_intp_reg_refresh tailcall 1 unreach
 t40 tisp_mdns_par_refresh step 1 shim #189 T40 triage 2: see mdns

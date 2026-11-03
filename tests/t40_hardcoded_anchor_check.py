@@ -34,11 +34,9 @@ def body_of(name, sig_re):
         return None
     return re.sub(r"/\*.*?\*/", "", mm.group(1), flags=re.S)
 for fn, sig, want in (
-        ("tisp_dmsc_dn_params_refresh", r"\bint32_t tisp_dmsc_dn_params_refresh\(uint32_t a0\)", "t40_dmsc_wdr_en"),
         ("tisp_ydns_dn_params_refresh", r"\bint32_t tisp_ydns_dn_params_refresh\(uint32_t a0\)", "regtrace_ydns_wdr_flag"),
         ("tisp_ysp_dn_params_refresh", r"\bint32_t tisp_ysp_dn_params_refresh\(uint32_t a0\)", "regtrace_ysp_wdr_flags"),
-        ("tisp_lce_tgain_interp_strength", r"\bint32_t tisp_lce_tgain_interp_strength\(uint32_t a0\)", "t40_lce_tgain_oem"),
-        ("tisp_dmsc_wdr_en", r"\bint64_t tisp_dmsc_wdr_en\(uint32_t a0, uint32_t a1\)", "t40_dmsc_wdr_en")):
+        ("tisp_lce_tgain_interp_strength", r"\bint32_t tisp_lce_tgain_interp_strength\(uint32_t a0\)", "t40_lce_tgain_oem")):
     b = body_of(fn, sig)
     if b is None:
         continue
