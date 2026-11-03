@@ -16,6 +16,7 @@
 #include "tx_isp_t23_subdev.h"
 #include "tx_isp_t23_crumbs.h"
 #include "tx_isp_t23_scratch.h"
+#include "tx_isp_t23_bypass.h"
 #include "tx_isp_t23_core_ioctl.h"
 #include "tx_isp_t23_msca_geom.h"
 #define TX_LS_STORAGE
@@ -16107,6 +16108,24 @@ copy_out:
  * so a second opener (a tuning tool) does not wipe the streamer's state.
  */
 static int regtrace_t23_txisp_stream(int enable, const char *reason);
+/*
+ * Optional ISP bypass graph (Lu-Fi/openimp#129, vendor SetISPBypass(DISABLE)):
+ * link config 1 feeds frame channel 0 from the VIC MDMA with raw RG12 frames
+ * (the frames do not go through the ISP pipeline or the MSCA).  Off by default: with 0 the link
+ * ioctls stay stubs and ISP_PROCESS accepts only 1, as before.
+ */
+static int isp_bypass_graph;
+module_param(isp_bypass_graph, int, S_IRUGO);
+MODULE_PARM_DESC(isp_bypass_graph,
+                 "Enable the vendor ISP bypass graph (link config 1: raw RG12 frames from the VIC on frame channel 0) (default: 0)");
+static bool t23_bp_flag;        /* ISP_PROCESS control set to a value other than 1 */
+static bool t23_bp_graph;       /* link config 1 active */
+static bool t23_bp_streaming;   /* channel 0 runs on the VIC bank ring */
+static int t23_bypass_check_len(uint32_t len);
+static int t23_bypass_qbuf(uint32_t phys);
+static long t23_bypass_link_ioctl(unsigned int cmd, unsigned long arg);
+static void t23_bypass_reset(void);
+
 static void regtrace_t23_txisp_last_close(void);
 
 static int regtrace_tx_isp_open(struct inode *inode, struct file *file)
@@ -16284,6 +16303,13 @@ static long regtrace_tx_isp_ioctl_body(struct file *file, unsigned int cmd,
 
     if (cmd == 0x8038564fU || cmd == 0xc0385650U)
         return regtrace_t23_sensor_register_ioctl(cmd, arg);
+
+    if (isp_bypass_graph && cmd >= 0x800456d0U && cmd <= 0x800456d3U) {
+        ret = t23_bypass_link_ioctl(cmd, arg);
+        printk(KERN_INFO "t23: tx-isp link ioctl cmd=0x%x ret=%ld pid=%d comm=%s\n",
+               cmd, ret, current->pid, current->comm);
+        return ret;
+    }
 
     ret = tx_isp_unlocked_ioctl(file, cmd, arg);
     printk(KERN_INFO "t23: tx-isp ioctl cmd=0x%x arg=0x%lx ret=%ld pid=%d comm=%s\n",
@@ -16668,6 +16694,7 @@ static spinlock_t regtrace_framechan_done_lock;
 static DEFINE_MUTEX(regtrace_framechan_stream_lock);
 static uint32_t regtrace_framechan_stream_mask;
 static struct file *regtrace_framechan_stream_owner[REGTRACE_FRAMECHAN_COUNT];
+
 static struct regtrace_t23_frame_image_format
     regtrace_t23_framechan_formats[REGTRACE_FRAMECHAN_COUNT];
 static bool regtrace_t23_framechan_format_ready[REGTRACE_FRAMECHAN_COUNT];
@@ -17066,6 +17093,7 @@ static int regtrace_framechan_record_qbuf(int channel, const uint32_t *words)
     unsigned long flags;
     uint32_t userptr;
     bool program;
+    bool bypass;
     int slot = -1;
     int i;
     int ret = 0;
@@ -17083,12 +17111,22 @@ static int regtrace_framechan_record_qbuf(int channel, const uint32_t *words)
         if (ret)
             return ret;
     }
-    program = regtrace_t23_direct_msca_qbuf;
-    if (program) {
-        ret = regtrace_t23_build_msca_qbuf(
-            channel, userptr, words[TX_ISP_FRAME_WORD_LENGTH], &buffer);
+    bypass = ACCESS_ONCE(t23_bp_graph) && channel == 0;
+    program = regtrace_t23_direct_msca_qbuf && !bypass;
+    if (bypass) {
+        /* raw frame size and the ring are checked before the buffer is
+         * recorded (nothing to undo) */
+        ret = t23_bypass_check_len(words[TX_ISP_FRAME_WORD_LENGTH]);
         if (ret)
             return ret;
+    }
+    if (program || bypass) {
+        if (program) {
+            ret = regtrace_t23_build_msca_qbuf(
+                channel, userptr, words[TX_ISP_FRAME_WORD_LENGTH], &buffer);
+            if (ret)
+                return ret;
+        }
         /* rmem lies below 512 MiB (checked above): kseg0 alias is valid */
         if (regtrace_t23_qbuf_cache_inv && userptr &&
             words[TX_ISP_FRAME_WORD_LENGTH])
@@ -17163,6 +17201,17 @@ static int regtrace_framechan_record_qbuf(int channel, const uint32_t *words)
     if (regtrace_t23_crumb_page && regtrace_t23_crumbs)
         regtrace_t23_crumb_page[T23_CRUMB_W_QBUF]++;
     spin_unlock_irqrestore(&regtrace_framechan_done_lock, flags);
+
+    if (bypass) {
+        /* the VIC bank ring takes the buffer (lock order: done lock first,
+         * released above, then the ring lock) */
+        ret = t23_bypass_qbuf(userptr);
+        if (ret) {
+            spin_lock_irqsave(&regtrace_framechan_done_lock, flags);
+            regtrace_framechan_qbuf_queued[channel][slot] = false;
+            spin_unlock_irqrestore(&regtrace_framechan_done_lock, flags);
+        }
+    }
 
     if (program && regtrace_t23_log_framechan_payloads)
         printk(KERN_WARNING "t23: direct MSCA qbuf ch=%d y=0x%x uv=0x%x len=0x%x ret=%d\n",
@@ -17281,6 +17330,340 @@ static void regtrace_framechan_complete_fifo(int channel,
     if (regtrace_t23_log_irq_count(count))
         printk(KERN_INFO "t23: framechan%d MSCA completion idx=%u y=0x%x uv=0x%x count=%u\n",
                channel, done->index, done->userptr, done->uv_phys, count);
+}
+
+/*
+ * ISP bypass graph (isp_bypass_graph=1, see the declarations above): VIC MDMA
+ * channel 0 writes the sensor's raw frame (2 bytes per pixel) into the
+ * buffers user space queued on frame channel 0.  Bookkeeping of the five VIC
+ * banks is in tx_isp_t23_bypass.h (host-tested); this is the register side.
+ * MDMA registers as the snapraw capture and the vendor vic_pipo_mdma_enable /
+ * ispvic_frame_channel_s_stream: 0x308 enable, 0x304 size, 0x310/0x314 stride,
+ * 0x318 + 4 * n bank n, 0x300 control (bank count << 16 | 0x80000020),
+ * 0x380 address of the frame just written.
+ */
+#define T23_BP_FMT_RG12 0x32314752U
+#define T23_BP_REG_CTRL 0x300U
+#define T23_BP_REG_EN 0x308U
+#define T23_BP_REG_SIZE 0x304U
+#define T23_BP_REG_STRIDE_Y 0x310U
+#define T23_BP_REG_STRIDE_UV 0x314U
+#define T23_BP_REG_BANK 0x318U
+#define T23_BP_REG_CUR 0x380U
+
+static DEFINE_SPINLOCK(t23_bp_lock);
+static struct t23_bp_ring t23_bp_state;
+static struct {
+    uint32_t size, en, stride_y, stride_uv, bank[T23_BP_BANKS];
+} t23_bp_saved;
+static uint t23_bp_frames;
+module_param_named(bypass_frames, t23_bp_frames, uint, 0444);
+MODULE_PARM_DESC(bypass_frames, "frames completed by the bypass graph (read only)");
+static uint t23_bp_irqs;
+static uint t23_bp_lost;
+module_param_named(bypass_lost, t23_bp_lost, uint, 0444);
+MODULE_PARM_DESC(bypass_lost, "bypass graph frame-done interrupts without a buffer owner (read only)");
+
+static void __iomem *t23_bp_vic_base(void)
+{
+    uintptr_t base;
+
+    if (!regtrace_t23_vic_sd)
+        return NULL;
+    base = *(uint32_t *)(regtrace_t23_vic_sd + 184);
+    return regtrace_t23_valid_ptr(base) ? (void __iomem *)base : NULL;
+}
+
+/* Raw frame geometry: the sensor output the VIC delivers. */
+static bool t23_bp_geometry(uint32_t *width, uint32_t *height)
+{
+    uint32_t w = regtrace_t23_source_sensor_width;
+    uint32_t h = regtrace_t23_source_sensor_height;
+
+    if ((!w || !h) && regtrace_t23_vic_sd) {
+        w = *(uint32_t *)(regtrace_t23_vic_sd + 220);
+        h = *(uint32_t *)(regtrace_t23_vic_sd + 224);
+    }
+    if (w < 64U || w > 2688U || h < 64U || h > 4320U)
+        return false;
+    *width = w;
+    *height = h;
+    return true;
+}
+
+/*
+ * Capture count (control bits 16..19): the frames the engine may still write,
+ * one per loaded bank.  The vendor frame-done interrupt rewrites it after every
+ * frame; the engine stops when it is used up, so it never writes into a bank
+ * whose buffer user space holds.  Ring lock held.
+ */
+static void t23_bp_set_count(void __iomem *base)
+{
+    uint32_t ctrl = readl(base + T23_BP_REG_CTRL);
+
+    ctrl = (ctrl & 0xfff0ffffU) | ((uint32_t)t23_bp_pending(&t23_bp_state) << 16);
+    writel(ctrl, base + T23_BP_REG_CTRL);
+}
+
+static int t23_bypass_check_len(uint32_t len)
+{
+    uint32_t w, h;
+
+    if (!t23_bp_geometry(&w, &h))
+        return -ENODEV;
+    if (len < w * h * 2U) {
+        printk_ratelimited(KERN_ERR "t23: bypass QBUF: buffer %u < raw frame %u\n",
+                           len, w * h * 2U);
+        return -EINVAL;
+    }
+    return 0;
+}
+
+static int t23_bypass_qbuf(uint32_t phys)
+{
+    struct t23_bp_load ld;
+    void __iomem *base = t23_bp_vic_base();
+    unsigned long flags;
+    int ret;
+
+    spin_lock_irqsave(&t23_bp_lock, flags);
+    ret = t23_bp_qbuf(&t23_bp_state, phys & ~7U, &ld);
+    if (ret == 1 && t23_bp_streaming && base) {
+        writel(ld.addr, base + T23_BP_REG_BANK + 4U * ld.bank);
+        wmb();
+        t23_bp_set_count(base);
+    }
+    spin_unlock_irqrestore(&t23_bp_lock, flags);
+    return ret < 0 ? -EBUSY : 0;
+}
+
+/* VIC MDMA channel 0 frame done (VIC interrupt, status1 bit 0). */
+static void t23_bypass_irq(void __iomem *base)
+{
+    struct t23_bp_load lds[T23_BP_BANKS];
+    uint32_t out[T23_BP_BANKS];
+    unsigned long flags;
+    uint32_t cur;
+    int n, nl, i;
+
+    cur = readl(base + T23_BP_REG_CUR);
+    spin_lock_irqsave(&t23_bp_lock, flags);
+    n = t23_bp_done(&t23_bp_state, cur, out, T23_BP_BANKS, lds, &nl);
+    for (i = 0; i < nl; i++)
+        writel(lds[i].addr, base + T23_BP_REG_BANK + 4U * lds[i].bank);
+    wmb();
+    t23_bp_set_count(base);
+    spin_unlock_irqrestore(&t23_bp_lock, flags);
+    t23_bp_irqs++;
+    if (t23_bp_irqs <= 12)
+        printk(KERN_INFO "t23: bypass irq %u cur=0x%x done=%d reload=%d busy=%u stale=%u bad=%u\n",
+               t23_bp_irqs, cur, n, nl, t23_bp_state.busy_n,
+               t23_bp_state.stale, t23_bp_state.bad_addr);
+    if (!n)
+        t23_bp_lost++;
+    for (i = 0; i < n; i++) {
+        t23_bp_frames++;
+        regtrace_framechan_complete_fifo(0, out[i], 0);
+    }
+}
+
+/* Format of frame channel 0 in the bypass graph: the sensor's raw frame. */
+static long t23_bypass_set_fmt(int channel,
+                               struct regtrace_t23_frame_image_format *format)
+{
+    uint32_t w, h;
+
+    if (channel != 0 || !t23_bp_geometry(&w, &h))
+        return -EINVAL;
+    if (format->pix.pixelformat && format->pix.pixelformat != T23_BP_FMT_RG12)
+        return -EINVAL;
+    if ((format->pix.width && format->pix.width != w) ||
+        (format->pix.height && format->pix.height != h))
+        return -EINVAL;
+    format->type = REGTRACE_TISP_BUF_TYPE_VIDEO_CAPTURE;
+    format->pix.width = w;
+    format->pix.height = h;
+    format->pix.pixelformat = T23_BP_FMT_RG12;
+    format->pix.field = REGTRACE_TISP_FIELD_NONE;
+    format->pix.bytesperline = w * 2U;
+    format->pix.sizeimage = w * h * 2U;
+    return 0;
+}
+
+/* STREAMON of frame channel 0 in the bypass graph (stream lock held). */
+static int t23_bypass_stream_on(struct file *file, int channel)
+{
+    void __iomem *base;
+    unsigned long flags;
+    uint32_t w, h, pending;
+    uint8_t count, i;
+    int ret = 0;
+
+    if (channel != 0)
+        return -EINVAL;
+    if (regtrace_framechan_stream_mask & ~1U)
+        return -EBUSY;
+    if (t23_bp_streaming)
+        return 0;
+    if (!t23_bp_geometry(&w, &h))
+        return -ENODEV;
+    regtrace_t23_enable_stream_clks();
+    base = t23_bp_vic_base();
+    if (!base)
+        return -ENODEV;
+    if (!regtrace_t23_vic_streaming)
+        regtrace_t23_source_input_stream(1, "bypass-streamon");
+    if (!regtrace_t23_vic_streaming) {
+        regtrace_t23_source_input_stream(0, "bypass-streamon-failed");
+        return -EIO;
+    }
+
+    t23_bp_saved.size = readl(base + T23_BP_REG_SIZE);
+    t23_bp_saved.en = readl(base + T23_BP_REG_EN);
+    t23_bp_saved.stride_y = readl(base + T23_BP_REG_STRIDE_Y);
+    t23_bp_saved.stride_uv = readl(base + T23_BP_REG_STRIDE_UV);
+    for (i = 0; i < T23_BP_BANKS; i++)
+        t23_bp_saved.bank[i] = readl(base + T23_BP_REG_BANK + 4U * i);
+    writel(0, base + T23_BP_REG_CTRL);
+    pending = readl(base + 0x1e4);
+    if (pending)
+        writel(pending, base + 0x1f4);
+
+    regtrace_framechan_set_streaming(0, true);
+    spin_lock_irqsave(&t23_bp_lock, flags);
+    count = t23_bp_start(&t23_bp_state);
+    if (count) {
+        for (i = 0; i < count; i++)
+            writel(t23_bp_state.bank_addr[i],
+                   base + T23_BP_REG_BANK + 4U * i);
+        t23_bp_streaming = true;
+    }
+    spin_unlock_irqrestore(&t23_bp_lock, flags);
+    if (!count) {
+        printk(KERN_ERR "t23: bypass STREAMON: no buffer queued\n");
+        ret = -EINVAL;
+        goto fail;
+    }
+    regtrace_framechan_stream_mask |= 1U;
+    regtrace_framechan_stream_owner[0] = file;
+    regtrace_t23_set_irq_enabled("vic", regtrace_t23_vic_sd,
+                                 &regtrace_t23_vic_irq_enabled, 1,
+                                 "bypass-streamon", 0);
+    writel(1, base + T23_BP_REG_EN);
+    writel((w << 16) | h, base + T23_BP_REG_SIZE);
+    writel(w * 2U, base + T23_BP_REG_STRIDE_Y);
+    writel(w * 2U, base + T23_BP_REG_STRIDE_UV);
+    wmb();
+    writel(((uint32_t)count << 16) | 0x80000020U, base + T23_BP_REG_CTRL);
+    wmb();
+    printk(KERN_INFO "t23: bypass graph STREAMON %ux%u RG12 banks=%u ctrl=0x%x\n",
+           w, h, count, readl(base + T23_BP_REG_CTRL));
+    return 0;
+fail:
+    regtrace_framechan_set_streaming(0, false);
+    regtrace_t23_source_input_stream(0, "bypass-streamon-failed");
+    return ret;
+}
+
+/* STREAMOFF of frame channel 0 in the bypass graph (stream lock held). */
+static void t23_bypass_stream_off_locked(const char *reason)
+{
+    void __iomem *base = t23_bp_vic_base();
+    unsigned long flags;
+    uint8_t i;
+
+    if (base) {
+        writel(0, base + T23_BP_REG_CTRL);
+        wmb();
+    }
+    spin_lock_irqsave(&t23_bp_lock, flags);
+    t23_bp_streaming = false;
+    t23_bp_clear(&t23_bp_state);
+    spin_unlock_irqrestore(&t23_bp_lock, flags);
+    if (base) {
+        /* a frame the engine was writing finishes before the buffers go away */
+        private_msleep(100);
+        for (i = 0; i < T23_BP_BANKS; i++)
+            writel(t23_bp_saved.bank[i], base + T23_BP_REG_BANK + 4U * i);
+        writel(t23_bp_saved.size, base + T23_BP_REG_SIZE);
+        writel(t23_bp_saved.stride_y, base + T23_BP_REG_STRIDE_Y);
+        writel(t23_bp_saved.stride_uv, base + T23_BP_REG_STRIDE_UV);
+        writel(t23_bp_saved.en, base + T23_BP_REG_EN);
+        wmb();
+    }
+    regtrace_t23_set_irq_enabled("vic", regtrace_t23_vic_sd,
+                                 &regtrace_t23_vic_irq_enabled, 0, reason, 0);
+    regtrace_framechan_stream_mask &= ~1U;
+    regtrace_framechan_stream_owner[0] = NULL;
+    regtrace_framechan_set_streaming(0, false);
+    regtrace_t23_source_input_stream(0, reason);
+    printk(KERN_INFO "t23: bypass graph STREAMOFF frames=%u lost=%u reason=%s\n",
+           t23_bp_frames, t23_bp_lost, reason ? reason : "?");
+}
+
+/* The graph goes away (links destroyed, last close, module exit). */
+static void t23_bypass_graph_off_locked(const char *reason)
+{
+    if (t23_bp_streaming)
+        t23_bypass_stream_off_locked(reason);
+    t23_bp_graph = false;
+}
+
+static void t23_bypass_reset(void)
+{
+    mutex_lock(&regtrace_framechan_stream_lock);
+    t23_bypass_graph_off_locked("bypass-reset");
+    t23_bp_flag = false;
+    mutex_unlock(&regtrace_framechan_stream_lock);
+}
+
+/*
+ * Link ioctls 0x800456d0..d3 (CREATE, DESTROY, ENABLE, DISABLE) of the
+ * vendor SetISPBypass five-step.  Only called with isp_bypass_graph=1.
+ */
+static long t23_bypass_link_ioctl(unsigned int cmd, unsigned long arg)
+{
+    int config = 0;
+    long ret = 0;
+
+    mutex_lock(&regtrace_framechan_stream_lock);
+    switch (cmd) {
+    case 0x800456d0U:       /* CREATE_LINKS(config) */
+        if (get_user(config, (int __user *)arg)) {
+            ret = -EFAULT;
+            break;
+        }
+        if (config == 1) {
+            uint32_t w, h;
+
+            /* Vendor order: the ISP_PROCESS control comes first */
+            if (!t23_bp_flag || !t23_bp_geometry(&w, &h)) {
+                ret = -EINVAL;
+                break;
+            }
+            if (regtrace_framechan_stream_mask) {
+                ret = -EBUSY;
+                break;
+            }
+            if (!t23_bp_graph) {
+                t23_bp_init(&t23_bp_state);
+                t23_bp_graph = true;
+                printk(KERN_INFO "t23: bypass graph active (frame channel 0 <- VIC MDMA, MSCA not used)\n");
+            }
+        } else if (t23_bp_graph) {
+            t23_bypass_graph_off_locked("bypass-create-links-0");
+            printk(KERN_INFO "t23: normal graph restored\n");
+        }
+        break;
+    case 0x800456d1U:       /* DESTROY_LINKS: the graph goes away with the links */
+        if (t23_bp_graph)
+            t23_bypass_graph_off_locked("bypass-destroy-links");
+        break;
+    default:                /* ENABLE_LINKS / DISABLE_LINKS */
+        break;
+    }
+    mutex_unlock(&regtrace_framechan_stream_lock);
+    return ret;
 }
 
 static int regtrace_framechan_latest_slot(int channel)
@@ -17638,6 +18021,11 @@ static int regtrace_framechan_stream_on(struct file *file, int channel)
     int ret;
 
     mutex_lock(&regtrace_framechan_stream_lock);
+    if (t23_bp_graph) {
+        ret = t23_bypass_stream_on(file, channel);
+        mutex_unlock(&regtrace_framechan_stream_lock);
+        return ret;
+    }
     regtrace_t23_enable_stream_clks();
     ret = regtrace_t23_tisp_prestart("framechan-streamon");
     if (ret) {
@@ -17794,6 +18182,17 @@ static void regtrace_t23_scratch_settle(const char *reason)
 static int regtrace_t23_txisp_stream_locked(int enable, const char *reason)
 {
     t23_crumb(enable ? T23C_TXISP_ON : T23C_TXISP_OFF, 0);
+    if (t23_bp_graph) {
+        /* bypass graph: the ISP core stays idle, only the input runs */
+        if (enable) {
+            regtrace_t23_enable_stream_clks();
+            regtrace_t23_source_input_stream(1, reason);
+        } else if (!t23_bp_streaming) {
+            regtrace_t23_source_input_stream(0, reason);
+        }
+        regtrace_t23_txisp_streaming = enable != 0;
+        return 0;
+    }
     if (enable) {
         int ret;
 
@@ -17840,6 +18239,8 @@ static void regtrace_t23_txisp_last_close(void)
 {
     mutex_lock(&regtrace_framechan_stream_lock);
     t23_crumb(T23C_LAST_CLOSE, regtrace_framechan_stream_mask);
+    t23_bypass_graph_off_locked("tx-isp-last-close");
+    t23_bp_flag = false;
     if (regtrace_t23_txisp_streaming && !regtrace_framechan_stream_mask)
         regtrace_t23_txisp_stream_locked(0, "tx-isp-last-close");
     mutex_unlock(&regtrace_framechan_stream_lock);
@@ -17980,6 +18381,10 @@ static void regtrace_framechan_stream_off_locked(int channel,
 {
     bool last;
 
+    if (t23_bp_streaming && channel == 0) {
+        t23_bypass_stream_off_locked(reason);
+        return;
+    }
     t23_crumb(T23C_CHAN_OFF, (u32)channel);
     regtrace_framechan_park(channel);
     regtrace_framechan_drain_wait(channel);
@@ -18112,7 +18517,10 @@ static long regtrace_framechan_ioctl_body(struct file *file, unsigned int cmd,
             ret = -EFAULT;
             break;
         }
-        ret = regtrace_t23_program_msca_format(channel, &format);
+        if (ACCESS_ONCE(t23_bp_graph))
+            ret = t23_bypass_set_fmt(channel, &format);
+        else
+            ret = regtrace_t23_program_msca_format(channel, &format);
         if (ret)
             break;
         if (copy_to_user((void __user *)(uintptr_t)arg, &format,
@@ -34828,6 +35236,8 @@ static int32_t isp_irq_handle_body(int32_t irq, void *dev_id)
             wmb();
         if (pending1 && ACCESS_ONCE(regtrace_t23_snapraw_active))
             complete(&regtrace_t23_snapraw_done);
+        if ((pending1 & 1U) && ACCESS_ONCE(t23_bp_streaming))
+            t23_bypass_irq(base);
         if (!pending0 && !pending1)
             return regtrace_t23_irq_none("VIC", irq);
 
@@ -102896,6 +103306,7 @@ void cleanup_module(void)
      * cancel it, free the interrupts with the subdevices, and cancel once
      * more before the buffers the work and the handlers use are freed.
      */
+    t23_bypass_reset();
     regtrace_t23_stream_irq_gate(0, "module-exit", -1);
     regtrace_t23_source_core_set_stream(0, "module-exit");
     /* Registers are still mapped here (the platforms go below). */
@@ -103507,8 +103918,18 @@ static long regtrace_t23_tuning_cid(bool get, uint32_t id, uint32_t *value)
     case REGTRACE_TISP_CTRL_SHADING:
         return get ? -EINVAL : 0;   /* OEM set no-op, get rejected */
     case REGTRACE_TISP_CTRL_ISP_PROCESS:
-        /* Only full processing (1) exists in this driver. */
-        return (!get && v == 1U) ? 0 : -EINVAL;
+        /* Full processing (1); any other value is the bypass flag the
+         * vendor core keeps (only with isp_bypass_graph=1). */
+        if (get)
+            return -EINVAL;
+        if (v == 1U) {
+            t23_bp_flag = false;
+            return 0;
+        }
+        if (!isp_bypass_graph)
+            return -EINVAL;
+        t23_bp_flag = true;
+        return 0;
     case REGTRACE_TISP_CTRL_CCM_ATTR: {
         struct regtrace_t23_ccm_user_attr attr;
 

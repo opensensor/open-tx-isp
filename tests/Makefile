@@ -3,7 +3,7 @@ CC ?= cc
 CFLAGS ?= -O2
 CFLAGS += -std=c99 -Wall -Wextra -Werror
 
-.PHONY: all check check-oracles clean t40_vic_layout_check t40_lost_tail_host lifted_ptr_scale_check t40_hardcoded_anchor_check t30_storage_audit t30_fw_irq_gate t30_fmt5c_check t40_vct_host t40_af_stats_host t40_bcsh_dn_host t40_tstp_host t40_ccm_conv_host t40_ccm_chain_host t40_dmsc_chain_host t40_mdns_chain_host t40_ysp_chain_host t40_ydns_host t40_gib_host t40_lsc_host t40_bitexact_host t40_callarg_check t41_sensor_barrier_check t40_hardcoded_anchor_check t40_clk_teardown_check t40_tstp_init_check t40_custom_algo_wake_check t41_custom_ae_check t41_custom_awb_check t41_awb_algo_host t41_af_gate_check lifted_ptr_scale_check t40_algo_handle_host t40_wdr_log2_host
+.PHONY: all check check-oracles clean t40_vic_layout_check t40_lost_tail_host lifted_ptr_scale_check t40_hardcoded_anchor_check t30_storage_audit t30_fw_irq_gate t30_fmt5c_check t40_vct_host t40_af_stats_host t40_bcsh_dn_host t40_tstp_host t40_ccm_conv_host t40_ccm_chain_host t40_dmsc_chain_host t40_mdns_chain_host t40_ysp_chain_host t40_ydns_host t40_gib_host t40_lsc_host t40_bitexact_host t40_callarg_check t41_sensor_barrier_check t40_hardcoded_anchor_check t40_clk_teardown_check t40_tstp_init_check t40_custom_algo_wake_check t41_custom_ae_check t41_custom_awb_check t41_awb_algo_host t41_af_gate_check lifted_ptr_scale_check t40_algo_handle_host t40_wdr_log2_host t23_bypass_host
 
 # Every host test binary.  A new test is registered with "TESTS += name"
 # (plus its build rule); `check` builds and runs all of them, keeps going
@@ -12,7 +12,7 @@ CFLAGS += -std=c99 -Wall -Wextra -Werror
 # so a test cannot be added and then silently never run.
 TESTS :=
 # Further check steps, run as "$(MAKE) <target>" after the binaries.
-CHECK_TARGETS := t40_vic_layout_check t30_storage_audit t30_fw_irq_gate t30_fmt5c_check t41_dfg_host t40_vct_host t40_af_stats_host t40_bcsh_dn_host t40_tstp_host t40_ccm_conv_host t40_ccm_chain_host t40_dmsc_chain_host t40_mdns_chain_host t40_ysp_chain_host t40_ydns_host t40_gib_host t40_lsc_host t40_bitexact_host t40_callarg_check t41_sensor_barrier_check t40_hardcoded_anchor_check t40_clk_teardown_check t40_tstp_init_check t40_custom_algo_wake_check t41_custom_ae_check t41_custom_awb_check t41_awb_algo_host t41_af_gate_check lifted_ptr_scale_check t40_lost_tail_host t40_algo_handle_host t40_wdr_log2_host
+CHECK_TARGETS := t40_vic_layout_check t30_storage_audit t30_fw_irq_gate t30_fmt5c_check t41_dfg_host t40_vct_host t40_af_stats_host t40_bcsh_dn_host t40_tstp_host t40_ccm_conv_host t40_ccm_chain_host t40_dmsc_chain_host t40_mdns_chain_host t40_ysp_chain_host t40_ydns_host t40_gib_host t40_lsc_host t40_bitexact_host t40_callarg_check t41_sensor_barrier_check t40_hardcoded_anchor_check t40_clk_teardown_check t40_tstp_init_check t40_custom_algo_wake_check t41_custom_ae_check t41_custom_awb_check t41_awb_algo_host t41_af_gate_check lifted_ptr_scale_check t40_lost_tail_host t40_algo_handle_host t40_wdr_log2_host t23_bypass_host
 # Sources that only run on the camera (not built on the host).
 TARGET_TESTS := $(basename $(wildcard t41_v4l2_*_test.c)) t41_antiflicker_ioctl_test
 TEST_TIMEOUT ?= 600
@@ -87,6 +87,7 @@ tx_isp_t31_fcrop_test: tx_isp_t31_fcrop_test.c ../driver/t31/tx_isp_t31_fcrop.h
 TESTS += tx_isp_t23_af_test
 TESTS += tx_isp_t23_crumbs_test
 TESTS += tx_isp_t23_scratch_test
+TESTS += tx_isp_t23_bypass_test
 TESTS += tx_isp_t23_mdns_hold_test
 TESTS += tx_isp_t32_mem_rcfg_test
 TESTS += tx_isp_t32_msca_curve_test
@@ -131,6 +132,13 @@ tx_isp_t23_msca_geom_test: tx_isp_t23_msca_geom_test.c ../driver/t23/tx_isp_t23_
 
 tx_isp_t23_scratch_test: tx_isp_t23_scratch_test.c ../driver/t23/tx_isp_t23_scratch.h
 	$(CC) $(CFLAGS) -o $@ $<
+
+tx_isp_t23_bypass_test: tx_isp_t23_bypass_test.c ../driver/t23/tx_isp_t23_bypass.h
+	$(CC) $(CFLAGS) -o $@ $<
+
+# T23 bypass graph VIC bank ring: mutation check (Lu-Fi/openimp#129)
+t23_bypass_host:
+	sh ./t23_bypass_host.sh
 
 tx_isp_t23_mdns_hold_test: tx_isp_t23_mdns_hold_test.c ../driver/t23/tx_isp_t23_mdns_hold.h
 	$(CC) $(CFLAGS) -o $@ $<
