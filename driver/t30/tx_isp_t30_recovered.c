@@ -52855,11 +52855,17 @@ static u32 tx_isp_t30_histogram_metered_mean(
 	statistics->histogram_total = population;
 	if (!population)
 		return 0;
+	/*
+	 * 0 means "no statistics" to the caller.  A frame whose pixels all sit
+	 * in bin 0 (black, e.g. at minimum exposure in a dark scene) has the
+	 * half-step mean 0.5, truncated to 0: report the darkest real level 1,
+	 * so the AE raises the exposure instead of holding it (#202).
+	 */
 #ifdef REGTRACE_KERNEL_TREE_BUILD
 	do_div(weighted, population * 2);
-	return (u32)weighted;
+	return max_t(u32, (u32)weighted, 1);
 #else
-	return (u32)(weighted / (population * 2));
+	return max_t(u32, (u32)(weighted / (population * 2)), 1);
 #endif
 }
 
