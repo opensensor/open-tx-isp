@@ -12,12 +12,13 @@
  * Findings from the OEM module (Eufy T8416 tx-isp-t40.ko):
  *  - tisp_ct_update reads TOP (reg 0x40) and skips CCM when bit 9, LSC when bit 1, BCSH when
  *    bit 15 and CLM when bit 16 is set (= module bypassed).
- *  - tisp_lsc_ct_update only re-interpolates the LUT (tisp_lsc_interp_by_ct) and defers the
- *    hardware write: lsc_lut_write_times[bank]++ when fnum > lsc_frm_num_saved + wlut_frequency
- *    (5), tisp_hardware_reg_refresh then calls tisp_lsc_real_write_lut.  The OEM module never
- *    writes fnum (.bss, 16 B, only read), so this deferral never fires: the vendor LSC LUT keeps
- *    its init interpolation.  t40_ct_fnum_tick=1 advances fnum per process to make the OEM
- *    deferral fire (beyond-vendor); default 0 = vendor behaviour.
+ *  - tisp_lsc_ct_update re-interpolates the LUT (tisp_lsc_interp_by_ct) and defers the hardware
+ *    write: lsc_lut_write_times[bank]++ when fnum >= lsc_frm_num_saved + wlut_frequency, then
+ *    tisp_hardware_reg_refresh calls tisp_lsc_real_write_lut.  fnum (.bss, u64 per sensor) is
+ *    advanced once per frame by tisp_push_frame_count from ispcore_interrupt_service_routine (the
+ *    only writer, through a pointer; same in the factory and the thingino vendor build), so the
+ *    deferral fires on the device.  Here fnum advances once per AWB process (t40_ct_fnum_tick=1,
+ *    default); 0 freezes it (LUT re-interpolated, never re-written).
  *  - TOP word (tisp_main_init 0x1da5c..0x1dae8): see t40_vct_top_word().
  * Included from tx_isp_t40_vawb.h after the runtime (VAWB_CTL/VAWB_CSP).
  */
@@ -40,9 +41,9 @@ module_param_named(t40_ct_top, t40_ct_top, uint, 0444);
 static uint t40_ct_chains;
 module_param(t40_ct_chains, uint, 0644);
 MODULE_PARM_DESC(t40_ct_chains, "1: OEM tisp_ct_update / ccm+bcsh ev_update chains (translated) instead of the literal CT/EV follow-ups");
-static uint t40_ct_fnum_tick;
+static uint t40_ct_fnum_tick = 1;
 module_param(t40_ct_fnum_tick, uint, 0644);
-MODULE_PARM_DESC(t40_ct_fnum_tick, "1: advance the OEM frame number per AWB process (OEM never does: LSC CT LUT write deferral never fires)");
+MODULE_PARM_DESC(t40_ct_fnum_tick, "1 (default): advance the OEM frame number per AWB process like the OEM ISR does per frame (LSC CT LUT write deferral fires); 0: frozen");
 static u32 vct_ct_calls, vct_ev_calls, vct_lut_writes, vct_skips;
 module_param_named(t40_ct_calls, vct_ct_calls, uint, 0444);
 module_param_named(t40_ct_lut_writes, vct_lut_writes, uint, 0444);

@@ -1,15 +1,25 @@
 #!/bin/bash
 # Host run of the translated T40 OEM colour chains (t40_ct_chains):
-#   tests/t40_vct_host.sh <tuning.bin> <oem data.bin> [verbose]
-# (oem data.bin = objcopy -O binary --only-section=.data of the OEM tx-isp-t40.ko)
-# Without arguments: T40_TUNING_BIN / T40_OEM_DATA from the environment, SKIP when absent (make check).
+#   tests/t40_vct_host.sh <tuning.bin> <oem data.bin | OEM tx-isp-t40.ko> [verbose]
+# (oem data.bin = objcopy -O binary --only-section=.data of the OEM tx-isp-t40.ko it was generated from, 190016 bytes;
+#  any other vendor build with a symbol table works as the .ko: t40_vct/oem_data_by_symbol.py places the 26 .data
+#  objects the generated init reads at their generation offsets)
+# Without arguments: T40_TUNING_BIN and T40_OEM_DATA or T40_OEM_KO from the environment, SKIP when absent (make check).
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd); D=$HERE/../driver/t40
-BIN=${1:-$T40_TUNING_BIN}; DAT=${2:-$T40_OEM_DATA}
-if [ ! -r "$BIN" ] || [ ! -r "$DAT" ]; then echo "t40_vct_host: SKIP (no tuning bin / OEM .data: set T40_TUNING_BIN and T40_OEM_DATA)"; [ -z "$T40_ORACLE_STRICT" ] || exit 1; exit 0; fi
-# the generated init code addresses the OEM .data by fixed offsets: only the .data of the exact build it was lifted from (190016 bytes) fits
-if [ "$(stat -c %s "$DAT")" != 190016 ]; then echo "t40_vct_host: SKIP (OEM .data is $(stat -c %s "$DAT") bytes, the harness needs the 190016-byte .data of the vendor build it was lifted from; see tests/README.oracles.md)"; [ -z "$T40_ORACLE_STRICT" ] || exit 1; exit 0; fi
+BIN=${1:-$T40_TUNING_BIN}; DAT=${2:-${T40_OEM_DATA:-$T40_OEM_KO}}
+skip() { echo "t40_vct_host: SKIP ($1)"; [ -z "$T40_ORACLE_STRICT" ] || exit 1; exit 0; }
+if [ ! -r "$BIN" ] || [ ! -r "$DAT" ]; then skip "no tuning bin / OEM module: set T40_TUNING_BIN and T40_OEM_KO (or T40_OEM_DATA)"; fi
 W=$(mktemp -d); trap 'rm -rf $W' EXIT
+is_elf() { [ "$(head -c4 "$1" | od -An -tx1 | tr -d ' ')" = 7f454c46 ]; }
+if ! is_elf "$DAT" && [ "$(stat -c %s "$DAT")" != 190016 ] && [ -r "$T40_OEM_KO" ]; then DAT=$T40_OEM_KO; fi
+if is_elf "$DAT"; then
+	python3 -c "import elftools" 2>/dev/null || skip "python3 pyelftools missing"
+	python3 "$HERE/t40_vct/oem_data_by_symbol.py" "$DAT" "$W/oem.data" || skip "OEM module without the colour .data objects"
+	DAT=$W/oem.data
+fi
+# the generated init code addresses the OEM .data by fixed offsets of the build it was generated from (190016 bytes)
+if [ "$(stat -c %s "$DAT")" != 190016 ]; then skip "OEM .data is $(stat -c %s "$DAT") bytes, not the 190016-byte .data of the generation build; pass the vendor .ko instead (see tests/README.oracles.md)"; fi
 sed -n '/^#include "tx_isp_t40_vawb_gen.inc"/q;p' $D/tx_isp_t40_vawb.h > $W/top.h
 sed -i -E -e 's/a >= 0x80000000U \&\& a < 0xfffff000U \&\& !\(a \& align\)/harness_ok(a, align)/' \
        -e 's/tg < 0x80000000U \|\| \(tg \& 3\)/tg < 0x1000U || (tg \& 3)/' \
