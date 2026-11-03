@@ -1,8 +1,8 @@
 # Unicorn oracles (T40)
 
-Ten host checks compare our C code with the instructions of the vendor module under the Unicorn
+Eleven host checks compare our C code with the instructions of the vendor module under the Unicorn
 emulator, or with translated vendor code:
-`t40_ccm_conv_host t40_ccm_chain_host t40_ct_chain_host t40_dmsc_chain_host t40_mdns_chain_host t40_ysp_chain_host t40_ydns_host t40_gib_host t40_lsc_host t40_blc_host`
+`t40_ccm_conv_host t40_ccm_chain_host t40_ct_chain_host t40_dmsc_chain_host t40_mdns_chain_host t40_ysp_chain_host t40_ydns_host t40_gib_host t40_lsc_host t40_blc_host t40_ae_leaf_host`
 (need `T40_OEM_KO`, and `T40_CC` for the chain ones), `t40_vct_host` (`T40_TUNING_BIN` + `T40_OEM_KO`) and
 `t40_bcsh_dn_host` (`T40_TUNING_BIN`, or the initialised `external/ingenic-sdk` submodule).
 
@@ -17,6 +17,7 @@ Inputs (vendor files are never part of the repository):
 
     export T40_OEM_KO=<tx-isp-t40.ko of a vendor firmware of the same ISP generation>
     export T40_CC=<mipsel-linux-gcc of any thingino toolchain>
+    export T40_OEM_KO_FAC=<tx-isp-t40.ko of the factory Eufy firmware>   # t40_ae_leaf_host only (3 functions, see below)
     export T40_TUNING_BIN=<a T40 sensor tuning bin, e.g. external/ingenic-sdk/sensor-iq/t40/gc2053.bin>
     python3 -m pip install unicorn pyelftools   # if missing
     make -C tests check-oracles
@@ -63,3 +64,14 @@ terms on the shift-ladder boundaries, Bayer types 0-3 and out-of-range, 48 sourc
 zero for a maximum black level of exactly 4096 (undefined result): those calls are counted as skipped, the C returns 8192 there.
 BLC is gated by the bypass flag of the sensor bin (the Eufy sc830ai bypasses it): the oracle proves the code, the effect on a picture needs a
 sensor with BLC switched on.
+
+## AE leaf and parameter functions (2026-11-03, #85 class A/B)
+
+`t40_ae_leaf_host` covers `driver/t40/tx_isp_t40_ae_leaf.h`: `tisp_ae_g_luma`, `g_comp`, `get_state`, `sensor_trig`, `ev_start_set`,
+`algo_deinit_internal`, `get_hist_bin`, `set_hist_bin`, `get_y_zone`, `g_scene_luma`, `s_comp`, `api_set_exp_list`, `tisp_s_ae_explist`,
+`tisp_s_ae_exprinfo_attr`, `tisp_s_ae_scence_attr`, `tisp_g_ae_scence_attr` (1000 calls per function on a random universe: both 0x164-byte AE contexts
+with their pointer fields aimed at random buffers, the stM/SAeOuter blocks, ae_cache, tparamsN, tisp_tattr, hist-last arrays; every byte of the test heap
+and of the globals, the return value and the calls to the not-converted callees and the AE locks are compared; 60 source mutations that must be detected).
+`tisp_ae_sensor_trig`, `ev_start_set` and (through it) `s_scence_attr` differ between the two Eufy builds: the vendor image moved the ae_cache fields (trigger flag
+at +1296 instead of +1292) and stores `ae_cache[ch] + 1297` in ev_start_set. The driver uses the factory layout, so those three are compared with the factory module
+(`T40_OEM_KO_FAC`); without it they are not compared (a note, a failure with `T40_ORACLE_STRICT=1`). Skipped calls: an empty zone geometry (OEM `divu` by zero).
