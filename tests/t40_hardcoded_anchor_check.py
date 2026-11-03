@@ -38,7 +38,6 @@ for fn, sig, want in (
         ("tisp_ydns_dn_params_refresh", r"\bint32_t tisp_ydns_dn_params_refresh\(uint32_t a0\)", "regtrace_ydns_wdr_flag"),
         ("tisp_ysp_dn_params_refresh", r"\bint32_t tisp_ysp_dn_params_refresh\(uint32_t a0\)", "regtrace_ysp_wdr_flags"),
         ("tisp_lce_tgain_interp_strength", r"\bint32_t tisp_lce_tgain_interp_strength\(uint32_t a0\)", "t40_lce_tgain_oem"),
-        ("tisp_lce_tgain_update", r"\bint32_t tisp_lce_tgain_update\(uint32_t a0, uint32_t a1\)", "t40_lce_tgain_oem"),
         ("tisp_dmsc_wdr_en", r"\bint64_t tisp_dmsc_wdr_en\(uint32_t a0, uint32_t a1\)", "t40_dmsc_wdr_en")):
     b = body_of(fn, sig)
     if b is None:
@@ -49,6 +48,12 @@ for fn, sig, want in (
         bad.append(fn + " does not use " + want)
     if re.search(r"&(dmsc_wdr_en|ydns_wdr_en|ysp_wdr_en|lce_tgain)\b", b):
         bad.append(fn + " still uses a 4-byte stand-in (&dmsc_wdr_en/&ydns_wdr_en/&ysp_wdr_en/&lce_tgain)")
+# tisp_lce_tgain_update was a lifted event-6/10 handler (OEM tisp_main_long_tgain_update fan-out); it went with those
+# handlers (#85).  If it comes back it must use the OEM array like the reader above.
+if re.search(r"\bint32_t tisp_lce_tgain_update\(uint32_t a0, uint32_t a1\)\s*\{", text):
+    b = body_of("tisp_lce_tgain_update", r"\bint32_t tisp_lce_tgain_update\(uint32_t a0, uint32_t a1\)")
+    if b is not None and "t40_lce_tgain_oem" not in b:
+        bad.append("tisp_lce_tgain_update does not use t40_lce_tgain_oem")
 nocomment = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
 for stand in ("dmsc_wdr_en", "ydns_wdr_en", "ysp_wdr_en", "lce_tgain"):
     for mm in re.finditer(r"&" + stand + r"\b(?!\w)", nocomment):
