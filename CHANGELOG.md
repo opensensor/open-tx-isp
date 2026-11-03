@@ -4,6 +4,11 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-03: T40 CDNS (chroma denoise) runs like the vendor, day and night (#203; host + QEMU + Eufy T40 camera)
+
+- `enable_cdns` is no longer opt-in: it follows the tuning bank flag 19 (TOP bit 19) like YDNS/SDNS, as the OEM `tisp_main_init` does (both sc830ai banks have the flag clear, so the vendor runs CDNS in day and night). `t40_force_active` / `t40_force_bypass` bit 19 override. The day/night bank refresh now reloads the section and repacks at the remembered gain (OEM `tisp_cdns_dn_params_refresh`).
+- Eufy T40 .184 day mode: TOP 0x7FD8000D -> 0x7FD0000D (= vendor day value), CDNS unit registers written, apitest 398/0 both, 6 reload cycles 0 oops, picture luma 125.9 -> 125.0, colour ratios unchanged. QEMU t40: 5 reloads 0 oops, TOP 0x7FD0000D.
+
 ## 2026-11-03: T30 tuning-bin customer initialisation, system table items at their OEM offsets, AE on a black frame (#202; T30X lab camera + QEMU T30)
 
 - The lifted `apical_custom_initialization()` read an unrelated static array instead of the customer table pointer stored by `init_tx_isp_customer_parameter()`, so the customer initialisation of the tuning bin was skipped (its two `apical_command()` calls also lacked the fifth argument). Now applied: maximum sensor analogue gain 117 -> 130 and maximum ISP digital gain 32 -> 125, the vendor values.
