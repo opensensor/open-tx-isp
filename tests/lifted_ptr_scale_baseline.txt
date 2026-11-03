@@ -1240,11 +1240,8 @@ t40 isp_i2c_new_subdev_board arity 1 dead only from the lifted subdev_sensor_ops
 t40 isp_info_show_isra_4 arity 7 dead only reachable from isp_core_debug_show, which nothing registers; /proc/jz/isp/isp-m0 is hand-written (#193)
 t40 isp_save_cmd_set arity 1 unreach
 t40 isp_vic_cmd_set arity 5 unreach
-t40 ispcore_activate_module arity 2 shim lost CALLEE, not a lost argument: the lifted jalr target is the counting no-op regtrace_unresolved_jalr (unresolved_jalr_count 0 on the Eufy and in QEMU: 3 reload cycles, timps start/stop); needs the real subdev op call + a camera proof, tracked as its own class (#193 follow-up)
 t40 ispcore_frame_channel_dqbuf arity 1 unreach
-t40 ispcore_frame_channel_streamoff arity 1 shim lost CALLEE, not a lost argument: the lifted jalr target is the counting no-op regtrace_unresolved_jalr (unresolved_jalr_count 0 on the Eufy and in QEMU: 3 reload cycles, timps start/stop); needs the real subdev op call + a camera proof, tracked as its own class (#193 follow-up)
 t40 ispcore_pad_event_handle arity 15 unreach
-t40 ispcore_video_s_stream arity 1 shim lost CALLEE, not a lost argument: the lifted jalr target is the counting no-op regtrace_unresolved_jalr (unresolved_jalr_count 0 on the Eufy and in QEMU: 3 reload cycles, timps start/stop); needs the real subdev op call + a camera proof, tracked as its own class (#193 follow-up)
 t40 sensor_alloc_integration_time arity 1 unreach
 t40 sensor_alloc_integration_time_short arity 1 unreach
 t40 sensor_set_mode arity 1 unreach
@@ -1288,9 +1285,6 @@ t40 tx_isp_gamma_g_attr_isra_32 arity 2 dead no caller: GET answered by regtrace
 t40 tx_isp_mask_g_attr_isra_35 arity 1 ok the T40-MASK-GET block returns before the lifted tail; the flagged call emits no code (compile line map, #193)
 t40 tx_isp_module_ratio_g_attr_isra_50 arity 1 shim OEM mismatch confirmed (tisp_g_* takes the user buffer); the command is answered earlier by regtrace_t40_g_ctrl_attr, the wrapper is not entered (#193)
 t40 tx_isp_probe arity 1 unreach
-t40 tx_isp_sensor_release_sensor arity 1 shim lost CALLEE, not a lost argument: the lifted jalr target is the counting no-op regtrace_unresolved_jalr (unresolved_jalr_count 0 on the Eufy and in QEMU: 3 reload cycles, timps start/stop); needs the real subdev op call + a camera proof, tracked as its own class (#193 follow-up)
 t40 tx_isp_statis_config_g_attr_isra_49 arity 2 shim OEM mismatch confirmed (tisp_g_* takes the user buffer); the command is answered earlier by regtrace_t40_g_ctrl_attr, the wrapper is not entered (#193)
-t40 tx_isp_video_link_stream arity 2 shim lost CALLEE, not a lost argument: the lifted jalr target is the counting no-op regtrace_unresolved_jalr (unresolved_jalr_count 0 on the Eufy and in QEMU: 3 reload cycles, timps start/stop); needs the real subdev op call + a camera proof, tracked as its own class (#193 follow-up)
-t40 tx_isp_vin_init arity 1 shim lost CALLEE, not a lost argument: the lifted jalr target is the counting no-op regtrace_unresolved_jalr (unresolved_jalr_count 0 on the Eufy and in QEMU: 3 reload cycles, timps start/stop); needs the real subdev op call + a camera proof, tracked as its own class (#193 follow-up)
-t40 tx_isp_vin_reset arity 1 shim lost CALLEE, not a lost argument: the lifted jalr target is the counting no-op regtrace_unresolved_jalr (unresolved_jalr_count 0 on the Eufy and in QEMU: 3 reload cycles, timps start/stop); needs the real subdev op call + a camera proof, tracked as its own class (#193 follow-up)
+t40 tx_isp_video_link_stream arity 2 dead #199: both lifted jalr sites call video_ops[1] (link_stream); no OEM subdev fills that slot (vendor tx-isp-t40.ko relocations: vic/vin/csi/ispcore video_ops hold only [0] s_stream, ispcore also [2] link_setup), so the slot is NULL and the call is never made. Left as the counting no-op on purpose
 t40 video_input_cmd_set arity 3 unreach

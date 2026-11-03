@@ -37618,7 +37618,8 @@ tx_isp_vin_init0x78:
     if (v0 == 0) { goto tx_isp_vin_init0x40; }
 
     /* fragment 13: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)regtrace_unresolved_jalr)(a0); /* jalr target resolved by relocation */
+    /* #199: OEM 0x170f0 jalr v0 = sensor core ops init (ops->core + 4), argument = the active sensor subdev */
+    v0 = (uintptr_t)((uintptr_t (*)(uintptr_t))(uintptr_t)v0)(a0);
 
     /* fragment 14: Arithmetic */
     v1 = -515;
@@ -38427,7 +38428,8 @@ tx_isp_vin_reset0x44:
     if (v0 == 0) { goto tx_isp_vin_reset0x34; }
 
     /* fragment 10: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)regtrace_unresolved_jalr)(a0); /* jalr target resolved by relocation */
+    /* #199: OEM jalr v0 = sensor core ops reset (ops->core + 8), argument = the active sensor subdev */
+    v0 = (uintptr_t)((uintptr_t (*)(uintptr_t))(uintptr_t)v0)(a0);
 
     /* fragment 11: Arithmetic */
     v1 = -515;
@@ -52965,6 +52967,7 @@ int32_t tx_isp_sensor_release_sensor(uintptr_t a0, uint32_t a1)
     uintptr_t s2 = 0;
     uintptr_t s3 = 0;
     uintptr_t v0 = 0;
+    uint8_t __rs_buf[100];   /* OEM sp+24..sp+123 */
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
@@ -52973,8 +52976,7 @@ int32_t tx_isp_sensor_release_sensor(uintptr_t a0, uint32_t a1)
     s1 = a0;
     { /* #agg51: OEM 0x10af8..0x10b1c copy_from_user(sp+24, a1, 100); the lift passed only the destination
        * (stale a1/a2 as source/length into the 4-byte local_18).  The buffer goes to the subdevs' core
-       * ioctl (0x2000001), which stays a regtrace_unresolved_jalr no-op as before. */
-      uint8_t __rs_buf[100];   /* OEM sp+24..sp+123 */
+       * ioctl (0x2000001); #199: handed to the subdevs' sensor ops ioctl now. */
       v0 = (uintptr_t *)(uintptr_t)private_copy_from_user((int32_t)(uintptr_t)__rs_buf, (int32_t)a1, 100); }
 
     /* fragment 2: Branch */
@@ -53040,7 +53042,8 @@ tx_isp_sensor_release_sensor0xb8:
     if (v0 == 0) { goto tx_isp_sensor_release_sensor0x54; }
 
     /* fragment 17: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)regtrace_unresolved_jalr)(a0); /* jalr target resolved by relocation */
+    /* #199: OEM 0x10b8c jalr v0 = ops->sensor + 8 (ioctl): (sd, 0x2000001, buffer) */
+    v0 = (uintptr_t)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)v0)(a0, s2, (uintptr_t)__rs_buf);
 
     /* fragment 18: Branch */
     if (v0 == 0) { goto tx_isp_sensor_release_sensor0x54; }
@@ -132522,7 +132525,8 @@ ispcore_frame_channel_streamoff0x70:
     if (v1 == 0) { goto ispcore_frame_channel_streamoff0xb4; }
 
     /* fragment 18: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)regtrace_unresolved_jalr)(*(uint32_t *)((char *)(v0) + 1012)); /* jalr target resolved by relocation */
+    /* #199: OEM 0x76c38 jalr v1: per-channel stream-off callback slot {fn 1008, ctx 1012}: fn(ctx, channel, 0) */
+    v0 = (uintptr_t)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)v1)(*(uint32_t *)((char *)(v0) + 1012), a1, 0);
 
     /* fragment 19: CallSetup */
     s2 = v0;
@@ -132534,6 +132538,7 @@ ispcore_frame_channel_streamoff0xb4:
 ispcore_frame_channel_streamoff0xd8:
     /* fragment 21: Epilogue */
     /* function epilogue: restore registers and return */
+    v0 = s2;   /* #199: OEM 0x76c6c move v0,s2 (callback result / 0); the lift returned the memset result */
     return (int64_t)v0;
 
 ispcore_frame_channel_streamoff0xdc:
@@ -138000,7 +138005,8 @@ ispcore_activate_module0x1f0:
     /* fragment 49: CallSetup */
     s2 = s0 + 60;
     s3 = s0 + 124;
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)regtrace_unresolved_jalr)(*(uint32_t *)((char *)(s0) + 992), 67108864, 0); /* jalr target resolved by relocation */
+    /* #199: OEM 0x8a0b0 jalr: sd = dev+992; (*(sd+0x80))(sd, 0x4000000, 0), the subdev event callback */
+    v0 = (uintptr_t)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)*(uint32_t *)((char *)*(uint32_t *)((char *)s0 + 992) + 0x80))(*(uint32_t *)((char *)(s0) + 992), 67108864, 0);
 
     /* fragment 50: Arithmetic */
     s4 = -515;
@@ -138030,7 +138036,8 @@ ispcore_activate_module0x220:
     if (v0 == 0) { goto ispcore_activate_module0x348; }
 
     /* fragment 58: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)regtrace_unresolved_jalr)(s1); /* jalr target resolved by relocation */
+    /* #199: OEM jalr v0 = ops->internal[0] (activate_subdev), argument = the slot subdev */
+    v0 = (uintptr_t)((uintptr_t (*)(uintptr_t))(uintptr_t)v0)(s1);
 
     /* fragment 59: Branch */
     if (v0 == 0) { goto ispcore_activate_module0x348; }
@@ -138885,7 +138892,8 @@ ispcore_video_s_stream0x1e8:
     if (v0 == 0) { goto ispcore_video_s_stream0x160; }
 
     /* fragment 40: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)regtrace_unresolved_jalr)(a0); /* jalr target resolved by relocation */
+    /* #199: OEM jalr v0 = ops->video[0] (s_stream), arguments (slot subdev, initarg {enable, vinum}) */
+    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)v0)(a0, (uintptr_t)s7);
 
     /* fragment 41: Branch */
     s5 = v0;
