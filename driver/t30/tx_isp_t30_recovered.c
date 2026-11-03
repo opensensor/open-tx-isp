@@ -54600,6 +54600,12 @@ static void tx_isp_t30_simple_awb_update(int32_t *awb_fsm)
 	state->awb_blue_scale = clamp_t(u32,
 		(state->blue_target_sum + coefficient / 2) / coefficient,
 		0x40, 0x400);
+	/* OEM awb_normalise(): with AWB not manual (system item 12) the red/blue feedback factors
+	 * are published halved into the system items 49/50, which back GetWB (#202) */
+	if (!stab[12]) {
+		stab[49] = (u8)min_t(u32, state->awb_red_scale >> 1, 0xff);
+		stab[50] = (u8)min_t(u32, state->awb_blue_scale >> 1, 0xff);
+	}
 
 	/*
 	 * awb_normalise() combines the two feedback factors with all four values
