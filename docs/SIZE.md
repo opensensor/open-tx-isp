@@ -83,12 +83,10 @@ picture chains (RAM only, no file size). Already `-Os`, `--gc-sections`,
 section anchors on.
 
 2026-11-01 (Lu-Fi/openimp#85, steps A to C of the remaining-chains plan):
-- `TX_ISP_T40_VCT=y` builds the translated OEM CT/EV colour chains
-  (`t40_ct_chains=1`, `tx_isp_t40_vct.h`, opt-in, never device-tested); default
-  off: `t40_ct_chains`, `t40_ct_fnum_tick`, `t40_ct_calls`, `t40_ct_lut_writes`,
-  `t40_ct_skips` and `t40_ct_diag` do not exist and the literal/C CT and EV
-  follow-ups run as with `t40_ct_chains=0`. `tests/t40_vct_host.sh` still tests
-  the chain on the host.
+- `TX_ISP_T40_VCT=y` built the translated OEM CT/EV colour chains (`t40_ct_chains=1`,
+  `tx_isp_t40_vct.h`, opt-in, never device-tested). Removed 2026-11-03 together with
+  `tx_isp_t40_vawb_gen.inc`, `tests/t40_vct_host.sh` and `tools/t40_vawb/` (#85): the
+  CT/EV consumers are the checked C chain `tx_isp_t40_ct_chain.h`.
 - 49 more parameters behind `TX_ISP_T40_BRINGUP_PARAMS` (same rule as above,
   searched 2026-11-01 in this repository's docs/tests/tools, OpenIMP, the
   firmware tree and the image's /etc; session audit scripts still in use kept

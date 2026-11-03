@@ -22,11 +22,6 @@ ifeq ($(TX_ISP_T40_TISP_PAR),y)
 ccflags-y += -DTX_ISP_T40_TISP_PAR
 endif
 ccflags-$(CONFIG_TX_ISP_T40_V4L2) += -DCONFIG_TX_ISP_T40_V4L2
-# Translated OEM CT/EV colour chains (t40_ct_chains=1, tx_isp_t40_vct.h; about 118 KB of code),
-# opt-in and not device-tested: built in only with make ... TX_ISP_T40_VCT=y (#85).
-ifeq ($(TX_ISP_T40_VCT),y)
-ccflags-y += -DTX_ISP_T40_VCT
-endif
 # -Os like the other SoCs (kernel default) instead of the old bring-up
 # -O0 -fno-tree-dce -fno-ipa-pure-const -fno-ipa-reference.  TX_ISP_T40_O0=y
 # restores that build for A/B if the recovered code misbehaves when optimised.

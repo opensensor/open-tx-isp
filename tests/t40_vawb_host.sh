@@ -14,7 +14,7 @@
 # e.g. 308cfe4b) on every call, register writes + state + faults compared; FUZZP=seed [FUZZN=calls] runs the fuzz loop.
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd); D=${T40_DRV_DIR:-$HERE/../driver/t40}; W=$(mktemp -d); trap '[ -n "$KEEPW" ] && echo "kept: $W" || rm -rf $W' EXIT
-sed -n '/^#include "tx_isp_t40_vawb_gen.inc"/q;p' $D/tx_isp_t40_vawb.h > $W/top.h
+sed -n '/^\/\* end of the host harness part/q;p' $D/tx_isp_t40_vawb.h > $W/top.h
 sed -i -e 's/a >= 0x80000000U \&\& a < 0xfffff000U \&\& !(a \& align)/harness_ok(a, align)/' \
        -e 's/tg < 0x80000000U || (tg \& 3)/tg < 0x1000U || (tg \& 3)/' \
        -e "s/vawb_tbuf\[256\]/vawb_tbuf[65536]/" -e 's/^\(static u8 vawb_wide_tele_para\[144\]\)/\1 VD/' -e 's/^\(static u32 vawb_argarea\[16\]\)/\1 VD/' \
@@ -70,7 +70,13 @@ if [ -n "$CTD_REF" ]; then
 	sed -i 's/^static u64 vawb_s_tisp_awb_ct_detect(/static u64 vawb_s_ctd_c(/' $W/top.h
 	XDEF="$XDEF -DCTD_REF_INC=\"$W/ref.inc\""
 fi
-sed -e 's/^static const u8 vawb_rodata\(\[[0-9]*\]\) __aligned(8)/static u8 vawb_rodata\1 __aligned(8) VD/' ${GEN:-$D/tx_isp_t40_vawb_gen.inc} > $W/gen.inc
+# GEN=<file>: extra translated OEM code to include (the driver has none since the CT/EV chain became C, #85)
+PRO_REF=${GR_REF:-${LA_REF:-$CTD_REF}}
+if [ -n "$GEN" ]; then cp "$GEN" $W/gen0.inc
+elif [ -n "$PRO_REF" ]; then	# the reference's own prologue: register-file macros and the OEM .rodata its translated functions use
+	git -C $HERE/.. show $PRO_REF:driver/t40/tx_isp_t40_vawb_gen.inc | sed -n '1,/^static const u8 vawb_rodata/p' > $W/gen0.inc
+else : > $W/gen0.inc; fi
+sed -e 's/^static const u8 vawb_rodata\(\[[0-9]*\]\) __aligned(8)/static u8 vawb_rodata\1 __aligned(8) VD/' $W/gen0.inc > $W/gen.inc
 XDEF="$XDEF $XDEFG $TOPDEF"
 [ -r $D/tx_isp_t40_awb_main.inc ] && XDEF="$XDEF -DHAVE_AWB_MAIN"
 ${VCC:-gcc} ${VOPT:--O1} ${XCFLAGS:--g0} -falign-functions=16 ${VPIE--no-pie -fno-pie} -w -fno-strict-aliasing ${VLD--Wl,--section-start=.vdata=0x30000000} \

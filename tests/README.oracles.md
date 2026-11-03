@@ -1,9 +1,9 @@
 # Unicorn oracles (T40)
 
-Eleven host checks compare our C code with the instructions of the vendor module under the Unicorn
-emulator, or with translated vendor code:
+Host checks that compare our C code with the instructions of the vendor module under the Unicorn
+emulator:
 `t40_ccm_conv_host t40_ccm_chain_host t40_ct_chain_host t40_dmsc_chain_host t40_mdns_chain_host t40_ysp_chain_host t40_ydns_host t40_gib_host t40_lsc_host t40_blc_host t40_ae_leaf_host`
-(need `T40_OEM_KO`, and `T40_CC` for the chain ones), `t40_vct_host` (`T40_TUNING_BIN` + `T40_OEM_KO`) and
+(need `T40_OEM_KO`, and `T40_CC` for the chain ones), and
 `t40_bcsh_dn_host` (`T40_TUNING_BIN`, or the initialised `external/ingenic-sdk` submodule).
 
 In a plain `make -C tests check` they print `SKIP` and exit 0 when the inputs are missing (the default flow
@@ -27,15 +27,15 @@ Inputs (vendor files are never part of the repository):
 Two Eufy T8416 vendor builds of `tx-isp-t40.ko` exist (both `20220601a`, both with symbols):
 - the thingino vendor image build (`ingenic-sdk` prebuilt, `.data` 189632 bytes): what the camera runs as the vendor
   stack in every vendor-vs-open comparison. This is the reference (`T40_OEM_KO`) for all oracles.
-- the factory Eufy firmware module (`.data` 190016 bytes): the one `tools/t40_vawb/gen.sh` translated
-  (`tx_isp_t40_vawb_gen.inc`, `tests/t40_vct/vct_init_gen.inc`).
+- the factory Eufy firmware module (`.data` 190016 bytes): the one the old mechanical translation of the CT/EV colour chain
+  came from (removed 2026-11-03, #85: the chain is the checked C of `tx_isp_t40_ct_chain.h`).
 
 Function-level diff (instructions with relocations compared by symbol, `jr`/`jr.hb` and trailing `nop` ignored):
 974 functions identical, 186 differ, 26 only in the factory build, 29 only in the vendor image build.
 - Identical in both: every function of the CT/EV colour chains and their init (`tisp_ct_update`, `tisp_ccm_main_ct_update`,
   `tisp_ccm_main_ev_update`, `tisp_ccm_ev_ct_update`, `tisp_lsc_ct_update`, `tisp_lsc_real_write_lut`, `tisp_bcsh_main_ct_update`,
   `tisp_bcsh_main_ev_update`, `tisp_ccm_main_init`, `tisp_bcsh_main_init`, `tisp_lsc_init`, `tisp_clm_ct_update`) and the 26 `.data`
-  objects `t40_vct_host` reads (CSC tables, `stMainBcshInterOri`, `stMainCcmInterOri`).
+  objects that init reads (CSC tables, `stMainBcshInterOri`, `stMainCcmInterOri`).
 - Different, used by an oracle: `tisp_awb_main_process`, `tisp_awb_params_refresh`, `tisp_awb_main_ev_update` (factory: wide/tele
   dual-sensor AWB; `tisp_awb_calc_tele_gain`, `tisp_awb_set_wide_tele`, `awb_wide_tele_para*` exist only there), `tisp_mdns_func_en`,
   `tisp_g_draw_attr`, `isp_vic_interrupt_service_routine`. All oracles pass with the vendor image build; see the #85 comment of
@@ -43,14 +43,10 @@ Function-level diff (instructions with relocations compared by symbol, `jr`/`jr.
 - Different elsewhere: AE (25 functions, flicker detect / AE step API only in one build each), CLM parameter get/set and `ct_interp`,
   GIB/BLC print helpers, MSCA, VIC/ISP core glue.
 
-## t40_vct_host and t40_bcsh_dn_host
+## t40_bcsh_dn_host
 
-- `t40_vct_host` runs with either build: the generated init addresses the OEM `.data` at the offsets of the factory build, so
-  `tests/t40_vct/oem_data_by_symbol.py` copies the 26 objects it reads by symbol name to those offsets (needs pyelftools). Pass the
-  vendor `.ko` (`T40_OEM_KO`, or as the second argument); a raw 190016-byte `.data` of the factory build still works as `T40_OEM_DATA`.
-  The harness loaded the day bank at bin offset 16 instead of 0x18 until 2026-11-03 (every bank field shifted by 8 bytes; LSC
-  ran with 46 instead of 1085 nodes on the Eufy bin). Result now: Eufy sc830ai and the SDK gc2053, sc200ai, gc4653 bins PASS;
-  os08a10 PASS with the note that its shading tables are identical for all CTs.
+- `t40_vct_host` (host run of the mechanically translated CT/EV chain) was removed on 2026-11-03 together with that translation
+  (#85); `t40_ct_chain_host` checks the C chain against the OEM instructions.
 - `t40_bcsh_dn_host` is not a mismatch: the strict run failed because the `external/ingenic-sdk` submodule is not initialised, so the
   default tuning bin is missing. With any T40 tuning bin it passes (0 words differ), e.g. the Ingenic T40 SDK `resource/sensor_settings_t40/gc2053-t40.bin`
   (also sc200ai, os08a10, gc4653: all PASS): `T40_TUNING_BIN=<bin> make -C tests t40_bcsh_dn_host`.

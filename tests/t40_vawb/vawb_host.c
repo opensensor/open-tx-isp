@@ -213,10 +213,6 @@ static u32 vawb_wide_tele_awb_gain[3] VD = { 0x04000400U, 0x04000400U, 0x0400040
 #undef vawb_s_tisp_awb_long_alogrithm
 static u64 vawb_s_tisp_awb_long_alogrithm(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 #endif
-/* CT-chain externals (tx_isp_t40_vct.h on the device), unused by the AWB run */
-static u64 vawb_x___private_spin_lock_irqsave(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp) { return 0; }
-static u64 vawb_x_private_spin_unlock_irqrestore(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp) { return 0; }
-static u64 vawb_s_tisp_clm_ct_update(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp) { return 0; }
 #include VAWB_INC
 #ifdef CTD_REF_INC
 #include CTD_REF_INC

@@ -1618,10 +1618,6 @@ static uintptr_t tparamsN[0x4000];
 static uint32_t tparams_day;
 static uint32_t tparams_night;
 static uint32_t tparams_status;
-/* tx_isp_t40_vct.h (included via tx_isp_t40_vawb.h at the end): OEM TOP word from the bin */
-static uint t40_ct_top_apply;
-static u32 t40_ct_top, t40_ct_top_sel;
-static u32 t40_vct_top_word(const u8 *bin, u32 sel, u32 status, u32 *reg6c);
 static uint32_t tsbin;
 static uint32_t deir_en;
 struct regtrace_sensor_ctrl_main_storage {
@@ -12737,17 +12733,6 @@ static int regtrace_isp_block_init_once(const char *where)
      * initializer above has completed, then make later scalar replays retain
      * that final value.
      */
-    /* OEM TOP word from the bin (tisp_main_init 0x1da5c..0x1dae8, tx_isp_t40_vct.h); readable as
-     * t40_ct_top, committed instead of the profile value with t40_ct_top_apply=1 */
-    if (nbuf) {
-        t40_ct_top_sel = *(uint32_t *)(tisp_par_info + 0x74);
-        t40_ct_top = t40_vct_top_word((const uint8_t *)(uintptr_t)nbuf, t40_ct_top_sel, tparams_status, NULL);
-        if (t40_ct_top_apply) {
-            printk(KERN_INFO "tx_isp_t40_recovered: isp-block-init top40 OEM word 0x%08x (sel=%u status=0x%x) replaces 0x%08x\n",
-                   t40_ct_top, t40_ct_top_sel, tparams_status, regtrace_t40_quality_top40_final);
-            regtrace_t40_quality_top40_final = t40_ct_top;
-        }
-    }
     if (regtrace_t40_quality_top40_final !=
         regtrace_tisp_main_init_top40_value) {
         int top_ret = system_reg_write(0x40U,

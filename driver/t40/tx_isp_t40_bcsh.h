@@ -591,8 +591,8 @@ static void t40_bcsh_load(const uint8_t *bank)
 
 /*
  * OEM pointer table (tisp_bcsh_params_transmit layout) into the two images,
- * for the translated OEM code in tx_isp_t40_vawb_gen.inc (t40_ct_chains=1:
- * tisp_bcsh_main_ev_update / main_ct_update run on it).
+ * built like the OEM init does it.  The driver's C consumers address the images
+ * directly; tests/t40/c_chains_host compares this table with the lifted one.
  */
 static uint32_t t40_bcsh_oem_ctx[72] T40C2;
 

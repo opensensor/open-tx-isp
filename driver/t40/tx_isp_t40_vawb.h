@@ -1,20 +1,17 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
- * T40 vendor AWB: the OEM AWB chain as hand-translated C (tx_isp_t40_awb_*.inc) and the
- * runtime for the mechanically translated OEM CT/EV colour chain in tx_isp_t40_vawb_gen.inc
- * (tools/t40_vawb/gen.sh, same asm2c.py as the T41 vendor AE).  Source module: Eufy T8416
+ * T40 vendor AWB: the OEM AWB chain as hand-translated C (tx_isp_t40_awb_*.inc).  Source module: Eufy T8416
  * OEM tx-isp-t40.ko (with symbols).
  *
  * C (bit-exact with the OEM, tests/t40_vawb_host.sh): tisp_awb_get_statistics (IRQ), tisp_awb_main_process
  * (long_par_update, spec_calculate, long_alogrithm -> ct_detect, sat_weight, set_gain, event 13), and for init /
  * day-night / EV: params_transmit, params_refresh, set_hardware_param, dn_params_refresh, main_ev_update,
- * ev_update_Ywgt, tgain_update (tx_isp_t40_awb_*.inc).  The mechanically translated part left in
- * tx_isp_t40_vawb_gen.inc is the CT/EV colour chain (t40_ct_chains, TX_ISP_T40_VCT).
- * In the generated part every OEM instruction is one C statement on 32-bit registers, relocations are
- * resolved by symbol name against the driver's own objects (pstMainAwbOri,
- * stMainAwbOuter/Inter, tparamsN, ...), so the lifter defect classes of the
- * fragment lift (lost args, wrong .bss anchors, 64-bit pairs) cannot occur.
- * Every load/store/call is guarded: a bad address is counted and skipped.
+ * ev_update_Ywgt, tgain_update (tx_isp_t40_awb_*.inc).  The CT/EV consumers of event 13 / 8 are the checked C
+ * chain in tx_isp_t40_ct_chain.h; no OEM code is translated mechanically in the driver any more (#85).
+ * The guarded load/store/call helpers below (vawb_lw, vawb_call, vf_*, ...) are the runtime of the old
+ * mechanical translation.  The driver no longer uses them (the compiler drops them); tests/t40_vawb_host.sh
+ * keeps them because its bit-exact modes (LA_REF / CTD_REF / GR_REF) run the translated OEM code of older
+ * commits against the C.
  * Included at the end of tx_isp_t40_recovered.c.
  */
 #ifndef TX_ISP_T40_VAWB_H
@@ -261,19 +258,6 @@ static u64 vawb_x_div64_u64(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
 	return div64_u64(((u64)a1 << 32) | a0, b);
 }
 
-/* OEM private state of the CT/EV colour chains (t40_ct_chains, tx_isp_t40_vct.h) */
-static u64 vct_fnum[2];			/* OEM fnum (.bss 16 B): read by tisp_ct_update, never written by the module */
-static u32 vct_lsc_ct;			/* OEM lsc_ct */
-static u8 vct_lsc_ct_flag[2];		/* OEM lsc_ct_flag */
-static u32 vct_lsc_ram_lock[2];		/* OEM lsc_ram_lock: only its address is used (adapter -> lsc_lit_banks[].lock) */
-static u8 vct_lsc_lut_write_times[2];	/* OEM lsc_lut_write_times */
-static u64 vct_lsc_frm_num_saved[2];	/* OEM lsc_frm_num_saved */
-static u8 vct_lsc_wlut_frequency[2] = { 5, 5 };	/* OEM .data 0x2c0f0 */
-static u32 vct_lsc_real_para[2];	/* OEM lsc_main_real_para, lsc_seco_real_para */
-static u32 vct_lsc_awdr_para[2];	/* OEM lsc_main_awdr_para, lsc_seco_awdr_para */
-static u64 vawb_x___private_spin_lock_irqsave(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
-static u64 vawb_x_private_spin_unlock_irqrestore(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
-static u64 vawb_s_tisp_clm_ct_update(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);
 /*
  * Issue 133: OEM tisp_awb_ct_detect (2065 insns + six helpers, ~0.45 M OEM instructions per
  * frame) costs about 65 % of the translated AWB process, where every OEM load/store is a guarded
@@ -291,7 +275,7 @@ static u64 vawb_s_tisp_awb_ct_detect(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
 #include "tx_isp_t40_awb_gain.inc"
 #include "tx_isp_t40_awb_init.inc"
 #include "tx_isp_t40_awb_main.inc"
-#include "tx_isp_t40_vawb_gen.inc"
+/* end of the host harness part (tests/t40_vawb_host.sh copies this file up to here) */
 
 
 /* The translated frames are large (ct_detect + GrayWorld_mode alone ~3.3 KB, the process chain ~6 KB)
@@ -366,7 +350,6 @@ t40_bringup_param(t40_vawb_run, uint, 0644);
 t40_bringup_param(t40_vawb_debug, uint, 0644);
 #define VAWB_STEP(n) do { if (t40_vawb_debug) { printk(KERN_WARNING "t40: vawb init step %d faults=%u\n", n, vawb_faults); msleep(400); } } while (0)
 #define VAWB_CSP ((u32)(uintptr_t)vawb_argarea)
-#include "tx_isp_t40_vct.h"
 
 /* OEM tisp_awb_main_init 0x31530 (frame of the open driver: inter seed =
  * stMainAwbInterOri, byte-identical with the Eufy OEM .data 0x1d36c). */
@@ -612,10 +595,6 @@ static void t40_vawb_ev_follow(void)
 	t40_vawb_ev_sent = ev;
 	VAWB_TOP();
 	t40_am_main_ev_update(ev);
-	if (t40_ct_chains) {	/* OEM event 8: tisp_ccm_main_ev_update + tisp_bcsh_main_ev_update */
-		t40_vct_ev_update(ev);
-		return;
-	}
 	if (regtrace_enable_ccm && regtrace_ccm_ct_track)
 		regtrace_ccm_ev = e10;	/* CCM by EV: the frame-done block below re-interpolates on change */
 	/* OEM tisp_bcsh_main_ev_update 0x6aac0 */
@@ -640,10 +619,6 @@ static void t40_vawb_ct_follow_ct(u32 ct)
 	if (ct < 1500U || ct > 15000U || READ_ONCE(regtrace_running_mode))
 		return;
 	t40_vawb_ct = ct;
-	if (t40_ct_chains) {	/* OEM event 13: tisp_ct_update (TOP-gated CCM/LSC/BCSH/CLM) */
-		t40_vct_ct_update(ct);
-		return;
-	}
 	t40_ct_update(ct, 0, t40_ct_fnum);
 }
 
