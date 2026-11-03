@@ -50,6 +50,11 @@ u32 = lambda e, ad: struct.unpack("<I", e.read(ad, 4))[0]
 def r32(): return rnd.getrandbits(32)
 def ctval(pts):
     """a CT near one of the zone limits (+-100 around the three points) or anywhere"""
+    if rnd.random() < 0.25:                                 # exactly on a zone limit (+-1)
+        return ((rnd.choice([pts[0] - 100, pts[1] - 100, pts[1] + 100, pts[2] + 100]) & 0xffff) + rnd.choice([0, 0, 1, -1])) & M32
+    if rnd.random() < 0.4:                                  # inside the interpolated zones (between the CT points)
+        lo, hi = sorted(pts[1:3]) if rnd.random() < 0.5 else sorted(pts[0:2])
+        return rnd.randrange(lo, hi + 201) if hi + 201 > lo else lo
     p = rnd.choice(pts); lim = rnd.choice([p - 100, p + 100, p])
     return rnd.choice([(lim + rnd.randrange(-3, 4)) & M32, rnd.randrange(1500, 12000), rnd.randrange(0, 0x10000), r32(), lim & M32, lim & M32])
 def mk_bank():
@@ -150,6 +155,9 @@ def compare(name, rs, ctx, extra=None):
     return True
 
 want = a.fn.split(",")
+# the .data defaults before anything is written (OEM clm_wlut_frequency vs the C initialiser)
+if oem.read(OS["clm_wlut_frequency"], 2) != our.read(US["t40_clm_wlut_frequency"], 2):
+    rec("defaults", "clm_wlut_frequency oem %s our %s" % (oem.read(OS["clm_wlut_frequency"], 2).hex(), our.read(US["t40_clm_wlut_frequency"], 2).hex()))
 for it in range(a.n):
     b = setup()
     for name in want:
@@ -161,16 +169,18 @@ for it in range(a.n):
             compare(name, init_both(bank), "init bank %d" % bank); continue
         ri = init_both(bank)
         if not compare("init", ri, "pre-init bank %d" % bank): continue
+        set_counters(bytes([rnd.getrandbits(8), rnd.getrandbits(8)]), random.Random(r32()).randbytes(16), bytes([rnd.choice([0, 1, 5, 255]), rnd.choice([0, 5])]))
         pts = list(struct.unpack("<3H", oem.read(b[bank] + BINOFF + 18912, 6)))
         set_state(bank, ct=ctval(pts), thr=rnd.choice([0, 64, 100, 0xffff, 0x8000, rnd.getrandbits(16)]), zone=rnd.choice([0, 1, 2, 3, 4, 5, rnd.getrandbits(8)]),
                   wdr=rnd.choice([0, 1]), csc=mk_csc() if rnd.random() < 0.5 else None)
         log["oem"].clear(); log["our"].clear()
         if name == "interp":
-            ct = ctval(pts); f = rnd.choice([0, 0, 1])
-            compare(name, (oem.call("tisp_clm_ct_interp", bank, ct, f), our.call("emu_interp", bank, ct, f)), "bank %d ct %d force %d pts %s" % (bank, ct, f, pts))
-            if rnd.random() < 0.7:                          # a second, unforced call close to the first: same zone, threshold
-                ct2 = (ct + rnd.choice([0, 1, -1, 63, 64, 65, -64, -65, rnd.randrange(-300, 300)])) & M32; log["oem"].clear(); log["our"].clear()
-                compare(name, (oem.call("tisp_clm_ct_interp", bank, ct2, 0), our.call("emu_interp", bank, ct2, 0)), "bank %d ct %d->%d pts %s" % (bank, ct, ct2, pts))
+            for k in range(6):                              # a chain of calls on the same context (zone / threshold memory)
+                ct = ctval(pts); f = rnd.choice([0, 0, 1]); log["oem"].clear(); log["our"].clear()
+                if not compare(name, (oem.call("tisp_clm_ct_interp", bank, ct, f), our.call("emu_interp", bank, ct, f)), "bank %d ct %d force %d pts %s" % (bank, ct, f, pts)): break
+                if rnd.random() < 0.7:                      # a second, unforced call close to the first: same zone, threshold
+                    ct2 = (ct + rnd.choice([0, 1, -1, 63, 64, 65, -64, -65, rnd.randrange(-300, 300)])) & M32; log["oem"].clear(); log["our"].clear()
+                    if not compare(name, (oem.call("tisp_clm_ct_interp", bank, ct2, 0), our.call("emu_interp", bank, ct2, 0)), "bank %d ct %d->%d pts %s" % (bank, ct, ct2, pts)): break
         elif name == "csc": compare(name, (oem.call("tisp_clm_write_csc_para", bank), our.call("emu_csc", bank)), "bank %d" % bank)
         elif name == "write": compare(name, (oem.call("tisp_clm_real_write_lut", bank), our.call("emu_write", bank)), "bank %d" % bank)
         elif name == "prepare": compare(name, (oem.call("tisp_clm_prepare_write_lut", bank), our.call("emu_prepare", bank)), "bank %d" % bank)
