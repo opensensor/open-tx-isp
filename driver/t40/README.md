@@ -571,7 +571,7 @@ The Bayer step is the colour fix. The driver defaulted to the GRBG phase of the 
 Rejected:
 - `t40_force_bypass=0x20001` (BLC off): U/V rise to 172.
 - `dmsc_stock_high_gain_overlay=1`: U/V rise to 142.
-- `enable_clm=1`: no change (the parameter and its plain-C start-up were removed on 2026-11-02, never reached by the QEMU apitest + stream workload).
+- `enable_clm=1`: no change (the parameter and its plain-C start-up were removed on 2026-11-02, never reached by the QEMU apitest + stream workload). Since 2026-11-03 CLM runs like the vendor, see the CLM section.
 - `t40_quality_top40_override=0x7FD0000D` (vendor TOP word): black frame. Bit 18 (SDNS) is the cause, because its initialiser is not run.
 
 Recommended insmod line (since the defaults patch the best settings are the driver defaults):
@@ -774,6 +774,23 @@ ISP digital gain is 1x there. `SetModule_Ratio` defog -> literal `tisp_s_defog_r
   points in `tx_isp_t40_recovered.c` are thin wrappers. Blocks keep the OEM layout (par 3432, comb 420, intp 146 bytes). Host check:
   `tests/t40_ysp_chain_host.sh` (tools/ko_emu/diff_ysp_chain.py), OEM instructions vs the C in Unicorn. The hand-written YDNS functions have the same kind of check
   (`tests/t40_ydns_host.sh`, tools/ko_emu/diff_ydns.py); it found the logical-vs-arithmetic gain shift and the no-op `tisp_ydns_intp_reg_refresh`.
+
+## CLM, one EV source, CT/EV chain without translated code (2026-11-03, #85)
+
+- CLM (colour LUT mapping, TOP bit 16) is `tx_isp_t40_clm.h`, plain C of the vendor `tisp_clm_*` (init, ct_interp, write_csc_para,
+  real_write_lut, prepare/get_wlut_times, dn_params_refresh, wdr_en, deinit), checked against the vendor module in Unicorn
+  (`tests/t40_clm_host.sh`). Like the vendor: `tisp_clm_init(0)` at ISP block init, bit 16 from the bank's bypass flag (the
+  sc830ai day bank runs CLM, the night bank bypasses it; vendor day TOP `0x7FD0000D`), the CT event re-interpolates the LUT
+  (5 zones around three CT points) and the LUT is written when armed and CLM is not bypassed, the day/night refresh reloads
+  the parameters. `t40_clm=0` keeps CLM bypassed (the behaviour before). The lifted `tisp_clm_*` are thin wrappers to the C.
+- EV: one value (integration time x total gain incl. the ISP digital gain, Q10) and one fan-out, the vendor
+  `tisp_main_long_ev_update` (`t40_main_long_ev_update` in `tx_isp_t40_vawb.h`): unchanged EV skipped, TOP-gated AWB, CCM
+  (`t40_ccm_main_ev_update`), ADR, defog, BCSH, run in the AWB thread. Before, two sources (with and without the ISP digital
+  gain) fed CCM and BCSH. Not ported (the driver has no such follow-up): the vendor gamma (bit 10) and WDR (bit 3) EV updates.
+- The mechanically translated CT/EV chain (`tx_isp_t40_vawb_gen.inc`, `tx_isp_t40_vct.h`, `TX_ISP_T40_VCT`) and the lifted
+  handlers of the AE-driven events 6..13 / 22..30 with their bring-up switches (`t40_ev_updates`, `t40_module_ctx_inits`,
+  `enable_tisp_main_init_color_inits`) are gone; the CT consumers run from `tx_isp_t40_ct_chain.h`.
+- Not vendor yet (found on the way): the vendor day TOP also runs CDNS (bit 19); this driver keeps CDNS opt-in (`enable_cdns`).
 
 ## DMSC day/night (2026-10-24, `t40_dmsc_follow`)
 - Default profile 1: DMSC (0xa000..0xa27c) uses the OEM chain (plain C since 2026-11-02, `tx_isp_t40_dmsc_chain.h`, checked against the OEM instructions in Unicorn) at night only (active bank, total gain incl. ISP

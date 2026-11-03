@@ -87,6 +87,10 @@ section anchors on.
   `tx_isp_t40_vct.h`, opt-in, never device-tested). Removed 2026-11-03 together with
   `tx_isp_t40_vawb_gen.inc`, `tests/t40_vct_host.sh` and `tools/t40_vawb/` (#85): the
   CT/EV consumers are the checked C chain `tx_isp_t40_ct_chain.h`.
+- 2026-11-03 (#85, CLM / one EV source / event twins): translated CT/EV chain and its `.rodata`, 34 lifted event-6..13 handlers
+  and callees, the lifted CLM bodies and the writer CLM port removed, CLM as checked C added. Against next 850013e3 (same
+  build): `.text` 449,368 -> 433,316, `.rodata` 51,240 -> 41,000, `.bss` 645,536 -> 604,080 (static scratch buffers of the
+  deleted handlers), `.data` -32; stripped ko 854,476 -> 819,216, xz -9e 254,576 -> 243,764.
 - 49 more parameters behind `TX_ISP_T40_BRINGUP_PARAMS` (same rule as above,
   searched 2026-11-01 in this repository's docs/tests/tools, OpenIMP, the
   firmware tree and the image's /etc; session audit scripts still in use kept
