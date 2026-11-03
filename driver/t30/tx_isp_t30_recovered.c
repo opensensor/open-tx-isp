@@ -22043,6 +22043,9 @@ load_tx_isp_parameters0x6a8:
 /* WHOLE_DRIVER_CANDIDATE fn_000000000000fd70 origin=fragment_seed original=apical_custom_initialization */
 uint32_t apical_custom_initialization(void)
 {
+    /* #202: the customer table pointer is tx_isp_customer_parameter + 0x1a80 (init_tx_isp_customer_parameter; OEM lw 6784(s2) of .bss);
+     * the lift read the unrelated static array "customer" (always 0), so the whole customer initialisation was skipped */
+    uint32_t customer_ptr = *(uint32_t *)((char *)&tx_isp_customer_parameter + 0x1a80);
     uint32_t *local_10 = 0;
     uint32_t *local_18 = 0;
     uint32_t local_24 = 0;
@@ -22077,7 +22080,7 @@ uint32_t apical_custom_initialization(void)
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(int32_t *)APICAL_WRITE_32)(68, 3198); /* jalr target resolved by relocation */
 
     /* fragment 3: MemoryAccess */
-    v0 = *(uint32_t *)((char *)((char *)&customer));
+    v0 = customer_ptr;
 
     /* fragment 4: Branch */
     if (v0 == 0) { goto apical_custom_initialization0x868; }
@@ -22087,10 +22090,10 @@ uint32_t apical_custom_initialization(void)
 
     /* fragment 6: CallSetup */
     s3 = 524288;
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(64, (~(0 | (*(uint32_t *)((char *)(*(uint32_t *)((char *)(uintptr_t)&customer)) + 0)))) & ((uintptr_t)v0 | (201457664 | 55916))); /* jalr target resolved by relocation */
+    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(64, (~(0 | (*(uint32_t *)((char *)(customer_ptr) + 0)))) & ((uintptr_t)v0 | (201457664 | 55916))); /* jalr target resolved by relocation */
 
     /* fragment 7: MemoryAccess */
-    v0 = *(uint32_t *)((char *)((char *)&customer));
+    v0 = customer_ptr;
     v0 = *(uint32_t *)((char *)v0 + 0);
     v0 = (uintptr_t)s3 & (uintptr_t)v0;
 
@@ -22127,7 +22130,7 @@ apical_custom_initialization0xf8:
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_WRITE_32)(1256); /* jalr target resolved by relocation */
 
     /* fragment 18: MemoryAccess */
-    v0 = *(uint32_t *)((char *)((char *)&customer));
+    v0 = customer_ptr;
     s3 = 1048576;
     v0 = *(uint32_t *)((char *)v0 + 0);
     v0 = (uintptr_t)s3 & (uintptr_t)v0;
@@ -22154,7 +22157,7 @@ apical_custom_initialization0x144:
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_WRITE_32)(a0); /* jalr target resolved by relocation */
 
     /* fragment 25: MemoryAccess */
-    v0 = *(uint32_t *)((char *)((char *)&customer));
+    v0 = customer_ptr;
     v1 = *(uint32_t *)((char *)v0 + 0);
     v0 = 134217728;
     v0 = (uintptr_t)v0 & v1;
@@ -22175,14 +22178,14 @@ apical_custom_initialization0x170:
 
     /* fragment 30: CallSetup */
     s4 = -256;
-    s3 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 4);
+    s3 = *(uint32_t *)((char *)(customer_ptr) + 4);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(452); /* jalr target resolved by relocation */
 
     /* fragment 31: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(452, ((uintptr_t)s3 & 255) | ((uintptr_t)v0 & s4)); /* jalr target resolved by relocation */
 
     /* fragment 32: CallSetup */
-    s3 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 8);
+    s3 = *(uint32_t *)((char *)(customer_ptr) + 8);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(464); /* jalr target resolved by relocation */
 
     /* fragment 33: CallSetup */
@@ -22190,21 +22193,21 @@ apical_custom_initialization0x170:
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(464, ((uintptr_t)s3 & 4095) | ((uintptr_t)v0 & (-4096))); /* jalr target resolved by relocation */
 
     /* fragment 34: CallSetup */
-    s5 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 12);
+    s5 = *(uint32_t *)((char *)(customer_ptr) + 12);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(472); /* jalr target resolved by relocation */
 
     /* fragment 35: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(472, (s5 & 4095) | ((uintptr_t)v0 & (uintptr_t)s3)); /* jalr target resolved by relocation */
 
     /* fragment 36: CallSetup */
-    s5 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 16);
+    s5 = *(uint32_t *)((char *)(customer_ptr) + 16);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(476); /* jalr target resolved by relocation */
 
     /* fragment 37: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(476, (s5 & 255) | ((uintptr_t)v0 & s4)); /* jalr target resolved by relocation */
 
     /* fragment 38: CallSetup */
-    s5 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 20);
+    s5 = *(uint32_t *)((char *)(customer_ptr) + 20);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(448); /* jalr target resolved by relocation */
 
     /* fragment 39: CallSetup */
@@ -22213,196 +22216,196 @@ apical_custom_initialization0x170:
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(448, (s5 << 2 & 4) | ((uintptr_t)v0 & (-5))); /* jalr target resolved by relocation */
 
     /* fragment 40: CallSetup */
-    s5 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 24);
+    s5 = *(uint32_t *)((char *)(customer_ptr) + 24);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(480); /* jalr target resolved by relocation */
 
     /* fragment 41: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(480, (s5 & 4095) | ((uintptr_t)v0 & (uintptr_t)s3)); /* jalr target resolved by relocation */
 
     /* fragment 42: CallSetup */
-    s5 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 28);
+    s5 = *(uint32_t *)((char *)(customer_ptr) + 28);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(484); /* jalr target resolved by relocation */
 
     /* fragment 43: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(484, (s5 & 4095) | ((uintptr_t)v0 & (uintptr_t)s3)); /* jalr target resolved by relocation */
 
     /* fragment 44: CallSetup */
-    s5 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 32);
+    s5 = *(uint32_t *)((char *)(customer_ptr) + 32);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(488); /* jalr target resolved by relocation */
 
     /* fragment 45: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(488, (s5 & 255) | ((uintptr_t)v0 & s4)); /* jalr target resolved by relocation */
 
     /* fragment 46: CallSetup */
-    s5 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 36);
+    s5 = *(uint32_t *)((char *)(customer_ptr) + 36);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(1024); /* jalr target resolved by relocation */
 
     /* fragment 47: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(1024, (s5 & 255) | ((uintptr_t)v0 & s4)); /* jalr target resolved by relocation */
 
     /* fragment 48: CallSetup */
-    s5 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 40);
+    s5 = *(uint32_t *)((char *)(customer_ptr) + 40);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(1028); /* jalr target resolved by relocation */
 
     /* fragment 49: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(1028, (s5 & 255) | ((uintptr_t)v0 & s4)); /* jalr target resolved by relocation */
 
     /* fragment 50: CallSetup */
-    s5 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 44);
+    s5 = *(uint32_t *)((char *)(customer_ptr) + 44);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(1032); /* jalr target resolved by relocation */
 
     /* fragment 51: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(1032, (s5 & 255) | ((uintptr_t)v0 & s4)); /* jalr target resolved by relocation */
 
     /* fragment 52: CallSetup */
-    s5 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 48);
+    s5 = *(uint32_t *)((char *)(customer_ptr) + 48);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(1036); /* jalr target resolved by relocation */
 
     /* fragment 53: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(1036, (s5 & 255) | ((uintptr_t)v0 & s4)); /* jalr target resolved by relocation */
 
     /* fragment 54: CallSetup */
-    s5 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 52);
+    s5 = *(uint32_t *)((char *)(customer_ptr) + 52);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(1040); /* jalr target resolved by relocation */
 
     /* fragment 55: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(1040, (s5 & 255) | ((uintptr_t)v0 & s4)); /* jalr target resolved by relocation */
 
     /* fragment 56: CallSetup */
-    s5 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 56);
+    s5 = *(uint32_t *)((char *)(customer_ptr) + 56);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(1044); /* jalr target resolved by relocation */
 
     /* fragment 57: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(1044, (s5 & 4095) | ((uintptr_t)v0 & (uintptr_t)s3)); /* jalr target resolved by relocation */
 
     /* fragment 58: CallSetup */
-    s5 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 60);
+    s5 = *(uint32_t *)((char *)(customer_ptr) + 60);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(1048); /* jalr target resolved by relocation */
 
     /* fragment 59: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(1048, (s5 & 4095) | ((uintptr_t)v0 & (uintptr_t)s3)); /* jalr target resolved by relocation */
 
     /* fragment 60: CallSetup */
-    s5 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 64);
+    s5 = *(uint32_t *)((char *)(customer_ptr) + 64);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(1052); /* jalr target resolved by relocation */
 
     /* fragment 61: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(1052, (s5 & 4095) | ((uintptr_t)v0 & (uintptr_t)s3)); /* jalr target resolved by relocation */
 
     /* fragment 62: CallSetup */
-    s5 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 68);
+    s5 = *(uint32_t *)((char *)(customer_ptr) + 68);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(1056); /* jalr target resolved by relocation */
 
     /* fragment 63: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(1056, (s5 & 4095) | ((uintptr_t)v0 & (uintptr_t)s3)); /* jalr target resolved by relocation */
 
     /* fragment 64: CallSetup */
-    s5 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 72);
+    s5 = *(uint32_t *)((char *)(customer_ptr) + 72);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(1060); /* jalr target resolved by relocation */
 
     /* fragment 65: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(1060, (s5 & 4095) | ((uintptr_t)v0 & (uintptr_t)s3)); /* jalr target resolved by relocation */
 
     /* fragment 66: CallSetup */
-    s5 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 76);
+    s5 = *(uint32_t *)((char *)(customer_ptr) + 76);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(1064); /* jalr target resolved by relocation */
 
     /* fragment 67: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(1064, (s5 & 4095) | ((uintptr_t)v0 & (uintptr_t)s3)); /* jalr target resolved by relocation */
 
     /* fragment 68: CallSetup */
-    s5 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 80);
+    s5 = *(uint32_t *)((char *)(customer_ptr) + 80);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(1068); /* jalr target resolved by relocation */
 
     /* fragment 69: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(1068, (s5 & 4095) | ((uintptr_t)v0 & (uintptr_t)s3)); /* jalr target resolved by relocation */
 
     /* fragment 70: CallSetup */
-    s5 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 84);
+    s5 = *(uint32_t *)((char *)(customer_ptr) + 84);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(1072); /* jalr target resolved by relocation */
 
     /* fragment 71: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(1072, (s5 & 4095) | ((uintptr_t)v0 & (uintptr_t)s3)); /* jalr target resolved by relocation */
 
     /* fragment 72: CallSetup */
-    s5 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 88);
+    s5 = *(uint32_t *)((char *)(customer_ptr) + 88);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(1076); /* jalr target resolved by relocation */
 
     /* fragment 73: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(1076, (s5 & 4095) | ((uintptr_t)v0 & (uintptr_t)s3)); /* jalr target resolved by relocation */
 
     /* fragment 74: CallSetup */
-    s5 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 92);
+    s5 = *(uint32_t *)((char *)(customer_ptr) + 92);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(1080); /* jalr target resolved by relocation */
 
     /* fragment 75: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(1080, (s5 & 4095) | ((uintptr_t)v0 & (uintptr_t)s3)); /* jalr target resolved by relocation */
 
     /* fragment 76: CallSetup */
-    s5 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 96);
+    s5 = *(uint32_t *)((char *)(customer_ptr) + 96);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(1092); /* jalr target resolved by relocation */
 
     /* fragment 77: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(1092, (s5 & 4095) | ((uintptr_t)v0 & (uintptr_t)s3)); /* jalr target resolved by relocation */
 
     /* fragment 78: CallSetup */
-    s5 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 100);
+    s5 = *(uint32_t *)((char *)(customer_ptr) + 100);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(1096); /* jalr target resolved by relocation */
 
     /* fragment 79: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(1096, (s5 & 255) | ((uintptr_t)v0 & s4)); /* jalr target resolved by relocation */
 
     /* fragment 80: CallSetup */
-    s5 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 104);
+    s5 = *(uint32_t *)((char *)(customer_ptr) + 104);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(1100); /* jalr target resolved by relocation */
 
     /* fragment 81: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(1100, (s5 & 255) | ((uintptr_t)v0 & s4)); /* jalr target resolved by relocation */
 
     /* fragment 82: CallSetup */
-    s5 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 108);
+    s5 = *(uint32_t *)((char *)(customer_ptr) + 108);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(1104); /* jalr target resolved by relocation */
 
     /* fragment 83: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(1104, (s5 & 4095) | ((uintptr_t)v0 & (uintptr_t)s3)); /* jalr target resolved by relocation */
 
     /* fragment 84: CallSetup */
-    s5 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 112);
+    s5 = *(uint32_t *)((char *)(customer_ptr) + 112);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(1108); /* jalr target resolved by relocation */
 
     /* fragment 85: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(1108, (s5 & 255) | ((uintptr_t)v0 & s4)); /* jalr target resolved by relocation */
 
     /* fragment 86: CallSetup */
-    s5 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 116);
+    s5 = *(uint32_t *)((char *)(customer_ptr) + 116);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(1112); /* jalr target resolved by relocation */
 
     /* fragment 87: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(1112, (s5 & 4095) | ((uintptr_t)v0 & (uintptr_t)s3)); /* jalr target resolved by relocation */
 
     /* fragment 88: CallSetup */
-    s5 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 120);
+    s5 = *(uint32_t *)((char *)(customer_ptr) + 120);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(1116); /* jalr target resolved by relocation */
 
     /* fragment 89: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(1116, (s5 & 255) | ((uintptr_t)v0 & s4)); /* jalr target resolved by relocation */
 
     /* fragment 90: CallSetup */
-    s5 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 124);
+    s5 = *(uint32_t *)((char *)(customer_ptr) + 124);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(1120); /* jalr target resolved by relocation */
 
     /* fragment 91: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(1120, (s5 & 255) | ((uintptr_t)v0 & s4)); /* jalr target resolved by relocation */
 
     /* fragment 92: CallSetup */
-    s5 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 128);
+    s5 = *(uint32_t *)((char *)(customer_ptr) + 128);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(1124); /* jalr target resolved by relocation */
 
     /* fragment 93: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(1124, (s5 & 255) | ((uintptr_t)v0 & s4)); /* jalr target resolved by relocation */
 
     /* fragment 94: CallSetup */
-    s5 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 132);
+    s5 = *(uint32_t *)((char *)(customer_ptr) + 132);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(1132); /* jalr target resolved by relocation */
 
     /* fragment 95: CallSetup */
@@ -22410,7 +22413,7 @@ apical_custom_initialization0x170:
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(1132, ((uintptr_t)v0 & (-128)) | (s5 & 63)); /* jalr target resolved by relocation */
 
     /* fragment 96: CallSetup */
-    s5 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 132);
+    s5 = *(uint32_t *)((char *)(customer_ptr) + 132);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(1132); /* jalr target resolved by relocation */
 
     /* fragment 97: CallSetup */
@@ -22420,35 +22423,35 @@ apical_custom_initialization0x170:
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(1132, ((s5 >> 6 & 1) << 7) | ((uintptr_t)v0 & (-129))); /* jalr target resolved by relocation */
 
     /* fragment 98: CallSetup */
-    s5 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 136);
+    s5 = *(uint32_t *)((char *)(customer_ptr) + 136);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(716); /* jalr target resolved by relocation */
 
     /* fragment 99: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(716, (s5 & 15) | ((uintptr_t)v0 & (-16))); /* jalr target resolved by relocation */
 
     /* fragment 100: CallSetup */
-    s5 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 140);
+    s5 = *(uint32_t *)((char *)(customer_ptr) + 140);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(580); /* jalr target resolved by relocation */
 
     /* fragment 101: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(580, (s5 & 4095) | ((uintptr_t)v0 & (uintptr_t)s3)); /* jalr target resolved by relocation */
 
     /* fragment 102: CallSetup */
-    s5 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 144);
+    s5 = *(uint32_t *)((char *)(customer_ptr) + 144);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(584); /* jalr target resolved by relocation */
 
     /* fragment 103: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(584, (s5 & 4095) | ((uintptr_t)v0 & (uintptr_t)s3)); /* jalr target resolved by relocation */
 
     /* fragment 104: CallSetup */
-    s5 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 148);
+    s5 = *(uint32_t *)((char *)(customer_ptr) + 148);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(588); /* jalr target resolved by relocation */
 
     /* fragment 105: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(588, (s5 & 4095) | ((uintptr_t)v0 & (uintptr_t)s3)); /* jalr target resolved by relocation */
 
     /* fragment 106: CallSetup */
-    s5 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 152);
+    s5 = *(uint32_t *)((char *)(customer_ptr) + 152);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(592); /* jalr target resolved by relocation */
 
     /* fragment 107: CallSetup */
@@ -22456,35 +22459,35 @@ apical_custom_initialization0x170:
 
     /* fragment 108: CallSetup */
     s5 = 4294901760;
-    s4 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 156);
+    s4 = *(uint32_t *)((char *)(customer_ptr) + 156);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(596); /* jalr target resolved by relocation */
 
     /* fragment 109: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(596, (s4 & 65535) | ((uintptr_t)v0 & s5)); /* jalr target resolved by relocation */
 
     /* fragment 110: CallSetup */
-    s4 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 160);
+    s4 = *(uint32_t *)((char *)(customer_ptr) + 160);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(600); /* jalr target resolved by relocation */
 
     /* fragment 111: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(600, (s4 & 65535) | ((uintptr_t)v0 & s5)); /* jalr target resolved by relocation */
 
     /* fragment 112: CallSetup */
-    s4 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 172);
+    s4 = *(uint32_t *)((char *)(customer_ptr) + 172);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(616); /* jalr target resolved by relocation */
 
     /* fragment 113: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(616, (s4 & 65535) | ((uintptr_t)v0 & s5)); /* jalr target resolved by relocation */
 
     /* fragment 114: CallSetup */
-    s4 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 168);
+    s4 = *(uint32_t *)((char *)(customer_ptr) + 168);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(612); /* jalr target resolved by relocation */
 
     /* fragment 115: CallSetup */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(612, (s4 & 4095) | ((uintptr_t)v0 & (uintptr_t)s3)); /* jalr target resolved by relocation */
 
     /* fragment 116: CallSetup */
-    s4 = *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 164);
+    s4 = *(uint32_t *)((char *)(customer_ptr) + 164);
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(608); /* jalr target resolved by relocation */
 
     /* fragment 117: CallSetup */
@@ -22493,7 +22496,10 @@ apical_custom_initialization0x170:
     /* fragment 118: CallSetup */
     s1 = (uintptr_t *)&local_18;
     local_10 = s1;
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t, uintptr_t))(uintptr_t)apical_command)(1, 41, *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 176), 0); /* jalr target resolved by relocation */
+    /* #202: the OEM passes &local_18 as the fifth argument (sw s1,16(sp)); the lift dropped it, so the
+     * customer ceiling (MAX_ISP_DGAIN 41 / MAX_SENSOR_AGAIN 37) of the tuning bin was never applied */
+    v0 = (uintptr_t *)(uintptr_t)apical_command(1, 41, *(uint32_t *)((char *)(customer_ptr) + 176), 0, (uint32_t *)&local_18);
+    pr_info("tx-isp-t30: customer ceiling id 41 value %u ret %d\n", *(uint32_t *)((char *)(customer_ptr) + 176), (int)(uintptr_t)v0);
 
     /* fragment 119: Branch */
     if (v0 == 0) { goto apical_custom_initialization0x820; }
@@ -22503,7 +22509,10 @@ apical_custom_initialization0x170:
 
 apical_custom_initialization0x820:
     /* fragment 121: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t, uintptr_t))(uintptr_t)apical_command)(1, 37, *(uint32_t *)((char *)(*(uint32_t *)((char *)((char *)&customer))) + 180), 0); /* jalr target resolved by relocation */
+    /* #202: the OEM passes &local_18 as the fifth argument (sw s1,16(sp)); the lift dropped it, so the
+     * customer ceiling (MAX_ISP_DGAIN 41 / MAX_SENSOR_AGAIN 37) of the tuning bin was never applied */
+    v0 = (uintptr_t *)(uintptr_t)apical_command(1, 37, *(uint32_t *)((char *)(customer_ptr) + 180), 0, (uint32_t *)&local_18);
+    pr_info("tx-isp-t30: customer ceiling id 37 value %u ret %d\n", *(uint32_t *)((char *)(customer_ptr) + 180), (int)(uintptr_t)v0);
 
     /* fragment 122: Branch */
     if (v0 == 0) { goto apical_custom_initialization0x864; }
