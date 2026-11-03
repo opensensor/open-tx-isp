@@ -1,8 +1,8 @@
 # Unicorn oracles (T40)
 
-Eight host checks compare our C code with the instructions of the vendor module under the Unicorn
+Nine host checks compare our C code with the instructions of the vendor module under the Unicorn
 emulator, or with translated vendor code:
-`t40_ccm_conv_host t40_ccm_chain_host t40_dmsc_chain_host t40_mdns_chain_host t40_ysp_chain_host t40_ydns_host t40_gib_host t40_lsc_host`
+`t40_ccm_conv_host t40_ccm_chain_host t40_dmsc_chain_host t40_mdns_chain_host t40_ysp_chain_host t40_ydns_host t40_gib_host t40_lsc_host t40_blc_host`
 (need `T40_OEM_KO`, and `T40_CC` for the chain ones), `t40_vct_host` (`T40_TUNING_BIN` + `T40_OEM_DATA`) and
 `t40_bcsh_dn_host` (`T40_TUNING_BIN`, or the initialised `external/ingenic-sdk` submodule).
 
@@ -33,3 +33,13 @@ Inputs (vendor files are never part of the repository):
 - `t40_bcsh_dn_host` is not a mismatch: the strict run failed because the `external/ingenic-sdk` submodule is not initialised, so the
   default tuning bin is missing. With any T40 tuning bin it passes (0 words differ), e.g. the Ingenic T40 SDK `resource/sensor_settings_t40/gc2053-t40.bin`
   (also sc200ai, os08a10, gc4653: all PASS): `T40_TUNING_BIN=<bin> make -C tests t40_bcsh_dn_host`.
+
+## BLC (2026-11-03)
+
+`t40_blc_host` covers `driver/t40/tx_isp_t40_blc.h`: `ag_interp`, `calc_digital_gain`, `write_reg`, `ag_long/short_frame_update`,
+`ae_write_dgain`, `init`, `dn_params_refresh` and the gain-parameter entry the `enable_blc_lit` path uses (1000 calls per function, both
+channels, black-level values at 0/0x7ff/0x800/0xfff/0x1000/0xffff, gains on the 1024 hysteresis step and on the 16.16 index limits, digital-gain
+terms on the shift-ladder boundaries, Bayer types 0-3 and out-of-range, 48 source mutations that must be detected). The OEM divides by
+zero for a maximum black level of exactly 4096 (undefined result): those calls are counted as skipped, the C returns 8192 there.
+BLC is gated by the bypass flag of the sensor bin (the Eufy sc830ai bypasses it): the oracle proves the code, the effect on a picture needs a
+sensor with BLC switched on.
