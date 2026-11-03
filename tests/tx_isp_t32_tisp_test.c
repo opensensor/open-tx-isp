@@ -16,6 +16,8 @@
 #include "../driver/t32/tx_isp_t32_mdns.h"
 #include "../driver/t32/tx_isp_t32_dpc.h"
 #include "../driver/t32/tx_isp_t32_gib.h"
+#include "../driver/t32/tx_isp_t32_ccm.h"
+#include "../driver/t32/tx_isp_t32_lce.h"
 #include "../driver/t32/tx_isp_t32_iq.h"
 #include "t32_trace.h"
 
@@ -250,6 +252,36 @@ int main(void)
 			r = t32_clm_init(bin + clo, bin + clo + l, (u32)len - clo - l, mode, t32_csc_modes[mode].m, w);
 			CHECK(r == T32_CLM_WRITES);
 			vs_vendor("clm", w, r);
+		}
+		{
+			static u8 cc[T32_CCM_SEC_BYTES + 4096];
+
+			off = t32_iq_section(bin, len, T32_SEC_CCM, &l);
+			CHECK(off && l == T32_CCM_SEC_BYTES);
+			memcpy(cc, bin + off, l);
+			r = t32_ccm_init(cc, bin + off + l, (u32)len - off - l, w);
+			CHECK(r == T32_CCM_WRITES);
+			vs_vendor("ccm", w, r);
+		}
+		{
+			static u8 lc[T32_LCE_SEC_BYTES];
+			u32 wk = 0, cu = 0, i;
+
+			/* the two DMA buffer addresses are the vendor run's (local trace): arguments of the block */
+			for (i = 0; i < tr_n; i++) {
+				if (tr[i].reg == 0xc090)
+					wk = tr[i].val;
+				if (tr[i].reg == 0xc0a4)
+					cu = tr[i].val;
+			}
+			off = t32_iq_section(bin, len, T32_SEC_LCE, &l);
+			CHECK(off && l == T32_LCE_SEC_BYTES);
+			memcpy(lc, bin + off, l);
+			r = t32_lce_init(lc, 3840, 2160, wk, cu, w);
+			CHECK(r == T32_LCE_WRITES);
+			if (wk && cu)
+				vs_vendor("lce", w, r);
+			CHECK(t32_lce_init(lc, 1920, 1080, 0, 0, w) == -1);
 		}
 		if (tr_n)
 			printf("tx_isp_t32_tisp_test: %u of %u vendor AddSensor writes covered by this test\n",

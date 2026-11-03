@@ -196,8 +196,19 @@ generation-shared come from the shared code instead:
   step 5 and the front end, AE/AWB and MSCA blocks 3241 of 5555 (58 %). Not built:
   tmo, RDNS, BCSH and AF need vendor-internal state tables the bin does not
   carry (AF: its filter coefficient tables; BCSH/RDNS/tmo: smooth and
-  default curves), CCM, LCE and defog are pointer-linked state flows still
-  to do (defog and AF also write the physical address of a driver buffer).
+  default curves); defog and AF also write the physical address of a driver
+  buffer.
+
+- **CCM and LCE** (S4 step 7, same scheme): CCM (`tx_isp_t32_ccm.h`, section 12 and
+  its knot payload, 24 writes: the matrix at 5000 K from the knots with the
+  hysteresis, the exposure-0 table words, the 1/range factors) and LCE
+  (`tx_isp_t32_lce.h`, section 15, 33 writes: block grid from the frame size,
+  strength words at gain 0, the 5x5 Gaussian smoothing words, default curve).
+  Identical write for write to the vendor's AddSensor writes, except LCE's five
+  DMA address words, which hold the physical addresses of the two buffers the
+  driver allocates for it (work 0x26400 bytes, curve 0x5a00 bytes). Refused
+  (vendor compiled-in defaults): CCM sections with byte `+0x35f` = 0 or
+  `+0x38` = 1, LCE at 1920x1080 or with `+0x1fb` set. 3298 of 5555 (59 %).
 
 ## Not yet (S4+)
 

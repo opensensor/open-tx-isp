@@ -41,6 +41,8 @@
 #include "tx_isp_t32_mdns.h"
 #include "tx_isp_t32_dpc.h"
 #include "tx_isp_t32_gib.h"
+#include "tx_isp_t32_ccm.h"
+#include "tx_isp_t32_lce.h"
 
 static void t32_bringup_ae_kick(void);
 
@@ -246,12 +248,43 @@ static void t32_front_init(void)
 
 /*
  * Remaining tisp init blocks of the vendor's AddSensor that are derived from
- * the IQ bin (S4 steps 5 and 6), in the vendor's order: DMSC, gamma, CDNS, GIB, DPC, YDNS, SDNS, YSP, MDNS, CLM.
+ * the IQ bin (S4 steps 5 and 6), in the vendor's order: DMSC, gamma, CDNS, GIB, DPC, YDNS, CCM, LCE, SDNS, YSP, MDNS, CLM.
  * Each block is one write list; a block whose section is missing or does
  * not have the expected size is skipped (the hardware keeps its reset state).
  */
 #define T32_TISP_MAX_WRITES	T32_MDNS_MAX_WRITES
 static struct t32_front_write *tisp_w;
+
+/* LCE DMA buffers (work 0x26400 bytes, default curve 0x5a00 bytes), kept until the module is removed */
+#define T32_LCE_WORK_ORDER	6	/* 256 KiB >= 0x26400 */
+#define T32_LCE_CURVE_ORDER	3	/* 32 KiB >= 0x5a00 */
+static unsigned long lce_work, lce_curve;
+
+static void *t32_uncached(unsigned long buf)
+{
+	unsigned long pa = virt_to_phys((void *)buf);
+
+#ifdef CONFIG_MIPS
+	return (void *)CKSEG1ADDR(pa);		/* uncached: the engine reads by DMA */
+#else
+	return phys_to_virt(pa);
+#endif
+}
+
+static int t32_lce_build(const u8 *sec, u32 width, u32 height)
+{
+	if (!lce_work)
+		lce_work = __get_free_pages(GFP_KERNEL | __GFP_ZERO, T32_LCE_WORK_ORDER);
+	if (!lce_curve)
+		lce_curve = __get_free_pages(GFP_KERNEL | __GFP_ZERO, T32_LCE_CURVE_ORDER);
+	if (!lce_work || !lce_curve)
+		return -ENOMEM;
+	t32_lce_curve(t32_uncached(lce_curve));			/* both halves hold the default curve */
+	t32_lce_curve((u8 *)t32_uncached(lce_curve) + 0x2d00);
+	wmb();
+	return t32_lce_init(sec, width, height, virt_to_phys((void *)lce_work),
+			    virt_to_phys((void *)lce_curve), tisp_w);
+}
 
 static void t32_tisp_flush(const char *name, int n)
 {
@@ -320,6 +353,18 @@ static void t32_tisp_init(void)
 	off = t32_iq_section(bin, bytes, T32_SEC_YDNS, &len);
 	if (off && len >= T32_YDNS_SEC_BYTES)
 		t32_tisp_flush("ydns", t32_ydns_init(bin + off, tisp_w));
+	off = t32_iq_section(bin, bytes, T32_SEC_CCM, &len);
+	if (off && len >= T32_CCM_SEC_BYTES) {
+		u8 *cp = kmemdup(bin + off, len, GFP_KERNEL);	/* the block clears two bytes of its section */
+
+		if (cp) {
+			t32_tisp_flush("ccm", t32_ccm_init(cp, bin + off + len, bytes - off - len, tisp_w));
+			kfree(cp);
+		}
+	}
+	off = t32_iq_section(bin, bytes, T32_SEC_LCE, &len);
+	if (off && len >= T32_LCE_SEC_BYTES && !t32_core_sensor_size(&width, &height))
+		t32_tisp_flush("lce", t32_lce_build(bin + off, width, height));
 	off = t32_iq_section(bin, bytes, T32_SEC_SDNS, &len);
 	if (off && len >= T32_SDNS_SEC_BYTES)
 		t32_tisp_flush("sdns", t32_sdns_init(bin + off, tisp_w));
@@ -812,6 +857,11 @@ void t32_hw_exit(void)
 	if (awb_buf)
 		free_pages(awb_buf, T32_AWB_BUF_ORDER);
 	ae_buf = awb_buf = 0;
+	if (lce_work)
+		free_pages(lce_work, T32_LCE_WORK_ORDER);
+	if (lce_curve)
+		free_pages(lce_curve, T32_LCE_CURVE_ORDER);
+	lce_work = lce_curve = 0;
 	kfree(tisp_w);
 	tisp_w = NULL;
 	free_pages(rcfg_pages, get_order((T32_RCFG_TABLE_WORDS + T32_RCFG_LIST_WORDS) * 4));
