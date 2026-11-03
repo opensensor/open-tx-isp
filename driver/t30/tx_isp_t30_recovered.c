@@ -882,7 +882,16 @@ static unsigned char __attribute__((aligned(4))) vin_subdev_ops[20] = {
 };
 static uintptr_t LC0;
 static const char LC28[] = "tx-isp";
-static unsigned char stab[60];
+static unsigned char stab[60] __aligned(4);
+/*
+ * Multi-byte system table items (OEM lhu/sh, lw/sw at the byte offsets of
+ * tx_isp_t30_stab.h).  The lift indexed the byte array with the OEM's
+ * halfword/word index (stab[12] for byte 24 ...), so integration time, its
+ * maximum, manual exposure time and DIS x/y hit other items (DIS y even the
+ * maximum analogue gain, byte 29) (#202).
+ */
+#define T30_STAB16(off) (*(u16 *)(stab + (off)))
+#define T30_STAB32(off) (*(u32 *)(stab + (off)))
 static const uint8_t CSWTCH_192[10];
 #include "tx_isp_t30_tuning_math.h"
 static const uint16_t resize_height_write_table[5] = {
@@ -40753,10 +40762,10 @@ int32_t system_dis_x(int32_t arg1, int16_t arg2, char arg3, int32_t *arg4)
     if (v != 1) {
         if (v != 0)
             return 2;
-        stab[28] = arg2;
+        T30_STAB16(56) = arg2;
     } else {
         *arg4 = 0;
-        *arg4 = stab[28];
+        *arg4 = T30_STAB16(56);
     }
 
     return 0;
@@ -40773,9 +40782,9 @@ int32_t system_dis_y(int32_t arg1, int16_t arg2, char arg3, int32_t *arg4)
         if (v != 0) {
             return 2;
         }
-        stab[29] = arg2;
+        T30_STAB16(58) = arg2;
     } else {
-        *arg4 = stab[29];
+        *arg4 = T30_STAB16(58);
     }
 
     return 0;
@@ -40877,12 +40886,12 @@ int system_manual_exposure_time(int arg1, int arg2, char arg3, int *arg4)
     int val = arg3 & 0xff;
     if (val == 1) {
         *arg4 = 0;
-        *arg4 = stab[4];
+        *arg4 = T30_STAB32(16);
         return 0;
     }
     if (val != 0)
         return 2;
-    stab[4] = arg2;
+    T30_STAB32(16) = arg2;
     return 0;
 }
 
@@ -40961,10 +40970,10 @@ int32_t system_integration_time(int32_t arg1, int16_t arg2, char arg3, int32_t *
         if (v != 0) {
             return 2;
         }
-        stab[12] = arg2;
+        T30_STAB16(24) = arg2;
     } else {
         *arg4 = 0;
-        *arg4 = stab[12];
+        *arg4 = T30_STAB16(24);
     }
 
     return 0;
@@ -40977,13 +40986,13 @@ int32_t system_max_integration_time(int32_t arg1, int16_t arg2, char arg3, int32
 
     if (cmd != 1) {
         if (cmd != 0) {
-            stab[13] = arg2;
+            T30_STAB16(26) = arg2;
             return 2;
         }
         return 0;
     }
 
-    *arg4 = (int32_t)stab[13];
+    *arg4 = (int32_t)T30_STAB16(26);
     return 0;
 }
 
@@ -53186,6 +53195,9 @@ static void tx_isp_t30_simple_ae_update(void)
 	state->analog_gain_code = (u16)sensor_code;
 	sensor_set_integration_time(0, state->integration_time);
 	sensor_set_analog_gain(0, state->analog_gain_code);
+	/* the system integration-time item (byte 24) backs GetExpr / GetIntegrationTime; the OEM
+	 * exposure history keeps it current, the compact AE has to publish it itself (#202) */
+	T30_STAB16(24) = (u16)state->integration_time;
 
 	/*
 	 * Publish the applied Q16 log2 gain through both OEM state interfaces.
