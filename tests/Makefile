@@ -723,6 +723,9 @@ lifted_ptr_scale_check:
 	python3 ./lifted_ptr_scale_check.py --expect-clean t40:isp_vic_interrupt_service_routine
 	@# #189 pass 5 (T23, vendor tx-isp-t23.ko 1.3.0 compared): typed-pointer byte arithmetic restored in the live T23 functions
 	python3 ./lifted_ptr_scale_check.py --expect-clean t23:ispcore_core_ops_ioctl t23:jz_isp_ccm t23:tisp_ae_mean_update
+	@# #193 (from #140): lost call arguments (class arity, scanner = cast call with fewer parameters than the prototype), compared with the vendor tx-isp-t40.ko
+	python3 ./lifted_ptr_scale_check.py --expect-clean t40:tisp_get_antiflicker_step:arity t40:subdev_sensor_ops_ioctl:arity t40:csi_sensor_ops_ioctl:arity \
+		t40:tx_isp_vin_slake_subdev:arity t40:isp_main_pre_frame_dequeue:arity
 
 # T40 VIC interrupt counter block and output format table are real objects, not stray anchors (#189 layout class)
 t40_vic_layout_check:

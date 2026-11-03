@@ -7040,7 +7040,7 @@ int32_t vic_core_ops_ioctl_1(uintptr_t a0, uint32_t a1, uintptr_t a2) __asm__("v
 int32_t vic_core_ops_ioctl_1(uintptr_t a0, uint32_t a1, uintptr_t a2);
 int32_t vin_s_stream(void *arg1, int32_t *arg2);
 int64_t tx_isp_vin_init(uintptr_t a0, uintptr_t a1);
-int32_t subdev_sensor_ops_set_input(void* arg1, int32_t* arg2, int32_t arg3);
+int32_t subdev_sensor_ops_set_input(void* arg1, int32_t* arg2);
 int32_t tx_isp_vin_activate_subdev(void *arg1);
 int tx_isp_vin_probe(struct platform_device *pdev);
 int32_t video_input_cmd_open(int32_t arg1, int32_t arg2);
@@ -37743,7 +37743,7 @@ tx_isp_vin_init0xcc:
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000006744 origin=model_output original=subdev_sensor_ops_set_input */
-int32_t subdev_sensor_ops_set_input(void* arg1, int32_t* arg2, int32_t arg3)
+int32_t subdev_sensor_ops_set_input(void* arg1, int32_t* arg2)   /* #193: OEM 0x17164 takes two parameters (the lift's third was a stale register used as an unused printf argument) */
 {
     int32_t *result = 0xffffffea;
 
@@ -37757,7 +37757,7 @@ int32_t subdev_sensor_ops_set_input(void* arg1, int32_t* arg2, int32_t arg3)
 
             if (s0_1 != NULL) {
                 if (*(uint32_t*)((char*)v0_2 + 0x138) == 4) {
-                    isp_printf(1, LC1, arg3);
+                    isp_printf(1, "Please, streamoff sensor firstly!\n");
                     return 0xffffffff;
                 }
 
@@ -38726,7 +38726,8 @@ tx_isp_vin_slake_subdev0x58:
     if (v1 != v0) { goto tx_isp_vin_slake_subdev0x78; }
 
     /* fragment 10: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)vin_s_stream)(s0, &local_10); /* jalr target resolved by relocation */
+    { uint32_t __vin_arg[2] = { 0, (uint32_t)(uintptr_t)s1 }; /* #193: OEM local_28 = 0, local_24 = index: two adjacent words, the lift kept them as separate scalars */
+    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)vin_s_stream)(s0, (uintptr_t)__vin_arg); } /* jalr target resolved by relocation */
 
 tx_isp_vin_slake_subdev0x78:
     /* fragment 11: MemoryAccess */
@@ -38738,7 +38739,8 @@ tx_isp_vin_slake_subdev0x78:
     if (v1 != v0) { goto tx_isp_vin_slake_subdev0x90; }
 
     /* fragment 13: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)tx_isp_vin_init)(s0); /* jalr target resolved by relocation */
+    { uint32_t __vin_arg[2] = { 0, (uint32_t)(uintptr_t)s1 };
+    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)tx_isp_vin_init)(s0, (uintptr_t)__vin_arg); } /* jalr target resolved by relocation; #193: OEM 0x17e48 tx_isp_vin_init(param_1, &local_28) */
 
 tx_isp_vin_slake_subdev0x90:
     /* fragment 14: MemoryAccess */
@@ -38749,8 +38751,8 @@ tx_isp_vin_slake_subdev0x90:
     if (v0 == 0) { goto tx_isp_vin_slake_subdev0xb0; }
 
     /* fragment 16: CallSetup */
-    local_10 = 0;
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)subdev_sensor_ops_set_input)(s0); /* jalr target resolved by relocation */
+    { uint32_t __vin_arg[2] = { 0, (uint32_t)(uintptr_t)s1 };
+    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)subdev_sensor_ops_set_input)(s0, (uintptr_t)__vin_arg); } /* jalr target resolved by relocation; #193: OEM subdev_sensor_ops_set_input(param_1, &local_28) */
 
 tx_isp_vin_slake_subdev0xb0:
     /* fragment 17: Arithmetic */
@@ -39092,7 +39094,7 @@ int64_t subdev_sensor_ops_ioctl(uintptr_t a0, uint32_t a1, uintptr_t a2)
 
 subdev_sensor_ops_ioctl0x64:
     /* fragment 4: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)subdev_sensor_ops_enum_input)(a0); /* jalr target resolved by relocation */
+    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)subdev_sensor_ops_enum_input)(a0, (uintptr_t)a1); /* jalr target resolved by relocation; #193: second argument (a1 = a2) was dropped (OEM 0x181d0 case 0x2000002: enum_input(param_1, param_3)) */
 
     /* fragment 5: Arithmetic */
     s0 = v0;
@@ -41099,7 +41101,7 @@ csi_sensor_ops_ioctl0x3c:
 
 csi_sensor_ops_ioctl0x48:
     /* fragment 10: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)csi_phy_start)(a0); /* jalr target resolved by relocation */
+    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)csi_phy_start)(a0, (uintptr_t)(*(uint32_t *)((char *)v1 + 4))); /* jalr target resolved by relocation; #193: OEM 0x19a58 csi_phy_start(param_1, *(param_3 + 4)), v1 = the argument block (a2), the lift passed the event id in a1 */
 
     /* fragment 11: Branch */
     goto csi_sensor_ops_ioctl0x3c;
@@ -138451,7 +138453,7 @@ int64_t tisp_get_antiflicker_step(uint32_t a0)
 
 tisp_get_antiflicker_step0x20:
     /* fragment 5: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)tisp_ae_main_get_antiflicker_step)(a0); /* jalr target resolved by relocation */
+    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)v0)(a0, (uintptr_t)a1); /* #193: OEM 0x85cc4 `(*pcVar1)(param_2, param_3)`: the lift dropped the second argument and bound the call to the main getter (the vinum 1 leg selected tisp_ae_sec_get_antiflicker_step in v0 and never used it) */
 
     /* fragment 6: Epilogue */
     /* function epilogue: restore registers and return */
@@ -139311,7 +139313,11 @@ int32_t isp_main_pre_frame_dequeue(void)
     v0 = v0;
 
     /* fragment 6: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)tx_isp_send_event_to_remote)(a0); /* jalr target resolved by relocation */
+    { /* #193: OEM 0x8696c tx_isp_send_event_to_remote(chan->sd, 0x3000006, auStack_38): the lift passed neither the event
+       * nor the payload.  The payload is the 28-byte OEM stack area (words 2..4 = 0, word 5 = 1, word 6 = the value the lift
+       * built in local_28; words 0/1 are never written by the OEM), as ONE array. */
+      uint32_t __ev[7] = { 0, 0, 0, 0, 0, 1, (uint32_t)local_28 };
+      v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)tx_isp_send_event_to_remote)(a0, a1, (uintptr_t)__ev); } /* jalr target resolved by relocation */
 
     /* fragment 7: Epilogue */
     /* function epilogue: restore registers and return */

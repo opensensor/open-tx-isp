@@ -7,6 +7,7 @@
 # #189 T23 dead-code fixes: ispvic_frame_channel_qbuf, tx_isp_subdev_pipo, tx_isp_vic_activate_subdev rewritten as byte-offset C per the vendor 1.3.0 bodies (function level: byte offsets into the vic device, second pop_buffer_fifo (bank node) restored, pipe table kept in the module global raw_pipe, mutex/state at +0x134/+0x12c); the path stays unreached (no sender of event 0x300000a), host proof = scanner clean + mutation check + module builds.
 # #189 T30: awb_roi fixed (the lifted body dropped the `jr t9` tail call of awb_roi.part.2 for mode 0 = the AWB ROI set never ran, and returned 0 for every mode; now tail call restored, mode 1 get, else 2); ncu_pad_event_handle tailcall reviewed ok (the case-12 tail call is hand-written, the lifted leftover is unreachable).
 # #189 T40 rest (branch claude/i189-t40-rest, device proof pending): frame_chan_event rewritten from the OEM body (channel struct byte offsets, OEM objects pre_queue_attr[0x80] / lastaddr[7], usec division restored, own log strings; Unicorn oracle tools/ko_emu/diff_frame_chan_event.py: OEM vs ours identical on random channel states; the function is not reached on the image while the frame-done delivery mode is LOCAL); ispcore_core_ops_init: register locals retyped to uintptr_t (state/channel-index offsets, cpu0_status MMIO addresses, stride walks were scaled x4), the &__param_str_isp_dual_buf (+9820 words) function-name anchors replaced by the real string, isp_printf calls get their full OEM argument lists. No entries left for either function.
+# #193 T40 lost-argument class `arity` (old #140 branch, scanner tools/t40_uninit_scan.py ARITY, now in this script): 187 call sites in 71 functions on origin/next 39d080a3, compared with the vendor tx-isp-t40.ko (headless Ghidra + objdump). Reach = QEMU T40 (3 reload cycles + timps, function-entry marks on all 71 functions: only tx_isp_unlocked_ioctl and tx_isp_video_link_stream entered, unresolved_jalr_count 0) + the Eufy sysfs counters (unresolved_jalr_count / cnt_core_ops_init / cnt_sec_init / cnt_main_long_tgain_update all 0) + the compile line map (flagged line emits no code). Fixed (arguments the lift dropped; none of them is entered in the default flow, so no visible effect expected): tisp_get_antiflicker_step (second argument, and the vinum 1 leg called the main getter), subdev_sensor_ops_ioctl (enum_input argument), csi_sensor_ops_ioctl (csi_phy_start lane argument was the event id), tx_isp_vin_slake_subdev (argument block {0, index} as one array for vin_init / set_input / vin_s_stream), isp_main_pre_frame_dequeue (event id and payload), subdev_sensor_ops_set_input (prototype is two parameters). Remaining shim entries: the `regtrace_unresolved_jalr` sites are a LOST CALLEE (counting no-op), not a lost argument; they need the real subdev op call and a camera proof. Camera proof pending (needs basement light on).
 t23 JZ_Isp_Awb ctr 6 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
 t23 JZ_Isp_Awb loop 8 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
 t23 JZ_Isp_Awb step 9 dead #189 T23 pass 5: not linked - no symbol in the tx-isp-t23.ko built from this tree (compiled out or dropped by the linker), never runs
@@ -1232,3 +1233,69 @@ t41 vic_mdma_irq_function tailcall 1 unreach
 t41 vic_mdma_irq_function var 5 unreach
 t41 video_input_cmd_set loop 4 unreach
 t41 video_input_cmd_set step 7 unreach
+t40 Tisp_lce_soft arity 7 unreach
+t40 Tiziano_adr_fpga arity 15 shim lifted ADR chain runs only with t40_adr_on=0 (default 1: C chain t40_adr_init); not entered in the default flow (#193)
+t40 Tiziano_wdr_deghost_fpga arity 6 unreach
+t40 Tiziano_wdr_fusion_fpga arity 26 unreach
+t40 frame_channel_reqbufs arity 2 unreach
+t40 frame_channel_vidioc_get_fmt arity 1 unreach
+t40 func_map_y_filter_sp arity 3 shim lifted ADR chain runs only with t40_adr_on=0 (default 1: C chain t40_adr_init); not entered in the default flow (#193)
+t40 isp_framesource_show arity 10 unreach
+t40 isp_i2c_new_subdev_board arity 1 dead only from the lifted subdev_sensor_ops_ioctl register case, which the open driver does not use (hand sensor registration); the OEM passes a1 through to request_module (#193)
+t40 isp_info_show_isra_4 arity 7 dead only reachable from isp_core_debug_show, which nothing registers; /proc/jz/isp/isp-m0 is hand-written (#193)
+t40 isp_save_cmd_set arity 1 unreach
+t40 isp_vic_cmd_set arity 5 unreach
+t40 ispcore_activate_module arity 2 shim lost CALLEE, not a lost argument: the lifted jalr target is the counting no-op regtrace_unresolved_jalr (unresolved_jalr_count 0 on the Eufy and in QEMU: 3 reload cycles, timps start/stop); needs the real subdev op call + a camera proof, tracked as its own class (#193 follow-up)
+t40 ispcore_frame_channel_dqbuf arity 1 unreach
+t40 ispcore_frame_channel_streamoff arity 1 shim lost CALLEE, not a lost argument: the lifted jalr target is the counting no-op regtrace_unresolved_jalr (unresolved_jalr_count 0 on the Eufy and in QEMU: 3 reload cycles, timps start/stop); needs the real subdev op call + a camera proof, tracked as its own class (#193 follow-up)
+t40 ispcore_pad_event_handle arity 15 unreach
+t40 ispcore_video_s_stream arity 1 shim lost CALLEE, not a lost argument: the lifted jalr target is the counting no-op regtrace_unresolved_jalr (unresolved_jalr_count 0 on the Eufy and in QEMU: 3 reload cycles, timps start/stop); needs the real subdev op call + a camera proof, tracked as its own class (#193 follow-up)
+t40 sensor_alloc_integration_time arity 1 unreach
+t40 sensor_alloc_integration_time_short arity 1 unreach
+t40 sensor_set_mode arity 1 unreach
+t40 table_intp arity 1 unreach
+t40 tisp_ae_dn_params_refresh arity 2 unreach
+t40 tisp_af_dn_params_refresh arity 1 unreach
+t40 tisp_bcsh_Tccm_RGB2YUV arity 1 shim event 13 / tisp_bcsh_ev_update path; the hand t40_bcsh chain is the default and events 6..13 are skipped (t40_ev_updates=0) (#193)
+t40 tisp_bcsh_ev_update_TransitParam arity 5 shim event 13 / tisp_bcsh_ev_update path; the hand t40_bcsh chain is the default and events 6..13 are skipped (t40_ev_updates=0) (#193)
+t40 tisp_blc_ae_write_dgain arity 1 dead the flagged call emits no code (behind an early return / compiled out); cnt_sec_init = 0 (#193)
+t40 tisp_blc_ag_long_frame_update arity 1 shim AE tgain events 6/10 are skipped (t40_ev_updates=0); cnt_main_long_tgain_update = 0 on the Eufy and in QEMU (#193)
+t40 tisp_blc_ag_short_frame_update arity 1 shim AE tgain events 6/10 are skipped (t40_ev_updates=0); cnt_main_long_tgain_update = 0 on the Eufy and in QEMU (#193)
+t40 tisp_ccm_sec_ct_update arity 1 ok false positive: tisp_ccm_ev_ct_update takes (a0, a1) only (a2_unused/a3_unused); second-sensor events anyway (#193)
+t40 tisp_ccm_sec_ev_update arity 1 ok false positive: tisp_ccm_ev_ct_update takes (a0, a1) only (a2_unused/a3_unused); second-sensor events anyway (#193)
+t40 tisp_ccm_set_attr arity 1 shim only with t40_csc_unsafe=1; SetCCMAttr uses t40_ccm_attr_set_user (T40-CCM-SET); tisp_ccm_ev_ct_update ignores its a2/a3 (#193)
+t40 tisp_channel_main_attr_set arity 1 unreach
+t40 tisp_channel_sec_attr_set arity 1 unreach
+t40 tisp_defog_dn_params_refresh arity 1 unreach
+t40 tisp_defog_init arity 3 unreach
+t40 tisp_defog_update_trans_k arity 1 dead lifted defog is replaced by the C chain tx_isp_t40_defog.h; not entered (#193)
+t40 tisp_defog_write_reg_para3 arity 1 unreach
+t40 tisp_gsm_interrupt_hist arity 1 unreach
+t40 tisp_gsm_main_long_process_api arity 2 unreach
+t40 tisp_hldc_set_attr arity 3 unreach
+t40 tisp_log2_fixed_to_fixed_64 arity 1 unreach
+t40 tisp_s_defog_ratio arity 4 unreach
+t40 tisp_s_defog_str_internal arity 2 unreach
+t40 tisp_sec_init arity 2 dead the flagged call emits no code (behind an early return / compiled out); cnt_sec_init = 0 (#193)
+t40 tisp_set_sensor_digital_gain_short arity 2 unreach
+t40 tisp_set_wdr_output_mode arity 1 unreach
+t40 tisp_wdr_quicksort arity 1 unreach
+t40 tisp_wdr_softout_reg_refresh arity 1 unreach
+t40 tiziano_adr_algorithm arity 2 shim lifted ADR chain runs only with t40_adr_on=0 (default 1: C chain t40_adr_init); not entered in the default flow (#193)
+t40 tiziano_isp_ccm_attr_g_ctrl_isra_31 arity 1 shim only with t40_csc_unsafe=1 (GetCCMAttr uses t40_ccm_attr_get_user otherwise) (#193)
+t40 tx_isp_ae_expoinfo_g_attr_isra_45 arity 2 dead no caller: GET answered by regtrace_t40_g_ctrl_attr / t40_az_get (#193)
+t40 tx_isp_ae_scence_g_attr_isra_44 arity 2 dead no caller: GET answered by regtrace_t40_g_ctrl_attr / t40_az_get (#193)
+t40 tx_isp_ae_weight_g_attr_isra_48 arity 2 shim OEM mismatch confirmed (tisp_g_* takes the user buffer); the command is answered earlier by regtrace_t40_g_ctrl_attr, the wrapper is not entered (#193)
+t40 tx_isp_autozoom_g_attr_isra_34 arity 2 dead no caller: GET answered by regtrace_t40_g_ctrl_attr / t40_az_get (#193)
+t40 tx_isp_awb_attr_g_attr_isra_41 arity 2 shim OEM mismatch confirmed (tisp_g_* takes the user buffer); the command is answered earlier by regtrace_t40_g_ctrl_attr, the wrapper is not entered (#193)
+t40 tx_isp_awb_weight_g_attr_isra_40 arity 2 shim OEM mismatch confirmed (tisp_g_* takes the user buffer); the command is answered earlier by regtrace_t40_g_ctrl_attr, the wrapper is not entered (#193)
+t40 tx_isp_gamma_g_attr_isra_32 arity 2 dead no caller: GET answered by regtrace_t40_g_ctrl_attr / t40_az_get (#193)
+t40 tx_isp_mask_g_attr_isra_35 arity 1 ok the T40-MASK-GET block returns before the lifted tail; the flagged call emits no code (compile line map, #193)
+t40 tx_isp_module_ratio_g_attr_isra_50 arity 1 shim OEM mismatch confirmed (tisp_g_* takes the user buffer); the command is answered earlier by regtrace_t40_g_ctrl_attr, the wrapper is not entered (#193)
+t40 tx_isp_probe arity 1 unreach
+t40 tx_isp_sensor_release_sensor arity 1 shim lost CALLEE, not a lost argument: the lifted jalr target is the counting no-op regtrace_unresolved_jalr (unresolved_jalr_count 0 on the Eufy and in QEMU: 3 reload cycles, timps start/stop); needs the real subdev op call + a camera proof, tracked as its own class (#193 follow-up)
+t40 tx_isp_statis_config_g_attr_isra_49 arity 2 shim OEM mismatch confirmed (tisp_g_* takes the user buffer); the command is answered earlier by regtrace_t40_g_ctrl_attr, the wrapper is not entered (#193)
+t40 tx_isp_video_link_stream arity 2 shim lost CALLEE, not a lost argument: the lifted jalr target is the counting no-op regtrace_unresolved_jalr (unresolved_jalr_count 0 on the Eufy and in QEMU: 3 reload cycles, timps start/stop); needs the real subdev op call + a camera proof, tracked as its own class (#193 follow-up)
+t40 tx_isp_vin_init arity 1 shim lost CALLEE, not a lost argument: the lifted jalr target is the counting no-op regtrace_unresolved_jalr (unresolved_jalr_count 0 on the Eufy and in QEMU: 3 reload cycles, timps start/stop); needs the real subdev op call + a camera proof, tracked as its own class (#193 follow-up)
+t40 tx_isp_vin_reset arity 1 shim lost CALLEE, not a lost argument: the lifted jalr target is the counting no-op regtrace_unresolved_jalr (unresolved_jalr_count 0 on the Eufy and in QEMU: 3 reload cycles, timps start/stop); needs the real subdev op call + a camera proof, tracked as its own class (#193 follow-up)
+t40 video_input_cmd_set arity 3 unreach

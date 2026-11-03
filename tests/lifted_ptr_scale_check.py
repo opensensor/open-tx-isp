@@ -28,6 +28,10 @@ end, and stores land behind the object (#186: tisp_g/s_mscaler_mask_attr).  Clas
          comment and call it explicitly
   argc   `system_reg_write` called with ONE argument (`...(uintptr_t)system_reg_write)(X)`): the delay-slot instruction that loaded the
          value register was lost, the write stores whatever the register variable held (#189: tisp_tstp_reg_cfg reg 0x60004)
+  arity  (T40 only) a cast call `((uintptr_t (*)(uintptr_t))f)(a0)` whose cast has fewer parameters than the prototype of f (issue #193, from #140):
+         the lifted `jalr` kept only the argument registers the decompiler recognised, the callee reads the lost ones from stale
+         registers.  Counted per function; every live hit is compared with the OEM disassembly.  Callees without a prototype or
+         variadic ones are skipped
   unal   `*(uint32_t *)((char *)X + k)` with k not a multiple of 4 (u16: odd k): unaligned access, usually a
          u16 field read as a word
 
@@ -236,6 +240,45 @@ def argc_hits(body):
     return out
 
 
+_ARITY_SKIP = ("if", "while", "for", "switch", "return", "sizeof")
+
+
+def proto_table(lines):
+    """-> {function: parameter count (max over its prototypes), None for variadic}"""
+    proto = {}
+    for l in lines:
+        m = re.match(r"^[A-Za-z_][\w \t\*]*?\b(\w+)\s*\(([^;{}()]*)\)\s*(?:__asm__\([^)]*\))?\s*[;{]?\s*$", l)
+        if not m or m.group(1) in _ARITY_SKIP:
+            continue
+        name, plist = m.group(1), m.group(2).strip()
+        if "..." in plist:
+            proto[name] = None
+            continue
+        cnt = 0 if plist in ("", "void") else plist.count(",") + 1
+        if name not in proto or proto[name] is not None:
+            proto[name] = max(cnt, proto.get(name) or 0)
+    return proto
+
+
+_RE_ARITY = re.compile(r"\(\s*\(\s*[\w\s\*]+\(\s*\*\s*\)\s*\(([^()]*)\)\s*\)\s*(?:\(\s*uintptr_t\s*\)\s*)?&?\s*(\w+)\s*\)\s*\(")
+
+
+def arity_hits(body, proto):
+    """-> [(offset, text)] class arity: a cast call with fewer parameters than the callee's prototype."""
+    out = []
+    for k, l in enumerate(body):
+        if l.lstrip().startswith(("/*", "*", "//", "#")):
+            continue
+        for m in _RE_ARITY.finditer(l):
+            plist, callee = m.group(1).strip(), m.group(2)
+            if proto.get(callee) is None:
+                continue
+            cnt = 0 if plist in ("", "void") else plist.count(",") + 1
+            if cnt < proto[callee]:
+                out.append((k, "%s %d/%d: %s" % (callee, cnt, proto[callee], l.strip()[:110])))
+    return out
+
+
 def functions(lines):
     i = 0
     while i < len(lines):
@@ -292,7 +335,7 @@ def live_set(rec, others):
     return F,live,roots,funcs
 
 
-def scan(path, only_postret=False):
+def scan(path, only_postret=False, with_arity=False):
     """-> {(func, class): [(line, text)]}"""
     lines = cut_hard_returns(mask_inactive(cut_hard_returns(cut_stub_tails(open(path, encoding="utf-8", errors="replace").read().split("\n")))))
     res = collections.defaultdict(list)
@@ -306,6 +349,11 @@ def scan(path, only_postret=False):
             res[(name, "tailcall")].append((first + k, t))
         for k, t in argc_hits(body):
             res[(name, "argc")].append((first + k, t))
+    if with_arity:
+        proto = proto_table(pl)
+        for name, first, body in functions(pl):
+            for k, t in arity_hits(body, proto):
+                res[(name, "arity")].append((first + k, t))
     if only_postret:
         return res
     for name, first, body in functions(lines):
@@ -499,7 +547,7 @@ def allres_for(tag):
     for t_, rel in FILES:
         p = os.path.join(HERE, rel)
         if t_ == tag and os.path.exists(p):
-            for (fn, cl), v in scan(p).items():
+            for (fn, cl), v in scan(p, with_arity=(t_ == "t40")).items():
                 out[(t_, fn, cl)] = v
     return out
 
@@ -540,7 +588,7 @@ def main():
     for tag, rel in FILES + EXTRA_FILES:
         p = os.path.join(HERE, rel)
         if os.path.exists(p):
-            for (fn, cl), v in scan(p, (tag, rel) in EXTRA_FILES).items():
+            for (fn, cl), v in scan(p, (tag, rel) in EXTRA_FILES, with_arity=(tag == "t40")).items():
                 allres[(tag, fn, cl)] = v
     if a.list or a.func:
         for (tag, fn, cl), v in sorted(allres.items()):
