@@ -4,6 +4,11 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-03: T40 lifted init/refresh twin source removed (#204 part 1; host + QEMU)
+
+- Deleted from `driver/t40/tx_isp_t40_recovered.c` (~2.2k lines): the garbage-collected lifted `tisp_dmsc_*` init/refresh/params/wdr twins, `tisp_gamma_init`, `tisp_bcsh_main_init`, `tisp_ccm_main_init`, `tisp_bcsh_params_transmit`, `tisp_ccm_params_transmit` and their dead callers (`tisp_day_or_night_s_ctrl`, `tisp_main_day_night_mode_ctl`, `tisp_bcsh_dn_params_refresh`, `tisp_ccm_dn_params_refresh`, the unreachable second-sensor tail of `tisp_sec_init`). They were not in the built module. Kept: `tisp_dmsc_main_deinit` / `tisp_dmsc_sec_*` (reachable via `skip_tisp_deinit=0`), AE classes C/D, gamma/WDR EV (parts 2 and 3).
+- Host tests and anchor check no longer reference the removed names. Built default ko: same toolchain, `.text` -516 B (static helpers now inlined into their single callers), `.data` -1264 B (the two unreferenced OEM BCSH/CCM default blobs), `.bss` -16 B; not byte-identical for that reason only.
+
 ## 2026-11-03: T40 CLM as the vendor runs it, one EV source, translated CT/EV chain and event twins removed (#85; host + QEMU + Eufy T40 camera)
 
 - CLM (colour LUT mapping, TOP bit 16) is plain C (`driver/t40/tx_isp_t40_clm.h`, Unicorn oracle `tests/t40_clm_host.sh`: 0 mismatches against the vendor module, 34 header mutations detected). Like the vendor: `tisp_clm_init(0)` at ISP block init, bit 16 from the bank flag, the CT event re-interpolates the LUT, the LUT is written while CLM is not bypassed, the day/night refresh reloads the parameters. Before, CLM was never initialised and always bypassed. `t40_clm=0` restores that. The lifted `tisp_clm_*` are wrappers to the C; the opt-in writer CLM port is gone.
