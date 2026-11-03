@@ -113,7 +113,6 @@ static unsigned step(int what, uint32_t v, uint8_t *bank, const char *tag)
     tparamsN[0] = (uintptr_t)bank;
     switch (what) {
     case S_INIT: lit_bcsh_ev = regtrace_bcsh_ev; lit_bcsh_ct = regtrace_bcsh_ct; lit_bcsh_main_init_lit(v); break;
-    case S_EV: lit_bcsh_ev_follow_lit(v); break;
     case S_CT: *(uint16_t *)(uintptr_t)pstMainBcshOri_lit[41] = v; tisp_bcsh_ct_update_lit((uint32_t)(uintptr_t)pstMainBcshOri_lit, 0); break;
     case S_BRI: lit_apply_ctl(46, v); break;
     case S_CON: lit_apply_ctl(47, v); break;
@@ -128,7 +127,6 @@ static unsigned step(int what, uint32_t v, uint8_t *bank, const char *tag)
     a = snap(&na);
     switch (what) {
     case S_INIT: t40_bcsh_init(v); break;
-    case S_EV: t40_bcsh_ev_follow(v); break;
     case S_CT: *t40_bcsh_in16(BI_CT) = v; t40_bcsh_ct_update(0); break;
     case S_BRI: c_apply_ctl(BI_BRIGHTNESS, v); break;
     case S_CON: c_apply_ctl(BI_CONTRAST, v); break;
@@ -258,7 +256,7 @@ static int chain_main(int argc, char **argv)
             for (i = 0; i < 400; i++) {
                 r = rnd() % 17;
                 snprintf(tag, sizeof(tag), "mode %u #%u op %u", mode, i, r);
-                if (r < 5) bad += step(S_EV, r == 4 ? *t40_bcsh_in32(BI_EV) : rnd() % (r ? 20000 : 0x400000), bank_of(bin, night), tag);
+                if (r < 5) bad += step(S_MEV, /* the EV input: one OEM path since #85 */ r == 4 ? *t40_bcsh_in32(BI_EV) : rnd() % (r ? 20000 : 0x400000), bank_of(bin, night), tag);
                 else if (r < 8) bad += step(S_CT, rnd() % 12000, bank_of(bin, night), tag);
                 else if (r == 8) bad += step(S_BRI, rnd() % 256, bank_of(bin, night), tag);
                 else if (r == 9) bad += step(S_CON, rnd() % 256, bank_of(bin, night), tag);

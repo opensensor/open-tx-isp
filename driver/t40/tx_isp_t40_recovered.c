@@ -12019,17 +12019,8 @@ static void regtrace_t40_ev_fanout(uint32_t again_log2)
         again_x1024 = 1024U;
     ev_q10 = ((uint64_t)it * again_x1024 * dg) >> 10;
     regtrace_t40_ev_now = (uint32_t)(ev_q10 >> 10);
-    t40_defog_ev_update(ev_q10);
-    /* T40-QUALITY4: EV unit probe for the ADR chain (night pedestal): the OEM AE pushes its
-     * own 64-bit EV with event 8; t40_adr_ev_shift scales ours by 2^shift (runtime, default 0). */
-    t40_adr_ev_update(regtrace_t40_adr_ev_shift >= 0 ?
-                               ev_q10 << regtrace_t40_adr_ev_shift :
-                               ev_q10 >> (-regtrace_t40_adr_ev_shift));
-    if (regtrace_t40_ev_follow) {
-        regtrace_ccm_ev = regtrace_t40_ev_now;
-        if (regtrace_enable_bcsh)
-            t40_bcsh_ev_follow(regtrace_t40_ev_now);
-    }
+    /* The consumers (AWB, CCM, ADR, defog, BCSH) get the EV from one place, the OEM tisp_main_long_ev_update in
+     * the AWB thread (tx_isp_t40_vawb.h, #85).  T40-QUALITY4: t40_adr_ev_shift scales the ADR EV by 2^shift there. */
 }
 
 static void regtrace_gc4653_tuning_again_update(uint32_t again_index)
@@ -47183,12 +47174,9 @@ static void regtrace_frame_done_tuning_follow(void)
      * tracking is disabled. */
     regtrace_t40_ev_fanout(regtrace_gc4653_again_log2_gain(min_t(uint32_t,
         READ_ONCE(regtrace_ae_soft_cur_again), regtrace_t40_ae_max_again_index())));
+    /* fixed CT (ccm_ct_track=0): follow a changed ccm_ct parameter; the EV side runs in t40_main_long_ev_update (#85) */
     if (regtrace_enable_ccm && !regtrace_ccm_ct_track &&
-        (regtrace_ccm_ct != regtrace_ccm_ct_now ||
-         regtrace_ccm_ev != regtrace_ccm_ev_now))
-        regtrace_ccm_main_ct_update_lit(regtrace_ccm_ct, false);
-    else if (regtrace_enable_ccm && regtrace_ccm_ct_track &&
-             regtrace_ccm_ev != regtrace_ccm_ev_now)
+        regtrace_ccm_ct != regtrace_ccm_ct_now)
         regtrace_ccm_main_ct_update_lit(regtrace_ccm_ct, false);
 
     /* Apply module-parameter changes through the same translated BCSH

@@ -574,40 +574,72 @@ static void t40_ct_lsc_write(u32 bank)
 	t40_ct_lsc_writes++;
 	lsc_lit_real_write_lut(bank);
 }
-/* EV like the OEM AE event 8 payload: integration time (lines) x total gain, Q10.  The open AE
- * does not push event 8, so AWB (Y weights / day-night EV gates), CCM and BCSH get it here. */
+/*
+ * EV: ONE value and ONE consumer chain, like the OEM (#85).  The OEM AE pushes event 8 with its exposure value (integration
+ * time x total gain incl. the digital gain, Q10, 64-bit) and the event thread runs tisp_main_long_ev_update, which hands it to
+ * every EV consumer whose block is not bypassed in TOP.  The open AE pushes no event 8: the value is built here from the
+ * exposure the AE applied (regtrace_t40_ev_now_q10 in the driver, the same number regtrace_t40_ev_fanout publishes) and the
+ * fan-out runs once per AWB process in the AWB thread, like the OEM event thread.  Until 2026-11-03 two sources fed the
+ * consumers (this AWB follow without the ISP digital gain, and the gain-update fan-out with it) and BCSH got both a
+ * threshold-gated and an always-repack update.
+ */
 t40_bringup_param_named(t40_vawb_ev, t40_vawb_ev, uint, 0444);
-static u32 t40_vawb_ev_now(void)
+static u64 t40_ev_last;		/* OEM .bss 6784/6788: last EV handed out */
+static u64 t40_vawb_ev_q10(void)
 {
-	u32 it, again_log2, again_x1024;
+	u32 it, again_log2, again_x1024, dg = 1024U;
 
-	if (READ_ONCE(t40_vendor_expo_count)) {
+	if (READ_ONCE(t40_vendor_expo_count)) {	/* custom AE library (#65): its exposure */
 		it = READ_ONCE(t40_vendor_it_sensor) & 0xffffU;
 		again_log2 = READ_ONCE(t40_vendor_again_log2);
 	} else {
 		it = READ_ONCE(regtrace_ae_soft_cur_it);
 		again_log2 = regtrace_gc4653_again_log2_gain(min_t(uint32_t, READ_ONCE(regtrace_ae_soft_cur_again),
 					READ_ONCE(regtrace_ae_sensor_apply_max_again_index)));
+		dg = clamp_t(u32, READ_ONCE(regtrace_ae_isp_dgain_cur), 1024U, 32767U);
 	}
 	again_x1024 = tx_isp_exp2_u32(again_log2, 16, 10);
 	if (!again_x1024)
 		again_x1024 = 1024U;
-	return (u32)min_t(u64, (u64)it * again_x1024, 0xffffffffULL);
+	return ((u64)it * again_x1024 * dg) >> 10;
+}
+/* OEM tisp_main_long_ev_update(lo, hi) 0x1bfb0: skip an unchanged EV; TOP-gated gamma (bit 10), AWB (bits 2+6 both
+ * bypassed), CCM (9), ADR (7), defog (11), BCSH (15), WDR (3) */
+static void t40_main_long_ev_update(u64 ev)
+{
+	u32 lo = (u32)ev, hi = (u32)(ev >> 32), e = hi << 22 | lo >> 10, top;
+
+	if (ev == t40_ev_last)
+		return;
+	top = (u32)system_reg_read(0x40U);
+	/* gamma (bit 10): the driver's gamma has no EV follow-up (OEM tisp_gamma_ev_update not ported) */
+	if ((top & 0x44U) != 0x44U)
+		t40_am_main_ev_update(lo);
+	if (!(top & 0x200U) && regtrace_t40_ev_follow && regtrace_enable_ccm && regtrace_ccm_ct_track &&
+	    stMainCcmOuter_lit && pstMainCcmOri_lit[3] && pstMainCcmOri_lit[4] && pstMainCcmOri_lit[5]) {
+		regtrace_ccm_ev = e;	/* read by the CT re-init path (regtrace_ccm_main_ct_update_lit) */
+		t40_ccm_main_ev_update((uintptr_t)pstMainCcmOri_lit, lo, hi);
+		regtrace_ccm_ev_now = e;
+	}
+	if (!(top & 0x80U))
+		t40_adr_ev_update(regtrace_t40_adr_ev_shift >= 0 ? ev << regtrace_t40_adr_ev_shift : ev >> (-regtrace_t40_adr_ev_shift));
+	if (!(top & 0x800U))
+		t40_defog_ev_update(ev);
+	if (!(top & 0x8000U) && regtrace_t40_ev_follow)
+		t40_bcsh_main_ev_update(e);	/* OEM tisp_bcsh_main_ev_update 0x6a990 */
+	/* WDR (bit 3): linear sensors only, the driver has no WDR EV follow-up */
+	t40_ev_last = ev;
 }
 static void t40_vawb_ev_follow(void)
 {
-	u32 ev = t40_vawb_ev_now(), e10 = ev >> 10;
+	u64 ev = t40_vawb_ev_q10();
 
-	t40_vawb_ev = e10;
-	if (!e10 || ev == t40_vawb_ev_sent)
+	t40_vawb_ev = (u32)(ev >> 10);
+	if (!t40_vawb_ev)
 		return;
-	t40_vawb_ev_sent = ev;
+	t40_vawb_ev_sent = (u32)ev;
 	VAWB_TOP();
-	t40_am_main_ev_update(ev);
-	if (regtrace_enable_ccm && regtrace_ccm_ct_track)
-		regtrace_ccm_ev = e10;	/* CCM by EV: the frame-done block below re-interpolates on change */
-	/* OEM tisp_bcsh_main_ev_update 0x6aac0 */
-	t40_bcsh_main_ev_update(e10);
+	t40_main_long_ev_update(ev);
 }
 
 static void t40_vawb_ct_follow(void)

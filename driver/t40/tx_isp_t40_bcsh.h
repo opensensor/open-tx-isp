@@ -648,16 +648,6 @@ static int t40_bcsh_init(uint32_t mode)
 	return 0;
 }
 
-/* OEM tisp_bcsh_main_ev_update(sensor, ev): store the AE EV and repack */
-static void t40_bcsh_ev_follow(uint32_t ev)
-{
-	if (!t40_bcsh.ready || *t40_bcsh_in32(BI_EV) == ev)
-		return;
-	*t40_bcsh_in32(BI_EV) = ev;
-	regtrace_bcsh_ev = ev;
-	t40_bcsh_ev_update(0);
-}
-
 /* OEM tisp_bcsh_main_ev_update / main_ct_update (vendor AWB follow, event
  * 8 / 13): store the input, repack when a setter is busy or the input moved
  * by more than its threshold (BI 0x1b8 / 0x1c0) from the last packed one */
