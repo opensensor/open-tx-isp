@@ -1200,9 +1200,7 @@ static uintptr_t bss_accessor;
 static uintptr_t bss_data1;
 static uintptr_t bss_data2;
 static uintptr_t ccm_main_ctrl;
-static uintptr_t clm_para;
 static uintptr_t clm_wlut_flag;
-static uintptr_t clm_wlut_times;
 static uintptr_t count_adr_test;
 static uintptr_t csc_switch;
 static uintptr_t d_height_wdr_main;
@@ -1433,7 +1431,6 @@ static uint32_t pstMainAwbOri[128];
 static uint32_t pstMainAwbCtDetectOri[34];
 static uintptr_t pstMainBcshOri[80];   /* OEM .bss+19184: BCSH ctx pointer table (tisp_bcsh_params_transmit fills ~0x40 entries), the lift declared one word */
 static uintptr_t pstMainCcmOri[32];   /* OEM .bss+19736: the CCM context (pointer table filled by tisp_ccm_params_transmit), the lift declared one word */
-static uintptr_t clm_ctx_tab[2];      /* OEM .bss+18936: per-channel CLM context pointers (tisp_clm_init kmalloc(24)), the lift used &isp_memopt + ch*4 */
 static uintptr_t pstSecAeOri_value;
 /* OEM .bss reserves 0x200 bytes: pointer table filled by tisp_awb_params_transmit */
 static uint32_t pstSecAwbOri[128];
@@ -6813,9 +6810,6 @@ static unsigned char g_data_a8a40[4];   /* T40-BSS-SHRINK: unreferenced lifter p
 static unsigned char g_data_a8a48[4];   /* T40-BSS-SHRINK: unreferenced lifter placeholder (was [16384]) */
 static unsigned char g_data_a8a30[4];   /* T40-BSS-SHRINK: unreferenced lifter placeholder (was [16384]) */
 static uintptr_t (*data_a8cf0)();
-static unsigned char __attribute__((aligned(4))) clm_wlut_frequency[4] = {
-    0x05, 0x05, 0x00, 0x00, 
-};
 static unsigned char __attribute__((aligned(4))) tisp_gsm_main_hist_last[1052] = {
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
@@ -10936,6 +10930,10 @@ static bool regtrace_t40_dmsc_day_valid;
 #include "tx_isp_t40_lsc_lit.inc"
 #include "tx_isp_t40_sdns.h"
 #include "tx_isp_t40_cdns.h"
+#define T40_CLM_ALLOC(n) kzalloc(n, GFP_KERNEL)
+#define T40_CLM_FREE(p)  kfree(p)
+#include "tx_isp_t40_clm.h"
+static int32_t t40_clm_ct_update(uint32_t bank, uint32_t ct, uint64_t fnum);
 #include "tx_isp_t40_adr.h"
 #include "tx_isp_t40_defog.h"
 #include "tx_isp_t40_lce.h"
@@ -11564,6 +11562,18 @@ static bool regtrace_t40_dn_keep_awb1 T40C2 = true;   /* own section: keeps .bss
 module_param_named(t40_dn_keep_awb1, regtrace_t40_dn_keep_awb1, bool, 0644);
 MODULE_PARM_DESC(t40_dn_keep_awb1, "1 (default): keep AWB1 (TOP bit 6) at the day-bank state at night, avoids the grey/green-magenta day picture after night->day; 0: follow the night bank");
 
+static bool regtrace_t40_clm T40C2 = true;
+module_param_named(t40_clm, regtrace_t40_clm, bool, 0644);
+MODULE_PARM_DESC(t40_clm, "1 (default): CLM colour LUT (TOP bit 16) from the bank flag with the vendor CT follow-up like the OEM; 0: CLM bypassed");
+
+static void regtrace_t40_clm_top_bit(const uint8_t *flags)
+{
+    if (flags[16] || !regtrace_t40_clm || !t40_clm_ctx[0])
+        regtrace_t40_quality_top40_final |= BIT(16);
+    else
+        regtrace_t40_quality_top40_final &= ~BIT(16);
+}
+
 static void regtrace_t40_apply_raw_tuning_gates(uint32_t nbuf)
 {
     uint32_t gate_off = (regtrace_t40_gates_oem_offset &&
@@ -11624,6 +11634,11 @@ static void regtrace_t40_apply_raw_tuning_gates(uint32_t nbuf)
         regtrace_enable_bcsh = true;
         regtrace_t40_quality_top40_final &= ~BIT(15);
     }
+
+    /* CLM (TOP bit 16) follows the bank flag like the OEM tisp_main_init / day-night refresh (#85): the Eufy sc830ai day
+     * bank runs it (vendor day TOP 0x7FD0000D), the night bank bypasses it.  Cleared only while the C block has a context
+     * (t40_clm_init succeeded); t40_clm=0 keeps it bypassed (the driver's behaviour before 2026-11-03). */
+    regtrace_t40_clm_top_bit(flags);
 
     if (regtrace_t40_gates_awb) {
         if (flags[2])
@@ -12692,6 +12707,16 @@ static int regtrace_isp_block_init_once(const char *where)
             regtrace_ccm_main_ct_update_lit(regtrace_ccm_ct, true);
         printk(KERN_INFO "tx_isp_t40_recovered: isp-block-init ccm ret=%d\n",
                ccm_ret);
+    }
+
+    /* OEM tisp_main_init: tisp_clm_init(0) (parameters from the bank, CSC, LUT for 5000 K written); the TOP bit follows the
+     * bank flag once the context exists, so set bit 16 now */
+    if (regtrace_t40_clm) {
+        int clm_ret = (int)t40_clm_init(0);
+
+        regtrace_t40_clm_top_bit((const uint8_t *)(uintptr_t)(nbuf + regtrace_t40_gates_offset_now));
+        printk(KERN_INFO "tx_isp_t40_recovered: isp-block-init clm ret=%d top16=%u\n",
+               clm_ret, (regtrace_t40_quality_top40_final >> 16) & 1U);
     }
 
     if (regtrace_t40_module_ctx_inits) {   /* T40-MODULE-CTX-INITS: the lifted OEM module inits (tisp_main_init 0x1f550..0x1f7f8) that build the
@@ -20707,6 +20732,14 @@ static int regtrace_t40_refresh_daynight_pipeline(void)
         REGTRACE_T40_DN_STEP(t40_lce_dn_refresh());
     if (regtrace_t40_dpc_active)
         REGTRACE_T40_DN_STEP(t40_dpc_dn_refresh());
+    /* OEM tisp_clm_dn_params_refresh(0): new bank parameters, LUT rebuilt for the current CT and armed; written below
+     * after the TOP word (OEM tisp_hardware_reg_refresh writes it while CLM is not bypassed) */
+    if (regtrace_t40_clm) {
+        if (t40_clm_ctx[0])
+            REGTRACE_T40_DN_STEP(t40_clm_dn_params_refresh(0));
+        else if (!t40_clm_init(0))
+            regtrace_t40_clm_top_bit((const uint8_t *)(uintptr_t)(nbuf + regtrace_t40_gates_offset_now));
+    }
 
     /* Every DNS/YSP initializer installs its bootstrap interpolation state.
      * The next completed frame must replay the live gain even when that gain
@@ -20722,6 +20755,7 @@ static int regtrace_t40_refresh_daynight_pipeline(void)
     if (subret && !ret)
         ret = subret;
     regtrace_t40_gates_commit_reg6c();
+    (void)t40_clm_hw_refresh(0);
 
     printk(KERN_INFO
            "tx_isp_t40_recovered: day/night refresh mode=%s gain=%u size=%ux%u top40=0x%08x ret=%d\n",
@@ -69922,8 +69956,8 @@ static const void *regtrace_vendor_per_frame_window(int which)
         /* exactly what tisp_gamma_get_wlut_times() dereferences */
         return (const void *)&gamma_wlut_times;
     default:
-        /* exactly what tisp_clm_get_wlut_times() dereferences */
-        return (const void *)&clm_wlut_times;
+        /* exactly what tisp_clm_get_wlut_times() dereferences (tx_isp_t40_clm.h) */
+        return (const void *)t40_clm_wlut_times;
     }
 }
 
@@ -95884,7 +95918,6 @@ struct t40_writer_context {
     size_t size[5];
 };
 static struct t40_writer_context *t40_writer_gamma_para[2];
-static struct t40_writer_context *t40_writer_clm_para[2];
 static void t40_writer_context_free(struct t40_writer_context **slot,
                                    void (*release)(void *))
 {
@@ -95963,6 +95996,11 @@ static int t40_writer_gamma_bytes(unsigned int sensor, const uint8_t *table,
 }
 
 /* OEM gamma EV strength interpolation and curve transform, byte-addressed. */
+static uint32_t t40_writer_le16(const uint8_t *p)
+{
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8);
+}
+
 static uint32_t t40_writer_le32(const uint8_t *p)
 {
     return p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) |
@@ -96248,507 +96286,6 @@ static int t40_writer_gamma_stop(unsigned int sensor)
     mutex_unlock(&t40_writer_context_mutex);
     return 0;
 }
-
-/*
- * T40-WRITER-FIX CLM opt-in context.
- *
- * Ported instruction-for-instruction from the OEM module, Oracle:
- * deepseek/work/eufy-oem/tx-isp-t40.ko, tisp_clm_* @ 0x6df10..0x6f0e0.
- *
- * The OEM keeps one context per sensor:
- *   ctx[0]  params 18924 B  (OEM tparamsN[sensor] + 65536 + 9132)
- *   ctx[4]  ptrtab   32 B   ctx[8]  real 3150 B
- *   ctx[12] state     8 B   ctx[16] csc   92 B
- *
- * `ptrtab` holds byte offsets *into* params and is the only thing that selects
- * a coefficient set, so the port keeps the indirection instead of hard-coding
- * the offsets the OEM is observed to use.
- *
- * Facts re-verified against the OEM disassembly while writing this block:
- *   - LUT-port control blocks are 0x500c0 + ch*0x20 + sensor*0x10, i.e.
- *     sensor 0 -> 0x500c0/0x500e0/0x50100/0x50120 and
- *     sensor 1 -> 0x500d0/0x500f0/0x50110/0x50130 (bne a0,1 takes the 0x500c0
- *     set, so sensor 0 owns the low block).
- *   - The CSC tail is 0x12000 + sensor*0x80 (0x12004 clip limit, 0x12000
- *     enable; 0x12084/0x12080 for sensor 1).
- *   - The coefficient tables are read SIGNED.  The OEM emits `lb` at 0x6e8c4
- *     and `lh` at 0x6e8dc, not `lbu`/`lhu`, so params[] is a signed table.
- *   - tisp_clm_write_csc_para reads CLM_CSC_BT709_FULL (.data + 0x2d0a4).
- *   - tisp_clm_ct_update has SIX arguments; the cadence pair arrives in
- *     arg5/arg6 from the caller's stack (OEM sp+48/sp+52), and the frame
- *     counter lives at .bss + 18920 (clm_frame_num_saved), not 18952.
- */
-#define T40_WRITER_CLM_BIN_OFFSET 74668U /* 65536 + 9132 */
-#define T40_WRITER_CLM_BIN_BYTES 204800U
-#define T40_WRITER_CLM_SLOTS 8U
-
-static const size_t t40_writer_clm_sizes[5] = {18924U, 32U, 3150U, 8U, 92U};
-
-/* OEM ptrtab slots, normal set (row 0) and WDR set (row 1, +3150). */
-static const uint32_t t40_writer_clm_slot[2][8] = {
-    {0U, 6U, 6312U, 7362U, 1056U, 8412U, 10512U, 18912U},
-    {3156U, 3162U, 12612U, 13662U, 4212U, 14712U, 16812U, 18918U},
-};
-
-/* OEM .data CLM_CSC_BT709_FULL, the 92 bytes tisp_clm_init copies into ctx[16]. */
-static const uint8_t t40_writer_clm_csc_default[92] = {
-    0x02, 0x00, 0x00, 0x00, 0x6d, 0x36, 0x00, 0x00, 0x17, 0xb7, 0x00, 0x00,
-    0x7c, 0x12, 0x00, 0x00, 0xab, 0xe2, 0xff, 0xff, 0x55, 0x9d, 0xff, 0xff,
-    0x00, 0x80, 0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0xbd, 0x8b, 0xff, 0xff,
-    0x43, 0xf4, 0xff, 0xff, 0x00, 0x80, 0x00, 0xff, 0x00, 0xff, 0x00, 0x00,
-    0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x26, 0x93, 0x01, 0x00,
-    0x00, 0x00, 0x01, 0x00, 0x0c, 0xd0, 0xff, 0xff, 0x29, 0x88, 0xff, 0xff,
-    0x00, 0x00, 0x01, 0x00, 0x09, 0xdb, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x80, 0x00, 0xff, 0x00, 0xff, 0x00, 0x00,
-};
-
-static uint64_t t40_writer_clm_saved_frame[2];
-/* OEM clm_frame_num_saved (.bss + 18920), consumed by tisp_clm_ct_update. */
-static uint64_t clm_frame_num_saved[2];
-static DEFINE_SPINLOCK(t40_writer_clm_lock0);
-static DEFINE_SPINLOCK(t40_writer_clm_lock1);
-
-static spinlock_t *t40_writer_clm_lock(unsigned int sensor)
-{
-    return sensor ? &t40_writer_clm_lock1 : &t40_writer_clm_lock0;
-}
-
-static uint32_t t40_writer_le16(const uint8_t *p)
-{
-    return (uint32_t)p[0] | ((uint32_t)p[1] << 8);
-}
-
-/* OEM tisp_clm_init: ctx[4][i] = (uint32_t)(uintptr_t)(ctx[0] + slot[i]). */
-static void t40_writer_clm_ptrtab(struct t40_writer_context *p,
-                                 unsigned int wdr)
-{
-    uint32_t *tab = (uint32_t *)(void *)p->part[1];
-    uintptr_t base = (uintptr_t)p->part[0];
-    unsigned int i;
-
-    for (i = 0; i < T40_WRITER_CLM_SLOTS; ++i)
-        tab[i] = (uint32_t)(base + t40_writer_clm_slot[wdr ? 1U : 0U][i]);
-}
-
-/* OEM tisp_clm_real_write_lut @0x6e2cc.  Caller holds the CLM lock. */
-static int t40_writer_clm_bytes(unsigned int sensor, const uint8_t *table,
-                               size_t bytes, uint32_t csc_limit,
-                               int (*write_word)(uint32_t, uint32_t))
-{
-    uint32_t control[4], data[4], row, col, word[4], i, ch;
-    int ret = 0, subret;
-
-    if (sensor > 1 || !table || bytes < 3150 || !write_word)
-        return -EINVAL;
-    for (ch = 0; ch < 4; ++ch) {
-        control[ch] = 0x500c0U + ch * 0x20U + sensor * 0x10U;
-        data[ch] = control[ch] + 4U;
-        subret = write_word(control[ch], 0x101U);
-        if (!ret && subret) ret = subret;
-    }
-    for (row = 0; row < 30; ++row) for (col = 0; col < 7; ++col) {
-        const uint8_t *p = table + 2100U + row * 35U + col * 5U;
-        const uint8_t *q = table + row * 70U + col * 10U;
-
-        word[0] = (p[0] & 127U) | (((uint32_t)p[1] << 7) & 16256U) |
-                  (((uint32_t)p[2] << 14) & 2080768U) |
-                  (((uint32_t)p[3] << 21) & 266338304U) |
-                  ((uint32_t)p[4] << 28);
-        word[1] = ((uint32_t)p[4] >> 4) & 7U;
-        word[2] = (t40_writer_le16(q) & 511U) |
-                  ((t40_writer_le16(q + 2) << 9) & 261632U) |
-                  ((t40_writer_le16(q + 4) << 18) & 133955584U) |
-                  (t40_writer_le16(q + 6) << 27);
-        word[3] = ((t40_writer_le16(q + 6) >> 5) & 15U) |
-                  ((t40_writer_le16(q + 8) << 4) & 8176U);
-        for (i = 0; i < 4; ++i) for (ch = 0; ch < 2; ++ch) {
-            subret = write_word(data[(i < 2 ? 0U : 2U) + ch], word[i]);
-            if (!ret && subret) ret = subret;
-        }
-    }
-    for (ch = 0; ch < 4; ++ch) {
-        subret = write_word(control[ch], 0xd10102U);
-        if (!ret && subret) ret = subret;
-    }
-    subret = write_word(0x12004U + sensor * 0x80U, csc_limit & 2047U);
-    if (!ret && subret) ret = subret;
-    subret = write_word(0x12000U + sensor * 0x80U, 1U);
-    if (!ret && subret) ret = subret;
-    return ret;
-}
-
-/* OEM tisp_clm_itp: a + round_int64((b - a) * w, shift 12).  The OEM rounds
- * with __ashrdi3, i.e. (v >> 12) + ((v >> 11) & 1); reproduced identically. */
-static int32_t t40_writer_clm_itp(int32_t a, int32_t b, uint32_t weight)
-{
-    int32_t v = (b - a) * (int32_t)weight;
-
-    return a + (v >> 12) + ((v >> 11) & 1);
-}
-
-/*
- * OEM tisp_clm_ct_interp @0x6e714.
- * Returns 1 when no rebuild is needed, 0 after rebuilding `real`, and a
- * negative errno when the knot block is not usable.
- */
-#define CLM_TAB(n) ((const uint8_t *)(uintptr_t)(tab[(n)]))
-
-static int t40_writer_clm_transform(struct t40_writer_context *p,
-                                   uint8_t *real, uint8_t *state,
-                                   uint32_t ct, unsigned int force)
-{
-    const uint32_t *tab = (const uint32_t *)(const void *)p->part[1];
-    const uint8_t *knot = (const uint8_t *)(uintptr_t)tab[7];
-    uint32_t high, mid, low, lo_hi, mid_lo, mid_hi, hi_lo;
-    uint32_t region, old_ct, delta, weight = 0;
-    const uint8_t *tbl_a, *tbl_b, *half_a, *half_b;
-    unsigned int i;
-
-    if (!p || !real || !state || !knot) return -EINVAL;
-    high = t40_writer_le16(knot + 0);
-    mid = t40_writer_le16(knot + 2);
-    low = t40_writer_le16(knot + 4);
-    if (low < 100U || high > 65435U || mid <= low + 200U || high <= mid + 200U)
-        return -EINVAL;
-    lo_hi = (low + 100U) & 0xffffU;
-    mid_lo = (mid - 100U) & 0xffffU;
-    mid_hi = (mid + 100U) & 0xffffU;
-    hi_lo = (high - 100U) & 0xffffU;
-    region = ct <= lo_hi ? 0U : ct < mid_lo ? 1U : ct <= mid_hi ? 2U :
-             ct < hi_lo ? 3U : 4U;
-    old_ct = t40_writer_le32(state);
-    delta = ct > old_ct ? ct - old_ct : old_ct - ct;
-    if (!force && ((region == state[6] && !(region & 1U)) ||
-        delta <= t40_writer_le16(state + 4)))
-        return 1;
-    /* OEM ptrtab roles: r0 -> {3,6}; r1 -> {3,2} + {6,5}; r2 -> {2,5};
-     * r3 -> {2,1} + {5,4}; r4 -> {1,4}. */
-    switch (region) {
-    case 0:
-        tbl_a = CLM_TAB(3); half_a = CLM_TAB(6); tbl_b = tbl_a;
-        half_b = half_a;
-        break;
-    case 1:
-        tbl_a = CLM_TAB(3); half_a = CLM_TAB(6); tbl_b = CLM_TAB(2);
-        half_b = CLM_TAB(5);
-        /* OEM 6e898: ((ct - lo_hi) << 12) / (mid_lo - lo_hi). */
-        weight = ((ct - lo_hi) << 12) / (mid - low - 200U);
-        break;
-    case 2:
-        tbl_a = CLM_TAB(2); half_a = CLM_TAB(5); tbl_b = tbl_a;
-        half_b = half_a;
-        break;
-    case 3:
-        tbl_a = CLM_TAB(2); half_a = CLM_TAB(5); tbl_b = CLM_TAB(1);
-        half_b = CLM_TAB(4);
-        /* OEM 6e964: ((ct - mid_hi) << 12) / (hi_lo - mid_hi). */
-        weight = ((ct - mid_hi) << 12) / (high - mid - 200U);
-        break;
-    default:
-        tbl_a = CLM_TAB(1); half_a = CLM_TAB(4); tbl_b = tbl_a;
-        half_b = half_a;
-        break;
-    }
-    if (!(region & 1U)) {
-        memcpy(real + 2100U, tbl_a, 1050U);
-        memcpy(real, half_a, 2100U);
-    } else {
-        for (i = 0; i < 1050U; ++i) {
-            /* Signed reads: the OEM emits lb/lh for both tables. */
-            int32_t a = (int32_t)(int8_t)tbl_a[i];
-            int32_t b = (int32_t)(int8_t)tbl_b[i];
-            int32_t v;
-
-            v = (b - a) * (int32_t)weight;
-            real[2100U + i] = (uint8_t)(a + (v >> 12) + ((v >> 11) & 1));
-            a = (int32_t)(int16_t)t40_writer_le16(half_a + 2U * i);
-            b = (int32_t)(int16_t)t40_writer_le16(half_b + 2U * i);
-            v = (b - a) * (int32_t)weight;
-            v = a + (v >> 12) + ((v >> 11) & 1);
-            real[2U * i] = (uint8_t)v;
-            real[2U * i + 1U] = (uint8_t)((uint32_t)v >> 8);
-        }
-    }
-    t40_writer_store32(state, ct);
-    state[6] = (uint8_t)region;
-    return 0;
-}
-
-/* OEM tisp_clm_write_csc_para @0x6df10.  Folds one signed 32-bit CSC field
- * through tisp_round_int64(value, 0, shift) and returns its magnitude. */
-static uint32_t t40_writer_clm_csc_rnd(const uint8_t *csc, unsigned int off,
-                                      unsigned int shift)
-{
-    int64_t x = (int64_t)(int32_t)t40_writer_le32(csc + off);
-    int64_t r = (x >> shift) + ((x >> (shift - 1U)) & 1);
-
-    return (uint32_t)(r < 0 ? -r : r);
-}
-
-static int t40_writer_clm_csc(unsigned int sensor, const uint8_t *csc,
-                             int (*write_word)(uint32_t, uint32_t))
-{
-    uint32_t reg, w[5];
-    unsigned int i;
-    int ret = 0, subret;
-
-    if (sensor > 1 || !csc || !write_word) return -EINVAL;
-    w[0] = ((t40_writer_clm_csc_rnd(csc, 76U, 6U) << 16) & 0x0fff0000U) |
-           (t40_writer_clm_csc_rnd(csc, 56U, 6U) & 0x00000fffU);
-    w[1] = ((t40_writer_clm_csc_rnd(csc, 68U, 6U) << 16) & 0x03ff0000U) |
-           (t40_writer_clm_csc_rnd(csc, 64U, 6U) & 0x000003ffU);
-    w[2] = ((t40_writer_clm_csc_rnd(csc, 20U, 8U) << 8) & 0x0000ffffU) |
-           ((t40_writer_clm_csc_rnd(csc, 24U, 8U) << 16) & 0x00ff0000U) |
-           (t40_writer_clm_csc_rnd(csc, 16U, 8U) & 0x000000ffU);
-    w[3] = ((t40_writer_clm_csc_rnd(csc, 32U, 8U) << 8) & 0x0000ffffU) |
-           ((t40_writer_clm_csc_rnd(csc, 36U, 8U) << 16) & 0x00ff0000U) |
-           (t40_writer_clm_csc_rnd(csc, 28U, 8U) & 0x000000ffU);
-    w[4] = ((t40_writer_clm_csc_rnd(csc, 60U, 8U) << 16) & 0x01ff0000U) |
-           ((uint32_t)(csc[42] != 0) << 8) | (uint32_t)csc[40];
-    reg = 0x12000U + sensor * 0x80U;
-    for (i = 0; i < 5U; ++i) {
-        subret = write_word(reg + 8U + i * 4U, w[i]);
-        if (!ret && subret) ret = subret;
-    }
-    subret = write_word(reg, 1U);
-    if (!ret && subret) ret = subret;
-    return ret;
-}
-
-/* OEM tisp_clm_ct_interp consumer: rebuild `real` for a new colour temperature. */
-static int t40_writer_clm_interp_run(unsigned int sensor, uint32_t ct,
-                                    unsigned int force)
-{
-    struct t40_writer_context *p;
-    unsigned long flags;
-    int ret;
-
-    if (sensor > 1) return -EINVAL;
-    spin_lock_irqsave(t40_writer_clm_lock(sensor), flags);
-    p = t40_writer_clm_para[sensor];
-    if (!p) {
-        ret = -EAGAIN;
-    } else {
-        ret = t40_writer_clm_transform(p, p->part[2], p->part[3], ct, force);
-    }
-    spin_unlock_irqrestore(t40_writer_clm_lock(sensor), flags);
-    return ret;
-}
-
-/* OEM tisp_clm_prepare_write_lut @0x6e2ac: only bumps the dirty counter. */
-static int t40_writer_clm_prepare(unsigned int sensor)
-{
-    unsigned long flags;
-
-    if (sensor > 1) return -EINVAL;
-    spin_lock_irqsave(t40_writer_clm_lock(sensor), flags);
-    ((uint8_t *)&clm_wlut_times)[sensor] += 1U;
-    spin_unlock_irqrestore(t40_writer_clm_lock(sensor), flags);
-    return 0;
-}
-
-/* OEM tisp_clm_real_write_lut consumer path: program the LUT and clear dirty. */
-static int t40_writer_clm_write(unsigned int sensor)
-{
-    struct t40_writer_context *p;
-    unsigned long flags;
-    int ret;
-
-    if (sensor > 1) return -EINVAL;
-    spin_lock_irqsave(t40_writer_clm_lock(sensor), flags);
-    p = t40_writer_clm_para[sensor];
-    if (!p) {
-        ret = -EAGAIN;
-    } else {
-        const uint32_t *tab = (const uint32_t *)(const void *)p->part[1];
-        uint32_t limit = t40_writer_le16((const uint8_t *)(uintptr_t)tab[0]);
-
-        ret = t40_writer_clm_bytes(sensor, p->part[2], p->size[2], limit,
-                                  t40_writer_mmio);
-        if (!ret) ((uint8_t *)&clm_wlut_times)[sensor] = 0;
-    }
-    spin_unlock_irqrestore(t40_writer_clm_lock(sensor), flags);
-    return ret;
-}
-
-/* OEM tisp_clm_ct_update @0x6e994: interp, then honour the frame cadence. */
-static int t40_writer_clm_frame(unsigned int sensor, uint32_t ct,
-                               uint64_t frame)
-{
-    int ret = t40_writer_clm_interp_run(sensor, ct, 1);
-
-    if (ret) return ret;
-    if (frame > t40_writer_clm_saved_frame[sensor] +
-                (uint64_t)((uint8_t *)&clm_wlut_frequency)[sensor]) {
-        ret = t40_writer_clm_prepare(sensor);
-        if (ret) return ret;
-        t40_writer_clm_saved_frame[sensor] = frame;
-    }
-    return 0;
-}
-
-/* OEM tisp_clm_wdr_en @0x6ea5c.  The OEM does NOT rebuild the ptrtab here: it
- * only stores the enable byte and re-runs the interpolation, so the WDR
- * coefficient selection comes from the params content, not from this call. */
-static int t40_writer_clm_wdr(unsigned int sensor, unsigned int en)
-{
-    struct t40_writer_context *p;
-    unsigned long flags;
-    int ret;
-
-    if (sensor > 1) return -EINVAL;
-    spin_lock_irqsave(t40_writer_clm_lock(sensor), flags);
-    p = t40_writer_clm_para[sensor];
-    if (!p) {
-        ret = -EAGAIN;
-    } else {
-        p->part[3][7] = (uint8_t)(en ? 1U : 0U);
-        ret = t40_writer_clm_transform(p, p->part[2], p->part[3],
-                                      t40_writer_le32(p->part[3]), 1U);
-        if (!ret) ((uint8_t *)&clm_wlut_times)[sensor] += 1U;
-    }
-    spin_unlock_irqrestore(t40_writer_clm_lock(sensor), flags);
-    return ret;
-}
-
-static int t40_writer_clm_csc_run(unsigned int sensor)
-{
-    struct t40_writer_context *p;
-    unsigned long flags;
-    int ret;
-
-    if (sensor > 1) return -EINVAL;
-    spin_lock_irqsave(t40_writer_clm_lock(sensor), flags);
-    p = t40_writer_clm_para[sensor];
-    if (!p) {
-        ret = -EAGAIN;
-    } else {
-        ret = t40_writer_clm_csc(sensor, p->part[4], t40_writer_mmio);
-    }
-    spin_unlock_irqrestore(t40_writer_clm_lock(sensor), flags);
-    return ret;
-}
-
-static int t40_writer_clm_start(unsigned int sensor)
-{
-    struct t40_writer_context *pending = NULL;
-    unsigned long flags;
-    int ret;
-
-    if (sensor > 1 || !tparamsN[sensor]) return -EINVAL;
-    mutex_lock(&t40_writer_context_mutex);
-    if (t40_writer_clm_para[sensor]) { ret = -EBUSY; goto done; }
-    ret = t40_writer_context_alloc(&pending, t40_writer_clm_sizes,
-        (const uint8_t *)(uintptr_t)tparamsN[sensor],
-        T40_WRITER_CLM_BIN_BYTES, T40_WRITER_CLM_BIN_OFFSET,
-        t40_writer_alloc, t40_writer_release);
-    if (ret) goto done;
-    memcpy(pending->part[4], t40_writer_clm_csc_default,
-           sizeof(t40_writer_clm_csc_default));
-    t40_writer_clm_ptrtab(pending, 0U);
-    /* OEM init: state[0] = 5000, state[6] = 5, *(uint16_t*)(state+4) = 64,
-     * state[7] = 0, then ct_interp(sensor, 5000, force). */
-    t40_writer_store32(pending->part[3], 5000U);
-    pending->part[3][6] = 5U;
-    pending->part[3][4] = 64U;
-    pending->part[3][5] = 0U;
-    pending->part[3][7] = 0U;
-    ret = t40_writer_clm_transform(pending, pending->part[2], pending->part[3],
-                                  5000U, 1U);
-    if (ret) goto done;
-    spin_lock_irqsave(t40_writer_clm_lock(sensor), flags);
-    ret = t40_writer_clm_csc(sensor, pending->part[4], t40_writer_mmio);
-    if (!ret)
-        ret = t40_writer_clm_bytes(sensor, pending->part[2], pending->size[2],
-                                  t40_writer_le16(pending->part[0]),
-                                  t40_writer_mmio);
-    if (!ret) {
-        t40_writer_clm_para[sensor] = pending;
-        pending = NULL;
-        ((uint8_t *)&clm_wlut_times)[sensor] = 0;
-    }
-    spin_unlock_irqrestore(t40_writer_clm_lock(sensor), flags);
-done:
-    t40_writer_context_free(&pending, t40_writer_release);
-    mutex_unlock(&t40_writer_context_mutex);
-    return ret;
-}
-
-static int t40_writer_clm_stop(unsigned int sensor)
-{
-    struct t40_writer_context *p;
-    unsigned long flags;
-
-    if (sensor > 1) return -EINVAL;
-    mutex_lock(&t40_writer_context_mutex);
-    spin_lock_irqsave(t40_writer_clm_lock(sensor), flags);
-    p = t40_writer_clm_para[sensor];
-    t40_writer_clm_para[sensor] = NULL;
-    t40_writer_clm_saved_frame[sensor] = 0;
-    ((uint8_t *)&clm_wlut_times)[sensor] = 0;
-    spin_unlock_irqrestore(t40_writer_clm_lock(sensor), flags);
-    t40_writer_context_free(&p, t40_writer_release);
-    mutex_unlock(&t40_writer_context_mutex);
-    return 0;
-}
-
-/*
- * CLM tuning surface.  op 0 reload LUT, 1 get params, 2 set params,
- * 3 get CSC block, 4 set CSC block, 5 WDR enable, 6 get dirty counter.
- * `length_out` is an optional uint32_t* receiving the transferred length.
- */
-static int t40_writer_clm_control(unsigned int sensor, unsigned int op,
-                                 uintptr_t arg, uintptr_t length_out)
-{
-    struct t40_writer_context *p;
-    unsigned long flags;
-    int ret;
-
-    if (sensor > 1) return -EINVAL;
-    if (op == 0U) return t40_writer_clm_write(sensor);
-    if (op == 5U) return t40_writer_clm_wdr(sensor, (unsigned int)arg);
-    if (op > 6U) return -EINVAL;
-    spin_lock_irqsave(t40_writer_clm_lock(sensor), flags);
-    p = t40_writer_clm_para[sensor];
-    if (!p) {
-        ret = -EAGAIN;
-    } else switch (op) {
-    case 1U:
-        if (!arg) { ret = -EINVAL; break; }
-        memcpy((void *)arg, p->part[0], p->size[0]);
-        if (length_out) *(uint32_t *)length_out = (uint32_t)p->size[0];
-        ret = 0;
-        break;
-    case 2U:
-        if (!arg) { ret = -EINVAL; break; }
-        memcpy(p->part[0], (const void *)arg, p->size[0]);
-        ret = t40_writer_clm_transform(p, p->part[2], p->part[3],
-                                      t40_writer_le32(p->part[3]), 1U);
-        break;
-    case 3U:
-        if (!arg) { ret = -EINVAL; break; }
-        memcpy((void *)arg, p->part[4], p->size[4]);
-        if (length_out) *(uint32_t *)length_out = (uint32_t)p->size[4];
-        ret = 0;
-        break;
-    case 4U:
-        if (!arg) { ret = -EINVAL; break; }
-        memcpy(p->part[4], (const void *)arg, p->size[4]);
-        ret = t40_writer_clm_csc(sensor, p->part[4], t40_writer_mmio);
-        break;
-    case 6U:
-        if (!arg) { ret = -EINVAL; break; }
-        *(uint32_t *)arg = ((uint8_t *)&clm_wlut_times)[sensor];
-        ret = 0;
-        break;
-    default:
-        ret = -EINVAL;
-        break;
-    }
-    spin_unlock_irqrestore(t40_writer_clm_lock(sensor), flags);
-    return ret;
-}
-
 
 /*
  * T40-WRITER-FIX LSC opt-in context.
@@ -131502,1292 +131039,67 @@ tisp_tstp_param_array_set0x50:
     return 0;
 }
 
-/* WHOLE_DRIVER_CANDIDATE fn_000000000006e020 origin=fragment_seed original=tisp_clm_write_csc_para */
+/*
+ * OEM tisp_clm_*: the C block of tx_isp_t40_clm.h, checked against the OEM instructions (tests/t40_clm_host.sh, #85).
+ * These entry points keep the OEM names for the remaining lifted callers (tuning switch, lifted init / refresh paths).
+ */
 int32_t tisp_clm_write_csc_para(uint32_t a0)
 {
-    if (regtrace_isr_oem_hw_refresh) { return t40_writer_clm_csc_run(a0); }
-#ifdef REGTRACE_KERNEL_TREE_BUILD
-    return 0;
-#else
-
-    uint32_t *local_10 = 0;
-    uint32_t local_14 = 0;
-    uint32_t *local_18 = 0;
-    uint32_t local_1c = 0;
-    uint32_t *local_20 = 0;
-    uint32_t *local_24 = 0;
-    uint32_t local_28 = 0;
-    uint32_t local_2c = 0;
-    uint32_t local_30 = 0;
-    uint32_t local_34 = 0;
-    uint32_t local_38 = 0;
-    uint32_t local_3c = 0;
-    uint32_t local_40 = 0;
-    uint32_t local_44 = 0;
-    uint32_t local_48 = 0;
-    uint32_t local_4c = 0;
-    uint32_t local_50 = 0;
-    uint32_t local_54 = 0;
-    uint32_t local_58 = 0;
-    uint32_t local_5c = 0;
-    uint32_t local_60 = 0;
-    uint32_t local_64 = 0;
-    uint32_t local_68 = 0;
-    uint32_t local_6c = 0;
-    uint32_t local_70 = 0;
-    uint32_t local_74 = 0;
-    uint32_t *a1 = 0;
-    uint32_t *a2 = 0;
-    uint32_t *a3 = 0;
-    uint32_t ra = 0;
-    uint32_t *s0 = 0;
-    uint32_t *s1 = 0;
-    uint32_t *s2 = 0;
-    uintptr_t *s3 = 0;
-    uint32_t *s4 = 0;
-    uint32_t s5 = 0;
-    uint32_t s6 = 0;
-    uint32_t s7 = 0;
-    uint32_t s8 = 0;
-    uint32_t t0 = 0;
-    uint32_t *t1 = 0;
-    uint32_t *t2 = 0;
-    uint32_t *t3 = 0;
-    uint32_t *t4 = 0;
-    uint32_t *t5 = 0;
-    uint32_t *t6 = 0;
-    uint32_t t7 = 0;
-    uint32_t *t8 = 0;
-    uint32_t t9 = 0;
-    uintptr_t *v0 = 0;
-    uint32_t *v1 = 0;
-
-    /* fragment 0: Arithmetic */
-    v1 = (int32_t *)&clm_para;
-    v0 = a0 << 2;
-    v1 = v1 + 18968;
-    v0 = (uintptr_t)v0 + (uintptr_t)v1;
-
-    /* fragment 1: StackAccess */
-    local_74 = ra;
-    local_70 = s8;
-    local_6c = s7;
-    local_68 = s6;
-    local_64 = s5;
-    local_60 = s4;
-    local_58 = s2;
-    local_54 = s1;
-    local_50 = s0;
-    local_5c = s3;
-    v0 = *(uint32_t *)((char *)v0 + 0);
-    local_4c = a0;
-    s2 = (uintptr_t *)&tisp_round_int64;
-    s3 = *(uint32_t *)((char *)v0 + 16);
-    s2 = s2;
-    a2 = 6;
-    v0 = *(uint8_t *)((char *)s3 + 42);
-    a0 = *(uint32_t *)((char *)s3 + 56);
-    v0 = 0 < v0;
-    local_14 = v0;
-    v0 = *(uint8_t *)((char *)s3 + 40);
-    a1 = (uintptr_t)a0 >> 31;
-
-    /* fragment 2: CallSetup */
-    local_10 = v0;
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)tisp_round_int64)(a0); /* jalr target resolved by relocation */
-
-    /* fragment 3: CallSetup */
-    local_48 = v0;
-    local_44 = v1;
-    v0 = (uintptr_t)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)tisp_round_int64)(*(uint32_t *)((char *)((uintptr_t)s3) + 64), (uintptr_t *)(*(uint32_t *)((char *)((uintptr_t)s3) + 64)) >> 31, 6); /* jalr target resolved by relocation */
-
-    /* fragment 4: CallSetup */
-    local_40 = v0;
-    local_3c = v1;
-    v0 = (uintptr_t)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)tisp_round_int64)(*(uint32_t *)((char *)((uintptr_t)s3) + 68), (uintptr_t *)(*(uint32_t *)((char *)((uintptr_t)s3) + 68)) >> 31, 6); /* jalr target resolved by relocation */
-
-    /* fragment 5: CallSetup */
-    s7 = v0;
-    local_38 = v1;
-    v0 = (uintptr_t)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)tisp_round_int64)(*(uint32_t *)((char *)((uintptr_t)s3) + 76), (uintptr_t *)(*(uint32_t *)((char *)((uintptr_t)s3) + 76)) >> 31, 6); /* jalr target resolved by relocation */
-
-    /* fragment 6: CallSetup */
-    s5 = v0;
-    local_34 = v1;
-    v0 = (uintptr_t)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)tisp_round_int64)(*(uint32_t *)((char *)((uintptr_t)s3) + 60), (uintptr_t *)(*(uint32_t *)((char *)((uintptr_t)s3) + 60)) >> 31, 8); /* jalr target resolved by relocation */
-
-    /* fragment 7: CallSetup */
-    s4 = v0;
-    local_18 = v1;
-    v0 = (uintptr_t)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)tisp_round_int64)(*(uint32_t *)((char *)((uintptr_t)s3) + 16), (uintptr_t *)(*(uint32_t *)((char *)((uintptr_t)s3) + 16)) >> 31, 8); /* jalr target resolved by relocation */
-
-    /* fragment 8: CallSetup */
-    local_30 = v0;
-    local_2c = v1;
-    v0 = (uintptr_t)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)tisp_round_int64)(*(uint32_t *)((char *)((uintptr_t)s3) + 20), (uintptr_t *)(*(uint32_t *)((char *)((uintptr_t)s3) + 20)) >> 31, 8); /* jalr target resolved by relocation */
-
-    /* fragment 9: CallSetup */
-    s1 = v0;
-    local_28 = v1;
-    v0 = (uintptr_t)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)tisp_round_int64)(*(uint32_t *)((char *)((uintptr_t)s3) + 24), (uintptr_t *)(*(uint32_t *)((char *)((uintptr_t)s3) + 24)) >> 31, 8); /* jalr target resolved by relocation */
-
-    /* fragment 10: CallSetup */
-    s6 = v0;
-    local_24 = v1;
-    v0 = (uintptr_t)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)tisp_round_int64)(*(uint32_t *)((char *)((uintptr_t)s3) + 28), (uintptr_t *)(*(uint32_t *)((char *)((uintptr_t)s3) + 28)) >> 31, 8); /* jalr target resolved by relocation */
-
-    /* fragment 11: CallSetup */
-    s8 = v0;
-    local_1c = v1;
-    v0 = (uintptr_t)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)tisp_round_int64)(*(uint32_t *)((char *)((uintptr_t)s3) + 32), (uintptr_t *)(*(uint32_t *)((char *)((uintptr_t)s3) + 32)) >> 31, 8); /* jalr target resolved by relocation */
-
-    /* fragment 12: CallSetup */
-    s0 = v0;
-    local_20 = v1;
-    v0 = (uintptr_t)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)tisp_round_int64)(*(uint32_t *)((char *)((uintptr_t)s3) + 36), (uintptr_t *)(*(uint32_t *)((char *)((uintptr_t)s3) + 36)) >> 31, 8); /* jalr target resolved by relocation */
-
-    /* fragment 13: StackAccess */
-    a2 = local_20;
-    t3 = local_24;
-    v1 = (uintptr_t)v1 >> 31;
-    a2 = (uintptr_t)a2 >> 31;
-    a0 = (uintptr_t)t3 >> 31;
-    v0 = (uintptr_t)v1 ^ (uintptr_t)v0;
-    s0 = (uintptr_t)a2 ^ (uintptr_t)s0;
-    t3 = a0 ^ s6;
-    v0 = (uintptr_t)v0 - (uintptr_t)v1;
-    s0 = (uintptr_t)s0 - (uintptr_t)a2;
-    t3 = t3 - a0;
-    s0 = (uintptr_t)s0 << 8;
-    a0 = 16711680;
-    v0 = (uintptr_t)v0 << 16;
-    v0 = (uintptr_t)v0 & a0;
-    s0 = (uintptr_t)s0 & 65535;
-    s0 = (uintptr_t)s0 | (uintptr_t)v0;
-    v0 = local_1c;
-    t4 = local_28;
-    t9 = local_34;
-    v0 = (uintptr_t *)((uintptr_t)v0 >> 31);
-    s8 = (uintptr_t)v0 ^ s8;
-    s8 = s8 - (uintptr_t)v0;
-    v0 = local_18;
-    t6 = local_38;
-    t7 = local_44;
-    v0 = (uintptr_t *)((uintptr_t)v0 >> 31);
-    t5 = local_3c;
-    t2 = local_2c;
-    s3 = (uintptr_t)v0 ^ (uintptr_t)s4;
-
-    /* fragment 14: Arithmetic */
-    t4 = (uintptr_t)t4 >> 31;
-
-    /* fragment 15: StackAccess */
-    t1 = local_48;
-    t0 = local_40;
-    a3 = local_30;
-    t9 = (int32_t)t9 >> 31;
-    t6 = (uintptr_t)t6 >> 31;
-    s3 = (uintptr_t)s3 - (uintptr_t)v0;
-    s1 = (uintptr_t)t4 ^ (uintptr_t)s1;
-    v0 = local_14;
-    a1 = t9 ^ s5;
-    t7 = (int32_t)t7 >> 31;
-    s2 = (uintptr_t)t6 ^ s7;
-    t5 = (uintptr_t)t5 >> 31;
-    t2 = (uintptr_t)t2 >> 31;
-    s1 = (uintptr_t)s1 - (uintptr_t)t4;
-    v1 = local_10;
-    a1 = a1 - t9;
-    s2 = (uintptr_t)s2 - (uintptr_t)t6;
-    t1 = t7 ^ (uintptr_t)t1;
-    t0 = (uintptr_t)t5 ^ t0;
-    s1 = (uintptr_t)s1 << 8;
-    t3 = (uintptr_t)t3 << 16;
-    a3 = (uintptr_t)t2 ^ (uintptr_t)a3;
-    t8 = local_4c;
-    s4 = 33488896;
-    a1 = (uintptr_t)a1 << 16;
-    t9 = 268369920;
-    t1 = t1 - t7;
-    s2 = (uintptr_t)s2 << 16;
-    t6 = 67043328;
-    t0 = t0 - (uintptr_t)t5;
-
-    /* fragment 16: Arithmetic */
-    s1 = (uintptr_t)s1 & 65535;
-    t3 = (uintptr_t)t3 & a0;
-    a3 = (uintptr_t)a3 - (uintptr_t)t2;
-    s8 = s8 & 255;
-    s3 = (uintptr_t)s3 << 16;
-    v0 = (uintptr_t)v0 << 8;
-    s3 = (uintptr_t)s3 & (uintptr_t)s4;
-    a1 = (uintptr_t)a1 & t9;
-    t1 = (uintptr_t)t1 & 4095;
-    s2 = (uintptr_t)s2 & (uintptr_t)t6;
-    t0 = t0 & 1023;
-    s1 = (uintptr_t)s1 | (uintptr_t)t3;
-    a3 = (uintptr_t)a3 & 255;
-    s8 = (uintptr_t)s0 | s8;
-    v0 = (uintptr_t)v0 | (uintptr_t)v1;
-    s0 = (uintptr_t *)&system_reg_write;
-    a1 = (uintptr_t)a1 | (uintptr_t)t1;
-    s2 = (uintptr_t)s2 | t0;
-    s1 = (uintptr_t)s1 | (uintptr_t)a3;
-    s3 = (uintptr_t)s3 | (uintptr_t)v0;
-    s0 = s0;
-
-    /* fragment 17: Branch */
-    s4 = 65536;
-    if (t8 != 0) { goto tisp_clm_write_csc_para0x328; }
-
-    /* fragment 18: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)system_reg_write)(s4 + 8200, a1); /* jalr target resolved by relocation */
-
-    /* fragment 19: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)system_reg_write)(s4 + 8204, s2); /* jalr target resolved by relocation */
-
-    /* fragment 20: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)system_reg_write)(s4 + 8208, s1); /* jalr target resolved by relocation */
-
-    /* fragment 21: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)system_reg_write)(s4 + 8212, s8); /* jalr target resolved by relocation */
-
-    /* fragment 22: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)system_reg_write)(s4 + 8216, s3); /* jalr target resolved by relocation */
-
-    /* fragment 23: CallSetup */
-    a1 = 1;
-    a0 = s4 + 8192;
-
-tisp_clm_write_csc_para0x2f4:
-    /* fragment 24: Epilogue */
-    /* function epilogue: restore registers and return */
-
-    /* fragment 25: CallSetup */
-    t9 = s0;
-    s0 = local_50;
-
-tisp_clm_write_csc_para0x328:
-    /* fragment 26: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)system_reg_write)(s4 + 8328); /* jalr target resolved by relocation */
-
-    /* fragment 27: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)system_reg_write)(s4 + 8332, s2); /* jalr target resolved by relocation */
-
-    /* fragment 28: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)system_reg_write)(s4 + 8336, s1); /* jalr target resolved by relocation */
-
-    /* fragment 29: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)system_reg_write)(s4 + 8340, s8); /* jalr target resolved by relocation */
-
-    /* fragment 30: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)system_reg_write)(s4 + 8344, s3); /* jalr target resolved by relocation */
-
-    /* fragment 31: Arithmetic */
-    a1 = 1;
-
-    /* fragment 32: Branch */
-    a0 = s4 + 8320;
-    goto tisp_clm_write_csc_para0x2f4;
-
-    return 0;
-
-#endif
+    return a0 < 2U && t40_clm_ctx[a0] ? t40_clm_write_csc_para(a0) : -1;
 }
 
-/* WHOLE_DRIVER_CANDIDATE fn_000000000006e3bc origin=model_output original=tisp_clm_prepare_write_lut */
 int32_t tisp_clm_prepare_write_lut(int32_t arg1)
 {
-    if (regtrace_isr_oem_hw_refresh) { return t40_writer_clm_prepare((unsigned int)arg1); }
-    /* T40-BSS-STRAY (issue 86): OEM 0x6e44c increments the u8 counter
-     * clm_wlut_times[arg1]; the lift incremented a byte at .bss + arg1. */
-    if ((uint32_t)arg1 < 2)
-        ((uint8_t *)&clm_wlut_times)[arg1]++;
-    return 0;
+    return (uint32_t)arg1 < 2U ? t40_clm_prepare_write_lut((uint32_t)arg1) : -1;
 }
 
-/* WHOLE_DRIVER_CANDIDATE fn_000000000006e3dc origin=fragment_seed original=tisp_clm_real_write_lut */
 int32_t tisp_clm_real_write_lut(uintptr_t a0)
 {
-    if (regtrace_isr_oem_hw_refresh) { return t40_writer_clm_write((unsigned int)(uintptr_t)a0); }
-    uint32_t *local_10 = 0;
-    uint32_t local_14 = 0;
-    uint32_t *local_18 = 0;
-    uint32_t local_1c = 0;
-    uint32_t *local_20 = 0;
-    uint32_t *local_24 = 0;
-    uint32_t local_28 = 0;
-    uint32_t local_2c = 0;
-    uint32_t local_30 = 0;
-    uint32_t local_34 = 0;
-    uint32_t local_38 = 0;
-    uint32_t local_3c = 0;
-    uint32_t local_40 = 0;
-    uint32_t local_44 = 0;
-    uint32_t local_48 = 0;
-    uint32_t local_50 = 0;
-    uint32_t local_54 = 0;
-    uint32_t local_58 = 0;
-    uint32_t local_5c = 0;
-    uint32_t local_60 = 0;
-    uint32_t local_64 = 0;
-    uint32_t local_68 = 0;
-    uint32_t local_6c = 0;
-    uint32_t local_70 = 0;
-    uint32_t local_74 = 0;
-    uintptr_t a1 = 0;
-    uintptr_t a2 = 0;
-    uintptr_t a3 = 0;
-    uint32_t ra = 0;
-    uintptr_t s0 = 0;
-    uintptr_t s1 = 0;
-    uintptr_t s2 = 0;
-    uintptr_t s3 = 0;
-    uintptr_t s4 = 0;
-    uint32_t s5 = 0;
-    uint32_t s6 = 0;
-    uint32_t s7 = 0;
-    uint32_t s8 = 0;
-    uint32_t t0 = 0;
-    uintptr_t t1 = 0;
-    uintptr_t t2 = 0;
-    uintptr_t t3 = 0;
-    uintptr_t t4 = 0;
-    uintptr_t t5 = 0;
-    uintptr_t v0 = 0;
-    uintptr_t v1 = 0;
-
-    /* fragment 0: Prologue */
-    /* function prologue: stack frame and callee-saved register setup */
-
-    /* fragment 1: Arithmetic */
-    v0 = 1;
-
-    /* fragment 2: StackAccess */
-    local_58 = s2;
-    local_54 = s1;
-    local_74 = ra;
-    local_70 = s8;
-    local_6c = s7;
-    local_68 = s6;
-    local_64 = s5;
-    local_60 = s4;
-    local_5c = s3;
-    local_50 = s0;
-    s2 = a0;
-
-    /* fragment 3: Branch */
-    s1 = 327680;
-    if (a0 != v0) { goto tisp_clm_real_write_lut0x340; }
-
-    /* fragment 4: Arithmetic */
-    v0 = s1 + 304;
-    s8 = s1 + 276;
-    s4 = s1 + 272;
-    s7 = s1 + 244;
-    s5 = s1 + 240;
-    s6 = s1 + 212;
-    t1 = s1 + 208;
-
-    /* fragment 5: CallSetup */
-    local_10 = v0;
-    s1 = s1 + 308;
-
-tisp_clm_real_write_lut0x60:
-    /* fragment 6: CallSetup */
-    local_1c = (uintptr_t)s2 << 2;
-    local_20 = (uint32_t *)(uintptr_t)clm_ctx_tab;
-    local_14 = *(uint32_t *)((char *)(*(uint32_t *)((char *)(((uintptr_t)s2 << 2) + (uintptr_t)clm_ctx_tab) + 0)) + 8);
-    local_2c = t1;
-    local_18 = (*(uint32_t *)((char *)(*(uint32_t *)((char *)(((uintptr_t)s2 << 2) + (uintptr_t)clm_ctx_tab) + 0)) + 8)) + 2100;
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)system_reg_write)(t1, 257); /* jalr target resolved by relocation */
-
-    /* fragment 7: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)system_reg_write)(s5, 257); /* jalr target resolved by relocation */
-
-    /* fragment 8: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)system_reg_write)(s4, 257); /* jalr target resolved by relocation */
-
-    /* fragment 9: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)system_reg_write)(local_10, 257); /* jalr target resolved by relocation */
-
-    /* fragment 10: Arithmetic */
-    v0 = 196608;
-
-    /* fragment 11: StackAccess */
-    t1 = local_2c;
-    t3 = 2031616;
-    v0 = (uintptr_t)v0 | 65024;
-    t0 = 0;
-    local_28 = s3;
-    t3 = (uintptr_t)t3 | 49152;
-    t4 = 266338304;
-    local_24 = v0;
-    t5 = 7;
-    v0 = local_18;
-
-tisp_clm_real_write_lut0xfc:
-    /* fragment 12: Arithmetic */
-    a2 = t0 << 1;
-    t2 = 0;
-    a3 = v0 + t0;
-
-    /* fragment 13: StackAccess */
-    v0 = local_14;
-    s3 = (uintptr_t)v0 + (uintptr_t)a2;
-
-tisp_clm_real_write_lut0x110:
-    /* fragment 14: MemoryAccess */
-    v1 = *(uint8_t *)((char *)a3 + 0);
-    v0 = *(uint8_t *)((char *)a3 + 4);
-    a0 = s6;
-    v1 = (uintptr_t)v1 & 127;
-    v0 = (uintptr_t)v0 << 28;
-    v1 = (uintptr_t)v1 | (uintptr_t)v0;
-    v0 = *(uint8_t *)((char *)a3 + 1);
-    local_48 = t5;
-    local_44 = t1;
-    v0 = (uintptr_t)v0 << 7;
-    v0 = (uintptr_t)v0 & 16256;
-    v1 = (uintptr_t)v1 | (uintptr_t)v0;
-    v0 = *(uint8_t *)((char *)a3 + 2);
-    local_40 = t0;
-    local_3c = t2;
-    v0 = (uintptr_t)v0 << 14;
-    v0 = (uintptr_t)v0 & (uintptr_t)t3;
-    v1 = (uintptr_t)v1 | (uintptr_t)v0;
-    v0 = *(uint8_t *)((char *)a3 + 3);
-    local_38 = t3;
-    local_34 = t4;
-    v0 = (uintptr_t)v0 << 21;
-    v0 = (uintptr_t)v0 & (uintptr_t)t4;
-    v1 = (uintptr_t)v1 | (uintptr_t)v0;
-    a1 = v1;
-    local_30 = a3;
-
-    /* fragment 15: CallSetup */
-    local_2c = v1;
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)system_reg_write)(a0, a1); /* jalr target resolved by relocation */
-
-    /* fragment 16: CallSetup */
-    s3 = s3 + 10;
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)system_reg_write)(s7, local_2c); /* jalr target resolved by relocation */
-
-    /* fragment 17: CallSetup */
-    local_2c = *(uint8_t *)((char *)(local_30) + 4);
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)system_reg_write)(s6, *(uint8_t *)((char *)(local_30) + 4)); /* jalr target resolved by relocation */
-
-    /* fragment 18: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)system_reg_write)(s7, local_2c); /* jalr target resolved by relocation */
-
-    /* fragment 19: CallSetup */
-    local_2c = (*(uint16_t *)((char *)((uintptr_t)s3) + -10) & 511) | ((*(uint16_t *)((char *)((uintptr_t)s3) + -4)) << 27) | (((*(uint16_t *)((char *)((uintptr_t)s3) + -8)) << 9) & (uintptr_t)local_24) | (((*(uint16_t *)((char *)((uintptr_t)s3) + -6)) << 18) & 133955584);
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)system_reg_write)(s8, (*(uint16_t *)((char *)((uintptr_t)s3) + -10) & 511) | ((*(uint16_t *)((char *)((uintptr_t)s3) + -4)) << 27) | (((*(uint16_t *)((char *)((uintptr_t)s3) + -8)) << 9) & (uintptr_t)local_24) | (((*(uint16_t *)((char *)((uintptr_t)s3) + -6)) << 18) & 133955584)); /* jalr target resolved by relocation */
-
-    /* fragment 20: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)system_reg_write)(s1, local_2c); /* jalr target resolved by relocation */
-
-    /* fragment 21: CallSetup */
-    local_2c = (*(uint16_t *)((char *)((uintptr_t)s3) + -4)) | ((*(uint16_t *)((char *)((uintptr_t)s3) + -2)) << 4 & 8176);
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)system_reg_write)(s8, (*(uint16_t *)((char *)((uintptr_t)s3) + -4)) | ((*(uint16_t *)((char *)((uintptr_t)s3) + -2)) << 4 & 8176)); /* jalr target resolved by relocation */
-
-    /* fragment 22: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)system_reg_write)(s1, local_2c); /* jalr target resolved by relocation */
-
-    /* fragment 23: StackAccess */
-    t2 = local_3c;
-    a3 = local_30;
-    t5 = local_48;
-    t2 = t2 + 1;
-    a3 = a3 + 5;
-    t4 = local_34;
-    t3 = local_38;
-    t0 = local_40;
-
-    /* fragment 24: Branch */
-    t1 = local_44;
-    if (t2 != t5) { goto tisp_clm_real_write_lut0x110; }
-
-    /* fragment 25: Arithmetic */
-    t0 = t0 + 35;
-    v0 = 1050;
-
-    /* fragment 26: Branch */
-    int _bc_t0_26 = t0 != v0;
-    v0 = local_18;
-    if (_bc_t0_26) { goto tisp_clm_real_write_lut0xfc; }
-
-    /* fragment 27: CallSetup */
-    s1 = 13697024;
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)system_reg_write)(t1, 13697024 + 258); /* jalr target resolved by relocation */
-
-    /* fragment 28: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)system_reg_write)(s5, (uintptr_t)s1 | 258); /* jalr target resolved by relocation */
-
-    /* fragment 29: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)system_reg_write)((uintptr_t)s4, (uintptr_t)s1 | 258); /* jalr target resolved by relocation */
-
-    /* fragment 30: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)system_reg_write)((uintptr_t)local_10, (uintptr_t)s1 | 258); /* jalr target resolved by relocation */
-
-    /* fragment 31: Branch */
-    v0 = local_20;
-    if (s2 != 0) { goto tisp_clm_real_write_lut0x368; }
-
-    /* fragment 32: CallSetup */
-    s1 = 65536;
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)system_reg_write)(65536 + 8196, *(uint16_t *)((char *)(*(uint32_t *)((char *)(*(uint32_t *)((char *)(*(uint32_t *)((char *)(uintptr_t)&clm_para)) + 4)) + 0)) + 0) & 2047); /* jalr target resolved by relocation */
-
-    /* fragment 33: CallSetup */
-    a1 = 1;
-    a0 = s1 + 8192;
-
-tisp_clm_real_write_lut0x2f4:
-    /* fragment 34: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)system_reg_write)(a0, a1); /* jalr target resolved by relocation */
-
-    /* fragment 35: ConstantLoad */
-    v0 = ((char *)&clm_wlut_times);
-
-    /* fragment 36: MemoryAccess */
-    /* OEM 0x6e5cc/0x6e5d0/0x6e5d4: addu s2,s2,%lo(clm_wlut_times); sb zero,0(s2).
-       The base add was lost, leaving a store to the bare index a0 (0/1). */
-    *(uint8_t *)((char *)&clm_wlut_times + (uintptr_t)s2) = 0;
-    ra = local_74;
-    s8 = local_70;
-    s7 = local_6c;
-    s6 = local_68;
-    s5 = local_64;
-    s4 = local_60;
-    s3 = local_5c;
-    s2 = local_58;
-    s1 = local_54;
-    s0 = local_50;
-    v0 = 0;
-
-    /* fragment 37: Epilogue */
-    /* function epilogue: restore registers and return */
-    return (int32_t)v0;
-
-tisp_clm_real_write_lut0x340:
-    /* fragment 38: Arithmetic */
-    v0 = s1 + 288;
-    s8 = s1 + 260;
-    s4 = s1 + 256;
-    s7 = s1 + 228;
-    s5 = s1 + 224;
-    s6 = s1 + 196;
-    t1 = s1 + 192;
-
-    /* fragment 39: StackAccess */
-    local_10 = v0;
-
-    /* fragment 40: Branch */
-    s1 = s1 + 292;
-    goto tisp_clm_real_write_lut0x60;
-
-tisp_clm_real_write_lut0x368:
-    /* fragment 41: CallSetup */
-    s1 = 65536;
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)system_reg_write)(65536 + 8324, *(uint16_t *)((char *)(*(uint32_t *)((char *)(*(uint32_t *)((char *)(*(uint32_t *)((char *)((uintptr_t)v0 + local_1c) + 0)) + 4)) + 0)) + 0) & 2047); /* jalr target resolved by relocation */
-
-    /* fragment 42: Arithmetic */
-    a1 = 1;
-
-    /* fragment 43: Branch */
-    a0 = s1 + 8320;
-    goto tisp_clm_real_write_lut0x2f4;
-
-    return 0;
+    return a0 < 2U && t40_clm_ctx[a0] ? t40_clm_real_write_lut((uint32_t)a0) : -1;
 }
 
-/* WHOLE_DRIVER_CANDIDATE fn_000000000006e778 origin=model_output original=tisp_clm_get_wlut_times */
 int32_t tisp_clm_get_wlut_times(void* arg1, uint32_t* arg2)
 {
-    if (regtrace_isr_oem_hw_refresh) { uint32_t idx = (uint32_t)(uintptr_t)arg1; uint32_t v; if (idx > 1 || !arg2) return -EINVAL; v = (uint32_t)system_reg_read((idx + 16U) << 2); if (!((v >> 16) & 1U)) *arg2 = ((uint8_t *)&clm_wlut_times)[idx]; return 0; }
-    uint32_t *v0;
-    uint32_t temp;
-    uint32_t wslot = 0;
-    
-    /* Call system_reg_read with (arg1 + 0x10) << 2 */
-    temp = (uint32_t)((char*)arg1 + 0x10);
-    temp = temp << 2;
-    v0 = system_reg_read(temp);
-    if (regtrace_isr_wlut_trace) { wslot = regtrace_wlut_trace_regs[43] & 1U; regtrace_wlut_trace_regs[0] = regtrace_wlut_trace_regs[0] + 1; regtrace_wlut_trace_regs[40] = regtrace_wlut_trace_regs[40] + 1; regtrace_wlut_trace_regs[43] = regtrace_wlut_trace_regs[43] + 1; regtrace_wlut_trace_regs[10 + wslot] = regtrace_wlut_trace_regs[10 + wslot] | (uint32_t)(uintptr_t)(v0); regtrace_wlut_trace_regs[16 + wslot] = (uint32_t)(uintptr_t)(v0); regtrace_wlut_trace_regs[48 + wslot] = (uint32_t)(uintptr_t)arg1; regtrace_wlut_trace_regs[54 + wslot] = temp; }
-    
-    /* Extract bit 0 from result */
-    v0 = ((uintptr_t)v0 >> 0x10) & 1;
-    
-    if (v0 != 0) {
-        *arg2 = 0;
-    if (regtrace_isr_wlut_trace) { regtrace_wlut_trace_regs[2] = regtrace_wlut_trace_regs[2] + 1; regtrace_wlut_trace_regs[28 + wslot] = regtrace_wlut_trace_regs[28 + wslot] + 1; }
-        /* Backward branch to return path - effectively just return */
-        goto return_zero;
-    } else {
-        /* OEM 0x6e668: addu s0,s0,%lo(clm_wlut_times); lbu v0,0(s0); sw v0,0(s1).
-           The array base is a RELOCATED SYMBOL (OEM .bss+0x49e0 == clm_wlut_times),
-           never the absolute address 0xa8d70 that the reconstruction baked in as a
-           literal. With arg1 = 1 that literal produced the wild, odd address
-           0x000a8d71 (the reported BadVA) and the ISR died on the unaligned lw.
-           The access is a byte load, as in the OEM. */
-        *arg2 = *(uint8_t *)((char *)&clm_wlut_times + (uintptr_t)arg1);
-    if (regtrace_isr_wlut_trace) { regtrace_wlut_trace_regs[1] = regtrace_wlut_trace_regs[1] + 1; regtrace_wlut_trace_regs[22 + wslot] = regtrace_wlut_trace_regs[22 + wslot] + 1; }
-    }
-    
-return_zero:
-    return 0;
+    uint32_t bank = (uint32_t)(uintptr_t)arg1;
+
+    return bank < 2U && arg2 ? t40_clm_get_wlut_times(bank, arg2) : -1;
 }
 
-/* WHOLE_DRIVER_CANDIDATE fn_000000000006e7e0 origin=model_output original=tisp_clm_itp */
 int32_t tisp_clm_itp(int32_t arg1, int32_t arg2, int32_t arg3)
 {
-    int32_t temp = (arg2 - arg1) * arg3;
-    int32_t rounded = tisp_round_int64(temp, 0, 12);
-    int32_t *result = arg1 + rounded;
-    return (int16_t)result;
+    return t40_clm_itp(arg1, arg2, (uint32_t)arg3);
 }
 
-/* WHOLE_DRIVER_CANDIDATE fn_000000000006e824 origin=fragment_seed original=tisp_clm_ct_interp */
 int64_t tisp_clm_ct_interp(uint32_t a0, uint32_t a1, uint32_t a2)
 {
-    if (regtrace_isr_oem_hw_refresh) { return t40_writer_clm_interp_run(a0, a1, a2); }
-    uint32_t *local_10 = 0;
-    uint32_t local_14 = 0;
-    uint32_t *local_18 = 0;
-    uint32_t local_1c = 0;
-    uint32_t *local_20 = 0;
-    uint32_t *local_24 = 0;
-    uint32_t local_28 = 0;
-    uint32_t local_2c = 0;
-    uint32_t local_30 = 0;
-    uint32_t local_34 = 0;
-    uintptr_t a3 = 0;
-    uint32_t ra = 0;
-    uintptr_t s0 = 0;
-    uintptr_t s1 = 0;
-    uintptr_t s2 = 0;
-    uintptr_t s3 = 0;
-    uintptr_t s4 = 0;
-    uint32_t s5 = 0;
-    uintptr_t s6 = 0;
-    uintptr_t s7 = 0;
-    uint32_t s8 = 0;
-    uint32_t t0 = 0;
-    uintptr_t t1 = 0;
-    uintptr_t t2 = 0;
-    uintptr_t t3 = 0;
-    uintptr_t v0 = 0;
-    uintptr_t v1 = 0;
-
-    /* fragment 0: Prologue */
-    /* function prologue: stack frame and callee-saved register setup */
-
-    /* fragment 1: Arithmetic */
-    s4 = a0 << 2;
-    a0 = (uint32_t *)clm_ctx_tab;   /* T40-CLM-CTX: OEM .bss+18936 per-channel ctx table */
-
-    /* fragment 2: StackAccess */
-    local_18 = s2;
-    s2 = (typeof(s2))clm_ctx_tab;   /* T40-CLM-CTX: OEM .bss+18936 (lift: &isp_memopt + 18968 words -> ctx NULL, MT88 Oops BadVA 4 in ct_interp) */
-    local_24 = s5;
-    local_10 = s0;
-    local_34 = ra;
-    local_30 = s8;
-    local_2c = s7;
-    local_28 = s6;
-    local_1c = s3;
-    local_14 = s1;
-    v0 = (uintptr_t)s4 + (uintptr_t)s2;
-    v0 = *(uint32_t *)((char *)v0 + 0);
-    s0 = a1;
-    a0 = (uint32_t *)&LC0;
-    s1 = *(uint32_t *)((char *)v0 + 4);
-    s3 = *(uint32_t *)((char *)v0 + 12);
-    a0 = a0;
-    v0 = *(uint32_t *)((char *)s1 + 4);
-    a1 = *(uint8_t *)((char *)v0 + 0);
-    v0 = (uintptr_t *)&printk;
-    v0 = v0;
-
-    /* fragment 3: CallSetup */
-    s5 = a2;
-    v0 = (uintptr_t *)printk("%s", ({ uintptr_t __regtrace_cstr = (uintptr_t)((const char *)(uintptr_t)a0); (const char *)(__regtrace_cstr ? __regtrace_cstr : (uintptr_t)"<null>"); })); /* jalr target resolved by relocation */
-
-    /* fragment 4: MemoryAccess */
-    v1 = *(uint32_t *)((char *)s1 + 28);
-    a3 = *(uint16_t *)((char *)v1 + 2);
-    v0 = a3 - 100;
-    t2 = (uintptr_t)v0 & 65535;
-    v0 = *(uint16_t *)((char *)v1 + 4);
-    a3 = a3 + 100;
-    t0 = (uintptr_t)a3 & 65535;
-    a3 = *(uint16_t *)((char *)v1 + 0);
-    v0 = v0 + 100;
-    t1 = (uintptr_t)v0 & 65535;
-    a3 = a3 - 100;
-    t3 = t1 < s0;
-    a3 = (uintptr_t)a3 & 65535;
-
-    /* fragment 5: Branch */
-    v1 = 0;
-    if (t3 == 0) { goto tisp_clm_ct_interp0xcc; }
-
-    /* fragment 6: Arithmetic */
-    v0 = s0 < t2;
-
-    /* fragment 7: Branch */
-    v1 = 1;
-    if (v0 != 0) { goto tisp_clm_ct_interp0xcc; }
-
-    /* fragment 8: Arithmetic */
-    v0 = t0 < s0;
-
-    /* fragment 9: Branch */
-    v1 = 2;
-    if (v0 == 0) { goto tisp_clm_ct_interp0xcc; }
-
-    /* fragment 10: Arithmetic */
-    v1 = s0 < a3;
-    v1 = v1 < 1;
-    v1 = v1 + 3;
-
-tisp_clm_ct_interp0xcc:
-    /* fragment 11: MemoryAccess */
-    v0 = *(uint32_t *)((char *)s3 + 0);
-    a0 = v0 < s0;
-
-    /* fragment 12: Branch */
-    a2 = (uintptr_t)v0 - (uintptr_t)s0;
-    if (a0 == 0) { goto tisp_clm_ct_interp0xe0; }
-
-    /* fragment 13: Arithmetic */
-    a2 = (uintptr_t)s0 - (uintptr_t)v0;
-
-tisp_clm_ct_interp0xe0:
-    /* fragment 14: Branch */
-    a0 = (uintptr_t)s2 + (uintptr_t)s4;
-    if (s5 != 0) { goto tisp_clm_ct_interp0x110; }
-
-    /* fragment 15: MemoryAccess */
-    v0 = *(uint8_t *)((char *)s3 + 6);
-
-    /* fragment 16: Branch */
-    a1 = (uintptr_t)v1 & 1;
-    if (v0 != v1) { goto tisp_clm_ct_interp0xfc; }
-
-    /* fragment 17: Branch */
-    v0 = 1;
-    if (a1 == 0) { goto tisp_clm_ct_interp0x150; }
-
-tisp_clm_ct_interp0xfc:
-    /* fragment 18: MemoryAccess */
-    a0 = *(uint16_t *)((char *)s3 + 4);
-    a0 = a0 < a2;
-
-    /* fragment 19: Branch */
-    v0 = 1;
-    if (a0 == 0) { goto tisp_clm_ct_interp0x150; }
-
-    /* fragment 20: Arithmetic */
-    a0 = (uintptr_t)s2 + (uintptr_t)s4;
-
-tisp_clm_ct_interp0x110:
-    /* fragment 21: MemoryAccess */
-    v0 = *(uint32_t *)((char *)a0 + 0);
-    s5 = *(uint32_t *)((char *)v0 + 8);
-    *(uint32_t *)((char *)s3 + 0) = s0;
-    *(uint8_t *)((char *)s3 + 6) = v1;
-
-    /* fragment 22: Branch */
-    a0 = s5 + 2100;
-    if (v1 != 0) { goto tisp_clm_ct_interp0x180; }
-
-    /* fragment 23: CallSetup */
-    v0 = (uintptr_t *)memcpy((void *)(uintptr_t)a0, (void *)(uintptr_t)(*(uint32_t *)((char *)(s1) + 12)), 1050); /* jalr target resolved by relocation */
-
-    /* fragment 24: CallSetup */
-    a1 = *(uint32_t *)((char *)s1 + 24);
-    a2 = 2100;
-
-tisp_clm_ct_interp0x144:
-    /* fragment 25: CallSetup */
-    v0 = (uintptr_t *)memcpy((void *)(uintptr_t)s5, (void *)(uintptr_t)a1, a2); /* jalr target resolved by relocation */
-
-    /* fragment 26: Arithmetic */
-    v0 = 0;
-
-tisp_clm_ct_interp0x150:
-    /* fragment 27: Epilogue */
-    /* function epilogue: restore registers and return */
-    return (int64_t)v0;
-
-tisp_clm_ct_interp0x180:
-    /* fragment 28: Arithmetic */
-    v0 = 1;
-
-    /* fragment 29: Branch */
-    if (v1 != v0) { goto tisp_clm_ct_interp0x224; }
-
-    /* fragment 30: MemoryAccess */
-    s2 = *(uint32_t *)((char *)s1 + 12);
-    a1 = *(uint32_t *)((char *)s1 + 8);
-    s7 = *(uint32_t *)((char *)s1 + 24);
-    s6 = *(uint32_t *)((char *)s1 + 20);
-
-    /* fragment 31: Branch */
-    v0 = -1;
-    if (t3 == 0) { goto tisp_clm_ct_interp0x150; }
-
-    /* fragment 32: Arithmetic */
-    v1 = s0 < t2;
-
-    /* fragment 33: Branch */
-    s0 = (uintptr_t)s0 - (uintptr_t)t1;
-    if (v1 == 0) { goto tisp_clm_ct_interp0x150; }
-
-    /* fragment 34: CallSetup */
-    s0 = (uintptr_t)s0 << 12;
-    v0 = (uintptr_t)t2 - (uintptr_t)t1;
-
-tisp_clm_ct_interp0x1bc:
-    /* fragment 35: CallSetup */
-    s1 = s5;
-    s5 = (uintptr_t)&tisp_clm_itp;
-    s4 = a1;
-    s3 = a0;
-    s8 = s2 + 1050;
-    s5 = s5;
-
-tisp_clm_ct_interp0x1d8:
-    /* fragment 36: CallSetup */
-    s2 = s2 + 1;
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)tisp_clm_itp)(*(uint8_t *)((char *)(s2) + 0), *(uint8_t *)((char *)(s4) + 0), s0); /* jalr target resolved by relocation */
-
-    /* fragment 37: CallSetup */
-    *(uint8_t *)((char *)s3 + 0) = v0;
-    s4 = s4 + 1;
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)tisp_clm_itp)(*(uint16_t *)((char *)(s7) + 0), *(uint16_t *)((char *)(s6) + 0), s0); /* jalr target resolved by relocation */
-
-    /* fragment 38: MemoryAccess */
-    *(uint16_t *)((char *)s1 + 0) = v0;
-    s3 = s3 + 1;
-    s7 = s7 + 2;
-    s6 = s6 + 2;
-
-    /* fragment 39: Branch */
-    s1 = s1 + 2;
-    if (s8 != s2) { goto tisp_clm_ct_interp0x1d8; }
-
-    /* fragment 40: Branch */
-    v0 = 0;
-    goto tisp_clm_ct_interp0x150;
-
-tisp_clm_ct_interp0x224:
-    /* fragment 41: Arithmetic */
-    v0 = 2;
-
-    /* fragment 42: Branch */
-    int _bc_v1_42 = v1 != v0;
-    v0 = 3;
-    if (_bc_v1_42) { goto tisp_clm_ct_interp0x250; }
-
-    /* fragment 43: CallSetup */
-    v0 = (uintptr_t *)memcpy((void *)(uintptr_t)a0, (void *)(uintptr_t)(*(uint32_t *)((char *)(s1) + 8)), 1050); /* jalr target resolved by relocation */
-
-    /* fragment 44: Arithmetic */
-    a2 = 2100;
-
-    /* fragment 45: Branch */
-    a1 = *(uint32_t *)((char *)(s1) + 20);
-    goto tisp_clm_ct_interp0x144;
-
-tisp_clm_ct_interp0x250:
-    /* fragment 46: Branch */
-    a1 = *(uint32_t *)((char *)(s1) + 4);
-    if (v1 != v0) { goto tisp_clm_ct_interp0x28c; }
-
-    /* fragment 47: Arithmetic */
-    v1 = t0 < s0;
-
-    /* fragment 48: MemoryAccess */
-    s2 = *(uint32_t *)((char *)s1 + 8);
-    s7 = *(uint32_t *)((char *)s1 + 20);
-    s6 = *(uint32_t *)((char *)s1 + 16);
-
-    /* fragment 49: Branch */
-    v0 = -1;
-    if (v1 == 0) { goto tisp_clm_ct_interp0x150; }
-
-    /* fragment 50: Arithmetic */
-    v1 = s0 < a3;
-
-    /* fragment 51: Branch */
-    s0 = s0 - t0;
-    if (v1 == 0) { goto tisp_clm_ct_interp0x150; }
-
-    /* fragment 52: Arithmetic */
-    s0 = (uintptr_t)s0 << 12;
-    a3 = a3 - t0;
-
-    /* fragment 53: Branch */
-    goto tisp_clm_ct_interp0x1bc;
-
-tisp_clm_ct_interp0x28c:
-    /* fragment 54: CallSetup */
-    v0 = (uintptr_t *)memcpy((void *)(uintptr_t)a0, (void *)(uintptr_t)a1, 1050); /* jalr target resolved by relocation */
-
-    /* fragment 55: Arithmetic */
-    a2 = 2100;
-
-    /* fragment 56: Branch */
-    a1 = *(uint32_t *)((char *)(s1) + 16);
-    goto tisp_clm_ct_interp0x144;
-
-    return ((int64_t)(uint32_t)v1 << 32) | (uint32_t)v0;
+    return a0 < 2U && t40_clm_ctx[a0] ? t40_clm_ct_interp(a0, a1, a2) : -1;
 }
 
-/* WHOLE_DRIVER_CANDIDATE fn_000000000006eacc origin=fragment_seed original=tisp_clm_ct_update */
+/* OEM tisp_clm_ct_update(sensor, -, ct, -, fnum lo, fnum hi) */
 int32_t tisp_clm_ct_update(uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t arg4, uint32_t arg5)
 {
-    if (regtrace_isr_oem_hw_refresh) { return t40_writer_clm_frame(a0, a2, ((uint64_t)arg5 << 32) | (uint64_t)arg4); }
-    uint32_t *local_10 = 0;
-    uint32_t local_14 = 0;
-    uint32_t *local_18 = 0;
-    uint32_t local_1c = 0;
-    uint32_t local_30 = 0;
-    uint32_t local_34 = 0;
-    uint32_t ra = 0;
-    uintptr_t s0 = 0;
-    uintptr_t s1 = 0;
-    uintptr_t s2 = 0;
-    uintptr_t v0 = 0;
-    uintptr_t v1 = 0;
-
-    /* fragment 0: Prologue */
-    /* function prologue: stack frame and callee-saved register setup */
-
-    /* fragment 1: CallSetup */
-    s2 = a0;
-    /* OEM reads the cadence pair from the caller's stack (sp+48/sp+52). */
-    s0 = arg4;
-    s1 = arg5;
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)tisp_clm_ct_interp)(a0, a2, 1); /* jalr target resolved by relocation */
-    local_30 = s0;
-    local_34 = s1;
-
-    /* fragment 2: Branch */
-    a1 = v0;
-    if (v0 != 0) { goto tisp_clm_ct_update0xac; }
-
-    /* fragment 3: Arithmetic */
-    v1 = (int32_t *)(void *)&clm_frame_num_saved;
-    v0 = (uintptr_t *)(void *)&clm_wlut_frequency;
-    a2 = (uintptr_t)s2 << 3;
-    v0 = (uintptr_t)s2 + (uintptr_t)v0;
-    a3 = (uintptr_t)v1 + a2;
-    v0 = (uintptr_t)v0;
-
-    /* fragment 4: MemoryAccess */
-    v0 = *(uint8_t *)((char *)v0 + 0);
-    a0 = *(uint32_t *)((char *)a3 + 0);
-    a3 = *(uint32_t *)((char *)a3 + 4);
-    a0 = v0 + a0;
-    v0 = a0 < v0;
-    v0 = v0 + a3;
-    a3 = v0 < s1;
-
-    /* fragment 5: Branch */
-    if (a3 != 0) { goto tisp_clm_ct_update0x90; }
-
-    /* fragment 6: Branch */
-    if (s1 != v0) { goto tisp_clm_ct_update0xb0; }
-
-    /* fragment 7: Arithmetic */
-    a0 = a0 < s0;
-
-    /* fragment 8: Branch */
-    if (a0 == 0) { goto tisp_clm_ct_update0xb0; }
-
-tisp_clm_ct_update0x90:
-    /* fragment 9: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)tisp_clm_prepare_write_lut)(s2); /* jalr target resolved by relocation */
-
-    /* fragment 10: Arithmetic */
-    v1 = (int32_t *)((char *)v1 + a2);
-
-    /* fragment 11: MemoryAccess */
-    *(uint32_t *)((char *)v1 + 0) = s0;
-    *(uint32_t *)((char *)v1 + 4) = s1;
-
-tisp_clm_ct_update0xac:
-    /* fragment 12: Epilogue */
-    /* function epilogue: restore registers and return */
-    return (int32_t)v0;
-
-tisp_clm_ct_update0xb0:
-    /* fragment 13: Epilogue */
-    /* function epilogue: restore registers and return */
-
-    /* fragment 14: Arithmetic */
-    v0 = a1;
-
-    /* fragment 15: Epilogue */
-    /* function epilogue: restore registers and return */
-
-    return 0;
+    (void)a1; (void)a3;
+    return a0 < 2U && t40_clm_ctx[a0] ? t40_clm_ct_update(a0, a2, ((uint64_t)arg5 << 32) | arg4) : -1;
 }
 
-/* WHOLE_DRIVER_CANDIDATE fn_000000000006ecfc origin=fragment_seed original=tisp_clm_dn_params_refresh */
+int64_t tisp_clm_wdr_en(uint32_t a0, uint32_t a1)
+{
+    return t40_clm_wdr_en(a0, a1);
+}
+
 int32_t tisp_clm_dn_params_refresh(uint32_t a0)
 {
-#ifdef REGTRACE_KERNEL_TREE_BUILD
-    return 0;
-#else
-
-    uint32_t local_14 = 0;
-    uint32_t *local_18 = 0;
-    uint32_t local_1c = 0;
-    uint32_t *a1 = 0;
-    uint32_t *a2 = 0;
-    uint32_t ra = 0;
-    uintptr_t *s0 = 0;
-    uint32_t *s1 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t *v1 = 0;
-
-    /* fragment 0: Prologue */
-    /* function prologue: stack frame and callee-saved register setup */
-
-    /* fragment 1: CallSetup */
-    s0 = a0 << 2;
-    s0 = (typeof(s0))((uintptr_t)s0 + (uintptr_t)clm_ctx_tab);   /* T40-CLM-CTX */
-    s1 = a0;
-    v0 = (uintptr_t *)memcpy((void *)(uintptr_t)(*(uint32_t *)((char *)(*(uint32_t *)((char *)((uintptr_t)s0) + 0)) + 0)), (void *)(uintptr_t)((*(uint32_t *)((char *)((a0 << 2) + &tparamsN) + 0)) + (65536 + 9132)), 18924); /* jalr target resolved by relocation */
-
-    /* fragment 2: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)tisp_clm_ct_interp)(s1, *(uint32_t *)((char *)(*(uint32_t *)((char *)(*(uint32_t *)((char *)(s0) + 0)) + 12)) + 0), 1); /* jalr target resolved by relocation */
-
-    /* fragment 3: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)tisp_clm_prepare_write_lut)(s1); /* jalr target resolved by relocation */
-
-    /* fragment 4: Epilogue */
-    /* function epilogue: restore registers and return */
-
-    /* fragment 5: Arithmetic */
-    v0 = 0;
-
-    /* fragment 6: Epilogue */
-    /* function epilogue: restore registers and return */
-
-    return 0;
-
-#endif
+    return t40_clm_dn_params_refresh(a0);
 }
 
-/* WHOLE_DRIVER_CANDIDATE fn_000000000006ed9c origin=fragment_seed original=tisp_clm_init */
 int32_t tisp_clm_init(uintptr_t a0)
 {
-    if (regtrace_isr_oem_hw_refresh) { return t40_writer_clm_start((unsigned int)(uintptr_t)a0); }
-    uint32_t *local_10 = 0;
-    uint32_t local_14 = 0;
-    uint32_t *local_18 = 0;
-    uint32_t local_1c = 0;
-    uint32_t *local_20 = 0;
-    uint32_t *local_24 = 0;
-    uint32_t local_28 = 0;
-    uint32_t local_2c = 0;
-    uintptr_t a1 = 0;
-    uintptr_t a2 = 0;
-    uint32_t ra = 0;
-    uintptr_t s0 = 0;
-    uintptr_t s1 = 0;
-    uintptr_t s2 = 0;
-    uintptr_t s3 = 0;
-    uintptr_t s4 = 0;
-    uintptr_t s5 = 0;
-    uintptr_t s6 = 0;
-    uintptr_t v0 = 0;
-    uintptr_t v1 = 0;
-
-    /* fragment 0: Prologue */
-    /* function prologue: stack frame and callee-saved register setup */
-
-    /* fragment 1: CallSetup */
-    s3 = 37748736;
-    s4 = a0;
-    s5 = (uintptr_t)s4 << 2;
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)private_kmalloc)(24, 37748736 + 192); /* jalr target resolved by relocation */
-
-    /* fragment 2: CallSetup */
-    s0 = (typeof(s0))((uintptr_t)s5 + (uintptr_t)clm_ctx_tab);   /* T40-CLM-CTX: OEM .bss+18936, the lift wrote the ctx pointer into the isp_memopt module variable */
-    *(uint32_t *)((char *)s0 + 0) = v0;
-    v0 = (uintptr_t *)memset((void *)(uintptr_t)v0, 0, 24); /* jalr target resolved by relocation */
-
-    /* fragment 3: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)private_spin_lock_init)((*(uint32_t *)((char *)(s0) + 0)) + 20); /* jalr target resolved by relocation */
-
-    /* fragment 4: CallSetup */
-    s6 = *(uint32_t *)((char *)(s0) + 0);
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)private_kmalloc)(18924, (uintptr_t)s3 | 192); /* jalr target resolved by relocation */
-
-    /* fragment 5: CallSetup */
-    *(uint32_t *)((char *)s6 + 0) = v0;
-    s6 = *(uint32_t *)((char *)(s0) + 0);
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)private_kmalloc)(32, (uintptr_t)s3 | 192); /* jalr target resolved by relocation */
-
-    /* fragment 6: CallSetup */
-    *(uint32_t *)((char *)s6 + 4) = v0;
-    s6 = *(uint32_t *)((char *)(s0) + 0);
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)private_kmalloc)(3150, (uintptr_t)s3 | 192); /* jalr target resolved by relocation */
-
-    /* fragment 7: CallSetup */
-    *(uint32_t *)((char *)s6 + 8) = v0;
-    s6 = *(uint32_t *)((char *)(s0) + 0);
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)private_kmalloc)(92, (uintptr_t)s3 | 192); /* jalr target resolved by relocation */
-
-    /* fragment 8: CallSetup */
-    *(uint32_t *)((char *)s6 + 16) = v0;
-    s6 = *(uint32_t *)((char *)(s0) + 0);
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)private_kmalloc)(8, (uintptr_t)s3 | 192); /* jalr target resolved by relocation */
-
-    /* fragment 9: CallSetup */
-    *(uint32_t *)((char *)s6 + 12) = v0;
-    v0 = (uintptr_t *)memset((void *)(uintptr_t)(*(uint32_t *)((char *)(*(uint32_t *)((char *)(s0) + 0)) + 0)), 0, 18924); /* jalr target resolved by relocation */
-
-    /* fragment 10: CallSetup */
-    v0 = (uintptr_t *)memset((void *)(uintptr_t)(*(uint32_t *)((char *)(*(uint32_t *)((char *)(s0) + 0)) + 4)), 0, 32); /* jalr target resolved by relocation */
-
-    /* fragment 11: CallSetup */
-    v0 = (uintptr_t *)memset((void *)(uintptr_t)(*(uint32_t *)((char *)(*(uint32_t *)((char *)(s0) + 0)) + 8)), 0, 3150); /* jalr target resolved by relocation */
-
-    /* fragment 12: CallSetup */
-    v0 = (uintptr_t *)memset((void *)(uintptr_t)(*(uint32_t *)((char *)(*(uint32_t *)((char *)(s0) + 0)) + 16)), 0, 92); /* jalr target resolved by relocation */
-
-    /* fragment 13: CallSetup */
-    v0 = (uintptr_t *)memset((void *)(uintptr_t)(*(uint32_t *)((char *)(*(uint32_t *)((char *)(s0) + 0)) + 12)), 0, 8); /* jalr target resolved by relocation */
-
-    /* fragment 14: CallSetup */
-    s5 = s5 + &tparamsN;
-    v0 = (uintptr_t *)memcpy((void *)(uintptr_t)(*(uint32_t *)((char *)(*(uint32_t *)((char *)(s0) + 0)) + 0)), (void *)(uintptr_t)((*(uint32_t *)((char *)(s5) + 0)) + (65536 + 9132)), 18924); /* jalr target resolved by relocation */
-
-    /* fragment 15: MemoryAccess */
-    v0 = *(uint32_t *)((char *)s0 + 0);
-    a1 = (uint32_t *)t40_writer_clm_csc_default;   /* OEM .data+0x2d0a4 CLM_CSC_BT709_FULL (the lift resolved it to &sclk_name-12476) */
-    a2 = 92;
-    v1 = *(uint32_t *)((char *)v0 + 4);
-    a0 = *(uint32_t *)((char *)v0 + 0);
-    /* a1 = a1 - 12476; -> blob above */
-    *(uint32_t *)((char *)v1 + 0) = a0;
-    v1 = *(uint32_t *)((char *)v0 + 0);
-    a0 = *(uint32_t *)((char *)v0 + 4);
-    v1 = v1 + 6;
-    *(uint32_t *)((char *)a0 + 4) = v1;
-    v1 = *(uint32_t *)((char *)v0 + 0);
-    a0 = *(uint32_t *)((char *)v0 + 4);
-    v1 = v1 + 6312;
-    *(uint32_t *)((char *)a0 + 8) = v1;
-    v1 = *(uint32_t *)((char *)v0 + 0);
-    a0 = *(uint32_t *)((char *)v0 + 4);
-    v1 = v1 + 7362;
-    *(uint32_t *)((char *)a0 + 12) = v1;
-    v1 = *(uint32_t *)((char *)v0 + 0);
-    a0 = *(uint32_t *)((char *)v0 + 4);
-    v1 = v1 + 1056;
-    *(uint32_t *)((char *)a0 + 16) = v1;
-    v1 = *(uint32_t *)((char *)v0 + 0);
-    a0 = *(uint32_t *)((char *)v0 + 4);
-    v1 = v1 + 8412;
-    *(uint32_t *)((char *)a0 + 20) = v1;
-    v1 = *(uint32_t *)((char *)v0 + 0);
-    a0 = *(uint32_t *)((char *)v0 + 4);
-    v1 = v1 + 10512;
-
-    /* fragment 16: CallSetup */
-    *(uint32_t *)((char *)a0 + 24) = v1;
-    *(uint32_t *)((char *)(*(uint32_t *)((char *)(v0) + 4)) + 28) = ((*(uint32_t *)((char *)(v0) + 0)) + 18912);
-    *(uint32_t *)((char *)(*(uint32_t *)((char *)(v0) + 12)) + 0) = 5000;
-    *(uint8_t *)((char *)(*(uint32_t *)((char *)(v0) + 12)) + 6) = 5;
-    *(uint16_t *)((char *)(*(uint32_t *)((char *)(v0) + 12)) + 4) = 64;
-    *(uint8_t *)((char *)(*(uint32_t *)((char *)(v0) + 12)) + 7) = 0;
-    v0 = (uintptr_t *)memcpy((void *)(uintptr_t)(*(uint32_t *)((char *)(v0) + 16)), (void *)(uintptr_t)a1, a2); /* jalr target resolved by relocation */
-
-    /* fragment 17: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)tisp_clm_write_csc_para)(s4); /* jalr target resolved by relocation */
-
-    /* fragment 18: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)tisp_clm_ct_interp)(s4, *(uint32_t *)((char *)(*(uint32_t *)((char *)(*(uint32_t *)((char *)(s0) + 0)) + 12)) + 0), 1); /* jalr target resolved by relocation */
-
-    /* fragment 19: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t))(uintptr_t)tisp_clm_real_write_lut)(s4); /* jalr target resolved by relocation */
-
-    /* fragment 20: Epilogue */
-    /* function epilogue: restore registers and return */
-
-    /* fragment 21: Arithmetic */
-    v0 = 0;
-
-    /* fragment 22: Epilogue */
-    /* function epilogue: restore registers and return */
-
-    return 0;
+    return t40_clm_init((uint32_t)a0);
 }
 
-/* WHOLE_DRIVER_CANDIDATE fn_000000000006f044 origin=fragment_seed original=tisp_clm_deinit */
 int32_t tisp_clm_deinit(uint32_t a0)
 {
-    if (regtrace_isr_oem_hw_refresh) { return t40_writer_clm_stop(a0); }
-#ifdef REGTRACE_KERNEL_TREE_BUILD
-    return 0;
-#else
-
-    uintptr_t *s0;
-    uintptr_t *s2;
-    uintptr_t *v0;
-    uint32_t a0_tmp;
-
-    s0 = (uintptr_t *)clm_ctx_tab;   /* T40-CLM-CTX */
-    s2 = a0 << 2;
-    v0 = (uintptr_t)s0 + (uintptr_t)s2;
-    v0 = *(uint32_t *)v0;
-
-    if (v0 != 0) {
-        a0_tmp = *(uint32_t *)v0;
-        if (a0_tmp != 0) {
-            private_kfree(NULL);
-        }
-
-        v0 = (uintptr_t)s0 + (uintptr_t)s2;
-        a0_tmp = *(uint32_t *)(v0 + 4);
-        if (a0_tmp != 0) {
-            private_kfree(NULL);
-        }
-
-        v0 = (uintptr_t)s0 + (uintptr_t)s2;
-        a0_tmp = *(uint32_t *)(*(uint32_t *)v0 + 8);
-        if (a0_tmp != 0) {
-            private_kfree(NULL);
-        }
-
-        v0 = (uintptr_t)s0 + (uintptr_t)s2;
-        a0_tmp = *(uint32_t *)(*(uint32_t *)v0 + 16);
-        if (a0_tmp != 0) {
-            private_kfree(NULL);
-        }
-
-        v0 = (uintptr_t)s0 + (uintptr_t)s2;
-        a0_tmp = *(uint32_t *)(*(uint32_t *)v0 + 12);
-        if (a0_tmp != 0) {
-            private_kfree(NULL);
-        }
-
-        v0 = (uintptr_t)s0 + (uintptr_t)s2;
-        private_kfree(NULL);
-        *(uint32_t *)v0 = 0;
-    }
-
-    return 0;
-
-#endif
+    return t40_clm_deinit(a0);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_000000000006f580 origin=model_output original=tisp_ccm_params_transmit */
@@ -149714,7 +148026,7 @@ static int regtrace_core_exit_steps(int upto, int from_proc)
             break;
         case 3: regtrace_tisp_event_threads_stop(); t40_adr_cleanup(); t40_defog_cleanup(); t40_lce_cleanup(); t40_dpc_cleanup(); t40_vawb_cleanup(); break;
         case 4: regtrace_dmsc_lit_cleanup(); break;
-        case 5: regtrace_lsc_lit_cleanup(); break;
+        case 5: regtrace_lsc_lit_cleanup(); t40_clm_deinit(0); t40_clm_deinit(1); break;
         case 6: regtrace_tisp_main_init_param_free(); tisp_disable_tuning(); break;
         case 7: t40_exit_quiesce_dma(); regtrace_tisp_dma_free(); break;
         case 8: regtrace_vic_mdma_internal_free(); break;

@@ -539,10 +539,19 @@ static void t40_ct_lsc_write(u32 bank);
 #define T40_CT_CCM(ct, a1)        t40_ct_ccm(ct)
 #define T40_CT_LSC(ct, a1, f)     t40_ctc_lsc_update(0, ct, a1, f, t40_lsc_frm_saved, lsc_wlut_frequency)
 #define T40_CT_BCSH(ct, a1)       t40_bcsh_main_ct_update(ct)	/* OEM tisp_bcsh_main_ct_update 0x6ab68 */
-#define T40_CT_CLM(ct, a1, f)     do { } while (0)	/* CLM has no CT follow-up state in this driver (#85) */
+#define T40_CT_CLM(ct, a1, f)     t40_clm_ct_update(0, ct, f)	/* OEM tisp_clm_ct_update 0x6eb5c (tx_isp_t40_clm.h) */
+#define T40_CLM_INTERP(b, ct)     t40_clm_ct_interp(b, ct, 1)
+#define T40_CLM_PREPARE(b)        t40_clm_prepare_write_lut(b)
 #define T40_LSC_INTERP(b, ct, a3) t40_ct_lsc_interp(b, ct)
 #define T40_LSC_PREPARE(b)        t40_ct_lsc_write(b)
 #include "tx_isp_t40_ct_chain.h"
+/* OEM tisp_clm_ct_update(sensor, -, ct, -, fnum): interpolation + frame cadence; the LUT write follows in t40_clm_hw_refresh */
+static int32_t t40_clm_ct_update(uint32_t bank, uint32_t ct, uint64_t fnum)
+{
+	if (bank > 1U || !t40_clm_ctx[bank])
+		return -1;
+	return t40_ctc_clm_update(bank, ct, fnum, t40_clm_frame_saved, t40_clm_wlut_frequency);
+}
 static void t40_ct_ccm(u32 ct)
 {
 	if (!regtrace_enable_ccm || !regtrace_ccm_ct_track || !stMainCcmOuter_lit || !pstMainCcmOri_lit[6] ||
@@ -620,6 +629,8 @@ static void t40_vawb_ct_follow_ct(u32 ct)
 		return;
 	t40_vawb_ct = ct;
 	t40_ct_update(ct, 0, t40_ct_fnum);
+	/* OEM tisp_hardware_reg_refresh, CLM step: write the armed LUT unless CLM is bypassed */
+	(void)t40_clm_hw_refresh(0);
 }
 
 static uint32_t t40_vawb_dn_params_refresh(uint32_t a0)

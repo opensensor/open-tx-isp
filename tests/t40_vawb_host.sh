@@ -60,7 +60,7 @@ XDEF=
 if [ -n "$CTD_REF" ]; then
 	# reference: the translated OEM ct_detect closure of $CTD_REF, renamed vref_*
 	FNS="tisp_awb_ct_detect ISPAWBInterpolation1 ISPAWBInterpolation2 Tiziano_Awb_Ct_Cal Tiziano_Awb_Ct_Detect_GrayWorld
-	     Tiziano_Awb_Ct_Detect_GrayWorld_mode func_zone_ct_weight fix_point_div_32 fix_point_div_64 fix_point_mult3_32 fix_point_div"
+	     Tiziano_Awb_Ct_Detect_GrayWorld_mode func_zone_ct_weight fix_point_div_32 fix_point_div_64 fix_point_mult3_32 fix_point_div fix_point_mult2_32"
 	git -C $HERE/.. show $CTD_REF:driver/t40/tx_isp_t40_vawb_gen.inc > $W/ref_all.inc
 	: > $W/ref.inc
 	for f in $FNS; do echo "u64 vref_$f(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp);" >> $W/ref.inc; done
