@@ -9243,6 +9243,17 @@ int64_t vic_frame_channel_streamoff(uintptr_t a0)
 	if (!vic || vic >= (char *)-4095)
 		return -22;
 	bank = t41_vic_bank(vic, *(uint8_t *)(a0 + 4));
+	if (isp_bypass_graph) {
+		volatile uint32_t *r = t41_vic_regs(vic);
+
+		printk(KERN_WARNING
+		       "t41: bypass VIC streamoff ctl=%#x st=%#x/%#x mask=%#x/%#x sel=%#x dma=%#x size=%#x stride=%#x addr=%#x/%#x frames=%u mdma=%u/%u queued=%d\n",
+		       r[0], r[0x1e0 / 4], r[0x1e4 / 4], r[0x1e8 / 4], r[0x1ec / 4],
+		       r[0x1ac / 4], r[0x300 / 4], r[0x304 / 4], r[0x310 / 4],
+		       r[0x318 / 4], r[0x31c / 4], *(uint32_t *)(vic + 0x1d0),
+		       *(uint32_t *)(vic + 0x1e0), *(uint32_t *)(vic + 0x1e4),
+		       *(int32_t *)(bank + 0x30));
+	}
 	t41_vic_regs(vic)[0x300 / 4] = 0;
 	*(uint32_t *)(bank + 0x2c) = 0;
 	return 0;
@@ -9299,6 +9310,48 @@ int64_t vic_frame_channel_set_fmt(uintptr_t a0, uintptr_t a1)
 	return 0;
 }
 
+/*
+ * Bypass input start (isp_bypass_graph=1 only).  The open driver defers the
+ * CSI receiver, the VIC, its interrupt and the sensor stream until the first
+ * output is started; that late start lives in ispcore_frame_channel_streamon,
+ * which a bypassed channel never reaches (its stream-on is the VIC
+ * frame-channel op).  Without this the VIC MDMA was armed but no line ever
+ * arrived (camera: 0 raw frames, no oops).  Same gate and flags as the ISP
+ * output path; the MSCA/tuning replays of that path are output-specific and
+ * not needed for raw capture.
+ */
+static int t41_video_s_stream_late(void);
+static int t41_sensor_fps_reapply(void);
+static int t41_start_isp_fw_thread_late(void);
+
+static int t41_bypass_input_start(void)
+{
+	int ret = tx_isp_t41_capture_start_begin(t41_video_stream_vinum);
+
+	if (ret <= 0)
+		return ret;
+	if (t41_late_start_mask & 0x01)
+		t41_defer_csi_start = 0;
+	if (t41_late_start_mask & 0x02)
+		t41_defer_vic_start = 0;
+	if (t41_late_start_mask & 0x04)
+		t41_defer_vic_irq = 0;
+	if (t41_late_start_mask & 0x08)
+		t41_defer_isp_start = 0;
+	if (t41_late_start_mask & 0x10)
+		t41_defer_sensor_start = 0;
+	ret = t41_video_s_stream_late();
+	if (!ret && !t41_defer_sensor_start)
+		t41_sensor_fps_reapply();
+	if (!ret && (t41_late_start_mask & 0x20))
+		ret = t41_start_isp_fw_thread_late();
+	printk(KERN_WARNING "t41: bypass input start mask=%#x ret=%d\n",
+	       t41_late_start_mask, ret);
+	tx_isp_t41_capture_start_end(t41_video_stream_vinum,
+				     ret == -ENOIOCTLCMD ? 0 : ret);
+	return ret == -ENOIOCTLCMD ? 0 : ret;
+}
+
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000002128 origin=clean_c original=vic_frame_channel_streamon */
 int64_t vic_frame_channel_streamon(uintptr_t a0)
 {
@@ -9322,6 +9375,15 @@ int64_t vic_frame_channel_streamon(uintptr_t a0)
 	}
 	if (*(uint32_t *)(bank + 0x2c))
 		return 0;
+	/* Start the deferred input first: the VIC start (control 2, 4, 1)
+	 * resets the MDMA, so the per-buffer triggers below must come after
+	 * it (camera: VIC frames counted, MDMA never done otherwise). */
+	if (isp_bypass_graph) {
+		int ret = t41_bypass_input_start();
+
+		if (ret)
+			return ret;
+	}
 
 	__private_spin_lock_irqsave((uint32_t)(uintptr_t)(bank + 0x10), (uintptr_t)&flags);
 	regs[0x308 / 4] = 1;
@@ -12064,8 +12126,12 @@ static void t41_vic_bank_done(char *vic, char *bank)
 	t41_vic_list_add_tail((struct t41_vic_list *)node, free_list);
 	if (node[2] != hw_addr) {
 		pending = *(int32_t *)(bank + 0x30);
+		/* OEM bounds this search only by the busy count, which stream-on
+		 * leaves at -1: with a done address that matches no busy node the
+		 * OEM loop never ends (pop returns NULL, "continue") and spins in
+		 * hard-IRQ context (hard hang).  Bounded here by the node count. */
 		for (i = 0;; i++) {
-			if (i == pending) {
+			if (i == pending || i >= (int32_t)T41_VIC_NODES) {
 				isp_printf(2, "[%s %d] [%s,%d] ; vic dma addrrss error, ch:%d !!!\n",
 					   "vic_mdma_irq_function", 795,
 					   "vic_mdma_irq_function", 795, (uint8_t)bank[2]);
@@ -12078,7 +12144,7 @@ static void t41_vic_bank_done(char *vic, char *bank)
 				isp_printf(1, "[%s %d], i=%d ;num = %d;busy_buf_count %d\n",
 					   "vic_mdma_irq_function", 792, i, pending,
 					   *(int32_t *)(bank + 0x30));
-				continue;
+				return;
 			}
 			(*(int32_t *)(bank + 0x30))--;
 			tx_isp_send_event_to_remote(*(void **)(bank + 8), 0x3000006, node);
@@ -37401,6 +37467,11 @@ static void t41_bypass_restore_inputs(void)
             *(uint32_t *)(bank + 0x2c) = 0;
         }
     }
+    /* The bypass started the input without an ISP output; release the
+     * start ownership so the next ISP output runs the full late start
+     * (MSCA geometry rebuild) instead of the "input already live" path. */
+    if (t41_video_stream_vinum >= 0 && t41_video_stream_vinum < 3)
+        tx_isp_t41_capture_stopped(t41_video_stream_vinum);
     printk(KERN_INFO "t41: ISP bypass off, frame channels back on the ISP\n");
 }
 
