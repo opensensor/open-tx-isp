@@ -1202,3 +1202,7 @@ With the vendor AE running (`t41_vendor_ae=1`, the default) the AE tuning calls 
   (`t41_ae_roi_stats`, default 1); the face AE meters them. The face AE converges slowly (vendor AE steps): on .34 a
   centre window moved the frame mean 98 -> 88 (target 40) and -> 106 (target 180) within 9 s.
 
+
+## Module parameter `isp_bypass_graph` (issue 125, QEMU only)
+
+`isp_bypass_graph=1` serves the vendor ISP bypass (`IMP_ISP_SetISPBypass(ENABLE)`, ioctl 0x80085418 with a non-zero value, before `IMP_ISP_AddSensor` as the vendor header requires): frame channel 0 reads the VIC MDMA (RAW16 BGGR, 2 bytes per pixel, pixel format 7) instead of the ISP core. Default `0`: the request is refused with `-EOPNOTSUPP` and the VIC frame-channel ops answer `-EINVAL`, nothing else changes. `SetISPBypass(0)` plus the next frame-channel open restores the ISP channels. Round trips are clean in QEMU (SetISPBypass, SET_FMT, REQBUFS, QBUF, STREAMON/OFF, NV12 after restore); the QEMU VIC has no MDMA, and no camera has delivered a raw frame through this path yet (see `CHANGELOG.md`). Pure logic: `tx_isp_t41_vic_bypass.h`, test `tests/tx_isp_t41_vic_bypass_test.c`.

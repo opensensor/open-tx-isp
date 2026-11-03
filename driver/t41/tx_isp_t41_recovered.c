@@ -18,6 +18,7 @@
 #include "tx_isp_t41_capture_gate.h"
 #include "tx_isp_t41_tmo.h"
 #include "tx_isp_t41_devioctl.h"
+#include "tx_isp_t41_vic_bypass.h"
 #include "tx_isp_t41_tmo_map.h"
 #include "tx_isp_t41_tmo_mxu3.h"
 #include <linux/random.h>
@@ -822,6 +823,13 @@ extern struct module __this_module;
 
 static int tx_isp_core_ioctl_mask;
 module_param(tx_isp_core_ioctl_mask, int, 0);
+/* Real ISP bypass (IMP_ISP_Tuning_SetISPBypass(DISABLE) / RAW capture, #125): route
+ * frame channel 0 to the VIC frame-channel (MDMA) ops.  Off by default: the
+ * request is refused and nothing changes. */
+static int isp_bypass_graph;
+module_param(isp_bypass_graph, int, 0444);
+MODULE_PARM_DESC(isp_bypass_graph, "Enable the VIC MDMA raw-capture bypass graph (default: 0)");
+static void t41_bypass_restore_inputs(void);
 MODULE_PARM_DESC(tx_isp_core_ioctl_mask, "isp ioctl calls mask");
 
 /*
@@ -7969,140 +7977,69 @@ int32_t vic_frame_channel_reqbufs(void)
     return 0;
 }
 
-/* WHOLE_DRIVER_CANDIDATE fn_0000000000001310 origin=fragment_seed original=vic_frame_channel_get_fmt */
-int32_t vic_frame_channel_get_fmt(uintptr_t a0, uintptr_t a1)
+/*
+ * VIC frame-channel ops (ISP bypass, descriptor 4/5 of the core input table;
+ * #125).  Real C from the OEM 1.2.5 vic_frame_channel_get_fmt/qbuf with the
+ * H20250310a layout: two per-stream banks at vic+0x334 and vic+0x368 (0x34
+ * apart), bank buffer nodes are 32 bytes (5 per bank at vic+500+160*stream).
+ * Bank: +0 input, +1 stream (DMA register set), +2 frame channel, +4 format,
+ * +8 core pad, +0xc enabled, +0xd sync flag, +0x10 lock, +0x14 queued user
+ * buffers, +0x1c free nodes, +0x24 nodes owned by the DMA, +0x2c streaming,
+ * +0x30 DMA-owned count.  Only reached with isp_bypass_graph=1 (dump_vsd set).
+ */
+#define T41_VIC_BANK0		0x334U
+#define T41_VIC_BANK_SIZE	0x34U
+
+struct t41_vic_list {
+	struct t41_vic_list *next;
+	struct t41_vic_list *prev;
+};
+
+static void t41_vic_list_add_tail(struct t41_vic_list *node,
+				  struct t41_vic_list *head)
 {
-    uint32_t *local_10 = 0;
-    uint32_t local_14 = 0;
-    uint32_t *local_18 = 0;
-    uint32_t *local_28 = 0;
-    uint32_t local_84 = 0;
-    uint32_t local_88 = 0;
-    uint32_t local_8c = 0;
-    uint32_t *local_90 = 0;
-    uint32_t *local_94 = 0;
-    uint32_t a2 = 0;
-    uint32_t ra = 0;
-    uintptr_t *s0 = 0;
-    uintptr_t *v0 = 0;
+	struct t41_vic_list *last = head->prev;
 
-    /* fragment 0: Prologue */
-    /* function prologue: stack frame and callee-saved register setup */
-
-    /* fragment 1: CallSetup */
-    local_8c = *(uint8_t *)((char *)(a0) + 4);
-    local_84 = (uintptr_t)&local_8c;
-    local_88 = (uintptr_t)&local_10;
-    s0 = a1;
-    v0 = (unsigned int *)memcpy((void *)(uintptr_t)&local_10, (void *)(uintptr_t)a1, 116); /* jalr target resolved by relocation */
-
-    /* fragment 2: Arithmetic */
-    v0 = (unsigned int *)&ivdc_threshold_line;
-
-    /* fragment 3: MemoryAccess */
-    a0 = *(uint32_t *)((char *)((char *)&dump_vsd));
-
-    /* fragment 4: Branch */
-    v0 = local_14;
-    if (a0 == 0) { goto vic_frame_channel_get_fmt0x64; }
-
-    /* fragment 5: MemoryAccess */
-    v0 = *(uint32_t *)((char *)a0 + 128);
-
-    /* fragment 6: Branch */
-    a2 = (uintptr_t)&local_84;
-    if (v0 == 0) { goto vic_frame_channel_get_fmt0x60; }
-
-    /* fragment 7: CallSetup */
-    v0 = (unsigned int *)((uintptr_t (*)(uintptr_t))(uintptr_t)t41_unresolved_jalr)(a0); /* jalr target resolved by relocation */
-
-vic_frame_channel_get_fmt0x60:
-    /* fragment 8: StackAccess */
-    v0 = local_14;
-
-vic_frame_channel_get_fmt0x64:
-    /* fragment 9: MemoryAccess */
-    *(uint8_t *)((char *)s0 + 52) = 0;
-    *(uint8_t *)((char *)s0 + 72) = 0;
-    *(uint32_t *)((char *)s0 + 4) = v0;
-    v0 = local_18;
-    *(uint32_t *)((char *)s0 + 8) = v0;
-    v0 = local_28;
-    *(uint32_t *)((char *)s0 + 24) = v0;
-    ra = local_94;
-    s0 = local_90;
-    v0 = 0;
-
-    /* fragment 10: Epilogue */
-    /* function epilogue: restore registers and return */
-
-    return 0;
+	head->prev = node;
+	node->next = head;
+	node->prev = last;
+	last->next = node;
 }
 
-/* WHOLE_DRIVER_CANDIDATE fn_00000000000013a4 origin=fragment_seed original=vic_frame_channel_streamoff */
-int64_t vic_frame_channel_streamoff(uintptr_t a0)
+static inline char *t41_vic_bank(char *vic, unsigned int pad_index)
 {
-    uint32_t a1 = 0;
-    uint32_t ra = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t v1 = 0;
+	if (vic[T41_VIC_BANK0 + 0xc] && pad_index == (uint8_t)vic[T41_VIC_BANK0 + 2])
+		return vic + T41_VIC_BANK0;
+	return vic + T41_VIC_BANK0 + T41_VIC_BANK_SIZE;
+}
 
-    /* fragment 0: Arithmetic */
-    v0 = (unsigned int *)&ivdc_threshold_line;
+static inline volatile uint32_t *t41_vic_regs(char *vic)
+{
+	return *(volatile uint32_t **)(vic + 0xe8);
+}
 
-    /* fragment 1: MemoryAccess */
-    v1 = *(uint32_t *)((char *)((char *)&dump_vsd));
+/* WHOLE_DRIVER_CANDIDATE fn_0000000000001310 origin=clean_c original=vic_frame_channel_get_fmt */
+int32_t vic_frame_channel_get_fmt(uintptr_t a0, uintptr_t a1)
+{
+	char *vic = (char *)(uintptr_t)dump_vsd;
+	uint32_t *out = (uint32_t *)a1;
+	uint32_t req[1 + 29];	/* core event 0x01000003: {index, 116-byte format} */
+	int32_t (*notify)(void *, uint32_t, void *);
 
-    /* fragment 2: Branch */
-    v0 = -22;
-    if (v1 == 0) { goto vic_frame_channel_streamoff0x4c; }
-
-    /* fragment 3: Arithmetic */
-    a1 = v1 < -4095;
-
-    /* fragment 4: Branch */
-    if (a1 == 0) { goto vic_frame_channel_streamoff0x4c; }
-
-    /* fragment 5: MemoryAccess */
-    v0 = *(uint8_t *)((char *)v1 + 832);
-
-    /* fragment 6: Branch */
-    int _bc_v0_6 = v0 == 0;
-    v0 = (uintptr_t)v1 + 872;
-    if (_bc_v0_6) { goto vic_frame_channel_streamoff0x3c; }
-
-    /* fragment 7: MemoryAccess */
-    a0 = *(uint8_t *)((char *)a0 + 4);
-    v0 = *(uint8_t *)((char *)v1 + 822);
-
-    /* fragment 8: Branch */
-    if (a0 != v0) { goto vic_frame_channel_streamoff0x54; }
-
-    /* fragment 9: Arithmetic */
-    v0 = (uintptr_t)v1 + 820;
-
-vic_frame_channel_streamoff0x3c:
-    /* fragment 10: MemoryAccess */
-    v1 = *(uint32_t *)((char *)v1 + 232);
-    *(uint32_t *)((char *)v1 + 768) = 0;
-    *(uint32_t *)((char *)v0 + 44) = 0;
-    v0 = 0;
-
-vic_frame_channel_streamoff0x4c:
-    /* fragment 11: Epilogue */
-    /* function epilogue: restore registers and return */
-    return (int64_t)v0;
-
-    /* fragment 12: Unknown */
-    /* unmatched fragment 12 (Unknown): no deterministic matcher for Unknown */
-    /* asm: 13f4:	00000000 	nop */
-
-vic_frame_channel_streamoff0x54:
-    /* fragment 13: Branch */
-    v0 = v1 + 872;
-    goto vic_frame_channel_streamoff0x3c;
-
-    return ((int64_t)(uint32_t)v1 << 32) | (uint32_t)v0;
+	memset(req, 0, sizeof(req));
+	req[0] = *(uint8_t *)(a0 + 4);
+	memcpy(&req[1], out, 116);
+	if (vic && vic < (char *)-4095) {
+		notify = *(int32_t (**)(void *, uint32_t, void *))(vic + 0x80);
+		if (notify)
+			notify(vic, 0x1000003, req);
+	}
+	((uint8_t *)out)[0x34] = 0;
+	((uint8_t *)out)[0x48] = 0;
+	out[1] = req[2];
+	out[2] = req[3];
+	out[6] = req[7];
+	return 0;
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000001400 origin=model_output original=vic_frame_channel_freebufs */
@@ -9252,662 +9189,174 @@ tx_isp_vic_start0xa10:
     return ((int64_t)(uint32_t)v1 << 32) | (uint32_t)v0;
 }
 
-/* WHOLE_DRIVER_CANDIDATE fn_0000000000001f20 origin=fragment_seed original=vic_frame_channel_qbuf */
+/* WHOLE_DRIVER_CANDIDATE fn_0000000000001f20 origin=clean_c original=vic_frame_channel_qbuf */
 int64_t vic_frame_channel_qbuf(uintptr_t a0, uintptr_t a1)
 {
-    uint32_t *local_10 = 0;
-    uint32_t *local_18 = 0;
-    uint32_t local_1c = 0;
-    uint32_t *local_20 = 0;
-    uint32_t local_24 = 0;
-    uint32_t *local_28 = 0;
-    uint32_t local_2c = 0;
-    uint32_t a2 = 0;
-    uintptr_t *a3 = 0;
-    uint32_t ra = 0;
-    uintptr_t *s0 = 0;
-    uintptr_t *s1 = 0;
-    uintptr_t *s2 = 0;
-    uint32_t s3 = 0;
-    uint32_t *s4 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t v1 = 0;
+	char *vic = (char *)(uintptr_t)dump_vsd;
+	struct t41_vic_list *user = (struct t41_vic_list *)a1;
+	struct t41_vic_list *queued, *node;
+	volatile uint32_t *regs;
+	unsigned long flags = 0;
+	char *bank;
+	uint32_t *buf, *dma;
+	unsigned int stream, idx;
 
-    /* fragment 0: Prologue */
-    /* function prologue: stack frame and callee-saved register setup */
+	if (!vic || vic >= (char *)-4095 || !user || (char *)user >= (char *)-4095)
+		return -22;
+	bank = t41_vic_bank(vic, *(uint8_t *)(a0 + 4));
+	stream = (uint8_t)bank[1];
+	regs = t41_vic_regs(vic);
 
-    /* fragment 1: Arithmetic */
-    v0 = (unsigned int *)&ivdc_threshold_line;
-
-    /* fragment 2: StackAccess */
-    local_1c = s1;
-    s1 = *(uint32_t *)((char *)((char *)&dump_vsd));
-    local_2c = ra;
-    local_28 = s4;
-    local_24 = s3;
-    local_20 = s2;
-    local_18 = s0;
-    local_10 = 0;
-
-    /* fragment 3: Branch */
-    v0 = -22;
-    if (s1 == 0) { goto vic_frame_channel_qbuf0x1a4; }
-
-    /* fragment 4: Arithmetic */
-    v1 = s1 < -4095;
-
-    /* fragment 5: Branch */
-    if (v1 == 0) { goto vic_frame_channel_qbuf0x1a4; }
-
-    /* fragment 6: Branch */
-    v1 = a1 < -4095;
-    if (a1 == 0) { goto vic_frame_channel_qbuf0x1a4; }
-
-    /* fragment 7: Branch */
-    if (v1 == 0) { goto vic_frame_channel_qbuf0x1a4; }
-
-    /* fragment 8: MemoryAccess */
-    v0 = *(uint8_t *)((char *)s1 + 832);
-
-    /* fragment 9: Branch */
-    s0 = (uintptr_t)s1 + 872;
-    if (v0 == 0) { goto vic_frame_channel_qbuf0x6c; }
-
-    /* fragment 10: MemoryAccess */
-    v1 = *(uint8_t *)((char *)a0 + 4);
-    v0 = *(uint8_t *)((char *)s1 + 822);
-
-    /* fragment 11: Branch */
-    s0 = (uintptr_t)s1 + 820;
-    if (v1 == v0) { goto vic_frame_channel_qbuf0x6c; }
-
-    /* fragment 12: CallSetup */
-    s0 = (uintptr_t)s1 + 872;
-
-vic_frame_channel_qbuf0x6c:
-    /* fragment 13: CallSetup */
-    s3 = (uintptr_t)s0 + 16;
-    s2 = a1;
-    s4 = *(uint8_t *)((char *)(s0) + 1);
-    v0 = (uintptr_t)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)__private_spin_lock_irqsave)((uintptr_t)s0 + 16, &local_10); /* jalr target resolved by relocation */
-
-    /* fragment 14: MemoryAccess */
-    v0 = *(uint32_t *)((char *)s0 + 24);
-    a0 = (uintptr_t)s0 + 20;
-    *(uint32_t *)((char *)s0 + 24) = s2;
-    *(uint32_t *)((char *)s2 + 0) = a0;
-    *(uint32_t *)((char *)s2 + 4) = v0;
-    *(uint32_t *)((char *)v0 + 0) = s2;
-    v0 = *(uint32_t *)((char *)s0 + 28);
-    a2 = (uintptr_t)s0 + 28;
-
-    /* fragment 15: Branch */
-    a1 = (uintptr_t)&LC15;
-    if (a2 == v0) { goto vic_frame_channel_qbuf0x200; }
-
-    /* fragment 16: MemoryAccess */
-    v0 = *(uint32_t *)((char *)s0 + 20);
-
-    /* fragment 17: Branch */
-    a1 = (uintptr_t)&LC14;
-    if (a0 == v0) { goto vic_frame_channel_qbuf0x1e4; }
-
-    /* fragment 18: CallSetup */
-    v0 = (unsigned int *)((uintptr_t (*)(uintptr_t))(uintptr_t)pop_buffer_fifo)(a0); /* jalr target resolved by relocation */
-
-    /* fragment 19: CallSetup */
-    v0 = (unsigned int *)((uintptr_t (*)(uintptr_t))(uintptr_t)t41_unresolved_jalr)(a2); /* jalr target resolved by relocation */
-
-    /* fragment 20: MemoryAccess */
-    a2 = *(uint32_t *)((char *)a3 + 8);
-    a0 = -16;
-    *(uint32_t *)((char *)v0 + 8) = a2;
-    v1 = *(uint32_t *)((char *)s1 + 280);
-    a1 = *(uint32_t *)((char *)s1 + 276);
-    v1 = (uintptr_t)v1 + 15;
-    v1 = (uintptr_t)v1 & a0;
-    a0 = *(uint32_t *)((char *)a3 + 8);
-    a3 = (uintptr_t)v1 * a1;
-    v1 = (uintptr_t)a3 + a0;
-    *(uint32_t *)((char *)v0 + 12) = v1;
-    v1 = *(uint32_t *)((char *)v0 + 16);
-    a1 = *(uint32_t *)((char *)s1 + 232);
-
-    /* fragment 21: Branch */
-    v1 = (uintptr_t)v1 << 2;
-    if (s4 == 0) { goto vic_frame_channel_qbuf0x1c4; }
-
-    /* fragment 22: Arithmetic */
-    a0 = (uintptr_t)v1 + 832;
-    a0 = a1 + a0;
-
-    /* fragment 23: MemoryAccess */
-    *(uint32_t *)((char *)a0 + 0) = a2;
-    v1 = *(uint32_t *)((char *)v0 + 16);
-    a1 = *(uint32_t *)((char *)v0 + 12);
-    v1 = (uintptr_t)v1 << 2;
-    v1 = (uintptr_t)v1 + 852;
-
-vic_frame_channel_qbuf0x134:
-    /* fragment 24: MemoryAccess */
-    a0 = *(uint32_t *)((char *)s1 + 232);
-    v1 = a0 + (uintptr_t)v1;
-    *(uint32_t *)((char *)v1 + 0) = a1;
-    v1 = *(uint32_t *)((char *)s1 + 232);
-    a0 = *(uint32_t *)((char *)v1 + 768);
-    a0 = *(uint8_t *)((char *)s0 + 13);
-
-    /* fragment 25: Branch */
-    if (a0 == 0) { goto vic_frame_channel_qbuf0x15c; }
-
-    /* fragment 26: CallSetup */
-    a0 = 1;
-    *(uint32_t *)((char *)v1 + 880) = a0;
-
-vic_frame_channel_qbuf0x15c:
-    /* fragment 27: CallSetup */
-    v1 = *(uint32_t *)((char *)s0 + 40);
-    a0 = (uintptr_t)s0 + 36;
-    *(uint32_t *)((char *)s0 + 40) = v0;
-    *(uint32_t *)((char *)v0 + 0) = a0;
-    *(uint32_t *)((char *)v0 + 4) = v1;
-    *(uint32_t *)((char *)v1 + 0) = v0;
-    v0 = *(uint32_t *)((char *)s0 + 48);
-    v0 = (uintptr_t)v0 + 1;
-    *(uint32_t *)((char *)s0 + 48) = v0;
-    v0 = *(uint32_t *)((char *)s2 + -24);
-    v0 = (uintptr_t)v0 + 1;
-    *(uint32_t *)((char *)s2 + -24) = v0;
-    a1 = local_10;
-
-vic_frame_channel_qbuf0x190:
-    /* fragment 28: CallSetup */
-    v0 = (unsigned int *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)private_spin_unlock_irqrestore)((uintptr_t)s3, (uintptr_t)local_10); /* jalr target resolved by relocation */
-
-    /* fragment 29: Arithmetic */
-    v0 = 0;
-
-vic_frame_channel_qbuf0x1a4:
-    /* fragment 30: Epilogue */
-    /* function epilogue: restore registers and return */
-    return (int64_t)v0;
-
-vic_frame_channel_qbuf0x1c4:
-    /* fragment 31: Arithmetic */
-    v1 = v1 + 792;
-    v1 = a1 + (uintptr_t)v1;
-
-    /* fragment 32: MemoryAccess */
-    *(uint32_t *)((char *)v1 + 0) = a2;
-    v1 = *(uint32_t *)((char *)v0 + 16);
-    a1 = *(uint32_t *)((char *)v0 + 12);
-    v1 = (uintptr_t)v1 << 2;
-
-    /* fragment 33: Branch */
-    v1 = v1 + 812;
-    goto vic_frame_channel_qbuf0x134;
-
-vic_frame_channel_qbuf0x1e4:
-    /* fragment 34: CallSetup */
-    a1 = a1;
-
-vic_frame_channel_qbuf0x1e8:
-    /* fragment 35: CallSetup */
-    v0 = (unsigned int *)((uintptr_t (*)(uintptr_t))(uintptr_t)isp_printf)(0); /* jalr target resolved by relocation */
-
-    /* fragment 36: Branch */
-    a1 = local_10;
-    goto vic_frame_channel_qbuf0x190;
-
-vic_frame_channel_qbuf0x200:
-    /* fragment 37: Branch */
-    a1 = (uintptr_t)&LC15;
-    goto vic_frame_channel_qbuf0x1e8;
-
-    return ((int64_t)(uint32_t)v1 << 32) | (uint32_t)v0;
+	__private_spin_lock_irqsave((uint32_t)(uintptr_t)(bank + 0x10), (uintptr_t)&flags);
+	t41_vic_list_add_tail(user, (struct t41_vic_list *)(bank + 0x14));
+	if (*(char **)(bank + 0x1c) == bank + 0x1c) {
+		isp_printf(0, "bank no free\n");
+	} else if (*(char **)(bank + 0x14) == bank + 0x14) {
+		isp_printf(0, "qbuffer null\n");
+	} else {
+		queued = (struct t41_vic_list *)pop_buffer_fifo((int32_t *)(bank + 0x14));
+		node = (struct t41_vic_list *)pop_buffer_fifo((int32_t *)(bank + 0x1c));
+		buf = (uint32_t *)queued;
+		dma = (uint32_t *)node;
+		dma[2] = buf[2];
+		dma[3] = ((*(uint32_t *)(vic + 0x118) + 15U) & ~15U) *
+			 *(uint32_t *)(vic + 0x114) + buf[2];
+		idx = dma[4];
+		regs[t41_vic_addr_reg(stream, idx, 0) / 4] = dma[2];
+		regs[t41_vic_addr_reg(stream, idx, 1) / 4] = dma[3];
+		if (bank[0xd])
+			regs[0x370 / 4] = 1;
+		t41_vic_list_add_tail(node, (struct t41_vic_list *)(bank + 0x24));
+		(*(uint32_t *)(bank + 0x30))++;
+		((uint32_t *)user)[-6]++;
+	}
+	private_spin_unlock_irqrestore((void *)(bank + 0x10), flags);
+	return 0;
 }
 
-/* WHOLE_DRIVER_CANDIDATE fn_0000000000002128 origin=fragment_seed original=vic_frame_channel_streamon */
-int64_t vic_frame_channel_streamon(uintptr_t a0)
+/* WHOLE_DRIVER_CANDIDATE fn_00000000000013a4 origin=clean_c original=vic_frame_channel_streamoff */
+int64_t vic_frame_channel_streamoff(uintptr_t a0)
 {
-    uint32_t *local_10 = 0;
-    uint32_t local_14 = 0;
-    uint32_t *local_18 = 0;
-    uint32_t local_1c = 0;
-    uint32_t local_24 = 0;
-    uint32_t *local_28 = 0;
-    uint32_t local_2c = 0;
-    uint32_t local_30 = 0;
-    uint32_t local_34 = 0;
-    uint32_t local_38 = 0;
-    uint32_t *local_3c = 0;
-    uint32_t a1 = 0;
-    uintptr_t a2 = 0;
-    uint32_t *a3 = 0;
-    uint32_t ra = 0;
-    uintptr_t *s0 = 0;
-    uintptr_t s1 = 0;
-    uint32_t *s2 = 0;
-    uint32_t s3 = 0;
-    uint32_t *s4 = 0;
-    uint32_t s5 = 0;
-    uint32_t t0 = 0;
-    uintptr_t v0 = 0;
-    uintptr_t v1 = 0;
+	char *vic = (char *)(uintptr_t)dump_vsd;
+	char *bank;
 
-    /* fragment 0: Prologue */
-    /* function prologue: stack frame and callee-saved register setup */
-
-    /* fragment 1: Arithmetic */
-    v0 = (unsigned int *)&ivdc_threshold_line;
-
-    /* fragment 2: StackAccess */
-    local_24 = s0;
-    s0 = *(uint32_t *)((char *)((char *)&dump_vsd));
-    local_2c = s2;
-    local_3c = ra;
-    local_38 = s5;
-    local_34 = s4;
-    local_30 = s3;
-    local_28 = s1;
-    local_1c = 0;
-
-    /* fragment 3: Branch */
-    s2 = -22;
-    if (s0 == 0) { goto vic_frame_channel_streamon0xb8; }
-
-    /* fragment 4: Arithmetic */
-    v0 = s0 < -4095;
-
-    /* fragment 5: Branch */
-    if (v0 == 0) { goto vic_frame_channel_streamon0xb8; }
-
-    /* fragment 6: MemoryAccess */
-    v0 = *(uint8_t *)((char *)s0 + 832);
-
-    /* fragment 7: Branch */
-    s1 = (uintptr_t)s0 + 872;
-    if (v0 == 0) { goto vic_frame_channel_streamon0x60; }
-
-    /* fragment 8: MemoryAccess */
-    v1 = *(uint8_t *)((char *)a0 + 4);
-    v0 = *(uint8_t *)((char *)s0 + 822);
-
-    /* fragment 9: Branch */
-    s1 = (uintptr_t)s0 + 820;
-    if (v1 == v0) { goto vic_frame_channel_streamon0x60; }
-
-    /* fragment 10: Arithmetic */
-    s1 = (uintptr_t)s0 + 872;
-
-vic_frame_channel_streamon0x60:
-    /* fragment 11: MemoryAccess */
-    v0 = *(uint32_t *)((char *)s1 + 4);
-    v1 = 1;
-
-    /* fragment 12: Branch */
-    s4 = *(uint32_t *)((char *)(s0) + 276);
-    if (v0 == v1) { goto vic_frame_channel_streamon0xf8; }
-
-    /* fragment 13: Arithmetic */
-    v1 = v0 < 2;
-
-    /* fragment 14: Branch */
-    int _bc_v1_14 = v1 == 0;
-    v1 = 6;
-    if (_bc_v1_14) { goto vic_frame_channel_streamon0xe0; }
-
-    /* fragment 15: Branch */
-    s3 = 7;
-    if (v0 == 0) { goto vic_frame_channel_streamon0xfc; }
-
-vic_frame_channel_streamon0x84:
-    /* fragment 16: CallSetup */
-    local_14 = 1709;
-    local_10 = (uint32_t *)&__pow2_lut;
-    v0 = (unsigned int *)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t, uintptr_t))(uintptr_t)isp_printf)(2, &LC16, &__pow2_lut, 1709); /* jalr target resolved by relocation */
-
-    /* fragment 17: Arithmetic */
-    s2 = -1;
-
-vic_frame_channel_streamon0xb8:
-    /* fragment 18: Epilogue */
-    /* function epilogue: restore registers and return */
-    return (int64_t)v0;
-
-vic_frame_channel_streamon0xbc:
-    /* fragment 19: Arithmetic */
-    v0 = s2;
-
-    /* fragment 20: Epilogue */
-    /* function epilogue: restore registers and return */
-    return (int64_t)v0;
-
-vic_frame_channel_streamon0xe0:
-    /* fragment 21: Branch */
-    int _bc_v0_21 = v0 == v1;
-    v1 = 7;
-    if (_bc_v0_21) { goto vic_frame_channel_streamon0x22c; }
-
-    /* fragment 22: Branch */
-    s4 = (uintptr_t)s4 << 1;
-    if (v0 != v1) { goto vic_frame_channel_streamon0x84; }
-
-    /* fragment 23: Branch */
-    s3 = 0;
-    goto vic_frame_channel_streamon0xfc;
-
-vic_frame_channel_streamon0xf8:
-    /* fragment 24: Arithmetic */
-    s3 = 6;
-
-vic_frame_channel_streamon0xfc:
-    /* fragment 25: MemoryAccess */
-    s2 = *(uint32_t *)((char *)s1 + 44);
-
-    /* fragment 26: Branch */
-    s5 = s1 + 16;
-    if (s2 != 0) { goto vic_frame_channel_streamon0x244; }
-
-    /* fragment 27: CallSetup */
-    v0 = (unsigned int *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)__private_spin_lock_irqsave)(s5, &local_1c); /* jalr target resolved by relocation */
-
-    /* fragment 28: MemoryAccess */
-    v0 = *(uint32_t *)((char *)s0 + 232);
-    a0 = 1;
-    *(uint32_t *)((char *)v0 + 776) = a0;
-    v0 = *(uint32_t *)((char *)s0 + 276);
-    v1 = *(uint32_t *)((char *)s0 + 280);
-    v0 = (uintptr_t)v0 << 16;
-    v0 = (uintptr_t)v0 | (uintptr_t)v1;
-    v1 = *(uint32_t *)((char *)s0 + 232);
-    *(uint32_t *)((char *)v1 + 772) = v0;
-    v0 = *(uint32_t *)((char *)s0 + 232);
-    *(uint32_t *)((char *)v0 + 784) = s4;
-    v0 = *(uint32_t *)((char *)s0 + 232);
-    *(uint32_t *)((char *)v0 + 788) = s4;
-    v0 = 2147483648;
-    v0 = v0 + 32;
-    s3 = s3 | (uintptr_t)v0;
-    v0 = *(uint32_t *)((char *)s0 + 232);
-    *(uint32_t *)((char *)v0 + 768) = s3;
-    v0 = *(uint8_t *)((char *)s1 + 13);
-
-    /* fragment 29: Branch */
-    int _bc_v0_29 = v0 == 0;
-    v0 = 1;
-    if (_bc_v0_29) { goto vic_frame_channel_streamon0x20c; }
-
-    /* fragment 30: MemoryAccess */
-    a2 = *(uint32_t *)((char *)s0 + 232);
-    v1 = *(uint32_t *)((char *)s0 + 828);
-    local_18 = 0;
-    v0 = *(uint32_t *)((char *)a2 + 428);
-
-    /* fragment 31: Branch */
-    a1 = (uintptr_t)&local_18;
-    if (v1 == 0) { goto vic_frame_channel_streamon0x194; }
-
-    /* fragment 32: MemoryAccess */
-    v1 = *(uint8_t *)((char *)s0 + 821);
-    v1 = a1 + (uintptr_t)v1;
-    *(uint8_t *)((char *)v1 + 0) = a0;
-
-vic_frame_channel_streamon0x194:
-    /* fragment 33: MemoryAccess */
-    v1 = *(uint32_t *)((char *)s0 + 880);
-
-    /* fragment 34: Branch */
-    a0 = (unsigned int *)&local_18;
-    if (v1 == 0) { goto vic_frame_channel_streamon0x1b0; }
-
-    /* fragment 35: MemoryAccess */
-    v1 = *(uint8_t *)((char *)s0 + 873);
-    v1 = a0 + (uintptr_t)v1;
-    a0 = 1;
-    *(uint8_t *)((char *)v1 + 0) = a0;
-
-vic_frame_channel_streamon0x1b0:
-    /* fragment 36: Arithmetic */
-    v1 = 0;
-    t0 = 15;
-    a3 = 4;
-    a0 = (unsigned int *)&local_18;
-
-vic_frame_channel_streamon0x1c0:
-    /* fragment 37: Arithmetic */
-    a0 = a0 + (uintptr_t)v1;
-
-    /* fragment 38: MemoryAccess */
-    a0 = *(uint8_t *)((char *)a0 + 0);
-
-    /* fragment 39: Branch */
-    int _bc_a0_39 = a0 != 0;
-    a0 = (uintptr_t)v1 << 2;
-    if (_bc_a0_39) { goto vic_frame_channel_streamon0x1e4; }
-
-    /* fragment 40: Arithmetic */
-    a1 = t0 << a0;
-    a1 = ~(0 | a1);
-    v0 = a1 & (uintptr_t)v0;
-    a0 = (uintptr_t)a3 << a0;
-    v0 = a0 | (uintptr_t)v0;
-
-vic_frame_channel_streamon0x1e4:
-    /* fragment 41: Arithmetic */
-    v1 = v1 + 1;
-
-    /* fragment 42: Branch */
-    a0 = (unsigned int *)&local_18;
-    if (v1 != a3) { goto vic_frame_channel_streamon0x1c0; }
-
-    /* fragment 43: MemoryAccess */
-    *(uint32_t *)((char *)a2 + 428) = v0;
-    a0 = 1;
-    v0 = *(uint32_t *)((char *)s1 + 48);
-
-vic_frame_channel_streamon0x1fc:
-    /* fragment 44: Arithmetic */
-    v1 = v0 - 1;
-
-    /* fragment 45: Branch */
-    *(uint32_t *)((char *)s1 + 48) = v1;
-    if (v0 != 0) { goto vic_frame_channel_streamon0x234; }
-
-    /* fragment 46: CallSetup */
-    v0 = 1;
-
-vic_frame_channel_streamon0x20c:
-    /* fragment 47: CallSetup */
-    *(uint32_t *)((char *)s1 + 44) = v0;
-    v0 = (unsigned int *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)private_spin_unlock_irqrestore)(s5, local_1c); /* jalr target resolved by relocation */
-
-    /* fragment 48: Branch */
-    goto vic_frame_channel_streamon0xbc;
-
-vic_frame_channel_streamon0x22c:
-    /* fragment 49: Branch */
-    s3 = 1;
-    goto vic_frame_channel_streamon0xfc;
-
-vic_frame_channel_streamon0x234:
-    /* fragment 50: MemoryAccess */
-    v0 = *(uint32_t *)((char *)s0 + 232);
-    *(uint32_t *)((char *)v0 + 880) = a0;
-
-    /* fragment 51: Branch */
-    v0 = *(uint32_t *)((char *)(s1) + 48);
-    goto vic_frame_channel_streamon0x1fc;
-
-vic_frame_channel_streamon0x244:
-    /* fragment 52: Branch */
-    s2 = 0;
-    goto vic_frame_channel_streamon0xb8;
-
-    return ((int64_t)(uint32_t)v1 << 32) | (uint32_t)v0;
+	if (!vic || vic >= (char *)-4095)
+		return -22;
+	bank = t41_vic_bank(vic, *(uint8_t *)(a0 + 4));
+	t41_vic_regs(vic)[0x300 / 4] = 0;
+	*(uint32_t *)(bank + 0x2c) = 0;
+	return 0;
 }
 
-/* WHOLE_DRIVER_CANDIDATE fn_0000000000002374 origin=fragment_seed original=vic_frame_channel_set_fmt */
+/* WHOLE_DRIVER_CANDIDATE fn_0000000000002374 origin=clean_c original=vic_frame_channel_set_fmt */
 int64_t vic_frame_channel_set_fmt(uintptr_t a0, uintptr_t a1)
 {
-    uint32_t local_14 = 0;
-    uint32_t *local_18 = 0;
-    uint32_t local_1c = 0;
-    uint32_t *local_20 = 0;
-    uint32_t local_24 = 0;
-    uint32_t a2 = 0;
-    uint32_t *a3 = 0;
-    uint32_t ra = 0;
-    uintptr_t *s0 = 0;
-    uintptr_t *s1 = 0;
-    uint32_t *s2 = 0;
-    uint32_t s3 = 0;
-    uint32_t t0 = 0;
-    uint32_t *t1 = 0;
-    uint32_t *t2 = 0;
-    uintptr_t *v0 = 0;
-    uintptr_t v1 = 0;
+	char *vic = (char *)(uintptr_t)dump_vsd;
+	volatile uint32_t *regs;
+	struct t41_vic_list *queue, *free_list, *busy;
+	unsigned int stream, i, shift;
+	uint32_t sel;
+	char *bank;
 
-    /* fragment 0: Prologue */
-    /* function prologue: stack frame and callee-saved register setup */
+	if (!vic || vic >= (char *)-4095)
+		return -22;
+	bank = t41_vic_bank(vic, *(uint8_t *)(a0 + 4));
+	stream = (uint8_t)bank[1];
+	regs = t41_vic_regs(vic);
+	queue = (struct t41_vic_list *)(bank + 0x14);
+	free_list = (struct t41_vic_list *)(bank + 0x1c);
+	busy = (struct t41_vic_list *)(bank + 0x24);
 
-    /* fragment 1: Arithmetic */
-    v0 = (unsigned int *)&ivdc_threshold_line;
+	*(uint32_t *)(bank + 4) = ((uint32_t *)a1)[3];
+	{
+		/* RAW8/RAW16: line and frame size like ispcore_frame_channel_s_fmt
+		 * (the generic fallback sized the queue for NV12, smaller than a
+		 * RAW16 frame) */
+		uint32_t bpl, size;
 
-    /* fragment 2: StackAccess */
-    local_18 = s1;
-    s1 = *(uint32_t *)((char *)((char *)&dump_vsd));
-    local_24 = ra;
-    local_20 = s3;
-    local_1c = s2;
-    local_14 = s0;
+		if (!t41_vic_raw_layout(((uint32_t *)a1)[3], ((uint32_t *)a1)[1],
+					((uint32_t *)a1)[2], &bpl, &size)) {
+			((uint32_t *)a1)[5] = bpl;
+			((uint32_t *)a1)[6] = size;
+		}
+	}
+	queue->next = queue->prev = queue;
+	busy->next = busy->prev = busy;
+	*(uintptr_t *)(bank + 8) = a0;
+	free_list->next = free_list->prev = free_list;
+	private_spin_lock_init((int32_t *)(bank + 0x10));
+	for (i = 0; i < T41_VIC_NODES; i++) {
+		uint32_t *node = (uint32_t *)(vic + 500 + 160 * stream + 32 * i);
 
-    /* fragment 3: Branch */
-    v0 = -22;
-    if (s1 == 0) { goto vic_frame_channel_set_fmt0x13c; }
+		node[4] = i;
+		t41_vic_list_add_tail((struct t41_vic_list *)node, free_list);
+		regs[t41_vic_addr_reg(stream, i, 0) / 4] = 0;
+		regs[t41_vic_addr_reg(stream, i, 1) / 4] = 0;
+	}
+	shift = stream << 2;
+	sel = regs[0x1ac / 4];
+	regs[0x1ac / 4] = ((uint32_t)(uint8_t)bank[0] << shift) | (sel & ~(0xfU << shift));
+	return 0;
+}
 
-    /* fragment 4: Arithmetic */
-    v1 = s1 < -4095;
+/* WHOLE_DRIVER_CANDIDATE fn_0000000000002128 origin=clean_c original=vic_frame_channel_streamon */
+int64_t vic_frame_channel_streamon(uintptr_t a0)
+{
+	char *vic = (char *)(uintptr_t)dump_vsd;
+	volatile uint32_t *regs;
+	unsigned long flags = 0;
+	uint32_t width, height, stride, mode;
+	char *bank;
 
-    /* fragment 5: Branch */
-    if (v1 == 0) { goto vic_frame_channel_set_fmt0x13c; }
+	if (!vic || vic >= (char *)-4095)
+		return -22;
+	bank = t41_vic_bank(vic, *(uint8_t *)(a0 + 4));
+	regs = t41_vic_regs(vic);
+	width = *(uint32_t *)(vic + 0x114);
+	height = *(uint32_t *)(vic + 0x118);
+	if (t41_vic_dma_mode(*(uint32_t *)(bank + 4), width, &mode, &stride)) {
+		isp_printf(2, "[%s %d] [error] [ %s:%d ] not support this format\n",
+			   "vic_frame_channel_streamon", 1709,
+			   "vic_frame_channel_streamon", 1709);
+		return -1;
+	}
+	if (*(uint32_t *)(bank + 0x2c))
+		return 0;
 
-    /* fragment 6: MemoryAccess */
-    v0 = *(uint8_t *)((char *)s1 + 832);
+	__private_spin_lock_irqsave((uint32_t)(uintptr_t)(bank + 0x10), (uintptr_t)&flags);
+	regs[0x308 / 4] = 1;
+	regs[0x304 / 4] = (width << 16) | height;
+	regs[0x310 / 4] = stride;
+	regs[0x314 / 4] = stride;
+	regs[0x300 / 4] = t41_vic_dma_config(mode);
+	if (bank[0xd]) {
+		uint8_t used[4] = { 0, 0, 0, 0 };
+		uint32_t sel = regs[0x1ac / 4];
+		int32_t pending;
+		unsigned int i;
 
-    /* fragment 7: Branch */
-    s0 = (uintptr_t)s1 + 872;
-    if (v0 == 0) { goto vic_frame_channel_set_fmt0x54; }
-
-    /* fragment 8: MemoryAccess */
-    v1 = *(uint8_t *)((char *)a0 + 4);
-    v0 = *(uint8_t *)((char *)s1 + 822);
-
-    /* fragment 9: Branch */
-    s0 = (uintptr_t)s1 + 820;
-    if (v1 == v0) { goto vic_frame_channel_set_fmt0x54; }
-
-    /* fragment 10: CallSetup */
-    s0 = (uintptr_t)s1 + 872;
-
-vic_frame_channel_set_fmt0x54:
-    /* fragment 11: CallSetup */
-    s3 = *(uint8_t *)((char *)(s0) + 1);
-    s2 = (uintptr_t)s0 + 28;
-    *(uint32_t *)((char *)s0 + 4) = (*(uint32_t *)((char *)(a1) + 12));
-    *(uint32_t *)((char *)s0 + 20) = (s0 + 20);
-    *(uint32_t *)((char *)s0 + 24) = (s0 + 20);
-    *(uint32_t *)((char *)s0 + 36) = (s0 + 36);
-    *(uint32_t *)((char *)s0 + 40) = (s0 + 36);
-    *(uint32_t *)((char *)s0 + 8) = a0;
-    *(uint32_t *)((char *)s0 + 28) = s2;
-    *(uint32_t *)((char *)s0 + 32) = s2;
-    v0 = (uintptr_t)((uintptr_t (*)(uintptr_t))(uintptr_t)private_spin_lock_init)((uintptr_t)s0 + 16); /* jalr target resolved by relocation */
-
-    /* fragment 12: Arithmetic */
-    a3 = s3 << 2;
-    a0 = (uintptr_t)a3 + s3;
-    t1 = a0 << 5;
-    v0 = (uintptr_t)t1 + 500;
-
-    /* fragment 13: Unknown */
-    /* unmatched fragment 13 (Unknown): no deterministic matcher for Unknown */
-    /* asm: 241c:	00042023 	negu	a0,a0 */
-
-    /* fragment 14: Arithmetic */
-    v0 = (uintptr_t)s1 + (uintptr_t)v0;
-    a2 = a0 << 5;
-    v1 = 832;
-    a1 = 0;
-    t2 = 5;
-
-vic_frame_channel_set_fmt0xc0:
-    /* fragment 15: Arithmetic */
-    a0 = a2 + (uintptr_t)v0;
-    a0 = a0 + (uintptr_t)t1;
-
-    /* fragment 16: MemoryAccess */
-    *(uint32_t *)((char *)a0 + 16) = a1;
-    a0 = *(uint32_t *)((char *)s0 + 32);
-    *(uint32_t *)((char *)s0 + 32) = v0;
-    *(uint32_t *)((char *)v0 + 0) = s2;
-    *(uint32_t *)((char *)v0 + 4) = a0;
-    *(uint32_t *)((char *)a0 + 0) = v0;
-
-    /* fragment 17: Branch */
-    a0 = *(uint32_t *)((char *)(s1) + 232);
-    if (s3 == 0) { goto vic_frame_channel_set_fmt0x158; }
-
-    /* fragment 18: Arithmetic */
-    a0 = a0 + (uintptr_t)v1;
-
-    /* fragment 19: MemoryAccess */
-    *(uint32_t *)((char *)a0 + 0) = 0;
-    a0 = (uintptr_t)v1 + 20;
-
-vic_frame_channel_set_fmt0xf4:
-    /* fragment 20: MemoryAccess */
-    t0 = *(uint32_t *)((char *)s1 + 232);
-    a1 = a1 + 1;
-    v0 = (uintptr_t)v0 + 32;
-    a0 = t0 + a0;
-    *(uint32_t *)((char *)a0 + 0) = 0;
-
-    /* fragment 21: Branch */
-    v1 = (uintptr_t)v1 + 4;
-    if (a1 != t2) { goto vic_frame_channel_set_fmt0xc0; }
-
-    /* fragment 22: MemoryAccess */
-    a0 = *(uint32_t *)((char *)s1 + 232);
-    v0 = 15;
-    v0 = (uintptr_t)v0 << (uintptr_t)a3;
-    v1 = *(uint32_t *)((char *)a0 + 428);
-    v0 = ~(0 | (uintptr_t)v0);
-    v0 = (uintptr_t)v0 & (uintptr_t)v1;
-    v1 = *(uint8_t *)((char *)s0 + 0);
-    v1 = (uintptr_t)v1 << (uintptr_t)a3;
-    v0 = (uintptr_t)v1 | (uintptr_t)v0;
-    *(uint32_t *)((char *)a0 + 428) = v0;
-    v0 = 0;
-
-vic_frame_channel_set_fmt0x13c:
-    /* fragment 23: Epilogue */
-    /* function epilogue: restore registers and return */
-    return (int64_t)v0;
-
-vic_frame_channel_set_fmt0x158:
-    /* fragment 24: Arithmetic */
-    t0 = v1 - 40;
-    a0 = a0 + t0;
-
-    /* fragment 25: MemoryAccess */
-    *(uint32_t *)((char *)a0 + 0) = 0;
-
-    /* fragment 26: Branch */
-    a0 = v1 - 20;
-    goto vic_frame_channel_set_fmt0xf4;
-
-    return ((int64_t)(uint32_t)v1 << 32) | (uint32_t)v0;
+		if (*(uint32_t *)(vic + 0x33c))
+			used[(uint8_t)vic[0x335] & 3] = 1;
+		if (*(uint32_t *)(vic + 0x370))
+			used[(uint8_t)vic[0x369] & 3] = 1;
+		for (i = 0; i < 4; i++)
+			if (!used[i])
+				sel = (4U << (i << 2)) | (sel & ~(0xfU << (i << 2)));
+		regs[0x1ac / 4] = sel;
+		/* OEM: trigger once per buffer queued before stream on, the
+		 * count is left at -1 afterwards. */
+		pending = *(int32_t *)(bank + 0x30);
+		while (1) {
+			*(int32_t *)(bank + 0x30) = pending - 1;
+			if (!pending)
+				break;
+			regs[0x370 / 4] = 1;
+			pending = *(int32_t *)(bank + 0x30);
+		}
+	}
+	*(uint32_t *)(bank + 0x2c) = 1;
+	private_spin_unlock_irqrestore((void *)(bank + 0x10), flags);
+	return 0;
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_00000000000024e0 origin=model_output original=tx_isp_vic_probe */
@@ -9963,6 +9412,11 @@ int tx_isp_vic_probe(struct platform_device *pdev)
     *(int *)((char *)vic_dev + 0x184) = 1;
     *(int *)((char *)vic_dev + 0x17c) = 4;
     *(void **)((char *)vic_dev + 0x10c) = vic_dev;
+
+    /* the vic_frame_channel_* ops address the VIC through dump_vsd (set by
+     * the stock probe); only needed by the bypass graph */
+    if (isp_bypass_graph)
+        dump_vsd = (uint32_t)(uintptr_t)vic_dev;
 
     return ret;
 }
@@ -12570,492 +12024,124 @@ tisp_vic_ctrl_ioctl0x408:
     return ((int64_t)(uint32_t)v1 << 32) | (uint32_t)v0;
 }
 
-/* WHOLE_DRIVER_CANDIDATE fn_0000000000004678 origin=fragment_seed original=vic_mdma_irq_function */
+/*
+ * MDMA done interrupt of the VIC (OEM 1.2.5 vic_mdma_irq_function): channel
+ * 0/1 bank path (frame-channel buffers programmed by vic_frame_channel_qbuf,
+ * ISP bypass) or the internal ring path.
+ */
+static void t41_vic_bank_hw_refill(char *vic, char *bank, uint32_t *node)
+{
+	volatile uint32_t *regs = t41_vic_regs(vic);
+	unsigned int idx = node[4];
+
+	regs[t41_vic_addr_reg((uint8_t)bank[1], idx, 0) / 4] = node[2];
+	regs[t41_vic_addr_reg((uint8_t)bank[1], idx, 1) / 4] = node[3];
+	regs[0x370 / 4] = 1;
+}
+
+static void t41_vic_bank_done(char *vic, char *bank)
+{
+	struct t41_vic_list *queue = (struct t41_vic_list *)(bank + 0x14);
+	struct t41_vic_list *free_list = (struct t41_vic_list *)(bank + 0x1c);
+	struct t41_vic_list *busy = (struct t41_vic_list *)(bank + 0x24);
+	volatile uint32_t *regs = t41_vic_regs(vic);
+	uint32_t *node, *queued;
+	uint32_t hw_addr;
+	int32_t pending;
+	int32_t i;
+
+	if (!*(uint32_t *)(bank + 0x2c))
+		return;
+	hw_addr = regs[((uint8_t)bank[1] ? 0x388 : 0x380) / 4];
+	node = (uint32_t *)pop_buffer_fifo((int32_t *)busy);
+	if (!node) {
+		if (!print_level)
+			printk(KERN_ERR "vic: no dma buffer to complete\n");
+		return;
+	}
+	(*(int32_t *)(bank + 0x30))--;
+	tx_isp_send_event_to_remote(*(void **)(bank + 8), 0x3000006, node);
+	t41_vic_list_add_tail((struct t41_vic_list *)node, free_list);
+	if (node[2] != hw_addr) {
+		pending = *(int32_t *)(bank + 0x30);
+		for (i = 0;; i++) {
+			if (i == pending) {
+				isp_printf(2, "[%s %d] [%s,%d] ; vic dma addrrss error, ch:%d !!!\n",
+					   "vic_mdma_irq_function", 795,
+					   "vic_mdma_irq_function", 795, (uint8_t)bank[2]);
+				isp_printf(2, "[%s %d] VIC_ADDR_DMA_CONFIGURE(0) : 0x%x\n",
+					   "vic_mdma_irq_function", 796, regs[0x300 / 4]);
+				return;
+			}
+			node = (uint32_t *)pop_buffer_fifo((int32_t *)busy);
+			if (!node) {
+				isp_printf(1, "[%s %d], i=%d ;num = %d;busy_buf_count %d\n",
+					   "vic_mdma_irq_function", 792, i, pending,
+					   *(int32_t *)(bank + 0x30));
+				continue;
+			}
+			(*(int32_t *)(bank + 0x30))--;
+			tx_isp_send_event_to_remote(*(void **)(bank + 8), 0x3000006, node);
+			t41_vic_list_add_tail((struct t41_vic_list *)node, free_list);
+			if (node[2] == hw_addr)
+				break;
+		}
+	}
+	/* re-arm: next queued user buffer into a free node */
+	if (free_list->next == free_list || queue->next == queue)
+		return;
+	queued = (uint32_t *)pop_buffer_fifo((int32_t *)queue);
+	node = (uint32_t *)pop_buffer_fifo((int32_t *)free_list);
+	if (!queued || !node)
+		return;
+	node[2] = queued[2];
+	t41_vic_list_add_tail((struct t41_vic_list *)node, busy);
+	(*(int32_t *)(bank + 0x30))++;
+	t41_vic_bank_hw_refill(vic, bank, node);
+}
+
+/* WHOLE_DRIVER_CANDIDATE fn_0000000000004678 origin=clean_c original=vic_mdma_irq_function */
 void* vic_mdma_irq_function(uintptr_t a0, uint32_t a1, uint32_t a2)
 {
-    uint32_t *local_10 = 0;
-    uint32_t local_14 = 0;
-    uint32_t *local_18 = 0;
-    uint32_t *local_20 = 0;
-    uint32_t local_24 = 0;
-    uint32_t *local_28 = 0;
-    uint32_t local_2c = 0;
-    uint32_t local_30 = 0;
-    uint32_t local_38 = 0;
-    uint32_t *local_3c = 0;
-    uint32_t local_40 = 0;
-    uint32_t local_44 = 0;
-    uint32_t local_48 = 0;
-    uint32_t local_4c = 0;
-    uint32_t local_50 = 0;
-    uint32_t local_54 = 0;
-    uint32_t local_58 = 0;
-    uint32_t local_5c = 0;
-    uint32_t *a3 = 0;
-    uint32_t ra = 0;
-    uint32_t *s0 = 0;
-    uintptr_t *s1 = 0;
-    uintptr_t *s2 = 0;
-    uint32_t s3 = 0;
-    uint32_t *s4 = 0;
-    uint32_t s5 = 0;
-    uintptr_t *s6 = 0;
-    uintptr_t s7 = 0;
-    uint32_t s8 = 0;
-    uintptr_t t0 = 0;
-    uintptr_t *t1 = 0;
-    uint32_t *t2 = 0;
-    uint32_t *t9 = 0;
-    uintptr_t *v0 = 0;
-    uint32_t *v1 = 0;
-
-    /* fragment 0: Arithmetic */
-    v0 = 52;
-    v1 = a2 * (uintptr_t)v0;
-
-    /* fragment 1: StackAccess */
-    local_54 = s7;
-    local_3c = s1;
-    local_5c = ra;
-    local_58 = s8;
-    local_50 = s6;
-    local_4c = s5;
-    local_48 = s4;
-    local_44 = s3;
-    local_40 = s2;
-    local_38 = s0;
-    s7 = a0;
-    v0 = v1 + a0;
-    a0 = *(uint32_t *)((char *)v0 + 828);
-
-    /* fragment 2: Branch */
-    s1 = a2;
-    if (a0 == 0) { goto vic_mdma_irq_function0x388; }
-
-    /* fragment 3: MemoryAccess */
-    a0 = *(uint32_t *)((char *)v0 + 864);
-
-    /* fragment 4: Branch */
-    if (a0 == 0) { goto vic_mdma_irq_function0x170; }
-
-    /* fragment 5: MemoryAccess */
-    v0 = *(uint8_t *)((char *)v0 + 821);
-
-    /* fragment 6: Branch */
-    a0 = *(uint32_t *)((char *)(s7) + 232);
-    if (v0 == 0) { goto vic_mdma_irq_function0x19c; }
-
-    /* fragment 7: CallSetup */
-    s8 = *(uint32_t *)((char *)a0 + 904);
-    s0 = 52;
-
-vic_mdma_irq_function0x68:
-    /* fragment 8: CallSetup */
-    s0 = (uintptr_t)s1 * (uintptr_t)s0;
-    s6 = s0 + 856;
-    local_20 = s7 + (uintptr_t)s6;
-    v0 = (uintptr_t)((uintptr_t (*)(uintptr_t))(uintptr_t)pop_buffer_fifo)(s7 + (((uintptr_t)s1 * (uintptr_t)s0) + 856)); /* jalr target resolved by relocation */
-
-    /* fragment 9: Arithmetic */
-    s2 = v0;
-
-    /* fragment 10: Branch */
-    t0 = s7 + (uintptr_t)s0;
-    if (v0 == 0) { goto vic_mdma_irq_function0x320; }
-
-    /* fragment 11: CallSetup */
-    *(uint32_t *)((char *)t0 + 868) = ((*(uint32_t *)((char *)(t0) + 868)) - 1);
-    local_24 = t0;
-    local_2c = (uintptr_t)&tx_isp_send_event_to_remote;
-    v0 = (uintptr_t)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)tx_isp_send_event_to_remote)(*(uint32_t *)((char *)(t0) + 828), 50331648 + 6, s2); /* jalr target resolved by relocation */
-
-    /* fragment 12: StackAccess */
-    t0 = local_24;
-    s4 = s0 + 848;
-    s4 = s7 + (uintptr_t)s4;
-    v0 = *(uint32_t *)((char *)t0 + 852);
-    *(uint32_t *)((char *)t0 + 852) = s2;
-    *(uint32_t *)((char *)s2 + 0) = s4;
-    *(uint32_t *)((char *)s2 + 4) = v0;
-    *(uint32_t *)((char *)v0 + 0) = s2;
-    v0 = *(uint32_t *)((char *)s2 + 8);
-
-    /* fragment 13: Branch */
-    int _bc_v0_13 = v0 == s8;
-    v0 = 52;
-    if (_bc_v0_13) { goto vic_mdma_irq_function0x230; }
-
-    /* fragment 14: MemoryAccess */
-    v0 = *(uint32_t *)((char *)t0 + 868);
-    s5 = (uintptr_t)&isp_printf;
-    s2 = 0;
-    local_28 = v0;
-    v0 = (unsigned int *)&__pow2_lut;
-    local_24 = v0;
-    s5 = s5;
-    s6 = t0;
-
-vic_mdma_irq_function0x110:
-    /* fragment 15: StackAccess */
-    v0 = local_28;
-
-    /* fragment 16: Branch */
-    a1 = (uintptr_t)&LC74;
-    if (s2 != v0) { goto vic_mdma_irq_function0x1a8; }
-
-    /* fragment 17: CallSetup */
-    local_14 = 848;
-    local_10 = (uint32_t *)&__pow2_lut;
-    v0 = (unsigned int *)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t, uintptr_t))(uintptr_t)isp_printf)(2, &LC74, &__pow2_lut, 848); /* jalr target resolved by relocation */
-
-    /* fragment 18: CallSetup */
-    local_10 = *(uint32_t *)((char *)(*(uint32_t *)((char *)(s7) + 232)) + 768);
-    v0 = (unsigned int *)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t, uintptr_t))(uintptr_t)isp_printf)(2, &LC75, s2, 849); /* jalr target resolved by relocation */
-
-vic_mdma_irq_function0x16c:
-    /* fragment 19: Epilogue */
-    /* function epilogue: restore registers and return */
-    return (void*)v0;
-
-vic_mdma_irq_function0x170:
-    /* fragment 20: Epilogue */
-    /* function epilogue: restore registers and return */
-    return (void*)v0;
-
-vic_mdma_irq_function0x174:
-    /* fragment 21: Epilogue */
-    /* function epilogue: restore registers and return */
-    return (void*)v0;
-
-vic_mdma_irq_function0x19c:
-    /* fragment 22: MemoryAccess */
-    s8 = *(uint32_t *)((char *)a0 + 896);
-
-    /* fragment 23: Branch */
-    s0 = 52;
-    goto vic_mdma_irq_function0x68;
-
-vic_mdma_irq_function0x1a8:
-    /* fragment 24: CallSetup */
-    v0 = (unsigned int *)((uintptr_t (*)(uintptr_t))(uintptr_t)pop_buffer_fifo)(local_20); /* jalr target resolved by relocation */
-
-    /* fragment 25: Arithmetic */
-    t1 = v0;
-
-    /* fragment 26: Branch */
-    v0 = *(uint32_t *)((char *)(s6) + 868);
-    if (t1 == 0) { goto vic_mdma_irq_function0x2ec; }
-
-    /* fragment 27: CallSetup */
-    *(uint32_t *)((char *)s6 + 868) = (v0 - 1);
-    local_14 = *(uint32_t *)((char *)(t1) + 8);
-    local_30 = t1;
-    v0 = (unsigned int *)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t, uintptr_t))(uintptr_t)isp_printf)(1, &LC72, &__pow2_lut, 839); /* jalr target resolved by relocation */
-
-    /* fragment 28: CallSetup */
-    t1 = local_30;
-    v0 = (uintptr_t)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)tx_isp_send_event_to_remote)(*(uint32_t *)((char *)(s6) + 828), 50331648 + 6, local_30); /* jalr target resolved by relocation */
-
-    /* fragment 29: MemoryAccess */
-    v0 = *(uint32_t *)((char *)s6 + 852);
-    t1 = local_30;
-    *(uint32_t *)((char *)s6 + 852) = t1;
-    *(uint32_t *)((char *)t1 + 4) = v0;
-    *(uint32_t *)((char *)t1 + 0) = s4;
-    *(uint32_t *)((char *)v0 + 0) = t1;
-    v0 = *(uint32_t *)((char *)t1 + 8);
-
-    /* fragment 30: Branch */
-    int _bc_v0_30 = v0 != s8;
-    v0 = 52;
-    if (_bc_v0_30) { goto vic_mdma_irq_function0x318; }
-
-vic_mdma_irq_function0x230:
-    /* fragment 31: Arithmetic */
-    v1 = (uintptr_t)s1 * (uintptr_t)v0;
-    s1 = v1 + s7;
-
-    /* fragment 32: MemoryAccess */
-    v0 = *(uint32_t *)((char *)s1 + 848);
-
-    /* fragment 33: Branch */
-    if (s4 == v0) { goto vic_mdma_irq_function0x170; }
-
-    /* fragment 34: MemoryAccess */
-    v0 = *(uint32_t *)((char *)s1 + 840);
-    a0 = s0 + 840;
-    a0 = s7 + a0;
-
-    /* fragment 35: Branch */
-    s8 = local_58;
-    if (a0 == v0) { goto vic_mdma_irq_function0x174; }
-
-    /* fragment 36: CallSetup */
-    v0 = (unsigned int *)((uintptr_t (*)(uintptr_t))(uintptr_t)pop_buffer_fifo)(a0); /* jalr target resolved by relocation */
-
-    /* fragment 37: CallSetup */
-    v0 = (unsigned int *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)pop_buffer_fifo)(s4, v0); /* jalr target resolved by relocation */
-
-    /* fragment 38: MemoryAccess */
-    a0 = *(uint32_t *)((char *)a1 + 8);
-    v1 = local_20;
-    *(uint32_t *)((char *)v0 + 8) = a0;
-    a0 = *(uint32_t *)((char *)s1 + 860);
-    *(uint32_t *)((char *)s1 + 860) = v0;
-    *(uint32_t *)((char *)v0 + 0) = v1;
-    *(uint32_t *)((char *)v0 + 4) = a0;
-    *(uint32_t *)((char *)a0 + 0) = v0;
-    a0 = *(uint32_t *)((char *)s1 + 868);
-    a1 = *(uint8_t *)((char *)s1 + 821);
-    a0 = a0 + 1;
-    *(uint32_t *)((char *)s1 + 868) = a0;
-    a2 = *(uint32_t *)((char *)s7 + 232);
-    a3 = *(uint32_t *)((char *)v0 + 8);
-
-    /* fragment 39: Branch */
-    a0 = *(uint32_t *)((char *)(v0) + 16);
-    if (a1 == 0) { goto vic_mdma_irq_function0x368; }
-
-    /* fragment 40: Arithmetic */
-    a0 = a0 + 208;
-    a1 = a0 << 2;
-    a1 = a2 + a1;
-
-    /* fragment 41: MemoryAccess */
-    *(uint32_t *)((char *)a1 + 0) = a3;
-    a1 = *(uint32_t *)((char *)v0 + 12);
-    v0 = *(uint32_t *)((char *)v0 + 16);
-    v0 = v0 + 213;
-
-vic_mdma_irq_function0x2c8:
-    /* fragment 42: MemoryAccess */
-    a0 = *(uint32_t *)((char *)s7 + 232);
-    v0 = (uintptr_t)v0 << 2;
-    v1 = 1;
-    v0 = a0 + (uintptr_t)v0;
-    *(uint32_t *)((char *)v0 + 0) = a1;
-    v0 = *(uint32_t *)((char *)s7 + 232);
-    *(uint32_t *)((char *)v0 + 880) = v1;
-
-    /* fragment 43: Branch */
-    goto vic_mdma_irq_function0x170;
-
-vic_mdma_irq_function0x2ec:
-    /* fragment 44: CallSetup */
-    local_18 = v0;
-    local_14 = local_28;
-    v0 = (unsigned int *)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t, uintptr_t))(uintptr_t)isp_printf)(1, &LC73, &__pow2_lut, 845); /* jalr target resolved by relocation */
-
-vic_mdma_irq_function0x318:
-    /* fragment 45: Branch */
-    s2 = s2 + 1;
-    goto vic_mdma_irq_function0x110;
-
-vic_mdma_irq_function0x320:
-    /* fragment 46: Epilogue */
-    /* function epilogue: restore registers and return */
-
-    /* fragment 47: MemoryAccess */
-    a2 = *(uint32_t *)((char *)t0 + 868);
-    a1 = (uintptr_t)&LC76;
-    t9 = (uint32_t *)&isp_printf;
-    a1 = a1;
-    a0 = 0;
-    t9 = t9;
-
-    /* fragment 48: Unknown */
-    /* unmatched fragment 48 (Unknown): no deterministic matcher for Unknown */
-    /* asm: 49d8:	03200408 	jr.hb	t9 */
-
-    /* fragment 49: Arithmetic */
-    /* unmatched fragment 49 (Arithmetic): arithmetic fragment did not contain supported register operations */
-    /* asm: 49dc:	27bd0060 	addiu	sp,sp,96 */
-
-vic_mdma_irq_function0x368:
-    /* fragment 50: Arithmetic */
-    a0 = a0 + 198;
-    a0 = a0 << 2;
-    a0 = a2 + a0;
-
-    /* fragment 51: MemoryAccess */
-    *(uint32_t *)((char *)a0 + 0) = a3;
-    a1 = *(uint32_t *)((char *)v0 + 12);
-    v0 = *(uint32_t *)((char *)v0 + 16);
-
-    /* fragment 52: Branch */
-    v0 = v0 + 203;
-    goto vic_mdma_irq_function0x2c8;
-
-vic_mdma_irq_function0x388:
-    /* fragment 53: Arithmetic */
-    v0 = (unsigned int *)&vic_mdma_bypass_onoff;
-
-    /* fragment 54: MemoryAccess */
-    v0 = *(uint32_t *)((char *)((char *)&vic_mdma_bypass_onoff));
-
-    /* fragment 55: Branch */
-    int _bc_v0_55 = v0 == 0;
-    v0 = 96;
-    if (_bc_v0_55) { goto vic_mdma_irq_function0x16c; }
-
-    /* fragment 56: Arithmetic */
-    v1 = a1 * (uintptr_t)v0;
-    a2 = (uintptr_t)&vic_mdma_ch0_sub_get_num;
-    a1 = v1 + s7;
-
-    /* fragment 57: MemoryAccess */
-    a0 = *(uint32_t *)((char *)a1 + 276);
-    v0 = *(uint32_t *)((char *)a1 + 280);
-    a0 = a0 * (uintptr_t)v0;
-
-    /* fragment 58: Branch */
-    a0 = a0 << 1;
-    if (s1 != 0) { goto vic_mdma_irq_function0x4b0; }
-
-    /* fragment 59: MemoryAccess */
-    v0 = *(uint32_t *)((char *)((char *)&vic_mdma_ch0_sub_get_num));
-
-    /* fragment 60: Branch */
-    int _bc_v0_60 = v0 == 0;
-    v0 = (unsigned int *)&vic_mdma_ch1_sub_get_num;
-    if (_bc_v0_60) { goto vic_mdma_irq_function0x44c; }
-
-    /* fragment 61: Arithmetic */
-    t1 = (uint32_t *)&vic_mdma_ch0_set_buff_index;
-
-    /* fragment 62: MemoryAccess */
-    v0 = *(uint32_t *)((char *)((char *)&vic_mdma_ch0_set_buff_index));
-    a3 = *(uint32_t *)((char *)s7 + 232);
-    a1 = v0 + 198;
-    a1 = a1 << 2;
-    a1 = a3 + a1;
-    t0 = *(uint32_t *)((char *)a1 + 0);
-    a1 = v0 + 1;
-    v0 = 5;
-
-    /* fragment 63: Unknown */
-    /* unmatched fragment 63 (Unknown): no deterministic matcher for Unknown */
-    /* asm: 4a60:	00a2001b 	divu	zero,a1,v0 */
-
-    /* fragment 64: Arithmetic */
-    a0 = a0 + t0;
-
-    /* fragment 65: MemoryAccess */
-    *(uint32_t *)((char *)((char *)&vic_mdma_ch0_set_buff_index)) = v0;
-    v0 = v0 + 198;
-    v0 = (uintptr_t)v0 << 2;
-    v0 = (uintptr_t)a3 + (uintptr_t)v0;
-    *(uint32_t *)((char *)v0 + 0) = a0;
-    v0 = *(uint32_t *)((char *)((char *)&vic_mdma_ch0_sub_get_num));
-    a0 = 7;
-    v0 = v0 - 1;
-
-    /* fragment 66: Branch */
-    int _bc_v0_66 = v0 != a0;
-    *(uint32_t *)((char *)a2 + 0) = v0;
-    if (_bc_v0_66) { goto vic_mdma_irq_function0x43c; }
-
-    /* fragment 67: MemoryAccess */
-    a1 = *(uint32_t *)((char *)s7 + 232);
-    a0 = 4293918720;
-    a0 = a0 | 65535;
-    v0 = *(uint32_t *)((char *)a1 + 768);
-    v0 = (uintptr_t)v0 & a0;
-    a0 = 458752;
-    v0 = (uintptr_t)v0 | a0;
-    *(uint32_t *)((char *)a1 + 768) = v0;
-
-vic_mdma_irq_function0x43c:
-    /* fragment 68: MemoryAccess */
-    v0 = *(uint32_t *)((char *)((char *)&vic_mdma_ch0_sub_get_num));
-
-vic_mdma_irq_function0x440:
-    /* fragment 69: Branch */
-    if (v0 != 0) { goto vic_mdma_irq_function0x170; }
-
-    /* fragment 70: Arithmetic */
-    v0 = (unsigned int *)&vic_mdma_ch1_sub_get_num;
-
-vic_mdma_irq_function0x44c:
-    /* fragment 71: MemoryAccess */
-    v0 = *(uint32_t *)((char *)((char *)&vic_mdma_ch1_sub_get_num));
-
-    /* fragment 72: Branch */
-    if (v0 != 0) { goto vic_mdma_irq_function0x170; }
-
-    /* fragment 73: CallSetup */
-    v0 = (unsigned int *)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))(uintptr_t)isp_printf)(1, &LC77, s1); /* jalr target resolved by relocation */
-
-    /* fragment 74: Epilogue */
-    /* function epilogue: restore registers and return */
-
-    /* fragment 75: Arithmetic */
-    a0 = s7 + 432;
-
-    /* fragment 76: Epilogue */
-    /* function epilogue: restore registers and return */
-
-    /* fragment 77: ConstantLoad */
-    t9 = 0x0;
-
-    /* fragment 78: Unknown */
-    /* unmatched fragment 78 (Unknown): no deterministic matcher for Unknown */
-    /* asm: 4b20:	03200408 	jr.hb	t9 */
-
-    /* fragment 79: Arithmetic */
-    /* unmatched fragment 79 (Arithmetic): arithmetic fragment did not contain supported register operations */
-    /* asm: 4b24:	27bd0060 	addiu	sp,sp,96 */
-
-vic_mdma_irq_function0x4b0:
-    /* fragment 80: Arithmetic */
-    v0 = 1;
-
-    /* fragment 81: Branch */
-    t0 = (uintptr_t)&vic_mdma_ch1_sub_get_num;
-    if (s1 != v0) { goto vic_mdma_irq_function0x43c; }
-
-    /* fragment 82: MemoryAccess */
-    v0 = *(uint32_t *)((char *)((char *)&vic_mdma_ch1_sub_get_num));
-
-    /* fragment 83: Branch */
-    int _bc_v0_83 = v0 == 0;
-    v0 = *(uint32_t *)((char *)((char *)&vic_mdma_ch0_sub_get_num));
-    if (_bc_v0_83) { goto vic_mdma_irq_function0x440; }
-
-    /* fragment 84: Arithmetic */
-    t1 = (uint32_t *)&vic_mdma_ch1_set_buff_index;
-
-    /* fragment 85: MemoryAccess */
-    v0 = *(uint32_t *)((char *)((char *)&vic_mdma_ch1_set_buff_index));
-    a3 = *(uint32_t *)((char *)s7 + 232);
-    a1 = v0 + 198;
-    a1 = a1 << 2;
-    a1 = a3 + a1;
-    t2 = *(uint32_t *)((char *)a1 + 0);
-    a1 = v0 + 1;
-    v0 = 5;
-
-    /* fragment 86: Unknown */
-    /* unmatched fragment 86 (Unknown): no deterministic matcher for Unknown */
-    /* asm: 4b64:	00a2001b 	divu	zero,a1,v0 */
-
-    /* fragment 87: Arithmetic */
-    a0 = a0 + (uintptr_t)t2;
-
-    /* fragment 88: MemoryAccess */
-    *(uint32_t *)((char *)((char *)&vic_mdma_ch1_set_buff_index)) = v0;
-    v0 = v0 + 198;
-    v0 = (uintptr_t)v0 << 2;
-    v0 = (uintptr_t)a3 + (uintptr_t)v0;
-    *(uint32_t *)((char *)v0 + 0) = a0;
-    v0 = *(uint32_t *)((char *)((char *)&vic_mdma_ch1_sub_get_num));
-    v0 = v0 - 1;
-
-    /* fragment 89: Branch */
-    *(uint32_t *)((char *)t0 + 0) = v0;
-    goto vic_mdma_irq_function0x43c;
-
-    return (void*)v0;
+	char *vic = (char *)a0;
+	volatile uint32_t *regs = t41_vic_regs(vic);
+	char *bank = vic + T41_VIC_BANK0 + a2 * T41_VIC_BANK_SIZE;
+	uint32_t step;
+
+	if (a2 < 2 && *(uint32_t *)(bank + 8)) {
+		t41_vic_bank_done(vic, bank);
+		return NULL;
+	}
+	if (!vic_mdma_bypass_onoff)
+		return NULL;
+	step = *(uint32_t *)(vic + 0x114 + a1 * 0x60) *
+	       *(uint32_t *)(vic + 0x118 + a1 * 0x60) * 2;
+	if (a2 == 0) {
+		if (vic_mdma_ch0_sub_get_num) {
+			uint32_t cur = vic_mdma_ch0_set_buff_index;
+
+			vic_mdma_ch0_set_buff_index = (cur + 1) % 5;
+			regs[(0x318 + vic_mdma_ch0_set_buff_index * 4) / 4] =
+				step + regs[(0x318 + cur * 4) / 4];
+			vic_mdma_ch0_sub_get_num--;
+			if (vic_mdma_ch0_sub_get_num == 7)
+				regs[0x300 / 4] = (regs[0x300 / 4] & 0xfff0ffffU) | 0x70000;
+		}
+	} else if (a2 == 1 && vic_mdma_ch1_sub_get_num) {
+		uint32_t cur = vic_mdma_ch1_set_buff_index;
+
+		vic_mdma_ch1_set_buff_index = (cur + 1) % 5;
+		regs[(0x318 + vic_mdma_ch1_set_buff_index * 4) / 4] =
+			step + regs[(0x318 + cur * 4) / 4];
+		vic_mdma_ch1_sub_get_num--;
+	}
+	if (vic_mdma_ch0_sub_get_num)
+		return NULL;
+	if (!vic_mdma_ch1_sub_get_num) {
+		isp_printf(1, "Info[VIC0_MDAM_IRQ] : channel[%d] frame done\n", a2);
+		private_complete((struct completion *)(vic + 0x1b0));
+	}
+	return NULL;
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000004b94 origin=fragment_seed original=isp_vic_interrupt_service_routine */
@@ -13169,6 +12255,18 @@ int64_t isp_vic_interrupt_service_routine(uintptr_t a0, uint32_t a1, uint32_t a2
                    *(uint32_t *)(vic + 0x1d4),
                    *(uint32_t *)(vic + 0x1d8),
                    *(uint32_t *)(vic + 0x1dc));
+        /* MDMA done (ISP bypass): VIC status 1 bits 0/1 are the frame
+         * channel DMA completions, OEM isp_vic_interrupt_service_routine. */
+        if (isp_bypass_graph && dump_vsd == (uint32_t)(uintptr_t)vic) {
+            if (active1 & 0x1) {
+                ++*(uint32_t *)(vic + 0x1e0);
+                vic_mdma_irq_function((uintptr_t)vic, 0, 0);
+            }
+            if (active1 & 0x2) {
+                ++*(uint32_t *)(vic + 0x1e4);
+                vic_mdma_irq_function((uintptr_t)vic, 0, 1);
+            }
+        }
         trace_count++;
         return IRQ_HANDLED;
     }
@@ -29775,6 +28873,8 @@ int frame_channel_open(struct inode *inode, struct file *file)
 		       val, *(uint32_t *)((char *)ptr + 0x2f4));
 		return ret;
     }
+	if (isp_bypass_graph)
+		t41_bypass_restore_inputs();
 	t41_note(
 	       "t41: framechan open exit channel=%u state=3\n",
 	       *(uint32_t *)((char *)ptr + 0x2dc));
@@ -38259,6 +37359,51 @@ static int t41_ioctl_set_default_bin_path(uintptr_t file, uint32_t user_arg)
 #define T41_EVENT_BYPASS_INPUT  0x01000005U
 #define T41_CHANNEL_STRIDE      232U
 
+/*
+ * Back from the bypass (isp_bypass_graph=1 only): stock never repoints a
+ * channel's input descriptor below type 3, so after DISABLE the channel stays
+ * on the VIC ops until the module is reloaded.  Here the next frame channel
+ * open (after the raw channel was destroyed, which streams it off through the
+ * VIC ops) puts every channel back on its own ISP descriptor and clears the
+ * VIC banks, so FrameSource gets the normal NV12 path again.
+ */
+static int t41_bypass_active;
+static int t41_bypass_restore_pending;
+
+static void t41_bypass_restore_inputs(void)
+{
+    unsigned char *core = (unsigned char *)(uintptr_t)ispcore_sd;
+    unsigned char *vic = (unsigned char *)(uintptr_t)dump_vsd;
+    unsigned char *channels;
+    unsigned int i;
+
+    if (!t41_bypass_restore_pending)
+        return;
+    t41_bypass_restore_pending = 0;
+    t41_bypass_active = 0;
+    if (!t41_kernel_data_ptr(core))
+        return;
+    channels = *(unsigned char **)(core + 0x1ac);
+    if (!t41_kernel_data_ptr(channels))
+        return;
+    for (i = 0; i < 3; i++) {
+        unsigned char *channel = channels + i * 232U;
+
+        *(void **)(channel + 0xd4) = core + 0x234 + i * 28U;
+        *(uint32_t *)(channel + 0xd8) = i;
+    }
+    if (t41_kernel_data_ptr(vic)) {
+        for (i = 0; i < 2; i++) {
+            unsigned char *bank = vic + 0x334 + i * 0x34U;
+
+            bank[0xc] = 0;
+            *(uint32_t *)(bank + 0x8) = 0;
+            *(uint32_t *)(bank + 0x2c) = 0;
+        }
+    }
+    printk(KERN_INFO "t41: ISP bypass off, frame channels back on the ISP\n");
+}
+
 static int t41_ioctl_isp_bypass(uintptr_t file, uint32_t user_arg)
 {
     uint32_t req[2];
@@ -38281,7 +37426,7 @@ static int t41_ioctl_isp_bypass(uintptr_t file, uint32_t user_arg)
      * device in dump_vsd), so FrameSource_EnableChn fails and no frame
      * flows (issue 125, QEMU T41).  Refuse it until the VIC MDMA capture
      * path works; value 0 (ISP processing, the normal state) stays served. */
-    if (req[0])
+    if (req[0] && !isp_bypass_graph)
         return -EOPNOTSUPP;
     channels = *(unsigned char **)(core + 0x1ac);
     if (!t41_kernel_data_ptr(channels))
@@ -38298,8 +37443,17 @@ static int t41_ioctl_isp_bypass(uintptr_t file, uint32_t user_arg)
     ret = ispcore_core_ops_ioctl((uintptr_t)core, T41_EVENT_BYPASS_FILL, 0);
     if (ret)
         return ret;
-    return ispcore_core_ops_ioctl((uintptr_t)core, T41_EVENT_BYPASS_INPUT,
-                                  (uintptr_t)inputs);
+    ret = ispcore_core_ops_ioctl((uintptr_t)core, T41_EVENT_BYPASS_INPUT,
+                                 (uintptr_t)inputs);
+    if (!ret && isp_bypass_graph) {
+        if (req[0]) {
+            t41_bypass_active = 1;
+            t41_bypass_restore_pending = 0;
+        } else if (t41_bypass_active) {
+            t41_bypass_restore_pending = 1;
+        }
+    }
+    return ret;
 }
 
 /*
@@ -173602,6 +172756,8 @@ int tx_isp_vic_remove(struct platform_device *pdev)
 	else
 		module = NULL;
 
+	if (vic && (uint32_t)(uintptr_t)vic == dump_vsd)
+		dump_vsd = 0;
 	private_platform_set_drvdata(pdev, NULL);
 	tx_isp_subdev_deinit(module);
 	private_kfree(vic);

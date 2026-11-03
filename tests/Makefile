@@ -21,6 +21,10 @@ TESTS += tx_isp_t41_ysp_test
 TESTS += tx_isp_t41_switchbin_test
 TESTS += tx_isp_t41_tuning_open_test
 TESTS += tx_isp_t41_devioctl_test
+TESTS += tx_isp_t41_vic_bypass_test
+
+tx_isp_t41_vic_bypass_test: tx_isp_t41_vic_bypass_test.c ../driver/t41/tx_isp_t41_vic_bypass.h
+	$(CC) $(CFLAGS) -o $@ $<
 
 tx_isp_t41_devioctl_test: tx_isp_t41_devioctl_test.c ../driver/t41/tx_isp_t41_devioctl.h
 	$(CC) $(CFLAGS) -o $@ $<
