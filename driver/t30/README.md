@@ -121,6 +121,36 @@ alignment, splitting, exhaustion, descriptor reuse, invalid frees, and
 adjacent-block coalescing; the T30 adapter owns the kernel mutex and reserved
 memory lookup.
 
+## Tuning controls (`tx_isp_t30_tuning_ctl.h`)
+
+The lifted `apical_isp_core_ops_g_ctrl` / `s_ctrl` lost most of their switch arms:
+inline jump-table cases came out as `-ENOSYS` or fell into the default branch,
+so most libimp getters and a few controls never reached the firmware state
+(Lu-Fi/openimp#177). The missing arms are plain C in `tx_isp_t30_tuning_ctl.h`,
+included into the recovered file and asked first by the tuning ioctl (the lifted
+switch only sees what the handlers do not serve):
+
+- getters: anti-flicker, WB (mode and gains), WB statistics, AWB/AE weights, AWB/AE/AF
+  histograms, RGB coefficients, AE strategy/compensation/ROI, exposure (`Expr`), EV,
+  max again/dgain, highlight depression, gamma, calibration tables, flip, colour effect,
+  brightness/contrast/saturation/sharpness, scene mode;
+- controls: sensor FPS, running mode (day/night), firmware freeze, WB attribute,
+  weights/histograms/coefficients, highlight depression, calibration table write, flip,
+  colour effect, the four picture levels (customer mid-node scaling and the contrast
+  curve), AE strategy, exposure, max gain.
+
+Each arm does what the stock tuning code does for the same control id: a firmware
+command through `apical_command`, a value kept in the tuning object, an ISP register
+block, or nothing where the stock handler is a no-op (scene mode returns before it
+changes anything; the value is kept here so the getter reads it back, as in the open
+T31 driver). Pure arithmetic and id maps live in `tx_isp_t30_tuning_math.h` (host test
+`tests/t30_tuning_ctl_host_test.c`, guard `tests/check_t30_tuning_ctl.sh`).
+
+Three lifted-code faults were found on the way: `set_sensor_fps` read the sensor fps
+callback as a byte (jump to address 0 on the first fps change), its fps id table was
+`5,10,15,20,25,30` instead of the stock `5,15,25,30,50,60`, and `apical_command` had no
+type 6 (the exposure/gain log2 readout of `GetEVAttr`).
+
 ## Validation boundary
 
 This remains recovery-grade code, but it is no longer static-only. The August

@@ -884,7 +884,7 @@ static uintptr_t LC0;
 static const char LC28[] = "tx-isp";
 static unsigned char stab[60];
 static const uint8_t CSWTCH_192[10];
-static const uint32_t fps_table[6] = { 5, 10, 15, 20, 25, 30 };
+#include "tx_isp_t30_tuning_math.h"
 static const uint16_t resize_height_write_table[5] = {
 	0x14b4, 0x14c2, 0x14cc, 0x14d6, 0x14e0
 };
@@ -14517,6 +14517,8 @@ apical_isp_core_ops_g_ctrl0x13b0:
     return ((int64_t)(uint32_t)v1 << 32) | (uint32_t)v0;
 }
 
+#include "tx_isp_t30_tuning_ctl.h"
+
 static int tx_isp_t30_tuning_set_isp_process(
 	struct tx_isp_t30_core_tuning_view *core, int enable)
 {
@@ -14597,36 +14599,11 @@ long isp_core_tunning_unlocked_ioctl(struct file *file, unsigned int cmd, unsign
 			 */
 			ret = tx_isp_t30_tuning_set_isp_process(core,
 							 control.value);
-		} else if (control.id == 0x00980918) {
-			ret = tx_isp_t30_tuning_set_antiflicker(control.value);
-		} else if (control.id == V4L2_CID_BRIGHTNESS) {
-			u32 reason = 0;
-
-			apical_command(4, 0x77, control.value & 0xff, 0,
-				       &reason);
-			ret = 0;
-		} else if (control.id == V4L2_CID_CONTRAST) {
-			u32 reason = 0;
-
-			/* OEM apical_isp_contrast_s_control(), default midpoint. */
-			apical_command(4, 0x78, control.value & 0xff, 0,
-				       &reason);
-			ret = 0;
-		} else if (control.id == V4L2_CID_SATURATION) {
-			u32 reason = 0;
-
-			apical_command(4, 0x79, control.value & 0xff, 0,
-				       &reason);
-			ret = 0;
-		} else if (control.id == V4L2_CID_SHARPNESS) {
-			u32 reason = 0;
-
-			apical_command(4, 0x76, control.value & 0xff, 0,
-				       &reason);
-			ret = 0;
 		} else {
-			ret = apical_isp_core_ops_s_ctrl((void **)tuning,
-							  (int32_t *)&control, 0);
+			ret = tx_isp_t30_tuning_ctl_set(tuning, core, &control);
+			if (ret == TCTL_UNHANDLED)
+				ret = apical_isp_core_ops_s_ctrl((void **)tuning,
+								  (int32_t *)&control, 0);
 		}
 		if (ret)
 			pr_err("tx-isp-t30: tuning set id=%08x failed ret=%ld\n",
@@ -14657,11 +14634,16 @@ long isp_core_tunning_unlocked_ioctl(struct file *file, unsigned int cmd, unsign
 				       control.value);
 			ret = 0;
 		} else {
-			ret = apical_isp_core_ops_g_ctrl((uintptr_t)tuning,
-						  (uintptr_t)&control);
+			ret = tx_isp_t30_tuning_ctl_get(tuning, core, &control);
+			if (ret == TCTL_UNHANDLED)
+				ret = apical_isp_core_ops_g_ctrl((uintptr_t)tuning,
+							  (uintptr_t)&control);
 		}
-		if (ret && ret != -ENOIOCTLCMD)
+		if (ret && ret != -ENOIOCTLCMD) {
+			pr_err("tx-isp-t30: tuning get id=%08x failed ret=%ld\n",
+			       control.id, ret);
 			break;
+		}
 		if (copy_to_user((void __user *)arg, &control,
 				 sizeof(control)))
 			return -EFAULT;
@@ -14728,14 +14710,6 @@ long isp_core_tunning_unlocked_ioctl(struct file *file, unsigned int cmd, unsign
 					       video_core->control.input_height);
 					ret = 0;
 				}
-			} else if (default_control.control.id == 0x080000e1 &&
-				   default_control.control.value == 0) {
-				/* Initial day-mode request matches the firmware default. */
-				ret = 0;
-			} else if (default_control.control.id == 0x0800002a &&
-				   default_control.control.value == 0) {
-				/* Default highlight-depression strength is a no-op. */
-				ret = 0;
 			} else if (default_control.control.id == 0x08000084) {
 				/*
 				 * IMAGE_TUNING_CID_TEMPER_BUF.  This is the exact OEM
@@ -14756,7 +14730,10 @@ long isp_core_tunning_unlocked_ioctl(struct file *file, unsigned int cmd, unsign
 				}
 				ret = 0;
 			} else {
-				ret = apical_isp_core_ops_s_ctrl((void **)tuning,
+				ret = tx_isp_t30_tuning_ctl_set(tuning, core,
+						&default_control.control);
+				if (ret == TCTL_UNHANDLED)
+					ret = apical_isp_core_ops_s_ctrl((void **)tuning,
 						(int32_t *)&default_control.control, 0);
 			}
 		} else {
@@ -14790,11 +14767,17 @@ long isp_core_tunning_unlocked_ioctl(struct file *file, unsigned int cmd, unsign
 						   default_control.control.value,
 						   blk, sizeof(blk)) ? -EFAULT : 0;
 			} else {
-				ret = apical_isp_core_ops_g_ctrl((uintptr_t)tuning,
+				ret = tx_isp_t30_tuning_ctl_get(tuning, core,
+						&default_control.control);
+				if (ret == TCTL_UNHANDLED)
+					ret = apical_isp_core_ops_g_ctrl((uintptr_t)tuning,
 						(uintptr_t)&default_control.control);
 			}
-			if (ret && ret != -ENOIOCTLCMD)
+			if (ret && ret != -ENOIOCTLCMD) {
+				pr_err("tx-isp-t30: tuning get id=%08x failed ret=%ld\n",
+				       default_control.control.id, ret);
 				break;
+			}
 			if (copy_to_user((void __user *)arg, &default_control,
 					 sizeof(default_control)))
 				return -EFAULT;
@@ -41841,15 +41824,25 @@ int32_t set_sensor_fps(void *arg1, int32_t arg2, char arg3, int32_t *arg4)
             *arg4 = 1;
             return 5;
         }
-        fps = fps_table[arg2 - 6];
-        fn = (sensor_fps_fn_t)((uint8_t *)arg1)[0xcc / 4];
+        fps = tctl_fps_by_id[arg2 - 6];
+        fn = *(sensor_fps_fn_t *)((uint8_t *)arg1 + 0xcc);
+        if (!fn) {
+            *arg4 = 0;
+            return 2;
+        }
         ret = ((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))fn)((uintptr_t)((uintptr_t)arg1 + 0x34), (uintptr_t)(fps), (uintptr_t)((uintptr_t)arg1 + 0x4c));
         cmos_update_exposure_partitioning_lut((uintptr_t)arg1 + 0x100);
+        /* the sensor's fps_control() answers non-zero on success */
+        return ret ? 0 : 2;
     } else {
         if (mode != 1) {
             return 2;
         }
-        fn = (sensor_fps_fn_t)((uint8_t *)arg1)[0xcc / 4];
+        fn = *(sensor_fps_fn_t *)((uint8_t *)arg1 + 0xcc);
+        if (!fn) {
+            *arg4 = 0;
+            return 2;
+        }
         ret = ((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))fn)((uintptr_t)((uintptr_t)arg1 + 0x34), (uintptr_t)(0), (uintptr_t)((uintptr_t)arg1 + 0x4c));
         if (ret == 0x19) {
             *arg4 = 8;
@@ -49410,6 +49403,16 @@ int32_t apical_command(uint32_t cmd, uint32_t subcmd, uint32_t value, uint32_t f
 			return register_source(api_base, s1, a2, data);
 		if (s2 == 0x7f)
 			return register_value(api_base, s1, a2, data);
+		if (s2 == 0x80)
+			return exposure_log2(api_base, s1, a2, data);
+		if (s2 == 0x81)
+			return gain_log2(api_base, s1, a2, data);
+		return 4;
+	case 6:
+		/*
+		 * Calibration type: the stock jump table has seven entries.  The
+		 * lift folded this one into case 5, so IMPISP_ev (type 6) got 4.
+		 */
 		if (s2 == 0x80)
 			return exposure_log2(api_base, s1, a2, data);
 		if (s2 == 0x81)
