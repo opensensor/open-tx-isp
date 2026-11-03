@@ -13,8 +13,8 @@
  *
  * This replaces the literal mips2c chain (tx_isp_t40_cdns_lit.inc up to
  * open-tx-isp next e96b92ea); tests/t40/c_chains_host compares both.
- * The driver glue keeps the literal behaviour: init (block init and the
- * day/night bank refresh) copies the section, selects the half, forgets the
+ * The driver glue keeps the literal behaviour: init (block init, and the
+ * day/night bank refresh on a first load) copies the section, selects the half, forgets the
  * remembered gain and packs at EV 1.0 (once; the OEM main_init packs the same
  * values twice); the frame-done DNS step repacks when the EV moved by at
  * least t40 cdns_thresh (OEM .data word: 0x10000 at load, 256 after
@@ -45,7 +45,7 @@ static uint32_t regtrace_cdns_gain_now;
 static uint regtrace_cdns_thresh = 0x10000U;
 t40_bringup_param_named(cdns_thresh, regtrace_cdns_thresh, uint, 0644);
 module_param_named(enable_cdns, regtrace_enable_cdns, bool, 0644);
-MODULE_PARM_DESC(enable_cdns, "1 runs the CDNS chroma denoise and clears TOP bit 19 (default 0)");
+MODULE_PARM_DESC(enable_cdns, "CDNS chroma denoise (TOP bit 19): follows the bank flag like the OEM (set at bank apply); force on with t40_force_active bit 19 (0x80000), off with t40_force_bypass bit 19");
 t40_bringup_param_named(cdns_dbg_init_ret, regtrace_cdns_dbg_init_ret, int, 0444);
 t40_bringup_param_named(cdns_init_count, regtrace_cdns_init_count, uint, 0444);
 t40_bringup_param_named(cdns_refresh_count, regtrace_cdns_refresh_count, uint, 0444);

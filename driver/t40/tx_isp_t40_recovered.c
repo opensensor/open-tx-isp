@@ -11615,6 +11615,16 @@ static void regtrace_t40_apply_raw_tuning_gates(uint32_t nbuf)
     regtrace_enable_sdns =
         regtrace_t40_quality_profile >= 1U && !flags[18];
     /*
+     * T40 CDNS (#203): the OEM tisp_main_init writes TOP from the bank flags and
+     * runs tisp_cdns_main_init when the flag (TOP bit 19) is clear; tisp_day_or_
+     * night_s_ctrl refreshes it on every bank switch while the bit is clear.  Both
+     * sc830ai banks carry flag 19 = 0, so the vendor runs CDNS in day and night
+     * (TOP 0x7FD0000D in day).  t40_force_active bit 19 forces it on,
+     * t40_force_bypass bit 19 switches it off.
+     */
+    regtrace_enable_cdns =
+        regtrace_t40_quality_profile >= 1U && !flags[19];
+    /*
      * T40 night lift: with the default profile 1 the DMSC block ran on, but
      * nobody re-interpolated it, so it kept low-gain day values at night
      * (open night 0xa000.. = vendor day; vendor night = night bank at the
@@ -11655,6 +11665,10 @@ static void regtrace_t40_apply_raw_tuning_gates(uint32_t nbuf)
         regtrace_t40_quality_top40_final &= ~BIT(18);
     else
         regtrace_t40_quality_top40_final |= BIT(18);
+    if (regtrace_enable_cdns)
+        regtrace_t40_quality_top40_final &= ~BIT(19);
+    else
+        regtrace_t40_quality_top40_final |= BIT(19);
     if (regtrace_enable_dmsc_lit)
         regtrace_t40_quality_top40_final &= ~BIT(13);
     else
@@ -11670,6 +11684,8 @@ static void regtrace_t40_apply_raw_tuning_gates(uint32_t nbuf)
             regtrace_enable_ydns = true;
         if (regtrace_t40_force_active & BIT(18))
             regtrace_enable_sdns = true;
+        if (regtrace_t40_force_active & BIT(19))
+            regtrace_enable_cdns = true;
     }
     if (regtrace_t40_force_bypass & ~(regtrace_t40_ysp_on ? BIT(17) : 0U)) {
         regtrace_t40_quality_top40_final |= regtrace_t40_force_bypass &
@@ -11684,6 +11700,8 @@ static void regtrace_t40_apply_raw_tuning_gates(uint32_t nbuf)
             regtrace_enable_ysp = false;
         if (regtrace_t40_force_bypass & BIT(18))
             regtrace_enable_sdns = false;
+        if (regtrace_t40_force_bypass & BIT(19))
+            regtrace_enable_cdns = false;
         if (regtrace_t40_force_bypass & BIT(13))
             regtrace_enable_dmsc_lit = false;
     }
@@ -20607,7 +20625,11 @@ static int regtrace_t40_refresh_daynight_pipeline(void)
         (void)tisp_s_sdns_ratio(0);
     }
     if (regtrace_enable_cdns) {
-        REGTRACE_T40_DN_STEP(t40_cdns_init(0));
+        /* OEM tisp_cdns_dn_params_refresh: reload the section and repack at the remembered gain */
+        if (t40_cdns[0].loaded && t40_cdns[0].gain_old != T40_CDNS_GAIN_NONE)
+            REGTRACE_T40_DN_STEP(t40_cdns_dn_refresh(0));
+        else
+            REGTRACE_T40_DN_STEP(t40_cdns_init(0));
         regtrace_t40_cdns_top_bit(subret);
     }
     if (regtrace_enable_mdns) {
