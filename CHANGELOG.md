@@ -4,6 +4,13 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-03: T30 tuning-bin customer initialisation, system table items at their OEM offsets, AE on a black frame (#202; T30X lab camera + QEMU T30)
+
+- The lifted `apical_custom_initialization()` read an unrelated static array instead of the customer table pointer stored by `init_tx_isp_customer_parameter()`, so the customer initialisation of the tuning bin was skipped (its two `apical_command()` calls also lacked the fifth argument). Now applied: maximum sensor analogue gain 117 -> 130 and maximum ISP digital gain 32 -> 125, the vendor values.
+- The 60-byte system table was indexed with the OEM halfword/word index (integration time, maximum integration time, DIS x/y, manual exposure time sat on the wrong bytes, DIS y overwrote the maximum analogue gain). The items are now at their OEM offsets, the table is 4-byte aligned, and the calibrated AE writes the applied integration time into the table like the OEM exposure history (`GetExpr` / `GetIntegrationTime` report the running value: 2880 lines, before 0 / 3).
+- AE leaves the minimum exposure on a black frame.
+- Evidence: apitest `isp` area 48 PASS / 0 FAIL, 0 oopses on the T30X lab camera; QEMU T30 debug kernel (`slub_debug`): 6 reload cycles with the `isp` area, 48/0, no slab reports; host tests green. AE/AWB behaviour still differs from the vendor (#202 stays open).
+
 ## 2026-11-03: T40 lifted subdev-op call sites call the real op (#199; host + QEMU)
 
 - Seven lifted `regtrace_unresolved_jalr` call sites (a counting no-op) now call the OEM callee with the OEM arguments: `tx_isp_vin_init` / `tx_isp_vin_reset` (sensor core ops init / reset of the active sensor), `tx_isp_sensor_release_sensor` (sensor ops ioctl `0x2000001` with the 100-byte user buffer), `ispcore_frame_channel_streamoff` (per-channel stream-off callback `fn(ctx, channel, 0)`; it also returns the callback result again, the lift returned the memset result), `ispcore_activate_module` (subdev event callback `0x4000000` and the slot subdevs' internal activate op) and `ispcore_video_s_stream` (slot subdevs' `s_stream`). Callees and arguments from the vendor `tx-isp-t40.ko` (headless Ghidra + objdump).
