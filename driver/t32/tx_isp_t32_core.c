@@ -790,6 +790,12 @@ int t32_core_sensor_size(u32 *w, u32 *h)
 	return 0;
 }
 
+/* the MDNS compression setting (1/1000) */
+unsigned int t32_core_memopt(void)
+{
+	return isp_memopt;
+}
+
 static int t32_proc_open(struct inode *inode, struct file *file)
 {
 	return single_open(file, t32_proc_show, NULL);

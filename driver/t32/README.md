@@ -184,6 +184,21 @@ generation-shared come from the shared code instead:
   appear in the stream-on phase with the vendor's values; picture effect
   needs a camera.
 
+- **MDNS, DPC and GIB** (S4 step 6, same scheme as above): GIB (`tx_isp_t32_gib.h`, section 8, 89 writes; written by hand from the vendor functions, RGGB-first pointer table only), MDNS (`tx_isp_t32_mdns.h`,
+  section 16, 1281 writes: frame compression setup, `func_en`, the 620-write
+  register refresh twice with `start`, trigger and enable) and DPC
+  (`_dpc.h`, section 5, 145 writes; the long and short exposure blocks and
+  the other words, the extra short-exposure words stay off with this front
+  end). The MDNS compression setting is the vendor's init parameter: the ratio
+  in tenths (11..20 on, 10 off), i.e. `isp_memopt` / 100; the frame
+  compression setup follows from it and the frame size. All three identical
+  write for write to the vendor's AddSensor writes (cv8001 bin, 3840x2160): with
+  step 5 and the front end, AE/AWB and MSCA blocks 3241 of 5555 (58 %). Not built:
+  tmo, RDNS, BCSH and AF need vendor-internal state tables the bin does not
+  carry (AF: its filter coefficient tables; BCSH/RDNS/tmo: smooth and
+  default curves), CCM, LCE and defog are pointer-linked state flows still
+  to do (defog and AF also write the physical address of a driver buffer).
+
 ## Not yet (S4+)
 
 No tisp/3A, no IQ bin parsing (the bin's physical address is kept), no

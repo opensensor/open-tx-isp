@@ -38,6 +38,9 @@
 #include "tx_isp_t32_ydns.h"
 #include "tx_isp_t32_sdns.h"
 #include "tx_isp_t32_clm.h"
+#include "tx_isp_t32_mdns.h"
+#include "tx_isp_t32_dpc.h"
+#include "tx_isp_t32_gib.h"
 
 static void t32_bringup_ae_kick(void);
 
@@ -243,11 +246,11 @@ static void t32_front_init(void)
 
 /*
  * Remaining tisp init blocks of the vendor's AddSensor that are derived from
- * the IQ bin (S4 step 5), in the vendor's order: DMSC, gamma, CDNS, YDNS, SDNS, YSP, CLM.
+ * the IQ bin (S4 steps 5 and 6), in the vendor's order: DMSC, gamma, CDNS, GIB, DPC, YDNS, SDNS, YSP, MDNS, CLM.
  * Each block is one write list; a block whose section is missing or does
  * not have the expected size is skipped (the hardware keeps its reset state).
  */
-#define T32_TISP_MAX_WRITES	868
+#define T32_TISP_MAX_WRITES	T32_MDNS_MAX_WRITES
 static struct t32_front_write *tisp_w;
 
 static void t32_tisp_flush(const char *name, int n)
@@ -262,10 +265,23 @@ static void t32_tisp_flush(const char *name, int n)
 		isp_wr(tisp_w[i].reg, tisp_w[i].val);
 }
 
+/* MDNS has a 1.7 KB value block: heap, not stack */
+static int t32_mdns_build(u8 *sec, u32 width, u32 height)
+{
+	u8 *o = kmalloc(T32_MDNS_VALUES, GFP_KERNEL);
+	int n;
+
+	if (!o)
+		return -ENOMEM;
+	n = t32_mdns_init(sec, width, height, t32_core_memopt(), o, tisp_w);
+	kfree(o);
+	return n;
+}
+
 static void t32_tisp_init(void)
 {
 	const u8 *bin;
-	u32 bytes, off, len, coff;
+	u32 bytes, off, len, coff, width, height, code;
 	unsigned int mode;
 
 	if (t32_core_iq_bin(&bin, &bytes))
@@ -289,6 +305,18 @@ static void t32_tisp_init(void)
 	off = t32_iq_section(bin, bytes, T32_SEC_CDNS, &len);
 	if (off && len >= T32_CDNS_SEC_BYTES)
 		t32_tisp_flush("cdns", t32_cdns_init(bin + off, tisp_w));
+	off = t32_iq_section(bin, bytes, T32_SEC_GIB, &len);
+	if (off && len >= T32_GIB_SEC_BYTES && !t32_core_sensor_mbus(&code) && t32_mbus_to_bayer(code) >= 0) {
+		u8 *cp = kmemdup(bin + off, len, GFP_KERNEL);	/* the block stores into its section */
+
+		if (cp) {
+			t32_tisp_flush("gib", t32_gib_init(cp, (u32)t32_mbus_to_bayer(code), tisp_w));
+			kfree(cp);
+		}
+	}
+	off = t32_iq_section(bin, bytes, T32_SEC_DPC, &len);
+	if (off && len >= T32_DPC_SEC_BYTES)
+		t32_tisp_flush("dpc", t32_dpc_init(bin + off, 0, tisp_w));	/* wide: ISP reg 0x88 & 0x1f > 4, never with this front end */
 	off = t32_iq_section(bin, bytes, T32_SEC_YDNS, &len);
 	if (off && len >= T32_YDNS_SEC_BYTES)
 		t32_tisp_flush("ydns", t32_ydns_init(bin + off, tisp_w));
@@ -301,6 +329,15 @@ static void t32_tisp_init(void)
 
 		if (cp) {
 			t32_tisp_flush("ysp", t32_ysp_init(cp, tisp_w));
+			kfree(cp);
+		}
+	}
+	off = t32_iq_section(bin, bytes, T32_SEC_MDNS, &len);
+	if (off && len >= T32_MDNS_SEC_BYTES && !t32_core_sensor_size(&width, &height)) {
+		u8 *cp = kmemdup(bin + off, len, GFP_KERNEL);	/* the block stores into its section */
+
+		if (cp) {
+			t32_tisp_flush("mdns", t32_mdns_build(cp, width, height));
 			kfree(cp);
 		}
 	}

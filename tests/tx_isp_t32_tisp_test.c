@@ -13,6 +13,9 @@
 #include "../driver/t32/tx_isp_t32_cdns.h"
 #include "../driver/t32/tx_isp_t32_dmsc.h"
 #include "../driver/t32/tx_isp_t32_ysp.h"
+#include "../driver/t32/tx_isp_t32_mdns.h"
+#include "../driver/t32/tx_isp_t32_dpc.h"
+#include "../driver/t32/tx_isp_t32_gib.h"
 #include "../driver/t32/tx_isp_t32_iq.h"
 #include "t32_trace.h"
 
@@ -212,6 +215,31 @@ int main(void)
 			r = t32_ysp_init(cp, w);
 			CHECK(r == T32_YSP_WRITES);
 			vs_vendor("ysp", w, r);
+		}
+		{
+			static u8 cp[T32_GIB_SEC_BYTES];
+
+			off = t32_iq_section(bin, len, T32_SEC_GIB, &l);
+			CHECK(off && l == T32_GIB_SEC_BYTES);
+			memcpy(cp, bin + off, sizeof(cp));
+			r = t32_gib_init(cp, 0, w);
+			CHECK(r > 0 && r <= (int)T32_GIB_MAX_WRITES);
+			vs_vendor("gib", w, r);
+		}
+		off = t32_iq_section(bin, len, T32_SEC_DPC, &l);
+		CHECK(off && l == T32_DPC_SEC_BYTES);
+		r = t32_dpc_init(bin + off, 0, w);
+		CHECK(r > 0 && r <= (int)T32_DPC_MAX_WRITES);
+		vs_vendor("dpc", w, r);
+		{
+			static u8 cp[T32_MDNS_SEC_BYTES], ov[T32_MDNS_VALUES];
+
+			off = t32_iq_section(bin, len, T32_SEC_MDNS, &l);
+			CHECK(off && l == T32_MDNS_SEC_BYTES);
+			memcpy(cp, bin + off, sizeof(cp));
+			r = t32_mdns_init(cp, 3840, 2160, 1500, ov, w);
+			CHECK(r > 0 && r <= (int)T32_MDNS_MAX_WRITES);
+			vs_vendor("mdns", w, r);
 		}
 		{
 			u32 cl = 0, co = t32_iq_section(bin, len, T32_IQ_SEC_CSC, &cl);
