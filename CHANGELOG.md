@@ -4,6 +4,12 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-03: T32 S4 step 5: tisp init blocks DMSC, gamma, CDNS, YDNS, SDNS, YSP, CLM from the IQ bin (`claude/t32-s5`; host, QEMU T32, not on a camera)
+
+- Seven blocks of the vendor's AddSensor tisp init as register writes at stream-on (`tx_isp_t32_{dmsc,gamma,cdns,ydns,sdns,ysp,clm}.h`, helpers in `tx_isp_t32_tp.h`): 1640 writes, each block identical write for write to the vendor's AddSensor writes (cv8001 PRJ007 bin, 3840x2160 SRGGB10; `tests/tx_isp_t32_tisp_test` with `T32_IQ_BIN` and the local QEMU trace `T32_ADD_TRACE`, nothing of the vendor is stored in the repository). With the earlier front end, AE/AWB and MSCA blocks 1726 of 5555 writes of the vendor's AddSensor core phase.
+- The CLM YCbCr -> RGB matrix is computed from the primaries and the range scale (equal to the vendor's six matrices, checked against the vendor module locally); the gamma curve, the CLM colour-temperature zones and the denoise/sharpen tables come from the bin. The DMSC and YSP register functions are a mechanical transcription of the vendor flow.
+- Not built yet: tmo, MDNS, RDNS, DPC, GIB, defog, CCM, BCSH, LCE, AF and small blocks (about 3800 writes); the QEMU model does not execute the pipeline, so there is no picture claim.
+
 ## 2026-11-03: T32 S4 step 4: front end (CSC, CSCCR, ISP top) from the IQ bin; IQ section offsets fixed (`claude/t32-s4z`; host, QEMU T32, not on a camera)
 
 - `tx_isp_t32_front.h`: flow of the vendor `tisp_csc_init` / `tisp_csccr_init` / `tisp_top_init` / `tisp_top_reg_cfg` as register writes, written at stream-on before the statistics engines. 25 of 25 writes identical to the vendor's AddSensor writes (cv8001 PRJ007 bin, 3840x2160 SRGGB10; `tests/tx_isp_t32_front_test` with `T32_IQ_BIN`). The matrix of the bin's mode comes from a six-mode table (BT.601/709/2020, full and limited range).

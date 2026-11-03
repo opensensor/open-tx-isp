@@ -159,6 +159,31 @@ generation-shared come from the shared code instead:
   (not counted in the table lengths): sections 8 and up were at wrong
   offsets before (none was used).
 
+- **tisp init blocks from the IQ bin** (S4 step 5; flow of the vendor
+  `tisp_*_init` at AddSensor, one header per block, written at stream-on after
+  the statistics engines, `t32_tisp_init`): DMSC (`tx_isp_t32_dmsc.h`, section
+  11, 175 writes), gamma (`_gamma.h`, section 13 and its curve payload, 390),
+  CDNS (`_cdns.h`, section 18, 16), YDNS (`_ydns.h`, section 17, 17), SDNS
+  (`_sdns.h`, section 22, 27), YSP (`_ysp.h`, section 21, 147) and CLM
+  (`_clm.h`, section 20 and its colour-temperature payload, 868; the
+  YCbCr -> RGB matrix of the colour space is computed from the primaries, not
+  copied). The interpolated blocks run the vendor's table interpolation at the
+  gain index 1.0 (as `tisp_*_refresh(0x10000)` at init); the DMSC and YSP
+  register functions are a mechanical transcription of the vendor flow (the
+  section is edited by them, so the driver passes a copy). Against the vendor's
+  AddSensor writes (cv8001 bin, 3840x2160, SRGGB10) every block is identical
+  write for write: 1640 of the 5555 writes of the vendor's AddSensor core
+  phase (host test `tx_isp_t32_tisp_test` with `T32_IQ_BIN` and the local
+  trace `T32_ADD_TRACE`; with the earlier front end, AE/AWB and MSCA blocks 1726).
+  A block whose section is missing or has another size is skipped. Not built
+  (vendor flow needs inputs the bin does not carry or vendor-internal
+  tables): tmo, MDNS (its compression setting comes from the init parameters),
+  RDNS (vendor smooth table), DPC, GIB, defog, CCM, BCSH, LCE, AF and the
+  remaining small blocks (about 3800 writes). QEMU (debug kernel,
+  `slub_debug=FZPU`, `maxcpus=1`, vendor libimp 2.2.0): the blocks' writes
+  appear in the stream-on phase with the vendor's values; picture effect
+  needs a camera.
+
 ## Not yet (S4+)
 
 No tisp/3A, no IQ bin parsing (the bin's physical address is kept), no
@@ -173,8 +198,8 @@ Day/night, WDR, LDC, OSD, IVDC direct mode, AOV/RISC-V hand-over: off.
 make -C $KDIR M=$PWD/driver/t32 ARCH=mips CROSS_COMPILE=mipsel-linux- modules
 ```
 against a thingino T32 kernel 4.4.94 tree. Host tests:
-`make -C tests tx_isp_t32_mem_rcfg_test tx_isp_t32_vic_test tx_isp_t32_msca_curve_test tx_isp_t32_lsc_test tx_isp_t32_stats_test`
-(`T32_IQ_BIN` / `T32_RCFG_REF` for the comparison with the vendor list).
+`make -C tests tx_isp_t32_mem_rcfg_test tx_isp_t32_vic_test tx_isp_t32_msca_curve_test tx_isp_t32_lsc_test tx_isp_t32_stats_test tx_isp_t32_front_test tx_isp_t32_tisp_test`
+(`T32_IQ_BIN` / `T32_RCFG_REF` / `T32_ADD_TRACE` for the comparison with the vendor lists).
 
 ## Module parameters
 

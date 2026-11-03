@@ -18,6 +18,7 @@
 #include <linux/interrupt.h>
 #include <linux/delay.h>
 #include <linux/gfp.h>
+#include <linux/slab.h>
 #include <linux/workqueue.h>
 
 #include "tx_isp_t32.h"
@@ -30,6 +31,13 @@
 #include "tx_isp_t32_stats.h"
 #include "tx_isp_t32_iq.h"
 #include "tx_isp_t32_front.h"
+#include "tx_isp_t32_gamma.h"
+#include "tx_isp_t32_cdns.h"
+#include "tx_isp_t32_dmsc.h"
+#include "tx_isp_t32_ysp.h"
+#include "tx_isp_t32_ydns.h"
+#include "tx_isp_t32_sdns.h"
+#include "tx_isp_t32_clm.h"
 
 static void t32_bringup_ae_kick(void);
 
@@ -230,6 +238,78 @@ static void t32_front_init(void)
 		n = t32_top_init(bin + off, width, height, (u32)bayer, w);
 		for (i = 0; i < n; i++)
 			isp_wr(w[i].reg, w[i].val);
+	}
+}
+
+/*
+ * Remaining tisp init blocks of the vendor's AddSensor that are derived from
+ * the IQ bin (S4 step 5), in the vendor's order: DMSC, gamma, CDNS, YDNS, SDNS, YSP, CLM.
+ * Each block is one write list; a block whose section is missing or does
+ * not have the expected size is skipped (the hardware keeps its reset state).
+ */
+#define T32_TISP_MAX_WRITES	868
+static struct t32_front_write *tisp_w;
+
+static void t32_tisp_flush(const char *name, int n)
+{
+	int i;
+
+	if (n <= 0) {
+		isp_printf(1, "tx-isp-t32: IQ bin block %s not built (%d)\n", name, n);
+		return;
+	}
+	for (i = 0; i < n && i < T32_TISP_MAX_WRITES; i++)
+		isp_wr(tisp_w[i].reg, tisp_w[i].val);
+}
+
+static void t32_tisp_init(void)
+{
+	const u8 *bin;
+	u32 bytes, off, len, coff;
+	unsigned int mode;
+
+	if (t32_core_iq_bin(&bin, &bytes))
+		return;
+	if (!tisp_w)
+		tisp_w = kmalloc_array(T32_TISP_MAX_WRITES, sizeof(*tisp_w), GFP_KERNEL);
+	if (!tisp_w)
+		return;
+	off = t32_iq_section(bin, bytes, T32_SEC_DMSC, &len);
+	if (off && len >= T32_DMSC_SEC_BYTES) {
+		u8 *cp = kmemdup(bin + off, len, GFP_KERNEL);	/* the block edits its section */
+
+		if (cp) {
+			t32_tisp_flush("dmsc", t32_dmsc_init(cp, tisp_w));
+			kfree(cp);
+		}
+	}
+	off = t32_iq_section(bin, bytes, T32_SEC_GAMMA, &len);
+	if (off && len >= T32_GAMMA_SEC_BYTES)
+		t32_tisp_flush("gamma", t32_gamma_init(bin + off, bin + off + len, bytes - off - len, tisp_w));
+	off = t32_iq_section(bin, bytes, T32_SEC_CDNS, &len);
+	if (off && len >= T32_CDNS_SEC_BYTES)
+		t32_tisp_flush("cdns", t32_cdns_init(bin + off, tisp_w));
+	off = t32_iq_section(bin, bytes, T32_SEC_YDNS, &len);
+	if (off && len >= T32_YDNS_SEC_BYTES)
+		t32_tisp_flush("ydns", t32_ydns_init(bin + off, tisp_w));
+	off = t32_iq_section(bin, bytes, T32_SEC_SDNS, &len);
+	if (off && len >= T32_SDNS_SEC_BYTES)
+		t32_tisp_flush("sdns", t32_sdns_init(bin + off, tisp_w));
+	off = t32_iq_section(bin, bytes, T32_SEC_YSP, &len);
+	if (off && len >= T32_YSP_SEC_BYTES) {
+		u8 *cp = kmemdup(bin + off, len, GFP_KERNEL);
+
+		if (cp) {
+			t32_tisp_flush("ysp", t32_ysp_init(cp, tisp_w));
+			kfree(cp);
+		}
+	}
+	coff = t32_iq_section(bin, bytes, T32_IQ_SEC_CSC, &len);
+	off = t32_iq_section(bin, bytes, T32_SEC_CLM, &len);
+	if (coff && off && len >= T32_CLM_SEC_BYTES && bin[coff + 0x5b] < 6) {
+		mode = bin[coff + 0x5b];
+		t32_tisp_flush("clm", t32_clm_init(bin + off, bin + off + len, bytes - off - len, mode,
+						   t32_csc_modes[mode].m, tisp_w));
 	}
 }
 
@@ -445,6 +525,7 @@ void t32_hw_stream_on(void)
 	isp_wr(T32_INT4_EN, 0xffffffff);
 	t32_front_init();
 	t32_stats_init();
+	t32_tisp_init();
 	t32_hw_rcfg_run_stream_on();
 	isp_wr(0x002c, 2);
 	isp_wr(0x1040, 1);
@@ -694,6 +775,8 @@ void t32_hw_exit(void)
 	if (awb_buf)
 		free_pages(awb_buf, T32_AWB_BUF_ORDER);
 	ae_buf = awb_buf = 0;
+	kfree(tisp_w);
+	tisp_w = NULL;
 	free_pages(rcfg_pages, get_order((T32_RCFG_TABLE_WORDS + T32_RCFG_LIST_WORDS) * 4));
 	rcfg_pages = 0;
 }

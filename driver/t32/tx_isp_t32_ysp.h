@@ -1,0 +1,630 @@
+/* SPDX-License-Identifier: GPL-2.0 */
+/*
+ * T32 luma sharpen (YSP, block 0x11000) from the IQ bin at AddSensor (S4
+ * step 5): tisp_ysp_init -> tisp_ysp_refresh -> tisp_ysp_all_reg_refresh
+ * (tisp_ysp_intp at the gain index 1.0 = 0x10000, tisp_ysp_noref_reg_cfg,
+ * tisp_ysp_ref_reg_cfg, the 0x11010 trigger, the 14 words 0xdce0.. from the
+ * value block, the 0xd014 trigger) and the block id.
+ *
+ * IQ bin section 21 (3928 bytes).  The interpolation reads 260 point tables
+ * (u8 or u16, 11 entries) of the section into a 0x186 byte value block (two
+ * values are 0x40 minus the table); the register functions then combine
+ * section bytes and values.  They are a mechanical transcription of the
+ * vendor's flow.
+ */
+#ifndef TX_ISP_T32_YSP_H
+#define TX_ISP_T32_YSP_H
+
+#include "tx_isp_t32_tp.h"
+
+#define T32_SEC_YSP		21
+#define T32_YSP_SEC_BYTES	3928U
+#define T32_YSP_VALUES		0x186U
+#define T32_YSP_ID		0x0134da11U
+#define T32_YSP_WRITES		147
+#define T32_YSP_MAX_WRITES	148
+
+/* { kind (8: u8, 16: u16, 9: 0x40 - u8), table offset in the section, byte offset in the value block } */
+static const u16 t32_ysp_map[260][3] = {
+	{8, 0x811, 0x0}, {16, 0x4, 0x2}, {8, 0x824, 0x4}, {8, 0x82f, 0x5}, {8, 0x83a, 0x6}, {8, 0x845, 
+	0x7}, {8, 0x850, 0x8}, {8, 0x85b, 0x9}, {8, 0x866, 0xa}, {8, 0x871, 0xb}, {8, 0x87c, 0xc}, {8, 
+	0x887, 0xd}, {8, 0x892, 0xe}, {16, 0x1a, 0x10}, {8, 0x89d, 0x12}, {8, 0x8a8, 0x14}, {8, 0x8b3, 
+	0x16}, {8, 0x8be, 0x18}, {8, 0x8c9, 0x1a}, {8, 0x8d4, 0x1c}, {8, 0x8df, 0x1e}, {8, 0x8ea, 
+	0x20}, {8, 0x8f5, 0x22}, {8, 0x900, 0x24}, {8, 0x90b, 0x26}, {8, 0x916, 0x28}, {8, 0x921, 
+	0x2a}, {8, 0x92c, 0x2c}, {8, 0x937, 0x2e}, {8, 0x942, 0x30}, {8, 0x94d, 0x32}, {8, 0x958, 
+	0x34}, {8, 0x963, 0x36}, {8, 0x96e, 0x38}, {8, 0x979, 0x3a}, {8, 0x984, 0x3c}, {8, 0x98f, 
+	0x3e}, {8, 0x99a, 0x40}, {8, 0x9a5, 0x42}, {8, 0x9b0, 0x44}, {8, 0x9bb, 0x46}, {8, 0x9c6, 
+	0x48}, {8, 0x9d1, 0x4a}, {8, 0x9dc, 0x4c}, {8, 0x9e7, 0x4e}, {8, 0x9f2, 0x50}, {16, 0x30, 
+	0x52}, {16, 0x46, 0x54}, {16, 0x5c, 0x56}, {8, 0x9fd, 0x58}, {8, 0xa08, 0x59}, {8, 0xa13, 
+	0x5a}, {8, 0xa1e, 0x5b}, {8, 0xa2f, 0x5c}, {8, 0xa3a, 0x5d}, {8, 0xa45, 0x5e}, {16, 0x72, 
+	0x60}, {8, 0xa50, 0x62}, {8, 0xa5b, 0x63}, {16, 0x88, 0x64}, {8, 0xa66, 0x66}, {8, 0xa71, 
+	0x67}, {8, 0xa7c, 0x68}, {8, 0xa87, 0x69}, {8, 0xa92, 0x6a}, {8, 0xa9d, 0x6b}, {16, 0x9e, 
+	0x6c}, {16, 0xb4, 0x6e}, {16, 0xca, 0x70}, {16, 0xe0, 0x72}, {16, 0xf6, 0x74}, {16, 0x10c, 
+	0x76}, {16, 0x122, 0x78}, {16, 0x138, 0x7a}, {16, 0x14e, 0x7c}, {16, 0x164, 0x7e}, {16, 0x17a, 
+	0x80}, {16, 0x190, 0x82}, {16, 0x1a6, 0x84}, {16, 0x1bc, 0x86}, {16, 0x1d2, 0x88}, {16, 0x1e8, 
+	0x8a}, {16, 0x1fe, 0x8c}, {16, 0x214, 0x8e}, {16, 0x22a, 0x90}, {16, 0x240, 0x92}, {16, 0x256, 
+	0x94}, {16, 0x26c, 0x96}, {16, 0x282, 0x98}, {16, 0x298, 0x9a}, {16, 0x2ae, 0x9c}, {16, 0x2c4, 
+	0x9e}, {16, 0x2da, 0xa0}, {16, 0x2f0, 0xa2}, {16, 0x306, 0xa4}, {16, 0x31c, 0xa6}, {16, 0x332, 
+	0xa8}, {16, 0x348, 0xaa}, {16, 0x35e, 0xac}, {16, 0x374, 0xae}, {16, 0x38a, 0xb0}, {16, 0x3a0, 
+	0xb2}, {16, 0x3b6, 0xb4}, {16, 0x3cc, 0xb6}, {16, 0x3e2, 0xb8}, {16, 0x3f8, 0xba}, {16, 0x40e, 
+	0xbc}, {16, 0x424, 0xbe}, {16, 0x43a, 0xc0}, {16, 0x450, 0xc2}, {16, 0x466, 0xc4}, {16, 0x47c, 
+	0xc6}, {16, 0x492, 0xc8}, {16, 0x4a8, 0xca}, {16, 0x4be, 0xcc}, {16, 0x4d4, 0xce}, {16, 0x4ea, 
+	0xd0}, {16, 0x500, 0xd2}, {16, 0x516, 0xd4}, {16, 0x52c, 0xd6}, {16, 0x542, 0xd8}, {16, 0x558, 
+	0xda}, {16, 0x56e, 0xdc}, {16, 0x584, 0xde}, {16, 0x59a, 0xe0}, {16, 0x5b0, 0xe2}, {16, 0x5c6, 
+	0xe4}, {16, 0x5dc, 0xe6}, {16, 0x5f2, 0xe8}, {16, 0x608, 0xea}, {16, 0x61e, 0xec}, {16, 0x634, 
+	0xee}, {16, 0x64a, 0xf0}, {8, 0xaa8, 0xf2}, {8, 0xab3, 0xf3}, {8, 0xabe, 0xf4}, {8, 0xac9, 
+	0xf5}, {8, 0xad4, 0xf6}, {8, 0xadf, 0xf7}, {8, 0xaea, 0xf8}, {8, 0xaf5, 0xf9}, {8, 0xb00, 
+	0xfa}, {8, 0xb0b, 0xfb}, {8, 0xb16, 0xfc}, {8, 0xb21, 0xfd}, {8, 0xb2c, 0xfe}, {8, 0xb37, 
+	0xff}, {8, 0xb42, 0x100}, {8, 0xb4d, 0x101}, {8, 0xb58, 0x102}, {8, 0xb63, 0x103}, {8, 0xb6e, 
+	0x104}, {8, 0xb79, 0x105}, {8, 0xb84, 0x106}, {8, 0xb8f, 0x107}, {8, 0xb9a, 0x108}, {8, 0xba5, 
+	0x109}, {8, 0xbb0, 0x10a}, {8, 0xbbb, 0x10b}, {8, 0xbc6, 0x10c}, {8, 0xbd1, 0x10d}, {8, 0xbdc, 
+	0x10e}, {8, 0xbe7, 0x10f}, {8, 0xbf2, 0x110}, {8, 0xbfd, 0x111}, {8, 0xc08, 0x112}, {8, 0xc13, 
+	0x113}, {8, 0xc1e, 0x114}, {16, 0x660, 0x116}, {16, 0x676, 0x118}, {16, 0x68c, 0x11a}, {16, 
+	0x6a2, 0x11c}, {16, 0x6b8, 0x11e}, {16, 0x6ce, 0x120}, {16, 0x6e4, 0x122}, {16, 0x6fa, 0x124}, 
+	{16, 0x710, 0x126}, {8, 0xc29, 0x128}, {16, 0x726, 0x12a}, {16, 0x73c, 0x12c}, {16, 0x752, 
+	0x12e}, {16, 0x768, 0x130}, {16, 0x77e, 0x132}, {16, 0x794, 0x134}, {16, 0x7aa, 0x136}, {16, 
+	0x7c0, 0x138}, {16, 0x7d6, 0x13a}, {8, 0xc34, 0x13c}, {8, 0xc3f, 0x13d}, {8, 0xc60, 0x140}, {8, 
+	0xc6b, 0x141}, {8, 0xc76, 0x142}, {8, 0xc81, 0x143}, {8, 0xc8c, 0x144}, {8, 0xc97, 0x145}, {8, 
+	0xca2, 0x146}, {8, 0xcad, 0x147}, {8, 0xcb8, 0x148}, {8, 0xcc3, 0x149}, {8, 0xcce, 0x14a}, {8, 
+	0xcd9, 0x14b}, {8, 0xce4, 0x14c}, {8, 0xcef, 0x14d}, {8, 0xcfa, 0x14e}, {8, 0xd05, 0x14f}, {8, 
+	0xd10, 0x150}, {8, 0xd1b, 0x151}, {8, 0xd26, 0x152}, {8, 0xd31, 0x153}, {8, 0xd3c, 0x154}, {8, 
+	0xd47, 0x155}, {8, 0xd52, 0x156}, {8, 0xd5d, 0x157}, {8, 0xd68, 0x158}, {8, 0xd73, 0x159}, {8, 
+	0xd7e, 0x15a}, {8, 0xd89, 0x15b}, {8, 0xd94, 0x15c}, {8, 0xd9f, 0x15d}, {8, 0xdaa, 0x15e}, {8, 
+	0xdb5, 0x15f}, {8, 0xdc0, 0x160}, {8, 0xdcb, 0x161}, {8, 0xdd6, 0x162}, {8, 0xde1, 0x163}, {8, 
+	0xdec, 0x164}, {8, 0xdf7, 0x165}, {8, 0xe02, 0x166}, {8, 0xe0d, 0x167}, {8, 0xe18, 0x168}, {8, 
+	0xe23, 0x169}, {8, 0xe2e, 0x16a}, {8, 0xe39, 0x16b}, {8, 0xe44, 0x16c}, {8, 0xe4f, 0x16d}, {8, 
+	0xe5a, 0x16e}, {8, 0xe65, 0x16f}, {8, 0xe70, 0x170}, {8, 0xe7b, 0x171}, {8, 0xe86, 0x172}, {8, 
+	0xe91, 0x173}, {8, 0xe9c, 0x174}, {8, 0xea7, 0x175}, {8, 0xeb2, 0x176}, {8, 0xebd, 0x177}, {8, 
+	0xec8, 0x178}, {8, 0xed3, 0x179}, {8, 0xede, 0x17a}, {8, 0xee9, 0x17b}, {8, 0xef4, 0x17c}, {8, 
+	0xeff, 0x17d}, {8, 0xf0a, 0x17e}, {8, 0xf15, 0x17f}, {8, 0xf20, 0x180}, {8, 0xf2b, 0x181}, {8, 
+	0xf36, 0x182}, {8, 0xf41, 0x183}, {8, 0xf4c, 0x184}, {9, 0xc4a, 0x13e}, {9, 0xc55, 0x13f}
+};
+
+/*
+ * The vendor's reciprocal normalisation of a 12 bit gain: x below 0x400 is
+ * kept, above it scaled down in steps of 0x200 with doubling slope; r is
+ * (0x2000 + x / 2) / x (0x2000 for x = 0, which stays 0).  The second form
+ * (the vendor's sum of two gains) saturates at 0xffff from 0xfff.
+ */
+static inline void t32_ysp_scale(u32 x, u32 *xs, u32 *r, int cap)
+{
+	if (x >= 0x400) {
+		if (x < 0x600)
+			x = (x - 0x200) * 2;
+		else if (x < 0x800)
+			x = (x - 0x400) * 4;
+		else if (x < 0xa00)
+			x = (x - 0x600) * 8;
+		else if (x < 0xc00)
+			x = (x - 0x800) * 0x10;
+		else if (x < 0xe00)
+			x = (x - 0xa00) * 0x20;
+		else if (!cap || x < 0xfff)
+			x = (x - 0xc00) * 0x40;
+		else
+			x = 0xffff;
+	}
+	*xs = x;
+	*r = x ? (u32)((((int)x >> 1) + 0x2000) / (int)x) : 0x2000;
+}
+
+static inline void t32_ysp_recip(u32 x, u32 *xs, u32 *r)
+{
+	t32_ysp_scale(x, xs, r, 0);
+}
+
+static inline void t32_ysp_recip_cap(u32 x, u32 *xs, u32 *r)
+{
+	t32_ysp_scale(x, xs, r, 1);
+}
+
+/* The expressions below keep the operator precedence of the transcribed code. */
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wparentheses"
+#endif
+
+/* tisp_ysp_noref_reg_cfg: the writes that do not depend on the interpolated values */
+static inline void t32_ysp_noref(u8 *sec, struct t32_front_write *w, unsigned int *np)
+{
+	unsigned int n = *np;
+	u32 uVar4;
+
+	T32_FWR(w, n, 0x11048, (sec[0x7ef] & 7) << 0x10 | (sec[0x7f0] & 3) << 0x14 |
+			sec[0x7ee] & 3);
+	T32_FWR(w, n, 0x11050, (sec[0x7f3] & 3) << 8 | (sec[0x7f4] & 3) << 0x10 | sec[0x7f2] & 3);
+	T32_FWR(w, n, 0x1105c, sec[0x806] & 3 | (u32)sec[0x808] << 8 | (sec[0x807] & 0xf) << 4);
+	T32_FWR(w, n, 0x1106c, (u32)sec[0xa2a] << 0x10 | (u32)sec[0xa29]);
+	T32_FWR(w, n, 0x11074, (u32)sec[0xa2c] << 0x10 | (u32)sec[0xa2b]);
+	T32_FWR(w, n, 0x1107c, (sec[0x80a] & 0x1f) << 0x10 | (u32)t32_tp_le16(sec + 0xa2d));
+	T32_FWR(w, n, 0x11080, (sec[0x80c] & 3) << 4 | (sec[0x80d] & 3) << 8 | sec[0x80b] & 1 |
+			(sec[0x80e] & 3) << 0xc);
+	T32_FWR(w, n, 0x11088, (sec[0x81d] & 7) << 8 | (sec[0x81e] & 7) << 0xc | sec[0x81c] & 0x1f);
+	T32_FWR(w, n, 0x1108c, (sec[0x820] & 7) << 4 | (sec[0x821] & 7) << 8 | sec[0x81f] & 7 |
+			(sec[0x822] & 7) << 0xc | (sec[0x823] & 0xf) << 0x10);
+	T32_FWR(w, n, 0x110a0, t32_front_le32(sec + 0x7f5));
+	T32_FWR(w, n, 0x110a4, t32_front_le32(sec + 0x7f9));
+	T32_FWR(w, n, 0x110b0, t32_front_le32(sec + 0x7fd));
+	T32_FWR(w, n, 0x110b4, t32_front_le32(sec + 0x801));
+	uVar4 = (sec[0x810] & 1) << 0x10 | (u32)sec[0x80f];
+	T32_FWR(w, n, 0x111f0, uVar4);
+	*np = n;
+}
+
+/* tisp_ysp_ref_reg_cfg: the writes from the interpolated values o[] */
+static inline void t32_ysp_ref(u8 *sec, u8 *o, struct t32_front_write *w, unsigned int *np)
+{
+	unsigned int n = *np;
+	u16 uVar1;
+	u16 uVar2;
+	u16 uVar3;
+	u16 uVar4;
+	u16 uVar5;
+	u16 uVar6;
+	u32 uVar9;
+	u32 uVar10;
+	u32 uVar12;
+	int iVar13;
+	u32 uVar14;
+	u32 uVar15;
+	u32 uVar16;
+	u32 uVar18;
+	u32 uVar19;
+	u32 uVar20;
+	u32 uVar21;
+	u32 local_4c;
+	u32 local_48;
+	u32 local_44;
+	u32 local_40;
+	u32 local_3c;
+	u32 local_38;
+
+	T32_FWR(w, n, 0x11044, (sec[0x7ed] & 0x1f) << 0x10 | o[0] & 7);
+	T32_FWR(w, n, 0x1104c, (sec[0x7f1] & 1) << 0x10 | (u32)o[4] << 0x15 |
+			t32_tp_le16(o + 2) & 0x3fff);
+	T32_FWR(w, n, 0x11054, t32_tp_le16(o + 0x52) & 0xfff);
+	T32_FWR(w, n, 0x11058, (t32_tp_le16(o + 0x56) & 0xfff) << 0x10 |
+			t32_tp_le16(o + 0x54) & 0xfff);
+	T32_FWR(w, n, 0x11060, ((u32)(u8)(o[0x5a]) << 8 | (u8)(o[0x58])));
+	T32_FWR(w, n, 0x11064, (o[0x5b] & 0x7f) << 8 | (sec[0x809] & 3) << 0x10 | o[0x59] & 0x7f);
+	T32_FWR(w, n, 0x11068, (u32)o[0x5d] << 0x10 | (u32)o[0x5c] | (o[0x5e] & 0x1f) << 0x18) ;
+	T32_FWR(w, n, 0x11070, t32_tp_le16(o + 0x60) & 0x1ff | (u32)o[0x62] << 0x10 |
+			(o[99] & 0x1f) << 0x18);
+	T32_FWR(w, n, 0x11078, t32_tp_le16(o + 100) & 0x1ff | (u32)o[0x66] << 0x10 |
+			(o[0x67] & 0x1f) << 0x18);
+	T32_FWR(w, n, 0x11084, (t32_tp_le16(o + 0x10) & 0xfff) << 0xc | (sec[0x805] & 3) << 0x18 |
+			(u32)o[0xe] << 1);
+	T32_FWR(w, n, 0x11090, (o[0x69] & 0x7f) << 8 | (o[0x6a] & 0x7f) << 0x10 | o[0x68] & 0x7f |
+			(o[0x6b] & 0x7f) << 0x18);
+	uVar9 = (u32)t32_tp_le16(o + 0x6c);
+	t32_ysp_recip(uVar9, &uVar9, &uVar20);
+	T32_FWR(w, n, 0x11094, (uVar20 & 0x3fff) << 0x10 | uVar9 & 0xffff);
+	uVar9 = (u32)t32_tp_le16(o + 0x12a);
+	t32_ysp_recip(uVar9, &uVar9, &local_4c);
+	uVar20 = (u32)t32_tp_le16(o + 300);
+	t32_ysp_recip(uVar20, &uVar20, &local_48);
+	uVar12 = (u32)t32_tp_le16(o + 0x12e);
+	t32_ysp_recip(uVar12, &uVar12, &local_44);
+	uVar14 = (u32)t32_tp_le16(o + 0x130);
+	t32_ysp_recip(uVar14, &uVar14, &local_40);
+	uVar19 = (u32)t32_tp_le16(o + 0x132);
+	t32_ysp_recip(uVar19, &uVar19, &local_3c);
+	uVar16 = (u32)t32_tp_le16(o + 0x134);
+	t32_ysp_recip(uVar16, &uVar16, &local_38);
+	uVar18 = (u32)t32_tp_le16(o + 0x136);
+	t32_ysp_recip(uVar18, &uVar15, &uVar21);
+	T32_FWR(w, n, 0x111c4, uVar9 & 0xffff | uVar20 << 0x10);
+	T32_FWR(w, n, 0x111c8, uVar12 & 0xffff | uVar14 << 0x10);
+	T32_FWR(w, n, 0x111cc, uVar19 & 0xffff | uVar16 << 0x10);
+	T32_FWR(w, n, 0x111d0, uVar15 & 0xffff);
+	T32_FWR(w, n, 0x111d4, (local_48 & 0x3fff) << 0x10 | local_4c & 0x3fff);
+	T32_FWR(w, n, 0x111d8, (local_40 & 0x3fff) << 0x10 | local_44 & 0x3fff);
+	T32_FWR(w, n, 0x111dc, (local_38 & 0x3fff) << 0x10 | local_3c & 0x3fff);
+	T32_FWR(w, n, 0x111e0, uVar21 & 0x3fff);
+	uVar18 = t32_tp_le16(o + 0x6e) + uVar18;
+	t32_ysp_recip_cap(uVar18, &uVar18, &uVar9);
+	T32_FWR(w, n, 0x11098, (uVar9 & 0x3fff) << 0x10 | uVar18);
+	T32_FWR(w, n, 0x1109c, t32_tp_le16(o + 0x70) & 0x7f);
+	uVar18 = (u32)o[5];
+	uVar9 = (u32)o[7];
+	iVar13 = o[6] - 0x80;
+	uVar20 = iVar13 + uVar18;
+	uVar16 = iVar13 + uVar20;
+	uVar14 = iVar13 + uVar16;
+	uVar12 = iVar13 + uVar14;
+	uVar19 = iVar13 + uVar12;
+	uVar15 = iVar13 + uVar19;
+	uVar21 = iVar13 + uVar15;
+	if (iVar13 < 0) {
+		if (uVar18 < uVar9) {
+			uVar9 = uVar18;
+		}
+		if ((int)uVar16 < (int)uVar9) {
+			uVar16 = uVar9;
+		}
+		if ((int)uVar19 < (int)uVar9) {
+			uVar19 = uVar9;
+		}
+		if ((int)uVar20 < (int)uVar9) {
+			uVar20 = uVar9;
+		}
+		if ((int)uVar12 < (int)uVar9) {
+			uVar12 = uVar9;
+		}
+		if ((int)uVar15 < (int)uVar9) {
+			uVar15 = uVar9;
+		}
+		if ((int)uVar14 < (int)uVar9) {
+			uVar14 = uVar9;
+		}
+		if ((int)uVar9 <= (int)uVar21) {
+			uVar9 = uVar21;
+		}
+	}
+	else {
+		if (uVar9 < uVar18) {
+			uVar9 = uVar18;
+		}
+		if ((int)uVar9 < (int)uVar16) {
+			uVar16 = uVar9;
+		}
+		if ((int)uVar9 < (int)uVar19) {
+			uVar19 = uVar9;
+		}
+		if ((int)uVar9 < (int)uVar20) {
+			uVar20 = uVar9;
+		}
+		if ((int)uVar9 < (int)uVar12) {
+			uVar12 = uVar9;
+		}
+		if ((int)uVar9 < (int)uVar15) {
+			uVar15 = uVar9;
+		}
+		if ((int)uVar9 < (int)uVar14) {
+			uVar14 = uVar9;
+		}
+		if ((int)uVar21 <= (int)uVar9) {
+			uVar9 = uVar21;
+		}
+	}
+	T32_FWR(w, n, 0x110a8, (uVar20 & 0xff) << 8 | uVar14 << 0x18 | uVar18 |
+			(uVar16 & 0xff) << 0x10);
+	T32_FWR(w, n, 0x110ac, uVar12 & 0xff | uVar9 << 0x18 | (uVar19 & 0xff) << 8 |
+			(uVar15 & 0xff) << 0x10);
+	uVar18 = (u32)o[8];
+	uVar9 = (u32)o[10];
+	iVar13 = o[9] - 0x80;
+	uVar12 = iVar13 + uVar18;
+	uVar14 = iVar13 + uVar12;
+	uVar19 = iVar13 + uVar14;
+	uVar20 = iVar13 + uVar19;
+	uVar15 = iVar13 + uVar20;
+	uVar16 = iVar13 + uVar15;
+	uVar21 = iVar13 + uVar16;
+	if (iVar13 < 0) {
+		if (uVar18 < uVar9) {
+			uVar9 = uVar18;
+		}
+		if ((int)uVar14 < (int)uVar9) {
+			uVar14 = uVar9;
+		}
+		if ((int)uVar15 < (int)uVar9) {
+			uVar15 = uVar9;
+		}
+		if ((int)uVar12 < (int)uVar9) {
+			uVar12 = uVar9;
+		}
+		if ((int)uVar20 < (int)uVar9) {
+			uVar20 = uVar9;
+		}
+		if ((int)uVar16 < (int)uVar9) {
+			uVar16 = uVar9;
+		}
+		if ((int)uVar19 < (int)uVar9) {
+			uVar19 = uVar9;
+		}
+		if ((int)uVar9 <= (int)uVar21) {
+			uVar9 = uVar21;
+		}
+	}
+	else {
+		if (uVar9 < uVar18) {
+			uVar9 = uVar18;
+		}
+		if ((int)uVar9 < (int)uVar14) {
+			uVar14 = uVar9;
+		}
+		if ((int)uVar9 < (int)uVar15) {
+			uVar15 = uVar9;
+		}
+		if ((int)uVar9 < (int)uVar12) {
+			uVar12 = uVar9;
+		}
+		if ((int)uVar9 < (int)uVar20) {
+			uVar20 = uVar9;
+		}
+		if ((int)uVar9 < (int)uVar16) {
+			uVar16 = uVar9;
+		}
+		if ((int)uVar9 < (int)uVar19) {
+			uVar19 = uVar9;
+		}
+		if ((int)uVar21 <= (int)uVar9) {
+			uVar9 = uVar21;
+		}
+	}
+	T32_FWR(w, n, 0x110b8, (uVar12 & 0xff) << 8 | uVar19 << 0x18 | uVar18 |
+			(uVar14 & 0xff) << 0x10);
+	T32_FWR(w, n, 0x110bc, uVar20 & 0xff | uVar9 << 0x18 | (uVar15 & 0xff) << 8 |
+			(uVar16 & 0xff) << 0x10);
+	uVar18 = (u32)o[0xb];
+	uVar9 = (u32)o[0xd];
+	iVar13 = o[0xc] - 0x80;
+	uVar12 = iVar13 + uVar18;
+	uVar14 = iVar13 + uVar12;
+	uVar19 = iVar13 + uVar14;
+	uVar20 = iVar13 + uVar19;
+	uVar15 = iVar13 + uVar20;
+	uVar16 = iVar13 + uVar15;
+	uVar21 = iVar13 + uVar16;
+	if (iVar13 < 0) {
+		if (uVar18 < uVar9) {
+			uVar9 = uVar18;
+		}
+		if ((int)uVar14 < (int)uVar9) {
+			uVar14 = uVar9;
+		}
+		if ((int)uVar15 < (int)uVar9) {
+			uVar15 = uVar9;
+		}
+		if ((int)uVar12 < (int)uVar9) {
+			uVar12 = uVar9;
+		}
+		if ((int)uVar20 < (int)uVar9) {
+			uVar20 = uVar9;
+		}
+		if ((int)uVar16 < (int)uVar9) {
+			uVar16 = uVar9;
+		}
+		if ((int)uVar19 < (int)uVar9) {
+			uVar19 = uVar9;
+		}
+		if ((int)uVar9 <= (int)uVar21) {
+			uVar9 = uVar21;
+		}
+	}
+	else {
+		if (uVar9 < uVar18) {
+			uVar9 = uVar18;
+		}
+		if ((int)uVar9 < (int)uVar14) {
+			uVar14 = uVar9;
+		}
+		if ((int)uVar9 < (int)uVar15) {
+			uVar15 = uVar9;
+		}
+		if ((int)uVar9 < (int)uVar12) {
+			uVar12 = uVar9;
+		}
+		if ((int)uVar9 < (int)uVar20) {
+			uVar20 = uVar9;
+		}
+		if ((int)uVar9 < (int)uVar16) {
+			uVar16 = uVar9;
+		}
+		if ((int)uVar9 < (int)uVar19) {
+			uVar19 = uVar9;
+		}
+		if ((int)uVar21 <= (int)uVar9) {
+			uVar9 = uVar21;
+		}
+	}
+	T32_FWR(w, n, 0x110c0, (uVar12 & 0xff) << 8 | uVar19 << 0x18 | uVar18 |
+			(uVar14 & 0xff) << 0x10);
+	T32_FWR(w, n, 0x110c4, uVar20 & 0xff | uVar9 << 0x18 | (uVar15 & 0xff) << 8 |
+			(uVar16 & 0xff) << 0x10);
+	T32_FWR(w, n, 0x110c8, (t32_tp_le16(o + 0x74) & 0x3ff) << 0x10 |
+			t32_tp_le16(o + 0x72) & 0x3ff);
+	T32_FWR(w, n, 0x110cc, (t32_tp_le16(o + 0x78) & 0x3ff) << 0x10 |
+			t32_tp_le16(o + 0x76) & 0x3ff);
+	T32_FWR(w, n, 0x110d0, (t32_tp_le16(o + 0x7c) & 0x3ff) << 0x10 |
+			t32_tp_le16(o + 0x7a) & 0x3ff);
+	T32_FWR(w, n, 0x110d4, (t32_tp_le16(o + 0x80) & 0x3ff) << 0x10 |
+			t32_tp_le16(o + 0x7e) & 0x3ff);
+	T32_FWR(w, n, 0x110d8, (t32_tp_le16(o + 0x84) & 0x3ff) << 0x10 |
+			t32_tp_le16(o + 0x82) & 0x3ff);
+	T32_FWR(w, n, 0x110dc, (t32_tp_le16(o + 0x88) & 0x3ff) << 0x10 |
+			t32_tp_le16(o + 0x86) & 0x3ff);
+	T32_FWR(w, n, 0x110e0, (t32_tp_le16(o + 0x8c) & 0x3ff) << 0x10 |
+			t32_tp_le16(o + 0x8a) & 0x3ff);
+	T32_FWR(w, n, 0x110e4, (t32_tp_le16(o + 0x90) & 0x3ff) << 0x10 |
+			t32_tp_le16(o + 0x8e) & 0x3ff);
+	T32_FWR(w, n, 0x110e8, (t32_tp_le16(o + 0x94) & 0x3ff) << 0x10 |
+			t32_tp_le16(o + 0x92) & 0x3ff);
+	T32_FWR(w, n, 0x110ec, (t32_tp_le16(o + 0x98) & 0x3ff) << 0x10 |
+			t32_tp_le16(o + 0x96) & 0x3ff);
+	T32_FWR(w, n, 0x110f0, (t32_tp_le16(o + 0x9c) & 0x3ff) << 0x10 |
+			t32_tp_le16(o + 0x9a) & 0x3ff);
+	T32_FWR(w, n, 0x110f4, (t32_tp_le16(o + 0xa0) & 0x3ff) << 0x10 |
+			t32_tp_le16(o + 0x9e) & 0x3ff);
+	T32_FWR(w, n, 0x110f8, (t32_tp_le16(o + 0xa4) & 0x3ff) << 0x10 |
+			t32_tp_le16(o + 0xa2) & 0x3ff);
+	T32_FWR(w, n, 0x110fc, (t32_tp_le16(o + 0xa8) & 0x3ff) << 0x10 |
+			t32_tp_le16(o + 0xa6) & 0x3ff);
+	T32_FWR(w, n, 0x11100, (t32_tp_le16(o + 0xac) & 0x3ff) << 0x10 |
+			t32_tp_le16(o + 0xaa) & 0x3ff);
+	T32_FWR(w, n, 0x11104, (t32_tp_le16(o + 0xb0) & 0x3ff) << 0x10 |
+			t32_tp_le16(o + 0xae) & 0x3ff);
+	T32_FWR(w, n, 0x11108, (t32_tp_le16(o + 0xb4) & 0x3ff) << 0x10 |
+			t32_tp_le16(o + 0xb2) & 0x3ff);
+	T32_FWR(w, n, 0x1110c, (t32_tp_le16(o + 0xb8) & 0x3ff) << 0x10 |
+			t32_tp_le16(o + 0xb6) & 0x3ff);
+	T32_FWR(w, n, 0x11110, (t32_tp_le16(o + 0xbc) & 0x3ff) << 0x10 |
+			t32_tp_le16(o + 0xba) & 0x3ff);
+	T32_FWR(w, n, 0x11114, (t32_tp_le16(o + 0xc0) & 0x3ff) << 0x10 |
+			t32_tp_le16(o + 0xbe) & 0x3ff);
+	T32_FWR(w, n, 0x11118, (t32_tp_le16(o + 0xc4) & 0x3ff) << 0x10 |
+			t32_tp_le16(o + 0xc2) & 0x3ff);
+	T32_FWR(w, n, 0x1111c, (t32_tp_le16(o + 200) & 0x3ff) << 0x10 |
+			t32_tp_le16(o + 0xc6) & 0x3ff) ;
+	T32_FWR(w, n, 0x11120, (t32_tp_le16(o + 0xcc) & 0x3ff) << 0x10 |
+			t32_tp_le16(o + 0xca) & 0x3ff);
+	T32_FWR(w, n, 0x11124, (t32_tp_le16(o + 0xd0) & 0x3ff) << 0x10 |
+			t32_tp_le16(o + 0xce) & 0x3ff);
+	T32_FWR(w, n, 0x11128, (t32_tp_le16(o + 0xd4) & 0x3ff) << 0x10 |
+			t32_tp_le16(o + 0xd2) & 0x3ff);
+	T32_FWR(w, n, 0x1112c, (t32_tp_le16(o + 0xd8) & 0x3ff) << 0x10 |
+			t32_tp_le16(o + 0xd6) & 0x3ff);
+	T32_FWR(w, n, 0x11130, (t32_tp_le16(o + 0xdc) & 0x3ff) << 0x10 |
+			t32_tp_le16(o + 0xda) & 0x3ff);
+	T32_FWR(w, n, 0x11134, (t32_tp_le16(o + 0xe0) & 0x3ff) << 0x10 |
+			t32_tp_le16(o + 0xde) & 0x3ff);
+	T32_FWR(w, n, 0x11138, (t32_tp_le16(o + 0xe4) & 0x3ff) << 0x10 |
+			t32_tp_le16(o + 0xe2) & 0x3ff);
+	T32_FWR(w, n, 0x1113c, (t32_tp_le16(o + 0xe8) & 0x3ff) << 0x10 |
+			t32_tp_le16(o + 0xe6) & 0x3ff);
+	T32_FWR(w, n, 0x11140, (t32_tp_le16(o + 0xec) & 0x3ff) << 0x10 |
+			t32_tp_le16(o + 0xea) & 0x3ff);
+	T32_FWR(w, n, 0x11144, (t32_tp_le16(o + 0xf0) & 0x3ff) << 0x10 |
+			t32_tp_le16(o + 0xee) & 0x3ff);
+	uVar1 = t32_tp_le16(o + 0x18);
+	uVar2 = t32_tp_le16(o + 0x16);
+	uVar3 = t32_tp_le16(o + 0x1a);
+	uVar4 = t32_tp_le16(o + 0x1c);
+	uVar5 = t32_tp_le16(o + 0x1e);
+	uVar6 = t32_tp_le16(o + 0x20);
+	T32_FWR(w, n, 0x11148, (t32_tp_le16(o + 0x14) & 0xff) << 0x12 |
+			(t32_tp_le16(o + 0x12) & 0xff) << 2);
+	T32_FWR(w, n, 0x1114c, (uVar1 & 0xff) << 0x12 | (uVar2 & 0xff) << 2);
+	T32_FWR(w, n, 0x11150, (uVar4 & 0xff) << 0x12 | (uVar3 & 0xff) << 2);
+	T32_FWR(w, n, 0x11154, (uVar6 & 0xff) << 0x12 | (uVar5 & 0xff) << 2);
+	uVar1 = t32_tp_le16(o + 0x28);
+	uVar2 = t32_tp_le16(o + 0x26);
+	uVar3 = t32_tp_le16(o + 0x2a);
+	uVar4 = t32_tp_le16(o + 0x2c);
+	uVar5 = t32_tp_le16(o + 0x2e);
+	uVar6 = t32_tp_le16(o + 0x30);
+	T32_FWR(w, n, 0x11158, (t32_tp_le16(o + 0x24) & 0xff) << 0x12 |
+			(t32_tp_le16(o + 0x22) & 0xff) << 2);
+	T32_FWR(w, n, 0x1115c, (uVar1 & 0xff) << 0x12 | (uVar2 & 0xff) << 2);
+	T32_FWR(w, n, 0x11160, (uVar4 & 0xff) << 0x12 | (uVar3 & 0xff) << 2);
+	T32_FWR(w, n, 0x11164, (uVar6 & 0xff) << 0x12 | (uVar5 & 0xff) << 2);
+	uVar1 = t32_tp_le16(o + 0x38);
+	uVar2 = t32_tp_le16(o + 0x36);
+	uVar3 = t32_tp_le16(o + 0x3a);
+	uVar4 = t32_tp_le16(o + 0x3c);
+	uVar5 = t32_tp_le16(o + 0x3e);
+	uVar6 = t32_tp_le16(o + 0x40);
+	T32_FWR(w, n, 0x11168, (t32_tp_le16(o + 0x34) & 0xff) << 0x12 |
+			(t32_tp_le16(o + 0x32) & 0xff) << 2);
+	T32_FWR(w, n, 0x1116c, (uVar1 & 0xff) << 0x12 | (uVar2 & 0xff) << 2);
+	uVar10 = 70000;
+	T32_FWR(w, n, uVar10,(uVar4 & 0xff) << 0x12 | (uVar3 & 0xff) << 2);
+	T32_FWR(w, n, 0x11174, (uVar6 & 0xff) << 0x12 | (uVar5 & 0xff) << 2);
+	uVar1 = t32_tp_le16(o + 0x48);
+	uVar2 = t32_tp_le16(o + 0x46);
+	uVar3 = t32_tp_le16(o + 0x4a);
+	uVar4 = t32_tp_le16(o + 0x4c);
+	uVar5 = t32_tp_le16(o + 0x4e);
+	uVar6 = t32_tp_le16(o + 0x50);
+	T32_FWR(w, n, 0x11178, (t32_tp_le16(o + 0x44) & 0xff) << 0x12 |
+			(t32_tp_le16(o + 0x42) & 0xff) << 2);
+	T32_FWR(w, n, 0x1117c, (uVar1 & 0xff) << 0x12 | (uVar2 & 0xff) << 2);
+	T32_FWR(w, n, 0x11180, (uVar4 & 0xff) << 0x12 | (uVar3 & 0xff) << 2);
+	T32_FWR(w, n, 0x11184, (uVar6 & 0xff) << 0x12 | (uVar5 & 0xff) << 2);
+	T32_FWR(w, n, 0x11188, (o[0xf3] & 0x7f) << 8 | (o[0xf4] & 0x7f) << 0x10 | o[0xf2] & 0x7f |
+			(o[0xf5] & 0x7f) << 0x18);
+	T32_FWR(w, n, 0x1118c, (o[0xf7] & 0x7f) << 8 | (o[0xf8] & 0x7f) << 0x10 | o[0xf6] & 0x7f |
+			(o[0xf9] & 0x7f) << 0x18);
+	T32_FWR(w, n, 0x11190, (o[0xfb] & 0x7f) << 8 | (o[0xfc] & 0x7f) << 0x10 | o[0xfa] & 0x7f |
+			(o[0xfd] & 0x7f) << 0x18);
+	T32_FWR(w, n, 0x11194, (o[0xff] & 0x7f) << 8 | (o[0x100] & 0x7f) << 0x10 |
+			o[0xfe] & 0x7f | (o[0x101] & 0x7f) << 0x18);
+	T32_FWR(w, n, 0x11198, (o[0x103] & 0x7f) << 8 | (o[0x104] & 0x7f) << 0x10 |
+			o[0x102] & 0x7f | (o[0x105] & 0x7f) << 0x18);
+	T32_FWR(w, n, 0x1119c, (o[0x107] & 0x7f) << 8 | (o[0x108] & 0x7f) << 0x10 |
+			o[0x106] & 0x7f | (o[0x109] & 0x7f) << 0x18);
+	T32_FWR(w, n, 0x111a0, (o[0x10b] & 0x7f) << 8 | (o[0x10c] & 0x7f) << 0x10 |
+			o[0x10a] & 0x7f | (o[0x10d] & 0x7f) << 0x18);
+	T32_FWR(w, n, 0x111a4, (o[0x10f] & 0x7f) << 8 | (o[0x110] & 0x7f) << 0x10 |
+			o[0x10e] & 0x7f | (o[0x111] & 0x7f) << 0x18);
+	T32_FWR(w, n, 0x111a8, (u32)o[0x113] << 0x10 | (u32)o[0x112]);
+	T32_FWR(w, n, 0x111ac, (t32_tp_le16(o + 0x116) & 0x1ff) << 8 | o[0x114] & 7);
+	T32_FWR(w, n, 0x111b0, (t32_tp_le16(o + 0x11a) & 0x1ff) << 0x10 |
+			t32_tp_le16(o + 0x118) & 0x1ff);
+	T32_FWR(w, n, 0x111b4, (t32_tp_le16(o + 0x11e) & 0x1ff) << 0x10 |
+			t32_tp_le16(o + 0x11c) & 0x1ff);
+	T32_FWR(w, n, 0x111b8, (t32_tp_le16(o + 0x122) & 0x1ff) << 0x10 |
+			t32_tp_le16(o + 0x120) & 0x1ff);
+	T32_FWR(w, n, 0x111bc, (t32_tp_le16(o + 0x126) & 0x1ff) << 0x10 |
+			t32_tp_le16(o + 0x124) & 0x1ff);
+	T32_FWR(w, n, 0x111c0, o[0x128]);
+	T32_FWR(w, n, 0x11040, sec[0x7ec] & 0x1f);
+	T32_FWR(w, n, 0x111ec, (t32_tp_le16(o + 0x13a) & 0x3ff) << 0x10 |
+			t32_tp_le16(o + 0x138) & 0x1ff);
+	T32_FWR(w, n, 0x111f4, (u32)o[0x13d] << 0x10 | (u32)o[0x13c]);
+	T32_FWR(w, n, 0x111f8, (o[0x13f] & 0x7f) << 0x10 | o[0x13e] & 0x7f);
+	T32_FWR(w, n, 0x111fc, (u32)o[0x141] << 8 | (u32)o[0x142] << 0x10 | (u32)o[0x140]);
+	T32_FWR(w, n, 0x11200, t32_front_le32(o + 0x143));
+	T32_FWR(w, n, 0x11204, t32_front_le32(o + 0x147));
+	T32_FWR(w, n, 0x11208, t32_front_le32(o + 0x14b));
+	T32_FWR(w, n, 0x1120c, t32_front_le32(o + 0x14f));
+	T32_FWR(w, n, 0x11210, t32_front_le32(o + 0x153));
+	T32_FWR(w, n, 0x11214, (u32)o[0x158] << 8 | (u32)o[0x159] << 0x10 | (u32)o[0x157]);
+	T32_FWR(w, n, 0x11218, (u32)o[0x15b] << 8 | (u32)o[0x15c] << 0x10 | (u32)o[0x15a]);
+	T32_FWR(w, n, 0x1121c, (u32)o[0x15e] << 8 | (u32)o[0x15f] << 0x10 | (u32)o[0x15d]);
+	T32_FWR(w, n, 0x11220, (u32)o[0x161] << 8 | (u32)o[0x162] << 0x10 | (u32)o[0x160]);
+	T32_FWR(w, n, 0x11224, (u32)o[0x164] << 8 | (u32)o[0x165] << 0x10 | (u32)o[0x163]);
+	T32_FWR(w, n, 0x11228, (u32)o[0x167] << 8 | (u32)o[0x168] << 0x10 | (u32)o[0x166]);
+	T32_FWR(w, n, 0x1122c, t32_front_le32(o + 0x169));
+	T32_FWR(w, n, 0x11230, (u32)o[0x16e] << 8 | (u32)o[0x16f] << 0x10 | (u32)o[0x16d]);
+	T32_FWR(w, n, 0x11234, t32_front_le32(o + 0x170));
+	T32_FWR(w, n, 0x11238, (u32)o[0x175] << 8 | (u32)o[0x176] << 0x10 | (u32)o[0x174]);
+	T32_FWR(w, n, 0x1123c, t32_front_le32(o + 0x177));
+	T32_FWR(w, n, 0x11240, (u32)o[0x17c] << 8 | (u32)o[0x17d] << 0x10 | (u32)o[0x17b]);
+	T32_FWR(w, n, 0x11244, (o[0x17f] & 1) << 1 | (o[0x180] & 1) << 2 | o[0x17e] & 1 |
+			(o[0x181] & 1) << 3 | (o[0x182] & 1) << 4);
+	T32_FWR(w, n, 0x11248, (u32)t32_tp_le16(o + 0x183));
+	*np = n;
+}
+
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
+
+/*
+ * sec: section 21 (T32_YSP_SEC_BYTES; pass a copy, the transcribed flow may
+ * edit it); the writes go to w (T32_YSP_MAX_WRITES entries).  Returns their
+ * number, -1 for a section without the block id.
+ */
+static inline int t32_ysp_init(u8 *sec, struct t32_front_write *w)
+{
+	u8 o[T32_YSP_VALUES];
+	unsigned int n = 0, k;
+
+	if (t32_front_le32(sec) != T32_YSP_ID)
+		return -1;
+	for (k = 0; k < T32_YSP_VALUES; k++)
+		o[k] = 0;
+	for (k = 0; k < 260; k++) {
+		u32 v;
+
+		if (t32_ysp_map[k][0] == 16) {
+			t32_tp_put16(o + t32_ysp_map[k][2], t32_tp_intp_u16(1, 0, sec + t32_ysp_map[k][1]));
+			continue;
+		}
+		v = t32_tp_intp_u8(1, 0, sec + t32_ysp_map[k][1]);
+		o[t32_ysp_map[k][2]] = t32_ysp_map[k][0] == 9 ? (u8)(0x40 - v) : (u8)v;
+	}
+	t32_ysp_noref(sec, w, &n);
+	t32_ysp_ref(sec, o, w, &n);
+	T32_FWR(w, n, 0x11010, 1);
+	for (k = 0; k < 14; k++)
+		T32_FWR(w, n, 0xdce0 + 4 * k, (u32)o[0x154 + 3 * k] << 8 | (u32)o[0x155 + 3 * k] << 16 | o[0x153 + 3 * k]);
+	T32_FWR(w, n, 0xdd18, o[0x17d]);
+	T32_FWR(w, n, 0xd014, 1);
+	T32_FWR(w, n, 0x11000, T32_YSP_ID);
+	return (int)n;
+}
+
+#endif /* TX_ISP_T32_YSP_H */
