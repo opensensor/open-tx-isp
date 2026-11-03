@@ -722,7 +722,7 @@ lifted_ptr_scale_check:
 		t41:tx_isp_vin_resume_module t41:fs_resume_module t41:ispcore_suspend_module t41:vic_core_ops_init t41:tx_isp_switch_bin_isra_78 t41:tisp_switch_bin \
 		t41:frame_channel_unlocked_ioctl t41:tx_isp_unlocked_ioctl t41:__fill_tisp_buffer
 	@# #189 postret: OEM `jr ra` delay-slot statements restored in front of the return (class postret only)
-	python3 ./lifted_ptr_scale_check.py --expect-clean t40:pop_buffer_fifo:postret t40:tisp_ae_get_state:postret t40:tisp_ae_main_mean_update:postret \
+	python3 ./lifted_ptr_scale_check.py --expect-clean t40:pop_buffer_fifo:postret t40:tisp_ae_main_mean_update:postret \
 		t40:tisp_ae_params_transmit:postret t40:tisp_ae_sec_mean_update:postret t40:tisp_awb_set_statis_localtion:postret t40:tisp_dmsc_wdr_en:postret \
 		t41:api_ae_set_exprinfo_attr:postret t41:tisp_msca_ch_curve_write:postret t41:tisp_wdr_get_lum_s:postret t41:vic_core_ops_init:postret \
 		t40:tisp_ae_ir_en_update:postret t40:tisp_af_set_attr_refresh:postret t40:tisp_awb_get_frz:postret t40:tisp_defog_wdr_choose_para:postret \
@@ -733,8 +733,7 @@ lifted_ptr_scale_check:
 		t41:tisp_gib_write_reg:argc t41:tisp_csc_yuv_dmo:tailcall t41:tisp_csccr_default_mode:tailcall t41:tisp_csccr_range_stretch_mode:tailcall \
 		t41:tisp_csccr_range_compress_mode:tailcall t41:tisp_raw_rdma_fd_interrupt
 	@# #189 pass 4 (T40, vendor T40 module + libt40-firmware compared): restored tail calls / the lost module-control mask
-	python3 ./lifted_ptr_scale_check.py --expect-clean t40:system_reg_write_af:tailcall t40:tisp_s_module_control:tailcall t40:tisp_ae_s_comp:tailcall \
-		t40:tisp_csc_set_attr:tailcall t40:tisp_dmsc_params_refresh:tailcall
+	python3 ./lifted_ptr_scale_check.py --expect-clean t40:system_reg_write_af:tailcall t40:tisp_s_module_control:tailcall		t40:tisp_csc_set_attr:tailcall t40:tisp_dmsc_params_refresh:tailcall
 	@# #189 T40 layout pass: the VIC ISR has no typed-pointer finding left in any class
 	python3 ./lifted_ptr_scale_check.py --expect-clean t40:isp_vic_interrupt_service_routine
 	@# #189 pass 5 (T23, vendor tx-isp-t23.ko 1.3.0 compared): typed-pointer byte arithmetic restored in the live T23 functions

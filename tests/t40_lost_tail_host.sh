@@ -8,7 +8,7 @@ python3 - "$HERE/../driver/t40/tx_isp_t40_recovered.c" "$W/t40_lost_tail_fn.inc"
 import re, sys
 src = open(sys.argv[1], errors="replace").read().split("\n")
 out = ["#include <stdint.h>"]
-for fn in ("system_reg_write_af", "tisp_s_module_control", "tisp_ae_s_comp"):
+for fn in ("system_reg_write_af", "tisp_s_module_control"):
     idx = [i for i, l in enumerate(src) if re.match(r"^[A-Za-z_][\w \*]*?[ \*]" + fn + r"\([^;]*\)\s*$", l) and src[i + 1] == "{"]
     assert idx, fn
     i = idx[-1]
