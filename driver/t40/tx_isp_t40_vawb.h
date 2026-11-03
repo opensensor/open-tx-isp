@@ -501,6 +501,7 @@ static void vawb_dump_take(int after)
 
 static void t40_vawb_ct_follow(void);
 static void t40_vawb_ct_follow_ct(u32 ct);
+static uint64_t t40_ct_fnum;	/* OEM fnum[0]: frames, here AWB processes */
 static int64_t t40_vawb_process(void)
 {
 	u32 argarea[16] __aligned(8) = { 0 };
@@ -530,6 +531,7 @@ static int64_t t40_vawb_process(void)
 
 	vawb_tarmed = 0;
 	vawb_frames++;
+	t40_ct_fnum++;
 	/* OEM: event 13 (CT) after every process -> CCM/LSC/BCSH; EV (event 8) once per frame */
 	t40_vawb_ct_follow();
 	if (vawb_frames <= 4 || (vawb_faults != f0 && vawb_faults <= 8))
@@ -538,13 +540,48 @@ static int64_t t40_vawb_process(void)
 	return (int64_t)ret;
 }
 
-/* CT consumers (OEM tisp_ct_update, event 13: ccm/lsc/bcsh main_ct_update) driven from the
- * frame-done work with the literal CCM/LSC/BCSH chains of this driver.  CT = *ctx[7]. */
-static uint32_t t40_vawb_ct, t40_vawb_lsc_ct;
+/* CT consumers (OEM tisp_ct_update, event 13 after every AWB process: TOP-gated ccm/lsc/bcsh/clm
+ * main_ct_update) on the CCM/LSC/BCSH chains of this driver: tx_isp_t40_ct_chain.h, checked against the
+ * OEM instructions (tests/t40_ct_chain_host.sh).  CT = *ctx[7].  The OEM frame number (fnum[0], advanced
+ * once per frame by the ISP interrupt) is counted here once per AWB process, i.e. once per frame. */
+static uint32_t t40_vawb_ct;
 t40_bringup_param_named(t40_vawb_ct, t40_vawb_ct, uint, 0444);
-static uint t40_vawb_lsc_step = 200;
-t40_bringup_param(t40_vawb_lsc_step, uint, 0644);
-t40_bringup_parm_desc(t40_vawb_lsc_step, "vendor AWB: LSC LUT re-interpolation CT step in K (default 200)");
+static uint64_t t40_lsc_frm_saved[2];
+static uint32_t t40_ct_lsc_writes;
+t40_bringup_param_named(t40_ct_lsc_writes, t40_ct_lsc_writes, uint, 0444);
+static void t40_ct_ccm(u32 ct);
+static int t40_ct_lsc_interp(u32 bank, u32 ct);
+static void t40_ct_lsc_write(u32 bank);
+#define T40_CT_TOP()              ((uint32_t)system_reg_read(0x40U))
+#define T40_CT_CCM(ct, a1)        t40_ct_ccm(ct)
+#define T40_CT_LSC(ct, a1, f)     t40_ctc_lsc_update(0, ct, a1, f, t40_lsc_frm_saved, lsc_wlut_frequency)
+#define T40_CT_BCSH(ct, a1)       t40_bcsh_main_ct_update(ct)	/* OEM tisp_bcsh_main_ct_update 0x6ab68 */
+#define T40_CT_CLM(ct, a1, f)     do { } while (0)	/* CLM has no CT follow-up state in this driver (#85) */
+#define T40_LSC_INTERP(b, ct, a3) t40_ct_lsc_interp(b, ct)
+#define T40_LSC_PREPARE(b)        t40_ct_lsc_write(b)
+#include "tx_isp_t40_ct_chain.h"
+static void t40_ct_ccm(u32 ct)
+{
+	if (!regtrace_enable_ccm || !regtrace_ccm_ct_track || !stMainCcmOuter_lit || !pstMainCcmOri_lit[6] ||
+	    !pstMainCcmOri_lit[7] || !pstMainCcmOri_lit[8])
+		return;
+	regtrace_ccm_ct = ct;	/* the EV re-interpolation in the frame-done block uses it */
+	t40_ccm_main_ct_update((uintptr_t)pstMainCcmOri_lit, ct);
+	regtrace_ccm_ct_now = ct;
+}
+static int t40_ct_lsc_interp(u32 bank, u32 ct)
+{
+	if (!regtrace_enable_lsc_lit || !regtrace_lsc_lit_ct_track || !lsc_lit_banks[bank].alive)
+		return 1;
+	regtrace_lsc_lit_ct_now = ct;
+	return lsc_lit_interp_by_ct(bank, ct, 0);
+}
+/* OEM: prepare_write_lut arms the write, tisp_hardware_reg_refresh streams it in the same frame-done pass */
+static void t40_ct_lsc_write(u32 bank)
+{
+	t40_ct_lsc_writes++;
+	lsc_lit_real_write_lut(bank);
+}
 /* EV like the OEM AE event 8 payload: integration time (lines) x total gain, Q10.  The open AE
  * does not push event 8, so AWB (Y weights / day-night EV gates), CCM and BCSH get it here. */
 t40_bringup_param_named(t40_vawb_ev, t40_vawb_ev, uint, 0444);
@@ -607,18 +644,7 @@ static void t40_vawb_ct_follow_ct(u32 ct)
 		t40_vct_ct_update(ct);
 		return;
 	}
-	if (regtrace_enable_ccm && regtrace_ccm_ct_track) {
-		regtrace_ccm_ct = ct;	/* the EV re-interpolation in the frame-done block uses it */
-		regtrace_ccm_main_ct_update_lit(ct, false);	/* own threshold ctx[8] like OEM */
-	}
-	if (regtrace_enable_lsc_lit && regtrace_lsc_lit_ct_track &&
-	    (ct > t40_vawb_lsc_ct + t40_vawb_lsc_step || ct + t40_vawb_lsc_step < t40_vawb_lsc_ct)) {
-		regtrace_lsc_lit_ct_update(0, ct);
-		regtrace_lsc_lit_ct_now = ct;
-		t40_vawb_lsc_ct = ct;
-	}
-	/* OEM tisp_bcsh_main_ct_update 0x6ab68 */
-	t40_bcsh_main_ct_update(ct);
+	t40_ct_update(ct, 0, t40_ct_fnum);
 }
 
 static uint32_t t40_vawb_dn_params_refresh(uint32_t a0)

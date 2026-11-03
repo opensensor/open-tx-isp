@@ -106,7 +106,7 @@ section anchors on.
   t40_module_ctx_inits, t40_msca_fifo_ctrl_on_set_fmt, t40_msca_late_work_en,
   t40_msca_oem_1602c, t40_msca_oem_stop, t40_msca_oem_stop_count,
   t40_release_reset, t40_release_reset_last_ack, t40_vawb_ct, t40_vawb_debug,
-  t40_vawb_dump_req, t40_vawb_ev, t40_vawb_loop_pc, t40_vawb_lsc_step,
+  t40_vawb_dump_req, t40_vawb_ev, t40_vawb_loop_pc, t40_vawb_lsc_step (removed 2026-11-03),
   t40_vawb_run, t40_vawb_trace. With `t40_module_ctx_inits` fixed at 0 the
   lifted gamma/LSC/CCM/BCSH/CLM main inits behind it (not executed in the QEMU
   workload or apitest coverage runs) leave the default build too.
