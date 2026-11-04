@@ -18,7 +18,7 @@ python3 -I "$HERE/oracle.py" "$SDK" "$HERE/../../../driver/t30"
 # 5. executed differential checks (SDK function vs driver function, same register file + customer block)
 python3 -I "$HERE/exec_oracle.py" "$SDK" "$HERE/../../../driver/t30"
 # mutation self-test: each executed check must fail on a one-mask change of the driver text
-for m in $(sed -n "s/^    if MUT == '\\([a-z_]*\\)'.*/\\1/p" "$HERE/exec_oracle.py"); do
+for m in $(sed -n "s/^ *if MUT == '\\([a-z_]*\\)'.*/\\1/p" "$HERE/exec_oracle.py"); do
 	if T30_ORACLE_MUTATE=$m T30_ORACLE_CASES=40 python3 -I "$HERE/exec_oracle.py" "$SDK" "$HERE/../../../driver/t30" >/dev/null; then
 		echo "t30_sdk_oracle: FAIL (mutation $m not detected)"; exit 1
 	fi

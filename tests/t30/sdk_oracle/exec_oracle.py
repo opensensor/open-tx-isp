@@ -9,6 +9,8 @@ apical_command are recorded.  The ordered write/command logs must be identical.
   custom_init : SDK apical_custom_initialization.c  vs  driver/t30/tx_isp_t30_recovered.c apical_custom_initialization
   dn_customer : SDK apical_isp_day_or_night_s_ctrl_internal customer register block
                 vs  driver/t30/tx_isp_t30_tuning_ctl.h tx_isp_t30_daynight_reload customer register block
+  sensor_msgs : SDK sensor_drv.c setters + ispcore_irq_thread_handle (message slot, event per slot)
+                vs  the driver's sensor_set_* and ispcore_irq_thread_handle_body (compiled SDK enums, parsed driver)
   (mutation: T30_ORACLE_MUTATE=<check> flips one mask in the driver text before compiling; the check must FAIL)
 """
 import os, re, subprocess, sys, tempfile
@@ -154,6 +156,43 @@ with tempfile.TemporaryDirectory() as t:
         regs_tab + '\n' + fld + '\nstatic void run(const u32 *cust){ unsigned int i;\n' + blk + '}\n' + \
         '#define RUN(c) run((const u32 *)(c))\n' + MAIN
     bad += compare('dn_customer', build(t, 'dn_sdk', sdk_src, SDK_INC), build(t, 'dn_drv', drv_src, []))
+
+# ---- sensor_msgs: AE -> sensor message slots (SDK sensor_drv.c + tx-isp-core.c ispcore_irq_thread_handle) -----
+# SDK side compiled: slot of each setter = its tx_isp_i2c_index, event of each slot = the thread's switch case
+# (enum tx_isp_notification).  Driver side: the slot each setter posts to and the slot -> event map of the thread.
+sd = rd(os.path.join(sdk, 'apical-isp/sensor_drv.c'))
+core_c = rd(os.path.join(sdk, 'apical-isp/tx-isp-core.c'))
+en = core_h[core_h.index('enum tx_isp_i2c_index'):]; en = en[:en.index('};') + 2]
+cm = rd(os.path.join(sdk, 'include/tx-isp-common.h'))
+nt = cm[cm.index('enum tx_isp_notification'):]; nt = nt[:nt.index('};') + 2]
+pre = '\n'.join(re.findall(r'#define NOTIFICATION_TYPE_\w+\s+.*', cm))
+setters = {n: re.search(r'i2c_msgs\[(TX_ISP_I2C_SET_\w+)\]', func(sd, 'static void sensor_' + n + '(')).group(1)
+           for n in ('set_integration_time', 'set_analog_gain', 'set_digital_gain')}
+th = func(core_c, 'static irqreturn_t ispcore_irq_thread_handle(')
+cases = re.findall(r'case (TX_ISP_I2C_SET_\w+):\s*cmd = (TX_ISP_EVENT_SENSOR_\w+);', th)
+src = '#include <stdio.h>\n' + pre + '\n' + en + '\n' + nt + '\nint main(void){\n' + \
+    ''.join('printf("S %s %%d\\n", %s);\n' % (n, e) for n, e in setters.items()) + \
+    ''.join('printf("E %%d %%#x\\n", %s, %s);\n' % (a, b) for a, b in cases) + 'return 0;}\n'
+with tempfile.TemporaryDirectory() as t:
+    out = build(t, 'msgs', src, [])
+sdk_s = {l.split()[1]: int(l.split()[2]) for l in out.split('\n') if l.startswith('S ')}
+sdk_e = {int(l.split()[1]): int(l.split()[2], 16) for l in out.split('\n') if l.startswith('E ')}
+drv_s = {}
+for n in sdk_s:
+    m = re.search(r'messages\[(\d)\]\.value', func(recovered, 'uint32_t sensor_' + n + '(uint32_t a0, uint32_t a1)\n{'))
+    if m: drv_s[n] = int(m.group(1))
+    else:   # lifted form: sw value at 384 + 8 * slot + 4
+        m = re.search(r'\(char \*\)v0 \+ (\d+)\) = a1;', func(recovered, 'uint32_t sensor_' + n + '(uint32_t a0, uint32_t a1)\n{'))
+        drv_s[n] = (int(m.group(1)) - 388) // 8 if m else None
+tb = func(recovered, 'static int32_t ispcore_irq_thread_handle_body(void *arg1)\n{')
+if MUT == 'sensor_msgs':
+    tb = tb.replace('i == 0 ? 0x2000006', 'i == 0 ? 0x2000005', 1).replace(': 0x2000005;', ': 0x2000006;', 1)
+m = re.search(r'i == 0 \? (0x[0-9a-f]+) :\s*i == 1 \? (0x[0-9a-f]+) : (0x[0-9a-f]+);', tb)
+drv_e = {i: int(x, 16) for i, x in enumerate(m.groups())} if m else {}
+ok = sdk_s == drv_s and sdk_e == drv_e and len(sdk_e) == 3
+print('sensor_msgs: setter slots SDK %s driver %s, slot events SDK %s driver %s: %s' % (
+    sdk_s, drv_s, {k: hex(v) for k, v in sdk_e.items()}, {k: hex(v) for k, v in drv_e.items()}, 'OK' if ok else 'FAIL'))
+bad += not ok
 
 print('t30_sdk_exec_oracle: %s' % ('FAIL' if bad else 'OK'))
 sys.exit(1 if bad else 0)

@@ -15111,8 +15111,10 @@ static int32_t ispcore_irq_thread_handle_body(void *arg1)
 			for (i = 0; i != 3; i++) {
 				if (entry[0] != 0) {
 					uint32_t cmd = entry[1];
-					uint32_t event = i == 0 ? 0x2000005 :
-							 i == 1 ? 0x2000007 : 0x2000006;
+					/* SDK ispcore_irq_thread_handle: slot AGAIN 0 -> TX_ISP_EVENT_SENSOR_AGAIN,
+					 * DGAIN 1 -> .._DGAIN, INTEGRATION 2 -> .._INT_TIME (vendor order: gain before time) */
+					uint32_t event = i == 0 ? 0x2000006 :
+							 i == 1 ? 0x2000007 : 0x2000005;
 					((void **)entry)[0] = 0;
 					((int (*)(void *, uint32_t, void *))ispcore_sensor_ops_ioctl)(arg1, event, &cmd);
 				}
@@ -22524,12 +22526,25 @@ int32_t sensor_alloc_analog_gain(int32_t arg1, int16_t *arg2)
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000010980 origin=model_output original=sensor_alloc_digital_gain */
 int32_t sensor_alloc_digital_gain(int32_t arg1, void *arg2)
 {
-    int32_t var_10 = 0;
-    int32_t *ops = (int32_t *)((char *)ispcore + 0x120);
-    int32_t (*fn)(int32_t, int32_t, int32_t *) = (int32_t (*)(int32_t, int32_t, int32_t *))(*(int32_t *)(ops + 0x88));
-    int32_t result = ((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))fn)((uintptr_t)(arg1), (uintptr_t)(0x10), (uintptr_t)(&var_10));
-    *(uint16_t *)((char *)arg2 + 2) = (uint16_t)var_10;
-    return result;
+	/* SDK sensor_drv.c sensor_alloc_digital_gain: attr->sensor_ctrl.alloc_dgain(gain, LOG2_GAIN_SHIFT, &dgain),
+	 * p_ctx->dgain = dgain (OEM 0x10994..0x109b4: lw 288(ispcore), lw 136(attr), sh 2(p_ctx)).
+	 * The lift indexed an int32_t pointer with the byte offset 0x88 and called the word at ispcore+0x340. */
+	struct tx_isp_t30_core_sensor_view *core = ispcore;
+	struct tx_isp_t30_sensor_attribute_view *attr;
+	u32 sensor_code = 0;
+	u32 (*alloc_dgain)(u32, u8, u32 *);
+
+	BUILD_BUG_ON(offsetof(struct tx_isp_t30_sensor_attribute_view,
+			      alloc_dgain) != 0x88);
+	if (!core || !arg2)
+		return arg1;
+	attr = (void *)(uintptr_t)core->sensor_attr;
+	if (!attr || !attr->alloc_dgain)
+		return arg1;
+	alloc_dgain = (void *)(uintptr_t)attr->alloc_dgain;
+	arg1 = alloc_dgain(arg1, 16, &sensor_code);
+	*(uint16_t *)((char *)arg2 + 2) = (uint16_t)sensor_code;
+	return arg1;
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_00000000000109c8 origin=fragment_seed original=sensor_alloc_integration_time */
@@ -22562,7 +22577,7 @@ sensor_alloc_integration_time0x28:
     /* fragment 4: MemoryAccess */
     v1 = *(uint16_t *)((char *)a1 + 108);
     v1 = v1 - 1;
-    v0 = v1 < v0;
+    v0 = (int32_t)v1 < (int32_t)(uintptr_t)v0;	/* OEM 0x109f8 slt (signed: native max 0 clamps to 0xffff as the SDK) */
 
     /* fragment 5: Branch */
     if (v0 == 0) { goto sensor_alloc_integration_time0x40; }
@@ -22595,8 +22610,8 @@ uint32_t sensor_set_integration_time(uint32_t a0, uint32_t a1)
 		return 0;
 	if (attr->integration_time != a1) {
 		attr->integration_time = a1;
-		core->messages[0].value = a1;
-		core->messages[0].pending = 1;
+		core->messages[2].value = a1;	/* TX_ISP_I2C_SET_INTEGRATION (OEM sw 400/404) */
+		core->messages[2].pending = 1;
 	}
 	return (u32)(uintptr_t)core;
 }
@@ -22615,8 +22630,8 @@ uint32_t sensor_set_analog_gain(uint32_t a0, uint32_t a1)
 		return 0;
 	if (attr->again != a1) {
 		attr->again = a1;
-		core->messages[2].value = a1;
-		core->messages[2].pending = 1;
+		core->messages[0].value = a1;	/* TX_ISP_I2C_SET_AGAIN (OEM sw 384/388) */
+		core->messages[0].pending = 1;
 	}
 	return (u32)(uintptr_t)core;
 }
