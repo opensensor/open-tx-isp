@@ -21737,7 +21737,8 @@ uint32_t apical_custom_initialization(void)
 
 apical_custom_initialization0xf8:
     /* fragment 17: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_WRITE_32)(1256); /* jalr target resolved by relocation */
+    /* OEM 0xf4..0xf8: a1 = READ(0x4e8) | 1 (or & ~1 from 0x888) is the value; the lift dropped it */
+    APICAL_WRITE_32(1256, (uint32_t)(uintptr_t)a1);
 
     /* fragment 18: MemoryAccess */
     v0 = customer_ptr;
@@ -21764,7 +21765,13 @@ apical_custom_initialization0xf8:
 
 apical_custom_initialization0x144:
     /* fragment 24: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_WRITE_32)(a0); /* jalr target resolved by relocation */
+    /*
+     * OEM 0x13c..0x144 (apical_isp_fr_sharpen_enable_write(1)): a1 = READ(0x500) | 1, or from 0x8d8
+     * READ(0x720) & ~1 with a0 = 0x720.  The lift dropped a1, so 0x500 got a stale register value
+     * and lost bits 2-3 (fr sharpen "coring" = LUT bank 1 from the ISP sequence, record 0x500 04/0d):
+     * device b22 0x500 = 1 (vendor 5).
+     */
+    APICAL_WRITE_32(a0, (uint32_t)(uintptr_t)a1);
 
     /* fragment 25: MemoryAccess */
     v0 = customer_ptr;
@@ -21784,7 +21791,9 @@ apical_custom_initialization0x144:
 
 apical_custom_initialization0x170:
     /* fragment 29: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_WRITE_32)(1568); /* jalr target resolved by relocation */
+    /* OEM 0x16c..0x170 (apical_isp_ds1_sharpen_enable_write): a1 = READ(0x620) | 1 or & ~1 (0x92c); the
+     * lift dropped it, 0x620 lost the coring bits like 0x500 (b22 open 1, vendor 5) */
+    APICAL_WRITE_32(1568, (uint32_t)(uintptr_t)a1);
 
     /* fragment 30: CallSetup */
     s4 = -256;
@@ -21799,8 +21808,10 @@ apical_custom_initialization0x170:
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(464); /* jalr target resolved by relocation */
 
     /* fragment 33: CallSetup */
-    s3 = -4096;
+    /* OEM: ge_threshold (customer word 2) into 0x1d0[11:0]; the lift reused s3 after loading -4096,
+     * so the field was always written 0 */
     v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(464, ((uintptr_t)s3 & 4095) | ((uintptr_t)v0 & (-4096))); /* jalr target resolved by relocation */
+    s3 = -4096;
 
     /* fragment 34: CallSetup */
     s5 = *(uint32_t *)((char *)(customer_ptr) + 12);
@@ -21821,9 +21832,11 @@ apical_custom_initialization0x170:
     v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)APICAL_READ_32)(448); /* jalr target resolved by relocation */
 
     /* fragment 39: CallSetup */
+    /* OEM: dp_module (customer word 5) -> 0x1c0 bit 2 (raw frontend defect pixel enable); the lift
+     * shifted twice, so DPC was always written off */
     s5 = s5 << 2;
     s5 = s5 & 4;
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(448, (s5 << 2 & 4) | ((uintptr_t)v0 & (-5))); /* jalr target resolved by relocation */
+    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(448, s5 | ((uintptr_t)v0 & (-5))); /* jalr target resolved by relocation */
 
     /* fragment 40: CallSetup */
     s5 = *(uint32_t *)((char *)(customer_ptr) + 24);
@@ -22030,7 +22043,8 @@ apical_custom_initialization0x170:
     s5 = s5 >> 6;
     s5 = s5 & 1;
     s5 = s5 << 7;
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(1132, ((s5 >> 6 & 1) << 7) | ((uintptr_t)v0 & (-129))); /* jalr target resolved by relocation */
+    /* OEM 0x640..0x654: bit 6 of customer word 33 -> 0x46c bit 7; the lift applied the shift twice (always 0) */
+    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(uintptr_t)APICAL_WRITE_32)(1132, s5 | ((uintptr_t)v0 & (-129))); /* jalr target resolved by relocation */
 
     /* fragment 98: CallSetup */
     s5 = *(uint32_t *)((char *)(customer_ptr) + 136);

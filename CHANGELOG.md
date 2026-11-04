@@ -4,6 +4,12 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-04: T30 sharpen coring bank and customer init fields as the vendor (Unicorn oracle + QEMU T30; T30X device test pending)
+
+- T30X b22: ISP `0x500` / `0x620` (FR / DS1 sharpen: enable bit 0, "coring" = sharpen LUT bank bits 2-3) read 5 on the vendor stack and 1 on the open stack. The ISP sequence (group 2, record `0x500`/`0x620` value 4 mask 0x0d) sets bank 1; the OEM `apical_custom_initialization` (`0xfd70`, `0x13c`..`0x144` / `0x16c`..`0x170`) then writes `READ | 1`. The lift dropped the value argument of these `APICAL_WRITE_32` calls (and of `0x4e8`), so a stale register value was written and the bank bits were lost.
+- Same function, same lift classes: `0x1d0` (green-equalisation threshold) was written from a reused register (always 0), `0x1c0` bit 2 (raw frontend defect pixel enable from the tuning bin) and `0x46c` bit 7 were shifted twice (always 0).
+- Evidence: Unicorn oracle `tools/ko_emu/diff_t30_custom_init.py` (session tools; vendor `apical_custom_initialization` from the SDK-built `tx-isp-t30.ko`, same layout as the OEM) vs ours, random register files and tuning-bin customer blocks incl. all eight combinations of top bits 19/20/27: 500/500 identical write sequences (old ko: 50/50 differ). QEMU T30 fresh boot: `0x500` = `0x620` = 5 (old ko: stale `0x33652593`), apitest isp area unchanged, 0 oops. `t30_callarg_check` baseline: 3 entries fixed.
+
 ## 2026-11-04: T30 day/night switch reloads the night parameter set as the vendor (QEMU T30; T30X device test pending)
 
 - `IMP_ISP_Tuning_SetISPRunningMode(NIGHT)` / `DAY` (DAY_OR_NIGHT, `0x80000e1`) only set a flag: the open interrupt handler never raised tuning event `0x4000003`, which the OEM frame-end case sends to reload the day or night set (T30X b19-b21: night not monochrome, vendor U = V = 128.00).
