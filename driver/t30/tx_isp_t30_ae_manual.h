@@ -152,4 +152,20 @@ static inline u32 t30_ae_max_integration(const u8 *stab, u32 sensor_max)
 	return item && item < sensor_max ? item : sensor_max;
 }
 
+/*
+ * iridix_fsm_process_interrupt (OEM fw iridix_hist_func.c.o 0x94..0xa8): the
+ * collection correction (ISP 0x3dc, Q8, default 0x100) is
+ * math_exp2(previous - current exposure, 16, 8) clamped with SIGNED compares:
+ * "bltz -> 0x100" and "slti 4096 / movz -> 0x1000" (0x1000 & 0xfff = 0 in the
+ * register).  The lift compared a pointer-typed value (unsigned), so a
+ * math_exp2 result with bit 31 set gave 0x1000 (register 0) where the vendor
+ * writes 0x100.
+ */
+static inline u32 t30_iridix_collection_correction(u32 ratio_q8)
+{
+	if ((s32)ratio_q8 < 0)
+		return 0x100;
+	return (s32)ratio_q8 < 0x1000 ? ratio_q8 : 0x1000;
+}
+
 #endif /* TX_ISP_T30_AE_MANUAL_H */
