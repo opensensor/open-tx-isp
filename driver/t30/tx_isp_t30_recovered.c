@@ -11867,6 +11867,17 @@ int32_t apical_isp_gamma_g_attr_isra_0(void *arg1)
     return (int32_t)copy_to_user((void __user *)(uintptr_t)((void *)s0), buf, 0x102);
 }
 
+/*
+ * Frame-done state of IMAGE_TUNING_CID_WAIT_FRAME (OEM frame_done_wq, frame_done_cond,
+ * frame_done_cnt).  The lifted byte-array copies were not usable as a wait queue (the
+ * static initialiser put a pointer into the spinlock word, the wake-up went to the count)
+ * and nothing raised the frame-done event, so the control never completed.
+ */
+static DECLARE_WAIT_QUEUE_HEAD(tx_isp_t30_frame_done_wq);
+static DEFINE_SPINLOCK(tx_isp_t30_frame_done_lock);
+static u64 tx_isp_t30_frame_done_count;
+static int tx_isp_t30_frame_done_cond;
+
 /* WHOLE_DRIVER_CANDIDATE fn_00000000000044e4 origin=model_output original=isp_core_tuning_event */
 int32_t isp_core_tuning_event(int32_t *arg1, int32_t arg2, int32_t arg3)
 {
@@ -11883,16 +11894,16 @@ int32_t isp_core_tuning_event(int32_t *arg1, int32_t arg2, int32_t arg3)
     uint16_t w4, w6, w8;
     uint32_t prod;
 
-    if (arg2 == 0x4000002) {
-        int32_t cnt = *(int32_t *)&frame_done_cnt;
-        int32_t cnt_hi = *(int32_t *)((char *)((char *)&frame_done_cnt + 0x4));
-        int32_t new_cnt = cnt + 1;
-        int32_t carry = (uint32_t)new_cnt < (uint32_t)cnt ? 1 : 0;
-        *(int32_t *)((char *)((char *)&frame_done_cnt + 0x4)) = cnt_hi + carry;
-        *(int32_t *)&frame_done_cnt = new_cnt;
-        *(int32_t *)&frame_done_cond = 1;
-        *(int32_t *)((char *)((char *)&frame_done_cond + 0x4)) = 0;
-        __wake_up(&frame_done_cnt, 3, 1, 0);
+    if (arg2 == 0x4000002) {	/* frame done (OEM ISR frame end) */
+        {
+            unsigned long flags;
+
+            spin_lock_irqsave(&tx_isp_t30_frame_done_lock, flags);
+            tx_isp_t30_frame_done_count++;
+            spin_unlock_irqrestore(&tx_isp_t30_frame_done_lock, flags);
+        }
+        ACCESS_ONCE(tx_isp_t30_frame_done_cond) = 1;
+        wake_up_interruptible_all(&tx_isp_t30_frame_done_wq);
         return 0;
     }
 
@@ -19131,6 +19142,17 @@ static int tx_isp_t30_ispcore_interrupt(struct tx_isp_t30_subdev *sd)
 		if (g_switch_lfb_on) {
 			isp_lfb_ctrl_flb_enable(1);
 			g_switch_lfb_on = 0;
+		}
+		/*
+		 * OEM ispcore_interrupt_service_routine, frame end: tuning event
+		 * 0x4000002 (frame done) through the handler the tuning block holds at
+		 * +0x40d4; WaitFrame and the frame-done count depend on it.
+		 */
+		{
+			struct tx_isp_t30_core_tuning_view *tcore = (void *)core;
+
+			if (tcore->tuning && !IS_ERR(tcore->tuning))
+				isp_core_tuning_event((int32_t *)tcore->tuning, 0x4000002, 0);
 		}
 	}
 	tx_isp_t30_dispatch_firmware_irqs(irq_status);

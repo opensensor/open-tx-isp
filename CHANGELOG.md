@@ -19,6 +19,11 @@ marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned 
 - The calibrated AWB publishes its red/blue factors (halved) into system table items 49/50 while AWB is not manual, so `GetWB` no longer reports the 50/50 initial values (T30X: 175/92 while the vendor reads 132/124 on the same scene: the calibrated AWB settles on another balance, an algorithm difference, not the getter; #202 stays open).
 - Evidence: T30 QEMU picture area 67 cases, no oops, no slab report; T30X apitest `isp` area 48 PASS / 0 FAIL, 0 oopses; host tests green.
 
+## 2026-11-04: T30 WaitFrame (tuning control 0x8000162) and the frame-done event (QEMU T30; device check pending)
+
+- The lifted `IMAGE_TUNING_CID_WAIT_FRAME` was unusable: its wait queue head was a byte array with a pointer in the spinlock word, the wake-up went to the counter, the wait loop dereferenced a static instead of `current`, and the ISR never raised the frame-done event. Now a proper wait queue, the frame end raises the OEM tuning event 0x4000002 and the control (timeout in jiffies like the vendor, 64-bit count in words 2-3, -ETIMEDOUT / -ERESTARTSYS) is served in `tx_isp_t30_tuning_ctl.h`.
+- QEMU T30: three `WaitFrame(100)` return 0 with count 92, 93, 94; timeout 0 returns -1 with the count kept; apitest isp 48/0, 0 oopses. OpenIMP sends the control on T30 as the vendor 1.0.5 does.
+
 ## 2026-11-03: T40 CDNS (chroma denoise) runs like the vendor, day and night (#203; host + QEMU + Eufy T40 camera)
 
 - `enable_cdns` is no longer opt-in: it follows the tuning bank flag 19 (TOP bit 19) like YDNS/SDNS, as the OEM `tisp_main_init` does (both sc830ai banks have the flag clear, so the vendor runs CDNS in day and night). `t40_force_active` / `t40_force_bypass` bit 19 override. The day/night bank refresh now reloads the section and repacks at the remembered gain (OEM `tisp_cdns_dn_params_refresh`).
