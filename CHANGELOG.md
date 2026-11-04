@@ -4,11 +4,13 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
-## 2026-11-04: T30 horizontal mirror, manual white balance and scene mode as the vendor (QEMU T30; T30X device proof: batch b20 pending)
+## 2026-11-04: T30 horizontal mirror, manual white balance and scene mode as the vendor (QEMU T30; T30X lab camera b20: mirror and scene; manual WB recovery: b21 pending)
 
 - Horizontal mirror: the OEM ISP interrupt applies a pending HFLIP control in its frame-end case (`0x40` bit 1 = not mirrored, bayer phase in `0x18` moved by one column; one row for a vertical flip when the input format changed). The open interrupt handler had no such step, so `IMP_ISP_Tuning_SetISPHflip` stored the state but never changed the picture (T30X b19: mirrored picture = base). QEMU: `0x40` `0x33242193` -> `0x33242191`, bayer 3 -> 2 and back on every toggle.
 - Manual white balance: OEM `awb_normalise()` takes the red/blue feedback factors from the system items 49/50 while AWB is manual (system item 12); the open AWB update kept computing them from the statistics and overwrote the manual gains every frame (T30X b19: no picture change). `system_manual_awb()` restored from the OEM (SET stores item 12; the lift dropped the SET and stored on invalid directions).
 - Scene mode: the stock handler returns without storing anything, so `GetSceneMode` reads 0 after a set on the vendor stack (T30X b17-b19); the open driver kept the value and now leaves it alone (QEMU: set 8 -> get 0).
+- Manual white balance, follow-up: while AWB is manual the gains are written from the system items alone and the automatic filter state is kept, so AWB resumes from its last automatic estimate. Writing the manual factors into the filter (first version) left AWB stuck after a manual red factor of 4: every zone was rejected and the automatic estimate never moved again (T30X b20).
+- Device (T30X lab camera `.231`, b20, open stack and vendor stack picture runs in the same boot): H, V and HV mirror PASS on both stacks; GetSceneMode 0 after a set on both; manual white balance now changes the picture (red factor 4: V 115 -> 25).
 - Host tests green.
 
 ## 2026-11-04: T31 defog tables come from the active tuning bin, like the vendor (`claude/t31-defog-from-bin`; host + Unicorn oracle + QEMU T31 + T31X light-box camera)

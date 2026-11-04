@@ -54149,6 +54149,52 @@ static void tx_isp_t30_awb_apply_calibrated_gains(void)
 	}
 }
 
+/*
+ * awb_normalise() combines the two feedback factors with all four values of
+ * CALIBRATION_STATIC_WB and raises the minimum channel to unity, in the
+ * hardware's Q8 linear gain domain.
+ */
+static void tx_isp_t30_awb_write_gains(struct tx_isp_t30_simple_3a_state *state,
+				       const u16 *static_wb, u32 red_scale,
+				       u32 blue_scale)
+{
+	u32 gains[4];
+	u32 minimum_gain;
+
+	gains[0] = ((u32)static_wb[0] * red_scale + 0x80) >> 8;
+	gains[1] = static_wb[1];
+	gains[2] = static_wb[2];
+	gains[3] = ((u32)static_wb[3] * blue_scale + 0x80) >> 8;
+	minimum_gain = min(min(gains[0], gains[1]), min(gains[2], gains[3]));
+	if (!minimum_gain)
+		return;
+	gains[0] = clamp_t(u32,
+		(gains[0] * 0x100U + minimum_gain / 2) / minimum_gain,
+		0x40, 0xfff);
+	gains[1] = clamp_t(u32,
+		(gains[1] * 0x100U + minimum_gain / 2) / minimum_gain,
+		0x40, 0xfff);
+	gains[2] = clamp_t(u32,
+		(gains[2] * 0x100U + minimum_gain / 2) / minimum_gain,
+		0x40, 0xfff);
+	gains[3] = clamp_t(u32,
+		(gains[3] * 0x100U + minimum_gain / 2) / minimum_gain,
+		0x40, 0xfff);
+	state->gain_00 = gains[0];
+	state->gain_01 = gains[1];
+	state->gain_10 = gains[2];
+	state->gain_11 = gains[3];
+
+	APICAL_WRITE_32(0x300, (APICAL_READ_32(0x300) & ~0xfffU) |
+			state->gain_00);
+	APICAL_WRITE_32(0x304, (APICAL_READ_32(0x304) & ~0xfffU) |
+			state->gain_01);
+	APICAL_WRITE_32(0x308, (APICAL_READ_32(0x308) & ~0xfffU) |
+			state->gain_10);
+	APICAL_WRITE_32(0x30c, (APICAL_READ_32(0x30c) & ~0xfffU) |
+			state->gain_11);
+}
+
 static void tx_isp_t30_simple_awb_update(int32_t *awb_fsm)
 {
 	struct tx_isp_t30_simple_3a_state *state = &tx_isp_t30_simple_3a;
@@ -54171,8 +54217,6 @@ static void tx_isp_t30_simple_awb_update(int32_t *awb_fsm)
 	u32 desired_blue_scale;
 	u32 average_rg;
 	u32 average_bg;
-	u32 gains[4];
-	u32 minimum_gain;
 	u32 coefficient;
 	u32 active_zones = 0;
 	u32 zone;
@@ -54197,6 +54241,17 @@ static void tx_isp_t30_simple_awb_update(int32_t *awb_fsm)
 	if (!static_wb || !average_coefficient || !average_coefficient[0] ||
 	    !rg_table || !bg_table || !weight_table || !ct_table)
 		return;
+	/*
+	 * OEM awb_normalise(): while AWB is manual (system item 12) the red and
+	 * blue feedback factors are the system items 49/50 (halved Q8).  The
+	 * automatic filter state is left alone, so AWB resumes from its last
+	 * automatic estimate when the mode returns to auto.
+	 */
+	if (stab[12]) {
+		tx_isp_t30_awb_write_gains(state, static_wb, (u32)stab[49] << 1,
+					   (u32)stab[50] << 1);
+		return;
+	}
 	coefficient = average_coefficient[0];
 	rg_pos = rg_table->ptr;
 	bg_pos = bg_table->ptr;
@@ -54360,15 +54415,6 @@ static void tx_isp_t30_simple_awb_update(int32_t *awb_fsm)
 	state->awb_blue_scale = clamp_t(u32,
 		(state->blue_target_sum + coefficient / 2) / coefficient,
 		0x40, 0x400);
-	/* OEM awb_normalise(): manual AWB (system item 12) takes the red/blue
-	 * feedback factors from the system items 49/50 (halved Q8), and the
-	 * filter continues from them when AWB returns to auto */
-	if (stab[12]) {
-		state->awb_red_scale = (u32)stab[49] << 1;
-		state->awb_blue_scale = (u32)stab[50] << 1;
-		state->red_target_sum = coefficient * state->awb_red_scale;
-		state->blue_target_sum = coefficient * state->awb_blue_scale;
-	}
 	/* OEM awb_normalise(): with AWB not manual (system item 12) the red/blue feedback factors
 	 * are published halved into the system items 49/50, which back GetWB (#202) */
 	if (!stab[12]) {
@@ -54376,43 +54422,8 @@ static void tx_isp_t30_simple_awb_update(int32_t *awb_fsm)
 		stab[50] = (u8)min_t(u32, state->awb_blue_scale >> 1, 0xff);
 	}
 
-	/*
-	 * awb_normalise() combines the two feedback factors with all four values
-	 * from CALIBRATION_STATIC_WB, then raises the minimum channel to unity.
-	 * Express the same operation in the hardware's Q8 linear gain domain.
-	 */
-	gains[0] = ((u32)static_wb[0] * state->awb_red_scale + 0x80) >> 8;
-	gains[1] = static_wb[1];
-	gains[2] = static_wb[2];
-	gains[3] = ((u32)static_wb[3] * state->awb_blue_scale + 0x80) >> 8;
-	minimum_gain = min(min(gains[0], gains[1]), min(gains[2], gains[3]));
-	if (!minimum_gain)
-		return;
-	gains[0] = clamp_t(u32,
-		(gains[0] * 0x100U + minimum_gain / 2) / minimum_gain,
-		0x40, 0xfff);
-	gains[1] = clamp_t(u32,
-		(gains[1] * 0x100U + minimum_gain / 2) / minimum_gain,
-		0x40, 0xfff);
-	gains[2] = clamp_t(u32,
-		(gains[2] * 0x100U + minimum_gain / 2) / minimum_gain,
-		0x40, 0xfff);
-	gains[3] = clamp_t(u32,
-		(gains[3] * 0x100U + minimum_gain / 2) / minimum_gain,
-		0x40, 0xfff);
-	state->gain_00 = gains[0];
-	state->gain_01 = gains[1];
-	state->gain_10 = gains[2];
-	state->gain_11 = gains[3];
-
-	APICAL_WRITE_32(0x300, (APICAL_READ_32(0x300) & ~0xfffU) |
-			state->gain_00);
-	APICAL_WRITE_32(0x304, (APICAL_READ_32(0x304) & ~0xfffU) |
-			state->gain_01);
-	APICAL_WRITE_32(0x308, (APICAL_READ_32(0x308) & ~0xfffU) |
-			state->gain_10);
-	APICAL_WRITE_32(0x30c, (APICAL_READ_32(0x30c) & ~0xfffU) |
-			state->gain_11);
+	tx_isp_t30_awb_write_gains(state, static_wb, state->awb_red_scale,
+				   state->awb_blue_scale);
 	state->awb_updates++;
 	if (state->awb_updates <= 8 || !(state->awb_updates & 0x1f))
 		pr_info("tx-isp-t30: calibrated AWB zones=%u mesh=%u/%u ct=%u scale=%u/%u gain=0x%x/0x%x/0x%x/0x%x\n",
