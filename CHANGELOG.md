@@ -4,6 +4,10 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-04: T30 day/night tables, system table and customer registers checked against the Ingenic T30 SDK source (`claude/t30-from-t20`; host oracle, no driver change)
+
+- `tests/t30/sdk_oracle` (`make -C tests t30_sdk_oracle`, SKIP without the SDK source) parses and compiles the Ingenic T30 SDK ISP core at test time (`external/ingenic-sdk/common/isp/t30`, or `T30_SDK_DIR`) and compares it with our T30 driver: the 93 (firmware table, calibration API id) pairs of the day/night reload, the 52 system table items (offset, width, 60 bytes), the 15 `stab[]` indices the reload writes, and the 43 customer register fields (the SDK register writers are executed with one customer word set at a time). All equal; a mutation of one table id, register or field width fails.
+
 ## 2026-11-04: T30 day/night switch reloads the night parameter set as the vendor (QEMU T30; T30X device test pending)
 
 - `IMP_ISP_Tuning_SetISPRunningMode(NIGHT)` / `DAY` (DAY_OR_NIGHT, `0x80000e1`) only set a flag: the open interrupt handler never raised tuning event `0x4000003`, which the OEM frame-end case sends to reload the day or night set (T30X b19-b21: night not monochrome, vendor U = V = 128.00).
