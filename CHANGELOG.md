@@ -4,6 +4,11 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-04: T30 VIC start constants checked against the SDK-built ko (`claude/t30-vic`; desk/Unicorn proof, no runtime change on the T30X SC4236 MIPI path)
+
+- `tx_isp_vic_start` (driver/t30/tx_isp_t30_recovered.c) carried three lift errors in the DVP and default branches: two symbol addresses used as register values (`&apical_downscaler_lut + 0x1f0`, `&isp_kfifo_in + 0x8dc`; the ko has `lui 0x4` / `lui 0x5`, VIC reg 0x10 = 0x40000 / 0x50000), an inverted `sensor_id >= 0x2002` test (ko `sltiu 0x2002 ; movn`), and a poll of VIC_CONTROL before START in the default branch that the ko does not have.
+- The MIPI branch (dbus type 1, SC4236 chip id 0x3235) was already identical to the ko. Unicorn differential `diff_t30_vic_start.py` (ordered VIC stores, VIC_CONTROL polls, printk line numbers, 3000 cases over all branch ids, MIPI/DVP/other bus types, DVP gpio/mode combinations): was 723/3000 different, now 0; three one-constant mutations are detected.
+
 ## 2026-11-04: T30 analog gain reaches the sensor again, anti-flicker off by default as the vendor (`claude/t30-ae-gain`; host test; T30X device proof pending)
 
 - T30X b22 (SC4236): the open AE reported analog gain code `0x71e` (15x) while the sensor gain registers `0x3e08/0x3e09` stayed `03/10` (1x) in every case; ISP digital gain ran at its maximum to compensate (vendor: `1f/1e`, dgain `0x215`).

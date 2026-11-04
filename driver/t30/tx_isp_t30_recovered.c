@@ -7781,9 +7781,10 @@ int tx_isp_vic_start(void *arg1)
 		} else if (sensor_id >= 0x3001) {
 			int bit = 1 << ((sensor_id - 0x3001) & 0x1f);
 			if (bit & 0x38080) {
-				v0_18 = ((char *)&apical_downscaler_lut + 0x1f0);
+				/* OEM/SDK-built ko tx_isp_vic_start 0x400-0x414: lui 0x4 / lui 0x5 (values, not addresses) */
+				v0_18 = 0x40000;
 				if (*(int *)((char *)sensor + 0x1c) == 2)
-					v0_18 = ((char *)&isp_kfifo_in + 0x8dc);
+					v0_18 = 0x50000;
 			} else if (bit & 0x6240) {
 				bits = *(int *)((char *)sensor + 0x18);
 				if (*(int *)((char *)sensor + 0x1c) != mode) {
@@ -7826,7 +7827,7 @@ int tx_isp_vic_start(void *arg1)
 			int t1_1 = 0xc0000;
 			if (sensor_id != 0x1006)
 				a3_1 = 0;
-			if (sensor_id >= 0x2002)
+			if (sensor_id < 0x2002)	/* ko 0x224: sltiu id,0x2002 ; movn t1,zero */
 				t1_1 = 0;
 			v0_18 = 0xc0000;
 			if (sensor_id != 0x2011)
@@ -7857,13 +7858,12 @@ int tx_isp_vic_start(void *arg1)
 		*(int *)((char *)vic + 0) = 1;
 		return 0;
 	} else {
-		*(int *)((char *)vic + 0x10) = ((char *)&apical_downscaler_lut + 0x1f0);
+		/* ko 0x428-0x470: lui 0x4 (value), no poll of VIC_CONTROL before START in this branch */
+		*(int *)((char *)vic + 0x10) = 0x40000;
 		*(int *)((char *)vic + 0xc) = 3;
 		*(int *)((uintptr_t)vic + 4) = (width << 16) | height;
 		*(int *)((char *)vic + 0x50) = 0;
 		*(int *)((char *)vic + 0xb0) = 0x80008000;
-		while (*(int *)((char *)vic + 0) != 0)
-			;
 		*(int *)((char *)vic + 0) = 1;
 		return 0;
 	}
