@@ -122,6 +122,13 @@ struct tctl_table_info {
 	void *ptr;
 };
 struct tctl_gamma { u16 gamma[129]; };
+struct tctl_wait_frame {
+	u32 timeout;
+	u32 reserved;
+	u32 count_lo;
+	u32 count_hi;
+	u32 tail[2];
+};
 
 static inline void tctl_check_abi(void)
 {
@@ -138,6 +145,7 @@ static inline void tctl_check_abi(void)
 	BUILD_BUG_ON(sizeof(struct tctl_expr_get) != 0xc);
 	BUILD_BUG_ON(sizeof(struct tctl_expr_set) != 0xc);
 	BUILD_BUG_ON(sizeof(struct tctl_table_info) != 0x18);
+	BUILD_BUG_ON(sizeof(struct tctl_wait_frame) != 0x18);
 	BUILD_BUG_ON(sizeof(struct tctl_gamma) != 0x102);
 	BUILD_BUG_ON(offsetof(struct tx_isp_t30_core_tuning_view, param) != 0x19c);
 	BUILD_BUG_ON(offsetof(struct tx_isp_t30_core_video_view, hflip_state) != 0x174);
@@ -478,6 +486,42 @@ static int tctl_table_set(void *core, int32_t value)
 		pr_err("%s,%d, ret = %u\n", __func__, __LINE__, ret);
 	kfree(data);
 	return 0;
+}
+
+/*
+ * IMAGE_TUNING_CID_WAIT_FRAME.  The 0x18-byte block holds the timeout in word 0
+ * (passed to schedule_timeout as it is, i.e. jiffies, like the OEM) and receives
+ * the 64-bit frame-done count in words 2 and 3.  Returns 0 when a frame ended
+ * during the wait, -ETIMEDOUT otherwise, -ERESTARTSYS on a signal; the count is
+ * copied back in every case.
+ */
+static int tctl_wait_frame(int32_t value)
+{
+	struct tctl_wait_frame w;
+	unsigned long flags;
+	long left;
+	int ret;
+	u64 count;
+
+	if (copy_from_user(&w, tctl_uptr(value), sizeof(w)))
+		return -EFAULT;
+	ACCESS_ONCE(tx_isp_t30_frame_done_cond) = 0;
+	left = wait_event_interruptible_timeout(tx_isp_t30_frame_done_wq,
+		ACCESS_ONCE(tx_isp_t30_frame_done_cond) == 1,
+		min_t(unsigned long, w.timeout, MAX_SCHEDULE_TIMEOUT - 1));
+	if (left < 0)
+		ret = -ERESTARTSYS;
+	else
+		ret = (left > 0 || ACCESS_ONCE(tx_isp_t30_frame_done_cond) == 1) ? 0 :
+		      -ETIMEDOUT;
+	spin_lock_irqsave(&tx_isp_t30_frame_done_lock, flags);
+	count = tx_isp_t30_frame_done_count;
+	spin_unlock_irqrestore(&tx_isp_t30_frame_done_lock, flags);
+	w.count_lo = (u32)count;
+	w.count_hi = (u32)(count >> 32);
+	if (copy_to_user(tctl_uptr(value), &w, sizeof(w)))
+		return -EFAULT;
+	return ret;
 }
 
 /* ---------------------------------------------------------------- get --- */
@@ -887,6 +931,8 @@ ev_err:
 		return tctl_table_get(tuning, core, c->value);
 	case 0x080000a6:	/* CSC_ATTR, beyond vendor */
 		return tctl_csc_get(core, c->value);
+	case 0x08000162:	/* WAIT_FRAME: OEM g_ctrl 0x8000162 */
+		return tctl_wait_frame(c->value);
 	}
 	return TCTL_UNHANDLED;
 }

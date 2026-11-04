@@ -34,6 +34,29 @@ marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned 
 - The calibrated AWB publishes its red/blue factors (halved) into system table items 49/50 while AWB is not manual, so `GetWB` no longer reports the 50/50 initial values (T30X: 175/92 while the vendor reads 132/124 on the same scene: the calibrated AWB settles on another balance, an algorithm difference, not the getter; #202 stays open).
 - Evidence: T30 QEMU picture area 67 cases, no oops, no slab report; T30X apitest `isp` area 48 PASS / 0 FAIL, 0 oopses; host tests green.
 
+## 2026-11-04: T30 b21 "AE brightness regression" analysed (`claude/t30-ae-fix`; desk analysis, no code change yet)
+
+- b20 -> b21 the AE state is identical (dmesg "calibrated AE": mean 6-7, target 29, int 1440, again 256041 = max, ISP gain 256000 = max in both): the system-items / AE-comp commit did not change the AE. Item 53 reaches the target (b21: aecomp-low target 6, high 139; b20 stayed 29).
+- The b20 -> b21 drop (Y 118 -> 64) comes from the exposure-history commit: Iridix collection correction 0x3dc 0 -> 0x100 and strength 0x3c4 0x46 -> 0x2a (vendor 0xfe / 0x24). With 0x3dc = 0 the old Iridix over-brightened; b21 is the correct Iridix behaviour.
+- The real defect, present since at least b19: the compact AE is pinned at maximum exposure because the histogram mean never reaches the target, so AE compensation cannot act (vendor Y 70/174, open 64/64). The vendor reads the same histogram (ae_read_full_histogram_data, 0x10000, 4.12 float bins) and computes the same mean (ae_calculate_target), so the signal itself is too low: on the open stack exp-short (ISP gain 1x) gives Y 6.7 with "again 15x" against vendor Y 13.4 at 1x/1x, i.e. the analog gain is not effective or the front end (black level) eats the signal. Also: the again cap (item 29) is ignored (again stays 256041 with limits 32 and 1) and the integration time stops at 1440 lines (vendor 1915).
+- Next: dump 0x3e08/0x3e09 (sensor) and the black-level registers on both stacks at base; port vendor ae_calculate_exposure (log2 integrator with anti-windup) once the signal path is right.
+
+## 2026-11-04: T30 compact AE keeps the exposure history, Iridix gets its linear ratio (`claude/t30-ae-exphistory`; QEMU T30, device b21 pending)
+
+- `iridix_fsm_process_interrupt` compares the current frame exposure with the previous one (OEM ring of 8 exposure sets, `cmos_store_frame_exposure_set` / `cmos_move_exposure_history`). The compact AE bypasses `cmos_update_exposure_history()` and the open firmware IRQ gate keeps the CMOS frame-start event off, so the ring never filled or moved: previous = 0 against the current 0x1e828, linear ratio exp2(negative) = 0, register 0x3dc stayed 0 and the Iridix strength (0x3c4) was never written (RawDRC without effect; vendor 0x3dc = 0x100).
+- The AE cycle (once per frame) now stores the applied exposure as the pending set and advances the ring (`tx_isp_t30_ae_store_exposure_history`), also on frames without statistics. QEMU T30 debug kernel: before cur=1e828 prev=0 ratio=0 0x3dc=0 0x3c4=0x46; after cur=prev, ratio 0x100, 0x3dc=0x100, 0x3c4 written (0x58, 0x62, 0x63, 0x64 ...). apitest isp 48/0, 0 oopses. Not ported: the 0x400a0/0x400a8 gain mirrors of the OEM function.
+
+## 2026-11-04: T30 system table accessors as the vendor, compact AE honours AE compensation and the manual items (#202; host + QEMU T30, picture effect pending a device batch)
+
+- 21 of the 51 lifted `system_*` accessors (`apical_command` type 1) had lost the SET arm or answered the GET wrongly (manual exposure, manual integration time/gains/sharpening/AWB/saturation, dark/bright target, limits, anti-flicker, bad pixels; `GetExpr` mode was always 0). Each vendor accessor is the same code, so all 51 are now `t30_system_item()` on the vendor item offset (`tx_isp_t30_system_item.h`, host test, `check_t30_system_items.sh`).
+- The compact AE ignored the AE compensation (item 53; OEM `ae_calculate_target` adds `(item-0x80)<<11` to the Q16 log2 target), the manual exposure (items 1, 16), integration time (3, 24) and gains (4, 6, 28, 32), and overwrote the table items each frame. `tx_isp_t30_ae_manual.h` (host-tested) carries the arithmetic.
+- QEMU T30 (debug kernel): `SetExpr(manual, 100 lines)` GetExpr mode 0 -> 1, it 100, held 3 s; `SetIntegrationTime` manual likewise; apitest isp 48/0, 0 oopses. Vendor-equal, unchanged: `SetExpr` in microseconds is -1 while the sensor reports 0 us/line.
+
+## 2026-11-04: T30 WaitFrame (tuning control 0x8000162) and the frame-done event (QEMU T30; device check pending)
+
+- The lifted `IMAGE_TUNING_CID_WAIT_FRAME` was unusable: its wait queue head was a byte array with a pointer in the spinlock word, the wake-up went to the counter, the wait loop dereferenced a static instead of `current`, and the ISR never raised the frame-done event. Now a proper wait queue, the frame end raises the OEM tuning event 0x4000002 and the control (timeout in jiffies like the vendor, 64-bit count in words 2-3, -ETIMEDOUT / -ERESTARTSYS) is served in `tx_isp_t30_tuning_ctl.h`.
+- QEMU T30: three `WaitFrame(100)` return 0 with count 92, 93, 94; timeout 0 returns -1 with the count kept; apitest isp 48/0, 0 oopses. OpenIMP sends the control on T30 as the vendor 1.0.5 does.
+
 ## 2026-11-03: T40 CDNS (chroma denoise) runs like the vendor, day and night (#203; host + QEMU + Eufy T40 camera)
 
 - `enable_cdns` is no longer opt-in: it follows the tuning bank flag 19 (TOP bit 19) like YDNS/SDNS, as the OEM `tisp_main_init` does (both sc830ai banks have the flag clear, so the vendor runs CDNS in day and night). `t40_force_active` / `t40_force_bypass` bit 19 override. The day/night bank refresh now reloads the section and repacks at the remembered gain (OEM `tisp_cdns_dn_params_refresh`).

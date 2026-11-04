@@ -892,6 +892,8 @@ static unsigned char stab[60] __aligned(4);
  */
 #define T30_STAB16(off) (*(u16 *)(stab + (off)))
 #define T30_STAB32(off) (*(u32 *)(stab + (off)))
+#include "tx_isp_t30_system_item.h"
+#include "tx_isp_t30_ae_manual.h"
 static const uint8_t CSWTCH_192[10];
 #include "tx_isp_t30_tuning_math.h"
 static const uint16_t resize_height_write_table[5] = {
@@ -11867,6 +11869,17 @@ int32_t apical_isp_gamma_g_attr_isra_0(void *arg1)
     return (int32_t)copy_to_user((void __user *)(uintptr_t)((void *)s0), buf, 0x102);
 }
 
+/*
+ * Frame-done state of IMAGE_TUNING_CID_WAIT_FRAME (OEM frame_done_wq, frame_done_cond,
+ * frame_done_cnt).  The lifted byte-array copies were not usable as a wait queue (the
+ * static initialiser put a pointer into the spinlock word, the wake-up went to the count)
+ * and nothing raised the frame-done event, so the control never completed.
+ */
+static DECLARE_WAIT_QUEUE_HEAD(tx_isp_t30_frame_done_wq);
+static DEFINE_SPINLOCK(tx_isp_t30_frame_done_lock);
+static u64 tx_isp_t30_frame_done_count;
+static int tx_isp_t30_frame_done_cond;
+
 /* WHOLE_DRIVER_CANDIDATE fn_00000000000044e4 origin=model_output original=isp_core_tuning_event */
 static void tx_isp_t30_csc_reapply(void *tuning);
 int32_t isp_core_tuning_event(int32_t *arg1, int32_t arg2, int32_t arg3)
@@ -11884,16 +11897,16 @@ int32_t isp_core_tuning_event(int32_t *arg1, int32_t arg2, int32_t arg3)
     uint16_t w4, w6, w8;
     uint32_t prod;
 
-    if (arg2 == 0x4000002) {
-        int32_t cnt = *(int32_t *)&frame_done_cnt;
-        int32_t cnt_hi = *(int32_t *)((char *)((char *)&frame_done_cnt + 0x4));
-        int32_t new_cnt = cnt + 1;
-        int32_t carry = (uint32_t)new_cnt < (uint32_t)cnt ? 1 : 0;
-        *(int32_t *)((char *)((char *)&frame_done_cnt + 0x4)) = cnt_hi + carry;
-        *(int32_t *)&frame_done_cnt = new_cnt;
-        *(int32_t *)&frame_done_cond = 1;
-        *(int32_t *)((char *)((char *)&frame_done_cond + 0x4)) = 0;
-        __wake_up(&frame_done_cnt, 3, 1, 0);
+    if (arg2 == 0x4000002) {	/* frame done (OEM ISR frame end) */
+        {
+            unsigned long flags;
+
+            spin_lock_irqsave(&tx_isp_t30_frame_done_lock, flags);
+            tx_isp_t30_frame_done_count++;
+            spin_unlock_irqrestore(&tx_isp_t30_frame_done_lock, flags);
+        }
+        ACCESS_ONCE(tx_isp_t30_frame_done_cond) = 1;
+        wake_up_interruptible_all(&tx_isp_t30_frame_done_wq);
         return 0;
     }
 
@@ -19153,6 +19166,17 @@ static int tx_isp_t30_ispcore_interrupt(struct tx_isp_t30_subdev *sd)
 		if (g_switch_lfb_on) {
 			isp_lfb_ctrl_flb_enable(1);
 			g_switch_lfb_on = 0;
+		}
+		/*
+		 * OEM ispcore_interrupt_service_routine, frame end: tuning event
+		 * 0x4000002 (frame done) through the handler the tuning block holds at
+		 * +0x40d4; WaitFrame and the frame-done count depend on it.
+		 */
+		{
+			struct tx_isp_t30_core_tuning_view *tcore = (void *)core;
+
+			if (tcore->tuning && !IS_ERR(tcore->tuning))
+				isp_core_tuning_event((int32_t *)tcore->tuning, 0x4000002, 0);
 		}
 	}
 	tx_isp_t30_dispatch_firmware_irqs(irq_status);
@@ -40598,853 +40622,307 @@ int32_t selftest_isp_interface(int32_t arg1, int32_t arg2, char arg3, int32_t *a
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000020118 origin=model_output original=system_freeze_firmware */
 int system_freeze_firmware(int arg1, char arg2, char arg3, int *arg4)
 {
-    int val = arg3 & 0xff;
-    if (val == 1) {
-        *arg4 = 0;
-		*arg4 = stab[0];
-        return 0;
-    }
-    if (val != 0) {
-        return 2;
-    }
-    stab[0] = (uint8_t)arg2;
-    return 0;
+	return t30_system_item(stab + 0, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000020154 origin=model_output original=system_manual_exposure */
 int32_t system_manual_exposure(int32_t arg1, char arg2, char arg3, int32_t *arg4)
 {
-    int32_t v;
-
-    arg3 &= 0xff;
-    if (arg3 == 1) {
-        *arg4 = 0;
-        v = stab[1];
-        *arg4 = v;
-    } else if (arg3 != 0) {
-        v = 2;
-        stab[1] = arg2;
-        return v;
-    }
-    return 0;
+	return t30_system_item(stab + 1, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000020190 origin=model_output original=system_manual_exposure_ratio */
 int32_t system_manual_exposure_ratio(int32_t arg1, char arg2, char arg3, int32_t *arg4)
 {
-    int32_t *v0;
-
-    arg3 &= 0xff;
-    *arg4 = 0;
-
-    if (arg3 != 1) {
-        if (arg3 != 0) {
-            v0 = 2;
-            stab[2] = arg2;
-            return v0;
-        }
-        v0 = 0;
-        return v0;
-    }
-
-    v0 = (uintptr_t *)stab[2];
-    *arg4 = v0;
-    return 0;
+	return t30_system_item(stab + 2, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_00000000000201cc origin=model_output original=system_manual_integration_time */
 int system_manual_integration_time(int arg1, char arg2, char arg3, int *arg4)
 {
-    int val = arg3 & 0xff;
-    if (val == 1) {
-        *arg4 = 0;
-        return 0;
-    }
-    if (val != 0) {
-        return 2;
-    }
-    stab[3] = arg2;
-    return 0;
+	return t30_system_item(stab + 3, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000020208 origin=model_output original=system_manual_sensor_analog_gain */
 int32_t system_manual_sensor_analog_gain(int32_t arg1, char arg2, char arg3, int32_t *arg4)
 {
-    uint32_t v = (uint32_t)(uint8_t)arg3;
-
-    if (v != 1) {
-        if (v != 0) {
-            stab[4] = (uint8_t)arg2;
-            return 0;
-        }
-        return 2;
-    }
-
-    *arg4 = 0;
-    *arg4 = (uint32_t)(uint8_t)stab[4];
-    return 0;
+	return t30_system_item(stab + 4, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000020244 origin=model_output original=system_manual_sensor_digital_gain */
 int32_t system_manual_sensor_digital_gain(int32_t arg1, char arg2, char arg3, int32_t *arg4)
 {
-    uint32_t mode = (uint32_t)arg3 & 0xff;
-
-    if (mode != 1) {
-        if (mode != 0) {
-            stab[5] = (uint8_t)arg2;
-            return 2;
-        }
-        return 0;
-    }
-
-    *arg4 = (int32_t)stab[5];
-    return 0;
+	return t30_system_item(stab + 5, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000020280 origin=model_output original=system_manual_isp_digital_gain */
 int32_t system_manual_isp_digital_gain(int32_t arg1, char arg2, char arg3, int32_t *arg4)
 {
-    uint32_t mode = (uint32_t)(uint8_t)arg3;
-
-    if (mode != 1) {
-        if (mode != 0) {
-            stab[6] = (unsigned char)arg2;
-            return 2;
-        }
-        return 0;
-    }
-
-    *arg4 = (int32_t)(uint8_t)stab[6];
-    return 0;
+	return t30_system_item(stab + 6, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_00000000000202bc origin=model_output original=system_manual_directional_sharpening */
 int32_t system_manual_directional_sharpening(int32_t arg1, char arg2, char arg3, int32_t *arg4)
 {
-    uint32_t dir = (uint32_t)(uint8_t)arg3;
-
-    if (dir != 1) {
-        if (dir != 0) {
-            stab[7] = (uint8_t)arg2;
-            return 2;
-        }
-        *arg4 = 0;
-    } else {
-        *arg4 = (int32_t)stab[7];
-    }
-
-    return 0;
+	return t30_system_item(stab + 7, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_00000000000202f8 origin=model_output original=system_manual_un_directional_sharpening */
 int32_t system_manual_un_directional_sharpening(int32_t arg1, char arg2, char arg3, int32_t *arg4)
 {
-    int32_t v;
-
-    arg3 &= 0xff;
-    if (arg3 == 1) {
-        *arg4 = 0;
-        v = stab[8];
-        *arg4 = v;
-    } else if (arg3 != 0) {
-        stab[8] = arg2;
-        return 2;
-    }
-    return 0;
+	return t30_system_item(stab + 8, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000020334 origin=model_output original=system_manual_iridix */
 int32_t system_manual_iridix(int32_t arg1, char arg2, char arg3, int32_t *arg4)
 {
-    int32_t v;
-    unsigned char mode = (unsigned char)arg3;
-
-    if (mode != 1) {
-        if (mode != 0) {
-            v = 2;
-        } else {
-            stab[9] = (unsigned char)arg2;
-            v = 0;
-        }
-    } else {
-        *arg4 = 0;
-        v = (int32_t)stab[9];
-        *arg4 = v;
-        v = 0;
-    }
-    return v;
+	return t30_system_item(stab + 9, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000020370 origin=model_output original=system_dis_x */
 int32_t system_dis_x(int32_t arg1, int16_t arg2, char arg3, int32_t *arg4)
 {
-    uint32_t v = (uint32_t)(uint8_t)arg3;
-
-    if (v != 1) {
-        if (v != 0)
-            return 2;
-        T30_STAB16(56) = arg2;
-    } else {
-        *arg4 = 0;
-        *arg4 = T30_STAB16(56);
-    }
-
-    return 0;
+	return t30_system_item(stab + 56, 2, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_00000000000203ac origin=model_output original=system_dis_y */
 int32_t system_dis_y(int32_t arg1, int16_t arg2, char arg3, int32_t *arg4)
 {
-    uint32_t v = (uint32_t)(uint8_t)arg3;
-
-    *arg4 = 0;
-
-    if (v != 1) {
-        if (v != 0) {
-            return 2;
-        }
-        T30_STAB16(58) = arg2;
-    } else {
-        *arg4 = T30_STAB16(58);
-    }
-
-    return 0;
+	return t30_system_item(stab + 58, 2, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_00000000000203e8 origin=model_output original=system_manual_sinter */
 int32_t system_manual_sinter(int32_t arg1, char arg2, char arg3, int32_t *arg4)
 {
-    uint32_t v = (uint32_t)(uint8_t)arg3;
-
-    if (v != 1) {
-        if (v != 0) {
-            return 2;
-        }
-        stab[10] = (uint8_t)arg2;
-        return 0;
-    }
-
-    *arg4 = 0;
-    *arg4 = (uint32_t)stab[10];
-    return 0;
+	return t30_system_item(stab + 10, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000020424 origin=model_output original=system_manual_temper */
 int32_t system_manual_temper(int32_t arg1, char arg2, char arg3, int32_t *arg4)
 {
-    int32_t v;
-    unsigned char mode = (unsigned char)arg3;
-
-    if (mode != 1) {
-        if (mode != 0) {
-            v = 2;
-        } else {
-            stab[11] = (unsigned char)arg2;
-            v = 0;
-        }
-    } else {
-        *arg4 = 0;
-        v = (int32_t)stab[11];
-        *arg4 = v;
-    }
-    return v;
+	return t30_system_item(stab + 11, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000020460 origin=model_output original=system_manual_awb */
 int32_t system_manual_awb(int32_t arg1, char arg2, char arg3, int32_t *arg4)
 {
-    uint32_t v = (uint32_t)(uint8_t)arg3;
-
-    *arg4 = 0;
-    if (v == 1) {
-        *arg4 = (int32_t)stab[12];
-        return 0;
-    }
-    if (v != 0)
-        return 2;
-    stab[12] = (uint8_t)arg2;
-    return 0;
+	return t30_system_item(stab + 12, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_000000000002049c origin=model_output original=system_slow_frame_rate_enable */
 int32_t system_slow_frame_rate_enable(int32_t arg1, char arg2, char arg3, int32_t *arg4)
 {
-	arg3 = arg3 & 0xff;
-	*arg4 = 0;
-	if (arg3 != 1) {
-		if (arg3 != 0)
-			return 2;
-		stab[14] = arg2;
-		return 0;
-	}
-	*arg4 = stab[14];
-	return 0;
+	return t30_system_item(stab + 14, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_00000000000204d8 origin=model_output original=system_manual_saturation */
 int32_t system_manual_saturation(int32_t arg1, char arg2, char arg3, int32_t *arg4)
 {
-    int32_t v;
-
-    arg3 &= 0xff;
-    if (arg3 == 1) {
-        *arg4 = 0;
-        v = stab[15];
-        *arg4 = v;
-    } else if (arg3 != 0) {
-        v = 2;
-        stab[15] = (uint8_t)arg2;
-    } else {
-        v = 0;
-    }
-    return v;
+	return t30_system_item(stab + 15, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000020514 origin=model_output original=system_manual_exposure_time */
 int system_manual_exposure_time(int arg1, int arg2, char arg3, int *arg4)
 {
-    int val = arg3 & 0xff;
-    if (val == 1) {
-        *arg4 = 0;
-        *arg4 = T30_STAB32(16);
-        return 0;
-    }
-    if (val != 0)
-        return 2;
-    T30_STAB32(16) = arg2;
-    return 0;
+	return t30_system_item(stab + 16, 4, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000020550 origin=model_output original=system_exposure_dark_target */
 int32_t system_exposure_dark_target(int32_t arg1, char arg2, char arg3, int32_t *arg4)
 {
-    uint32_t v = (uint32_t)arg3 & 0xff;
-
-    if (v != 1) {
-        if (v != 0) {
-            stab[20] = (uint8_t)arg2;
-            return 2;
-        }
-        return 0;
-    }
-
-    *arg4 = 0;
-    *arg4 = (int32_t)stab[20];
-    return 0;
+	return t30_system_item(stab + 20, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_000000000002058c origin=model_output original=system_exposure_bright_target */
 int32_t system_exposure_bright_target(int32_t arg1, char arg2, char arg3, int32_t *arg4)
 {
-    uint32_t v = (uint32_t)arg3 & 0xff;
-
-    if (v != 1) {
-        if (v != 0)
-            return 2;
-        *arg4 = (uint8_t)stab[21];
-    } else {
-        stab[21] = arg2;
-    }
-    return 0;
+	return t30_system_item(stab + 21, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_00000000000205c8 origin=model_output original=system_exposure_ratio */
 int system_exposure_ratio(int arg1, char arg2, char arg3, int *arg4)
 {
-    int val = arg3 & 0xff;
-    if (val == 1) {
-        *arg4 = 0;
-        *arg4 = *(unsigned char *)(stab + 22);
-        return 0;
-    }
-    if (val != 0) {
-        return 2;
-    }
-    *(unsigned char *)(stab + 22) = arg2;
-    return 0;
+	return t30_system_item(stab + 22, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000020604 origin=model_output original=system_max_exposure_ratio */
 int32_t system_max_exposure_ratio(int32_t arg1, char arg2, char arg3, int32_t *arg4)
 {
-    uint32_t v = (uint32_t)arg3 & 0xff;
-
-    if (v != 1) {
-        if (v != 0) {
-            stab[23] = arg2;
-            return 2;
-        }
-        *arg4 = 0;
-    } else {
-        *arg4 = (uint32_t)(uint8_t)stab[23];
-    }
-    return 0;
+	return t30_system_item(stab + 23, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000020640 origin=model_output original=system_integration_time */
 int32_t system_integration_time(int32_t arg1, int16_t arg2, char arg3, int32_t *arg4)
 {
-    uint32_t v = (uint32_t)(uint8_t)arg3;
-
-    if (v != 1) {
-        if (v != 0) {
-            return 2;
-        }
-        T30_STAB16(24) = arg2;
-    } else {
-        *arg4 = 0;
-        *arg4 = T30_STAB16(24);
-    }
-
-    return 0;
+	return t30_system_item(stab + 24, 2, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_000000000002067c origin=model_output original=system_max_integration_time */
 int32_t system_max_integration_time(int32_t arg1, int16_t arg2, char arg3, int32_t *arg4)
 {
-    uint32_t cmd = (uint32_t)(uint8_t)arg3;
-
-    if (cmd != 1) {
-        if (cmd != 0) {
-            T30_STAB16(26) = arg2;
-            return 2;
-        }
-        return 0;
-    }
-
-    *arg4 = (int32_t)T30_STAB16(26);
-    return 0;
+	return t30_system_item(stab + 26, 2, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_00000000000206b8 origin=model_output original=system_sensor_analog_gain */
 int32_t system_sensor_analog_gain(int32_t arg1, char arg2, char arg3, int32_t *arg4)
 {
-	*arg4 = 0;
-	if ((u8)arg3 == 0)
-		stab[28] = (u8)arg2;
-	else if ((u8)arg3 == 1)
-		*arg4 = (u8)stab[28];
-	else
-		return 2;
-	return 0;
+	return t30_system_item(stab + 28, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_00000000000206f4 origin=model_output original=system_max_sensor_analog_gain */
 int32_t system_max_sensor_analog_gain(int32_t arg1, char arg2, char arg3, int32_t *arg4)
 {
-	*arg4 = 0;
-	if ((u8)arg3 == 0)
-		stab[29] = (u8)arg2;
-	else if ((u8)arg3 == 1)
-		*arg4 = (u8)stab[29];
-	else
-		return 2;
-	return 0;
+	return t30_system_item(stab + 29, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000020730 origin=model_output original=system_sensor_digital_gain */
 int32_t system_sensor_digital_gain(int32_t arg1, char arg2, char arg3, int32_t *arg4)
 {
-	*arg4 = 0;
-	if ((u8)arg3 == 0)
-		stab[30] = (u8)arg2;
-	else if ((u8)arg3 == 1)
-		*arg4 = (u8)stab[30];
-	else
-		return 2;
-	return 0;
+	return t30_system_item(stab + 30, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_000000000002076c origin=model_output original=system_max_sensor_digital_gain */
 int system_max_sensor_digital_gain(int arg1, char arg2, char arg3, int *arg4)
 {
-	*arg4 = 0;
-	if ((u8)arg3 == 0)
-		stab[31] = (u8)arg2;
-	else if ((u8)arg3 == 1)
-		*arg4 = (u8)stab[31];
-	else
-		return 2;
-	return 0;
+	return t30_system_item(stab + 31, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_00000000000207a8 origin=model_output original=system_isp_digital_gain */
 int32_t system_isp_digital_gain(int32_t arg1, char arg2, char arg3, int32_t *arg4)
 {
-	*arg4 = 0;
-	if ((u8)arg3 == 0)
-		stab[32] = (u8)arg2;
-	else if ((u8)arg3 == 1)
-		*arg4 = (u8)stab[32];
-	else
-		return 2;
-	return 0;
+	return t30_system_item(stab + 32, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_00000000000207e4 origin=model_output original=system_max_isp_digital_gain */
 int32_t system_max_isp_digital_gain(int32_t arg1, char arg2, char arg3, int32_t *arg4)
 {
-	*arg4 = 0;
-	if ((u8)arg3 == 0)
-		stab[33] = (u8)arg2;
-	else if ((u8)arg3 == 1)
-		*arg4 = (u8)stab[33];
-	else
-		return 2;
-	return 0;
+	return t30_system_item(stab + 33, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000020820 origin=model_output original=system_directional_sharpening_target */
 int32_t system_directional_sharpening_target(int32_t arg1, char arg2, char arg3, int32_t *arg4)
 {
-    uint32_t v = (uint32_t)(uint8_t)arg3;
-
-    if (v != 1) {
-        if (v != 0) {
-            stab[34] = arg2;
-            return 2;
-        }
-        *arg4 = 0;
-    } else {
-        *arg4 = (uint32_t)(uint8_t)stab[34];
-    }
-
-    return 0;
+	return t30_system_item(stab + 34, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_000000000002085c origin=model_output original=system_maximum_directional_sharpening */
 int32_t system_maximum_directional_sharpening(int32_t arg1, char arg2, char arg3, int32_t *arg4)
 {
-    uint32_t val = (uint32_t)(uint8_t)arg3;
-    if (val == 1) {
-        *arg4 = 0;
-        *arg4 = (uint32_t)(uint8_t)stab[0x23];
-        return 0;
-    }
-    if (val != 0) {
-        return 2;
-    }
-    stab[0x23] = arg2;
-    return 0;
+	return t30_system_item(stab + 35, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000020898 origin=model_output original=system_minimum_directional_sharpening */
 int32_t system_minimum_directional_sharpening(int32_t arg1, char arg2, char arg3, int32_t *arg4)
 {
-    uint32_t dir = (uint32_t)arg3 & 0xff;
-
-    *arg4 = 0;
-
-    if (dir != 1) {
-        if (dir != 0) {
-            stab[36] = (uint8_t)arg2;
-            return 2;
-        }
-    } else {
-        *arg4 = (int32_t)stab[36];
-    }
-
-    return 0;
+	return t30_system_item(stab + 36, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_00000000000208d4 origin=model_output original=system_un_directional_sharpening_target */
 int system_un_directional_sharpening_target(int arg1, char arg2, char arg3, int *arg4)
 {
-    unsigned char val = (unsigned char)arg3;
-    if (val == 1) {
-        *arg4 = 0;
-        *arg4 = (unsigned char)stab[0x25];
-        return 0;
-    }
-    if (val != 0) {
-        return 2;
-    }
-    stab[0x25] = arg2;
-    return 0;
+	return t30_system_item(stab + 37, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000020910 origin=model_output original=system_maximum_un_directional_sharpening */
 int32_t system_maximum_un_directional_sharpening(int32_t arg1, char arg2, char arg3, int32_t *arg4)
 {
-    uint32_t mode = (uint32_t)(uint8_t)arg3;
-
-    if (mode != 1) {
-        if (mode != 0)
-            return 2;
-        stab[38] = (uint8_t)arg2;
-    } else {
-        *arg4 = 0;
-        *arg4 = (int32_t)(uint8_t)stab[38];
-    }
-    return 0;
+	return t30_system_item(stab + 38, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_000000000002094c origin=model_output original=system_minimum_un_directional_sharpening */
 int32_t system_minimum_un_directional_sharpening(int32_t arg1, char arg2, char arg3, int32_t *arg4)
 {
-    uint32_t v = (uint32_t)(uint8_t)arg3;
-
-    if (v != 1) {
-        if (v != 0)
-            return 2;
-        stab[39] = arg2;
-    } else {
-        *arg4 = 0;
-        *arg4 = (uint32_t)(uint8_t)stab[39];
-    }
-
-    return 0;
+	return t30_system_item(stab + 39, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000020988 origin=model_output original=system_iridix_strength_target */
 int32_t system_iridix_strength_target(int32_t arg1, char arg2, char arg3, int32_t *arg4)
 {
-    uint32_t v = (uint32_t)(uint8_t)arg3;
-
-    if (v != 1) {
-        if (v != 0) {
-            stab[40] = (uint8_t)arg2;
-            return 2;
-        }
-        return 0;
-    }
-
-    *arg4 = (int32_t)(uint8_t)stab[40];
-    return 0;
+	return t30_system_item(stab + 40, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_00000000000209c4 origin=model_output original=system_maximum_iridix_strength */
 int32_t system_maximum_iridix_strength(int32_t arg1, char arg2, char arg3, int32_t *arg4)
 {
-    int32_t *v0;
-
-    arg3 &= 0xff;
-    if (arg3 == 1) {
-        *arg4 = 0;
-        v0 = stab[41];
-        *arg4 = v0;
-    } else if (arg3 != 0) {
-        v0 = 2;
-        stab[41] = (uint8_t)arg2;
-        return v0;
-    }
-    return 0;
+	return t30_system_item(stab + 41, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000020a00 origin=model_output original=system_minimum_iridix_strength */
 int32_t system_minimum_iridix_strength(int32_t arg1, char arg2, char arg3, int32_t *arg4)
 {
-    uint32_t v = (uint32_t)arg3 & 0xff;
-
-    if (v != 1) {
-        if (v != 0) {
-            return 2;
-        }
-        stab[42] = arg2;
-    } else {
-        *arg4 = 0;
-        *arg4 = (uint32_t)(uint8_t)stab[42];
-    }
-
-    return 0;
+	return t30_system_item(stab + 42, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000020a3c origin=model_output original=system_sinter_threshold_target */
 int32_t system_sinter_threshold_target(int32_t arg1, char arg2, char arg3, int32_t *arg4)
 {
-    uint32_t v = (uint32_t)(uint8_t)arg3;
-
-    if (v != 1) {
-        if (v != 0) {
-            stab[43] = (uint8_t)arg2;
-            return 2;
-        }
-        return 0;
-    }
-
-    *arg4 = (int32_t)stab[43];
-    return 0;
+	return t30_system_item(stab + 43, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000020a78 origin=model_output original=system_maximum_sinter_strength */
 int system_maximum_sinter_strength(int arg1, char arg2, char arg3, int *arg4)
 {
-    int val = arg3 & 0xff;
-    if (val == 1) {
-        *arg4 = 0;
-        *arg4 = *(unsigned char *)(((char *)&stab + 0x2c));
-        return 0;
-    }
-    if (val != 0) {
-        return 2;
-    }
-    *(unsigned char *)(((char *)&stab + 0x2c)) = arg2;
-    return 0;
+	return t30_system_item(stab + 44, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000020ab4 origin=model_output original=system_minimum_sinter_strength */
 int32_t system_minimum_sinter_strength(int32_t arg1, char arg2, char arg3, int32_t *arg4)
 {
-    uint32_t v = (uint32_t)(uint8_t)arg3;
-
-    if (v != 1) {
-        if (v != 0)
-            return 2;
-        stab[45] = (uint8_t)arg2;
-    } else {
-        *arg4 = 0;
-        *arg4 = (int32_t)(uint8_t)stab[45];
-    }
-
-    return 0;
+	return t30_system_item(stab + 45, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000020af0 origin=model_output original=system_temper_threshold_target */
 int32_t system_temper_threshold_target(int32_t arg1, char arg2, char arg3, int32_t *arg4)
 {
-    uint32_t v = (uint32_t)(uint8_t)arg3;
-
-    if (v != 1) {
-        if (v != 0)
-            return 2;
-        stab[46] = (uint8_t)arg2;
-    } else {
-        *arg4 = (int32_t)(uint8_t)stab[46];
-    }
-
-    return 0;
+	return t30_system_item(stab + 46, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000020b2c origin=model_output original=system_maximum_temper_strength */
 int32_t system_maximum_temper_strength(int32_t arg1, char arg2, char arg3, int32_t *arg4)
 {
-    int32_t v;
-
-    arg3 &= 0xff;
-    if (arg3 == 1) {
-        *arg4 = 0;
-        v = (unsigned char)stab[47];
-        *arg4 = v;
-    } else if (arg3 != 0) {
-        stab[47] = arg2;
-        return 2;
-    }
-    return 0;
+	return t30_system_item(stab + 47, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000020b68 origin=model_output original=system_minimum_temper_strength */
 int32_t system_minimum_temper_strength(int32_t arg1, char arg2, char arg3, int32_t *arg4)
 {
-    uint32_t v = (uint32_t)arg3 & 0xff;
-
-    if (v == 1) {
-        *arg4 = 0;
-        *arg4 = (uint8_t)stab[48];
-        return 0;
-    }
-    if (v != 0) {
-        stab[48] = arg2;
-        return 2;
-    }
-    return 0;
+	return t30_system_item(stab + 48, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000020ba4 origin=model_output original=system_awb_red_gain */
 int32_t system_awb_red_gain(int32_t arg1, char arg2, char arg3, int32_t *arg4)
 {
-	u32 direction = (u8)arg3;
-
-	*arg4 = 0;
-	if (direction == 1)
-		*arg4 = stab[49];
-	else if (direction == 0)
-		stab[49] = (u8)arg2;
-	else
-		return 2;
-	return 0;
+	return t30_system_item(stab + 49, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000020be0 origin=model_output original=system_awb_blue_gain */
 int32_t system_awb_blue_gain(int32_t arg1, char arg2, char arg3, int32_t *arg4)
 {
-	u32 direction = (u8)arg3;
-
-	*arg4 = 0;
-	if (direction == 1)
-		*arg4 = stab[50];
-	else if (direction == 0)
-		stab[50] = (u8)arg2;
-	else
-		return 2;
-	return 0;
+	return t30_system_item(stab + 50, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000020c1c origin=model_output original=system_saturation_target */
 int32_t system_saturation_target(int32_t arg1, char arg2, char arg3, int32_t *arg4)
 {
-	u32 direction = (u8)arg3;
-
-	*arg4 = 0;
-	if (direction == 1)
-		*arg4 = stab[51];
-	else if (direction == 0)
-		stab[51] = (u8)arg2;
-	else
-		return 2;
-	return 0;
+	return t30_system_item(stab + 51, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000020c58 origin=model_output original=system_anti_flicker_frequency */
 int32_t system_anti_flicker_frequency(int32_t arg1, char arg2, char arg3, int32_t *arg4)
 {
-    uint32_t v = (uint32_t)(uint8_t)arg3;
-
-    if (v != 1) {
-        if (v != 0) {
-            stab[52] = (uint8_t)arg2;
-            return 2;
-        }
-        *arg4 = 0;
-        return 0;
-    }
-
-    *arg4 = (int32_t)stab[52];
-    return 0;
+	return t30_system_item(stab + 52, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000020c94 origin=model_output original=system_ae_compensation */
 int32_t system_ae_compensation(int32_t arg1, char arg2, char arg3, int32_t *arg4)
 {
-    uint32_t v;
-
-    v = (uint32_t)(uint8_t)arg3;
-    if (v != 1) {
-        if (v != 0)
-            return 2;
-        stab[53] = (uint8_t)arg2;
-    } else {
-        *arg4 = 0;
-        *arg4 = stab[53];
-    }
-    return 0;
+	return t30_system_item(stab + 53, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000020cd0 origin=model_output original=system_calibrate_bad_pixels */
 int32_t system_calibrate_bad_pixels(int32_t arg1, char arg2, char arg3, int32_t *arg4)
 {
-    uint32_t mode = (uint32_t)arg3 & 0xff;
-
-    if (mode != 1) {
-        if (mode != 0)
-            return 2;
-        *arg4 = 0;
-        *arg4 = (uint32_t)(uint8_t)stab[54];
-    } else {
-        stab[54] = arg2;
-    }
-
-    return 0;
+	return t30_system_item(stab + 54, 1, (u32)arg2, (u8)arg3, (int *)arg4);
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000020d0c origin=fragment_seed original=selftest_lens_interface */
@@ -52746,9 +52224,13 @@ static u32 tx_isp_t30_ae_corrected_target(u32 target, u32 integration_time,
 	if (curve_value)
 		*curve_value = correction;
 
-	/* The correction byte is a signed 1/32-stop offset around 0x80. */
+	/*
+	 * The correction byte is a signed 1/32-stop offset around 0x80; the AE
+	 * compensation (system table item 53, SetAeComp) is added the same way
+	 * (OEM ae_calculate_target).
+	 */
 	target_log2 = log2_fixed_to_fixed(target, 0, 16) +
-		(((s32)correction - 0x80) << 11);
+		(((s32)correction - 0x80) << 11) + t30_ae_comp_log2(stab[53]);
 	return max_t(u32, 1, math_exp2(target_log2, 16, 0));
 }
 
@@ -52824,6 +52306,47 @@ static void tx_isp_t30_ae_partition_exposure(
 		max_isp_digital_gain_log2);
 }
 
+/*
+ * OEM cmos_update_exposure_history(), history part: the exposure that was just
+ * applied (integration time, analog / digital / ISP gain, all already in the
+ * CMOS fields) is stored as the pending frame exposure set, which
+ * cmos_move_exposure_history() copies into the 8-entry ring at the sensor
+ * delay.  The compact AE bypasses the OEM CMOS FSM, so without this the ring
+ * stayed zero: iridix_fsm_process_interrupt saw previous = 0 against the
+ * current exposure, computed a linear ratio of exp2(negative) = 0 and left
+ * 0x3dc at 0 and the Iridix strength (0x3c4) never written, i.e. RawDRC had no
+ * effect.  The stab items and the 0x400a0/0x400a8 gain mirrors of the OEM
+ * function are not part of this step (the compact AE publishes the stab items).
+ */
+static void tx_isp_t30_ae_store_exposure_history(u32 integration_time)
+{
+	struct apical_isp *ai = (void *)TX_ISP_T30_ISP_PTR(0);
+	int32_t *cmos = (int32_t *)&ai->cmos;
+	u8 *base = (u8 *)(uintptr_t)cmos[0];
+	unsigned long flags;
+	unsigned int i;
+
+	if (!base)
+		return;
+	local_irq_save(flags);
+	if (cmos[0x1a4 / 4] < 0) {
+		cmos[0x1a4 / 4] = 0;
+		for (i = 0; i <= base[0x7e]; i++)
+			cmos_store_frame_exposure_set(cmos,
+				cmos_get_frame_exposure_set(cmos, i));
+	}
+	cmos[0x1c0 / 4] = *(u16 *)((u8 *)cmos + 0x1c4);	/* previous integration time */
+	*(u16 *)((u8 *)cmos + 0x1c4) = (u16)integration_time;
+	cmos_store_frame_exposure_set(cmos, &cmos[0x20 / 4]);
+	/*
+	 * The OEM advances the ring at the frame-start interrupt of the CMOS FSM;
+	 * the open firmware IRQ gate keeps that source off (frame end, AE and AWB
+	 * only), so the AE cycle, which runs once per frame, moves it.
+	 */
+	cmos_move_exposure_history((uint32_t *)cmos);
+	local_irq_restore(flags);
+}
+
 static void tx_isp_t30_simple_ae_update(void)
 {
 	struct tx_isp_t30_core_sensor_view *core = ispcore;
@@ -52849,6 +52372,9 @@ static void tx_isp_t30_simple_ae_update(void)
 	u32 mean;
 	u8 curve_value = 0x80;
 	s16 sensor_code;
+	struct t30_ae_manual manual;
+	s32 fixed_gain;
+	s32 part_exposure;
 
 	if (!simple_3a || !core)
 		return;
@@ -52883,6 +52409,7 @@ static void tx_isp_t30_simple_ae_update(void)
 		(s32)system_gain->max_isp_digital_gain << 11;
 	max_exposure_log2 = log2_fixed_to_fixed(max_integration, 0, 16) +
 		attr->max_again + max_isp_digital_gain_log2;
+	t30_ae_manual_load(&manual, stab);
 
 	BUILD_BUG_ON(offsetof(struct tx_isp_t30_ae_statistics_view,
 			      exposure_log2) != 0x11c);
@@ -52891,8 +52418,16 @@ static void tx_isp_t30_simple_ae_update(void)
 	BUILD_BUG_ON(offsetof(struct tx_isp_t30_ae_statistics_view,
 			      histogram_total) != 0x738);
 	mean = tx_isp_t30_histogram_metered_mean(ae[2], statistics);
-	if (!mean)
+	if (!mean) {
+		/*
+		 * No statistics yet (or an empty frame): the exposure the sensor runs
+		 * with still belongs in the history, as the OEM CMOS FSM stores it
+		 * every cycle whatever the AE decides.
+		 */
+		tx_isp_t30_ae_store_exposure_history(state->ae_initialized ?
+			state->integration_time : attr->integration_time);
 		return;
+	}
 	if (!state->ae_initialized) {
 		/*
 		 * Sensor timing and limits come from the sensor attribute ABI.  If
@@ -52919,7 +52454,12 @@ static void tx_isp_t30_simple_ae_update(void)
 			state->analog_gain_log2 +
 			state->isp_digital_gain_log2, &curve_value);
 		error = (s32)target - (s32)mean;
-		if (error > 1 || error < -1) {
+		if (manual.exposure) {
+			/* OEM ae_calculate_exposure: manual exposure time (item 16, Q6 lines) */
+			state->total_exposure_request_log2 = clamp_t(s32,
+				log2_fixed_to_fixed(manual.exposure_time_q6, 6, 16),
+				min_exposure_log2, max_exposure_log2);
+		} else if (error > 1 || error < -1) {
 			correction = DIV_ROUND_UP((u32)abs(error) * gain_accuracy,
 						  pi_coefficient);
 			if (error > 0)
@@ -52931,16 +52471,34 @@ static void tx_isp_t30_simple_ae_update(void)
 				min_exposure_log2, max_exposure_log2);
 		}
 	}
+	/* manual gains (items 4, 6) come off the exposure the integration time partition gets */
+	fixed_gain = t30_ae_manual_fixed_gain(&manual, attr->max_again,
+					      max_isp_digital_gain_log2);
+	part_exposure = max_t(s32, 0,
+			      state->total_exposure_request_log2 - fixed_gain);
 	tx_isp_t30_ae_partition_exposure(
-		core, attr, state->total_exposure_request_log2,
+		core, attr, part_exposure,
 		min_integration, max_integration, max_isp_digital_gain_log2,
 		&state->integration_time, &state->analog_gain_request_log2,
 		&state->isp_digital_gain_log2);
 	tx_isp_t30_ae_apply_antiflicker(
-		core, attr, state->total_exposure_request_log2,
+		core, attr, part_exposure,
 		min_integration, max_integration, max_isp_digital_gain_log2,
 		&state->integration_time, &state->analog_gain_request_log2,
 		&state->isp_digital_gain_log2);
+	if (t30_ae_manual_active(&manual)) {
+		s32 again_log2, isp_log2;
+
+		state->integration_time = t30_ae_manual_integration(
+			&manual, state->integration_time, min_integration,
+			max_integration);
+		t30_ae_manual_gains(&manual, state->total_exposure_request_log2,
+				    log2_fixed_to_fixed(state->integration_time, 0, 16),
+				    attr->max_again, max_isp_digital_gain_log2,
+				    &again_log2, &isp_log2);
+		state->analog_gain_request_log2 = again_log2;
+		state->isp_digital_gain_log2 = isp_log2;
+	}
 
 	if (state->analog_gain_request_log2 < 0)
 		state->analog_gain_request_log2 = 0;
@@ -52959,7 +52517,8 @@ static void tx_isp_t30_simple_ae_update(void)
 	sensor_set_analog_gain(0, state->analog_gain_code);
 	/* the system integration-time item (byte 24) backs GetExpr / GetIntegrationTime; the OEM
 	 * exposure history keeps it current, the compact AE has to publish it itself (#202) */
-	T30_STAB16(24) = (u16)state->integration_time;
+	if (!manual.integration)
+		T30_STAB16(24) = (u16)state->integration_time;
 
 	/*
 	 * Publish the applied Q16 log2 gain through both OEM state interfaces.
@@ -52973,14 +52532,18 @@ static void tx_isp_t30_simple_ae_update(void)
 	BUILD_BUG_ON(sizeof(*system_gain) != sizeof(stab));
 	BUILD_BUG_ON(offsetof(struct tx_isp_t30_nr_owner_view,
 			      sensor_analog_gain) != 0x2cc);
-	system_gain->sensor_analog_gain = clamp_t(s32,
-		state->analog_gain_log2 >> 11, 0, 0xff);
+	/* OEM cmos_update_exposure_history: the table items keep a manual value */
+	if (!manual.again)
+		system_gain->sensor_analog_gain = clamp_t(s32,
+			state->analog_gain_log2 >> 11, 0, 0xff);
 	system_gain->sensor_digital_gain = 0;
-	system_gain->isp_digital_gain = clamp_t(s32,
-		state->isp_digital_gain_log2 >> 11, 0, 0xff);
+	if (!manual.isp_dgain)
+		system_gain->isp_digital_gain = clamp_t(s32,
+			state->isp_digital_gain_log2 >> 11, 0, 0xff);
 	isp->sensor_analog_gain = state->analog_gain_log2;
 	isp->sensor_digital_gain = 0;
 	isp->isp_digital_gain = state->isp_digital_gain_log2;
+	tx_isp_t30_ae_store_exposure_history(state->integration_time);
 	statistics->exposure_log2 = state->total_exposure_request_log2;
 	APICAL_WRITE_32(0x01a0,
 		(APICAL_READ_32(0x01a0) & 0xfffff000) |

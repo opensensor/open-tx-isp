@@ -1,0 +1,116 @@
+/* SPDX-License-Identifier: GPL-2.0 */
+/*
+ * T30 compact AE: the vendor system table controls the compact controller
+ * (tx_isp_t30_simple_ae_update) has to honour (host-testable,
+ * tests/t30_ae_manual_host_test.c).  Source of the behaviour: tx-isp-t30
+ * H20190523a ae_calculate_target (item 53), ae_calculate_exposure (items 1, 16),
+ * cmos_alloc_integration_time (items 3, 24), cmos_inttime_update and
+ * cmos_get_manual_{again,dgain,isp_dgain}_log2 (items 4-6, 28-33): the
+ * lifted OEM state machine is bypassed by the compact AE, so without this
+ * the manual exposure, integration time and gain items and the AE
+ * compensation were stored but never reached the sensor.
+ *
+ * All gains are Q16 log2 (system table gains are Q5: item << 11).
+ */
+#ifndef TX_ISP_T30_AE_MANUAL_H
+#define TX_ISP_T30_AE_MANUAL_H
+
+struct t30_ae_manual {
+	u8 exposure;		/* item 1: manual exposure (total exposure from item 16) */
+	u8 integration;		/* item 3: manual integration time (item 24) */
+	u8 again;		/* item 4: manual sensor analog gain (item 28) */
+	u8 isp_dgain;		/* item 6: manual ISP digital gain (item 32) */
+	u8 comp;		/* item 53: AE compensation, 0x80 neutral */
+	u8 again_q5, max_again_q5;
+	u8 isp_q5, max_isp_q5;
+	u16 integration_time;	/* item 24, sensor lines */
+	u32 exposure_time_q6;	/* item 16, exposure time in lines, 6 fraction bits */
+};
+
+static inline void t30_ae_manual_load(struct t30_ae_manual *m, const u8 *stab)
+{
+	m->exposure = stab[1];
+	m->integration = stab[3];
+	m->again = stab[4];
+	m->isp_dgain = stab[6];
+	m->comp = stab[53];
+	m->again_q5 = stab[28];
+	m->max_again_q5 = stab[29];
+	m->isp_q5 = stab[32];
+	m->max_isp_q5 = stab[33];
+	memcpy(&m->integration_time, stab + 24, sizeof(m->integration_time));
+	memcpy(&m->exposure_time_q6, stab + 16, sizeof(m->exposure_time_q6));
+}
+
+static inline s32 t30_ae_clamp(s32 v, s32 lo, s32 hi)
+{
+	return v < lo ? lo : v > hi ? hi : v;
+}
+
+/* ae_calculate_target: signed 1/32-stop offset of the log2 target around 0x80 */
+static inline s32 t30_ae_comp_log2(u8 comp)
+{
+	return ((s32)comp - 0x80) << 11;
+}
+
+static inline bool t30_ae_manual_active(const struct t30_ae_manual *m)
+{
+	return m->exposure || m->integration || m->again || m->isp_dgain;
+}
+
+/* cmos_get_manual_again_log2: min(item 28, item 29) << 11 */
+static inline s32 t30_ae_manual_again_log2(const struct t30_ae_manual *m,
+					   s32 max_again)
+{
+	u8 q5 = m->again_q5 < m->max_again_q5 ? m->again_q5 : m->max_again_q5;
+
+	return t30_ae_clamp((s32)q5 << 11, 0, max_again);
+}
+
+/* cmos_get_manual_isp_dgain_log2: min(item 32, item 33, ISP maximum) << 11 */
+static inline s32 t30_ae_manual_isp_log2(const struct t30_ae_manual *m,
+					 s32 max_isp)
+{
+	u8 q5 = m->isp_q5 < m->max_isp_q5 ? m->isp_q5 : m->max_isp_q5;
+
+	return t30_ae_clamp((s32)q5 << 11, 0, max_isp);
+}
+
+/* gain part the operator fixed; the integration time partition gets the rest */
+static inline s32 t30_ae_manual_fixed_gain(const struct t30_ae_manual *m,
+					   s32 max_again, s32 max_isp)
+{
+	return (m->again ? t30_ae_manual_again_log2(m, max_again) : 0) +
+	       (m->isp_dgain ? t30_ae_manual_isp_log2(m, max_isp) : 0);
+}
+
+/* cmos_alloc_integration_time: manual time clamped to the sensor range */
+static inline u32 t30_ae_manual_integration(const struct t30_ae_manual *m,
+					    u32 auto_time, u32 min_time,
+					    u32 max_time)
+{
+	u32 t = m->integration ? m->integration_time : auto_time;
+
+	return t < min_time ? min_time : t > max_time ? max_time : t;
+}
+
+/* gains for the chosen integration time (its Q16 log2 in it_log2) */
+static inline void t30_ae_manual_gains(const struct t30_ae_manual *m,
+				       s32 total_log2, s32 it_log2,
+				       s32 max_again, s32 max_isp,
+				       s32 *again_log2, s32 *isp_log2)
+{
+	s32 rest = total_log2 - it_log2;
+	s32 fixed_isp = m->isp_dgain ? t30_ae_manual_isp_log2(m, max_isp) : 0;
+	s32 a, i;
+
+	if (rest < 0)
+		rest = 0;
+	a = m->again ? t30_ae_manual_again_log2(m, max_again) :
+		t30_ae_clamp(rest - fixed_isp, 0, max_again);
+	i = m->isp_dgain ? fixed_isp : t30_ae_clamp(rest - a, 0, max_isp);
+	*again_log2 = a;
+	*isp_log2 = i;
+}
+
+#endif /* TX_ISP_T30_AE_MANUAL_H */
