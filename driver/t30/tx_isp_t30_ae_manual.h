@@ -113,4 +113,43 @@ static inline void t30_ae_manual_gains(const struct t30_ae_manual *m,
 	*isp_log2 = i;
 }
 
+/*
+ * cmos_alloc_sensor_analog_gain (libt30-firmware cmos_func.c.o 0x10260):
+ * the automatic analog gain request is capped at item 29 (maximum sensor
+ * analog gain, Q5) before the sensor's alloc_again quantises it; the part
+ * above the cap is left to the ISP digital gain (cmos_digital_gain_update).
+ */
+static inline s32 t30_ae_auto_again_cap(const u8 *stab, s32 sensor_max)
+{
+	s32 item = (s32)stab[29] << 11;
+
+	return item < sensor_max ? item : sensor_max;
+}
+
+/*
+ * cmos_fsm_process_interrupt (0x10a0c, frame event 7) and cmos_inttime_update
+ * (0x10fc4): the anti-flicker frequency (item 52) is only used while item 13
+ * (global_antiflicker_enable) is set.  init_stab() leaves item 52 at 50 and
+ * item 13 at 0, so a freshly initialised ISP runs without anti-flicker until
+ * the tuning control enables it.
+ */
+static inline u32 t30_ae_antiflicker_hz(const u8 *stab)
+{
+	return stab[13] ? stab[52] : 0;
+}
+
+/*
+ * cmos_alloc_integration_time (0x101a0): the automatic integration time is
+ * limited by item 26 (maximum integration time, set from the sensor attribute
+ * on SYNC_SENSOR_ATTR and by the libimp AE limits) as well as by the sensor.
+ * An unset item (0) leaves the sensor limit.
+ */
+static inline u32 t30_ae_max_integration(const u8 *stab, u32 sensor_max)
+{
+	u16 item;
+
+	memcpy(&item, stab + 26, sizeof(item));
+	return item && item < sensor_max ? item : sensor_max;
+}
+
 #endif /* TX_ISP_T30_AE_MANUAL_H */

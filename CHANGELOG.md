@@ -4,6 +4,14 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-04: T30 analog gain reaches the sensor again, anti-flicker off by default as the vendor (`claude/t30-ae-gain`; host test; T30X device proof pending)
+
+- T30X b22 (SC4236): the open AE reported analog gain code `0x71e` (15x) while the sensor gain registers `0x3e08/0x3e09` stayed `03/10` (1x) in every case; ISP digital gain ran at its maximum to compensate (vendor: `1f/1e`, dgain `0x215`).
+- Cause: the compact AE state survived the ISP core init (`apical_init` -> `apical_fw_init`, which clears the OEM CMOS/AE/AWB state on every ISP open). The sensor init table puts the sensor back to 1x, but the AE kept the converged code, which equals the attribute shadow, so `sensor_set_analog_gain()` posted no message and the gain never reached the sensor. `apical_fw_init` now clears the compact AE/AWB state together with the firmware state.
+- Integration time stopped at 1440 lines (vendor 1915): the compact AE used the anti-flicker frequency (system item 52, 50 Hz after `init_stab`) without the enable item 13, so it quantised to 3 x 480 lines. The OEM CMOS FSM (`cmos_fsm_process_interrupt`, `cmos_inttime_update`) uses item 52 only while item 13 is set, and the anti-flicker control sets item 13 (`apical_isp_flicker_s_control`). Both now as the vendor.
+- The automatic analog gain request is capped at system item 29 (max sensor analog gain) before the sensor quantises it, the rest goes to the ISP digital gain (OEM `cmos_alloc_sensor_analog_gain`); the automatic integration time is capped at item 26 (`cmos_alloc_integration_time`). Before, item 29 was ignored (b22 "limits=1/1" still gave 15x).
+- Host test `t30_ae_gain_host_test` (OEM limits + a model of the gain message path with an SC4236 mock) and source guard `check_t30_ae_gain.sh`. QEMU T30 cannot prove the I2C write (the sensor model gives no histogram, so the AE does not run); a T30X device run must show `0x3e08/0x3e09` following the AE and about 1915 lines at base.
+
 ## 2026-11-04: T30 day/night switch reloads the night parameter set as the vendor (QEMU T30; T30X device test pending)
 
 - `IMP_ISP_Tuning_SetISPRunningMode(NIGHT)` / `DAY` (DAY_OR_NIGHT, `0x80000e1`) only set a flag: the open interrupt handler never raised tuning event `0x4000003`, which the OEM frame-end case sends to reload the day or night set (T30X b19-b21: night not monochrome, vendor U = V = 128.00).
