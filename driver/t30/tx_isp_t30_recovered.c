@@ -1494,10 +1494,10 @@ struct _get_size_entry {
     uint16_t f6;
     uint16_t f8;
 };
-struct tx_isp_customer_parameter {
-    uint32_t field_0x1a80;
-};
-static struct tx_isp_customer_parameter tx_isp_customer_parameter;
+/* SDK apical_custom_initialization.c: static TXispPrivCustomerParamer *customer (OEM .bss+0x1a80).
+ * The lift kept it as "tx_isp_customer_parameter + 0x1a80" of a 4-byte object, i.e. a store 0x1a80 bytes past it
+ * (into isp_kfifo_out in the built ko); it is its own variable now. */
+static uint32_t tx_isp_t30_customer;
 #ifndef TX_ISP_T30_SHARED_IO
 static void *apical_io_base;
 #endif
@@ -21653,9 +21653,9 @@ load_tx_isp_parameters0x6a8:
 /* WHOLE_DRIVER_CANDIDATE fn_000000000000fd70 origin=fragment_seed original=apical_custom_initialization */
 uint32_t apical_custom_initialization(void)
 {
-    /* #202: the customer table pointer is tx_isp_customer_parameter + 0x1a80 (init_tx_isp_customer_parameter; OEM lw 6784(s2) of .bss);
+    /* #202: the customer table pointer set by init_tx_isp_customer_parameter (OEM lw 6784(s2) of .bss);
      * the lift read the unrelated static array "customer" (always 0), so the whole customer initialisation was skipped */
-    uint32_t customer_ptr = *(uint32_t *)((char *)&tx_isp_customer_parameter + 0x1a80);
+    uint32_t customer_ptr = tx_isp_t30_customer;
     uint32_t *local_10 = 0;
     uint32_t *local_18 = 0;
     uint32_t local_24 = 0;
@@ -22228,9 +22228,8 @@ apical_custom_initialization0x92c:
 /* WHOLE_DRIVER_CANDIDATE fn_00000000000106b0 origin=model_output original=init_tx_isp_customer_parameter */
 int32_t init_tx_isp_customer_parameter(uint32_t arg1)
 {
-    struct tx_isp_customer_parameter *p = &tx_isp_customer_parameter;
-    *(unsigned long *)((char *)p + 0x1a80) = (unsigned long)(arg1);
-    return (int32_t)p;
+    tx_isp_t30_customer = arg1;
+    return (int32_t)(uintptr_t)&tx_isp_t30_customer;
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_00000000000106bc origin=fragment_seed original=apical_custom_sequence */
