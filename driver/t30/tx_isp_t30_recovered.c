@@ -37400,6 +37400,16 @@ int32_t apical_fw_init(int32_t *arg1)
     ACCESS_ONCE(tx_isp_t30_fw_ready) = 0;
     smp_wmb();
     memset(arg1, 0, 0x2fd0);
+    /*
+     * The memset above restarts the OEM CMOS/AE/AWB state machines on every
+     * ISP core init; the compact 3A stands in for them, so it restarts too.
+     * Without this it kept the converged state of the previous ISP session
+     * (e.g. analog gain code 0x71e) while the sensor init table had just put
+     * the sensor back to 1x (SC4236 0x3e08/0x3e09 = 03/10): the unchanged
+     * code equals the attribute shadow, sensor_set_analog_gain() posts no
+     * message, and the gain never reached the sensor again (Lu-Fi/openimp#202).
+     */
+    memset(&tx_isp_t30_simple_3a, 0, sizeof(tx_isp_t30_simple_3a));
     pr_err("tx-isp-t30 fw-init: state cleared\n");
     init_semaphore((int32_t *)(arg1 + 3));
     pr_err("tx-isp-t30 fw-init: semaphore initialized\n");
@@ -51957,6 +51967,8 @@ static void tx_isp_t30_simple_ae_update(void)
 	    (attr->max_integration_time &&
 	     attr->max_integration_time < max_integration))
 		max_integration = attr->max_integration_time;
+	/* OEM cmos_alloc_integration_time (0x101a0): item 26 caps the automatic time */
+	max_integration = t30_ae_max_integration(stab, max_integration);
 	if (!min_integration || max_integration <= min_integration)
 		return;
 	min_exposure_log2 = log2_fixed_to_fixed(min_integration, 0, 16);
@@ -52059,8 +52071,16 @@ static void tx_isp_t30_simple_ae_update(void)
 		state->analog_gain_request_log2 = 0;
 	if ((u32)state->analog_gain_request_log2 > attr->max_again)
 		state->analog_gain_request_log2 = attr->max_again;
+	/*
+	 * OEM cmos_alloc_sensor_analog_gain (0x10260): the request is capped at
+	 * item 29 before the sensor quantises it; a manual gain (item 4) was
+	 * already limited by item 29 in t30_ae_manual_again_log2().  The part
+	 * above the cap moves to the ISP digital gain below.
+	 */
 	requested_gain = sensor_alloc_analog_gain(
-		state->analog_gain_request_log2, &sensor_code);
+		min_t(s32, state->analog_gain_request_log2,
+		      t30_ae_auto_again_cap(stab, attr->max_again)),
+		&sensor_code);
 	/* Preserve requested exposure when the sensor quantizes analog gain. */
 	state->isp_digital_gain_log2 = clamp_t(s32,
 		state->isp_digital_gain_log2 +
@@ -57036,6 +57056,12 @@ static int tx_isp_t30_tuning_set_antiflicker(int mode)
 		return -EINVAL;
 	/* OEM control values are off/50 Hz/60 Hz; APICAL stores frequency. */
 	stab[52] = frequency_hz[mode];
+	/*
+	 * OEM apical_isp_flicker_s_control: stab.global_antiflicker_enable
+	 * (item 13) = frequency ? 1 : 0.  The CMOS anti-flicker reads item 52
+	 * only while item 13 is set; init_stab() clears it on every ISP init.
+	 */
+	stab[13] = frequency_hz[mode] ? 1 : 0;
 	pr_info("tx-isp-t30: anti-flicker mode=%d frequency=%uHz\n",
 		mode, frequency_hz[mode]);
 	return 0;
@@ -57050,7 +57076,8 @@ static void tx_isp_t30_ae_apply_antiflicker(
 {
 	u32 fps_numerator = core->fps >> 16;
 	u32 fps_denominator = core->fps & 0xffff;
-	u32 frequency = stab[52];
+	/* OEM cmos_fsm_process_interrupt/cmos_inttime_update: item 52 only while item 13 is set */
+	u32 frequency = t30_ae_antiflicker_hz(stab);
 	u32 denominator;
 	u32 quantized;
 	u32 step_lines;
