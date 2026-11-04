@@ -12092,10 +12092,102 @@ static void tiziano_defog_load_res_tables(const uint32_t *w3, const uint32_t *w5
 
 static void tisp_defog_trsy_apply(uint32_t str);
 static uint32_t defog_strength_attr;
+static bool defog_bank_logged;
 
-/* OEM tiziano_defog_params_refresh — load ROM defaults into defog parameter arrays.
- * OEM copies from embedded ROM constants at addresses 0x95778..0x95988.
- * We inline the extracted values here. */
+/*
+ * Stock tiziano_defog_params_refresh (tx-isp-t31.ko 0x555a0) memcpy's every
+ * defog table from the ACTIVE tuning bank, the 0x137f0 byte `tparams` block
+ * that tisp_day_or_night_s_ctrl fills from the day/night part of the sensor
+ * bin.  Offsets below are bank-relative (stock ROM address - 0x94fc0), sizes
+ * are the array sizes (= stock memcpy lengths).
+ */
+struct defog_bank_item {
+	uint8_t *dst;
+	uint32_t off;
+	uint32_t len;
+};
+#define DEFOG_BANK(arr, o) { (arr), (o), sizeof(arr) }
+#define TISP_DEFOG_BANK_RGBRA	0x10c44
+#define TISP_DEFOG_BANK_END	0x1102c	/* end of the last item */
+static const struct defog_bank_item defog_bank_items[] = {
+	DEFOG_BANK(defog_ev_list, 0x10b6c),
+	DEFOG_BANK(defog_trsy0_list, 0x10b90),
+	DEFOG_BANK(defog_trsy1_list, 0x10bb4),
+	DEFOG_BANK(defog_trsy2_list, 0x10bd8),
+	DEFOG_BANK(defog_trsy3_list, 0x10bfc),
+	DEFOG_BANK(defog_trsy4_list, 0x10c20),
+	DEFOG_BANK(defog_main_para_array, 0x10c68),
+	DEFOG_BANK(defog_color_control_array, 0x10c94),
+	DEFOG_BANK(defog_lc_s_array, 0x10ccc),
+	DEFOG_BANK(defog_lc_v_array, 0x10cf4),
+	DEFOG_BANK(defog_cc_s_array, 0x10d1c),
+	DEFOG_BANK(defog_cc_v_array, 0x10d3c),
+	DEFOG_BANK(defog_dark_l1_array, 0x10d60),
+	DEFOG_BANK(defog_dark_l2_array, 0x10d88),
+	DEFOG_BANK(defog_block_t_x_array, 0x10db0),
+	DEFOG_BANK(defog_block_t_y_array, 0x10dc4),
+	DEFOG_BANK(defog_t_par_list1, 0x10dd8),
+	DEFOG_BANK(defog_t_par_list2, 0x10e04),
+	DEFOG_BANK(defog_manual_ctrl, 0x10e78),
+	DEFOG_BANK(defog_ev_list_wdr, 0x10e94),
+	DEFOG_BANK(defog_trsy0_list_wdr, 0x10eb8),
+	DEFOG_BANK(defog_trsy1_list_wdr, 0x10edc),
+	DEFOG_BANK(defog_trsy2_list_wdr, 0x10f00),
+	DEFOG_BANK(defog_trsy3_list_wdr, 0x10f24),
+	DEFOG_BANK(defog_trsy4_list_wdr, 0x10f48),
+	DEFOG_BANK(param_defog_main_para_wdr_array, 0x10f6c),
+	DEFOG_BANK(param_defog_block_t_x_wdr_array, 0x10f98),
+	DEFOG_BANK(param_defog_fpga_para_wdr_array, 0x10fac),
+	DEFOG_BANK(param_defog_fpga_para_array, 0x10fec),
+};
+/* stock rgbra_list == 1: weight LUTs and centre weights come from the bank too */
+static const struct defog_bank_item defog_bank_lut_items[] = {
+	DEFOG_BANK(defog_weightlut20, 0x107d8),
+	DEFOG_BANK(defog_weightlut02, 0x10858),
+	DEFOG_BANK(defog_weightlut12, 0x108d8),
+	DEFOG_BANK(defog_weightlut22, 0x10958),
+	DEFOG_BANK(defog_weightlut21, 0x109d8),
+	DEFOG_BANK(defog_cent3_w_dis_array, 0x10a90),
+	DEFOG_BANK(defog_cent5_w_dis_array, 0x10af0),
+};
+
+/*
+ * Copy the defog tables from the active tuning bank like stock.  Returns
+ * false (nothing copied, built-in values stay) without a loaded bin or when
+ * the bank looks empty.  The loader only accepts bins that hold two full
+ * 0x137f0 byte banks, so every offset is in bounds (checked below).
+ */
+static bool tiziano_defog_load_bank(void)
+{
+	const u8 *bp = tparams_active ? tparams_active : tparams_day;
+	uint32_t rgbra;
+	size_t i;
+
+	BUILD_BUG_ON(TISP_DEFOG_BANK_END > TISP_PARAM_BLOCK_SIZE);
+	if (!bp || !tuning_bin_loaded)
+		return false;
+	/* an all-zero bank (no defog section) has no EV axis: keep built-in */
+	if (!le32_at(bp + 0x10b6c + 8 * 4))
+		return false;
+	rgbra = le32_at(bp + TISP_DEFOG_BANK_RGBRA);
+	if (rgbra > 1)
+		return false;
+
+	memcpy(defog_rgbra_list, bp + TISP_DEFOG_BANK_RGBRA, sizeof(defog_rgbra_list));
+	if (rgbra == 1)
+		for (i = 0; i < ARRAY_SIZE(defog_bank_lut_items); i++)
+			memcpy(defog_bank_lut_items[i].dst,
+			       bp + defog_bank_lut_items[i].off,
+			       defog_bank_lut_items[i].len);
+	for (i = 0; i < ARRAY_SIZE(defog_bank_items); i++)
+		memcpy(defog_bank_items[i].dst, bp + defog_bank_items[i].off,
+		       defog_bank_items[i].len);
+	return true;
+}
+
+/* OEM tiziano_defog_params_refresh — built-in defaults first (the stock ROM
+ * constants at 0x95778..0x95988, used without a tuning bin), then the tables
+ * of the active tuning bank overwrite them like the stock memcpy chain. */
 static void tiziano_defog_params_refresh(void)
 {
     /* param_defog_main_para_array: 11 uint32s (0x2c bytes)
@@ -12296,6 +12388,18 @@ static void tiziano_defog_params_refresh(void)
             0x14, 0x28, 0x0F, 0x28, 0x32, 0x32, 0x32, 0x32
         };
         for (i = 0; i < 16; i++) le32_put(param_defog_fpga_para_wdr_array, i, fpgaw[i]);
+    }
+
+    if (tiziano_defog_load_bank()) {
+        if (!defog_bank_logged) {
+            pr_notice("tiziano_defog_params_refresh: defog tables from tuning bin (ev %u..%u, rgbra %u)\n",
+                    le32_at(defog_ev_list), le32_at(defog_ev_list + 8 * 4),
+                    le32_at(defog_rgbra_list));
+            defog_bank_logged = true;
+        }
+    } else if (!defog_bank_logged) {
+        pr_notice("tiziano_defog_params_refresh: no usable tuning bank, built-in defog tables\n");
+        defog_bank_logged = true;
     }
 
     /* OEM stores one byte-valued sample in each u32 slot. */
