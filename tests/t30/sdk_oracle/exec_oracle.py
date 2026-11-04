@@ -11,6 +11,7 @@ apical_command are recorded.  The ordered write/command logs must be identical.
                 vs  driver/t30/tx_isp_t30_tuning_ctl.h tx_isp_t30_daynight_reload customer register block
   sensor_msgs : SDK sensor_drv.c setters + ispcore_irq_thread_handle (message slot, event per slot)
                 vs  the driver's sensor_set_* and ispcore_irq_thread_handle_body (compiled SDK enums, parsed driver)
+  scene_math  : SDK sat/bright/contrast/colorfx/ae-strategy handler math + scene ids vs tx_isp_t30_tuning_math.h
   (mutation: T30_ORACLE_MUTATE=<check> flips one mask in the driver text before compiling; the check must FAIL)
 """
 import os, re, subprocess, sys, tempfile
@@ -65,7 +66,7 @@ def compare(name, a, b):
     la, lb = a.split('\n'), b.split('\n')
     if la == lb:
         nw = sum(1 for l in la if l.startswith('W ')); nc = sum(1 for l in la if l.startswith('C '))
-        print('%s: %d cases, %d register writes + %d commands identical to the SDK' % (name, CASES, nw, nc)); return 0
+        print('%s: %d log lines (%d register writes, %d commands) identical to the SDK' % (name, len(la), nw, nc)); return 0
     case = '?'
     for x, y in zip(la, lb):
         if x.startswith('CASE'): case = x
@@ -193,6 +194,47 @@ ok = sdk_s == drv_s and sdk_e == drv_e and len(sdk_e) == 3
 print('sensor_msgs: setter slots SDK %s driver %s, slot events SDK %s driver %s: %s' % (
     sdk_s, drv_s, {k: hex(v) for k, v in sdk_e.items()}, {k: hex(v) for k, v in drv_e.items()}, 'OK' if ok else 'FAIL'))
 bad += not ok
+
+# ---- scene_math: picture controls (SDK tx-isp-core-tuning.c sat/bright/contrast/colorfx/ae_strategy handlers)
+#      vs driver/t30/tx_isp_t30_tuning_math.h + the scene ids of tx_isp_t30_tuning_ctl.h, executed exhaustively
+sat = func(tune, 'static inline int apical_isp_sat_s_control(')
+mid_expr = re.search(r'value = (value < 128 \?[^;]*);', sat).group(1)
+con = func(tune, 'static inline int apical_isp_contrast_s_control(')
+cblk = con[con.index('\tif(curves[0][0] != 0xff){'):con.index('set_contrast_val:')]
+cfx = func(tune, 'static inline int colorfx_value_v4l2_to_apical(int val)')
+ids = 'TSCENE_MODES SATURATION_STRENGTH_ID BRIGHTNESS_STRENGTH_ID CONTRAST_STRENGTH_ID SHARPENING_STRENGTH_ID COLOR_MODE_ID AE_SPLIT_BALANCED AE_SPLIT_INTEGRATION_PRIORITY'.split()
+DRV_IDS = 'TCTL_T_SCENE TCTL_SCENE_SATURATION TCTL_SCENE_BRIGHTNESS TCTL_SCENE_CONTRAST TCTL_SCENE_SHARPENING TCTL_SCENE_COLOR_MODE'.split()
+LOOP = r"""
+int main(void){ unsigned long long sd = 7;
+ for (unsigned v = 0; v < 256; v++) for (unsigned m = 0; m < 256; m++) printf("M %u %u %u\n", v, m, MID(v, m));
+ for (int c = 0; c < 16; c++) printf("X %d %d\n", c, CFX(c));
+ printf("A %u %u\n", AES(0), AES(1));
+ for (int k = 0; k < 20000; k++) { unsigned char cv[11][2]; int n;
+  sd = sd * 6364136223846793005ULL + 1; n = (sd >> 33) % 11;
+  for (int i = 0; i < 11; i++) { sd = sd * 6364136223846793005ULL + 1; cv[i][0] = 1 + i * 12 + ((sd >> 40) % 12); cv[i][1] = sd >> 52; }
+  cv[n][0] = 0xff; cv[10][0] = 0xff;      /* SDK reads curves[10] when all 10 are used: keep that in bounds */
+  sd = sd * 6364136223846793005ULL + 1; unsigned g = (sd >> 34) % 5000, v = (sd >> 20) & 0xff;
+  printf("C %d %u %u %u\n", k, g, v, CON(v, cv, g)); }
+ printf("I"); IDS; printf("\n"); return 0; }
+"""
+sdk_src = '#include <stdio.h>\n#include <errno.h>\n#include <stdint.h>\n#include <linux/videodev2.h>\n#define KERNEL_MODULE 0\n#include "apical_command_api.h"\n' + \
+    '#define CONTRAST_CURVES_MAXNUM 10\n' + \
+    'static unsigned MID(unsigned value, unsigned mid_node){ return %s; }\n' % mid_expr + cfx + '\n#define CFX colorfx_value_v4l2_to_apical\n' + \
+    '#define AES(x) ((x) ? AE_SPLIT_INTEGRATION_PRIORITY : AE_SPLIT_BALANCED)\n' + \
+    'static unsigned CON(unsigned value, unsigned char (*curves)[2], unsigned total_gain){ int x1, x2, i; unsigned y1, y2, v1, v2;\n' + cblk + '\treturn value; }\n' + \
+    '#define IDS ' + ' '.join('printf(" %%d", %s);' % x for x in ids[:6]) + '\n' + LOOP
+dn_ids = '\n'.join(l for l in tuning_h.split('\n') if re.match(r'#define (%s)\s' % '|'.join(DRV_IDS), l))
+drv_src = '#include <stdio.h>\n#include <stdint.h>\ntypedef uint8_t u8; typedef uint32_t u32; typedef int32_t s32;\n' + \
+    rd(os.path.join(drv, 'tx_isp_t30_tuning_math.h')) + '\n' + dn_ids + '\n' + \
+    '#define MID tctl_mid_scale\n#define CFX tctl_colorfx_to_apical\n#define AES tctl_ae_strategy_to_apical\n' + \
+    '#define CON(v, c, g) tctl_contrast_value(v, (const u8 (*)[2])(c), g)\n' + \
+    '#define IDS ' + ' '.join('printf(" %%d", %s);' % x for x in DRV_IDS) + '\n' + LOOP
+if MUT == 'scene_math':
+    drv_src = drv_src.replace('mid + (0xff - mid) * (value - 128) / 128', 'mid + (0xff - mid) * (value - 127) / 128', 1)
+with tempfile.TemporaryDirectory() as t:
+    for d in ('asm', 'linux'): os.makedirs(os.path.join(t, d))
+    for stub in ('asm/io.h', 'asm/div64.h', 'linux/math64.h'): open(os.path.join(t, stub), 'w').close()
+    bad += compare('scene_math', build(t, 'sc_sdk', sdk_src, SDK_INC), build(t, 'sc_drv', drv_src, []))
 
 print('t30_sdk_exec_oracle: %s' % ('FAIL' if bad else 'OK'))
 sys.exit(1 if bad else 0)
