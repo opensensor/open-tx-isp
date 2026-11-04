@@ -773,10 +773,9 @@ static int tx_isp_t30_tuning_ctl_set(void *tuning, void *core,
 	case V4L2_CID_SCENE_MODE:
 		/*
 		 * The stock handler returns before it touches anything (no
-		 * firmware scene change, value never stored).  The value is kept
-		 * so the getter reads back what was set, as in the open T31 driver.
+		 * firmware scene change, value never stored), so GetSceneMode
+		 * keeps reading 0 as on the vendor stack (T30X b18/b19).
 		 */
-		TCTL_U32(tuning, TCTL_OFF_SCENE) = c->value;
 		return 0;
 	case V4L2_CID_COLORFX:
 		TCTL_U32(tuning, TCTL_OFF_COLORFX) = c->value;
