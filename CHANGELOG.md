@@ -4,6 +4,13 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-04: T30 horizontal mirror, manual white balance and scene mode as the vendor (QEMU T30; T30X device proof: batch b20 pending)
+
+- Horizontal mirror: the OEM ISP interrupt applies a pending HFLIP control in its frame-end case (`0x40` bit 1 = not mirrored, bayer phase in `0x18` moved by one column; one row for a vertical flip when the input format changed). The open interrupt handler had no such step, so `IMP_ISP_Tuning_SetISPHflip` stored the state but never changed the picture (T30X b19: mirrored picture = base). QEMU: `0x40` `0x33242193` -> `0x33242191`, bayer 3 -> 2 and back on every toggle.
+- Manual white balance: OEM `awb_normalise()` takes the red/blue feedback factors from the system items 49/50 while AWB is manual (system item 12); the open AWB update kept computing them from the statistics and overwrote the manual gains every frame (T30X b19: no picture change). `system_manual_awb()` restored from the OEM (SET stores item 12; the lift dropped the SET and stored on invalid directions).
+- Scene mode: the stock handler returns without storing anything, so `GetSceneMode` reads 0 after a set on the vendor stack (T30X b17-b19); the open driver kept the value and now leaves it alone (QEMU: set 8 -> get 0).
+- Host tests green.
+
 ## 2026-11-04: T31 defog tables come from the active tuning bin, like the vendor (`claude/t31-defog-from-bin`; host + Unicorn oracle + QEMU T31 + T31X light-box camera)
 
 - `tiziano_defog_params_refresh` wrote the built-in table values (the vendor module's ROM bank) whatever the sensor bin said. The vendor copies 29 defog tables (ev/transmission lists, main/colour/dark/block parameters, WDR variants, fpga parameters) from the active day/night bank (`tparams`, bank offsets 0x10b6c..0x1102c); with `rgbra_list` = 1 it also takes the weight LUTs and centre weights from the bank. The driver now does the same (`tiziano_defog_load_bank`); the built-in values stay as fallback when no bin is loaded, the bank has no EV axis (all-zero defog section) or `rgbra_list` is neither 0 nor 1. The loader only accepts bins with two full 0x137f0 byte banks, so the offsets are in bounds. `force_bypass_defog` and the defog enable bit are unchanged.
