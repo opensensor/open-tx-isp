@@ -4,6 +4,12 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-04: T30 day/night switch reloads the night parameter set as the vendor (QEMU T30; T30X device test pending)
+
+- `IMP_ISP_Tuning_SetISPRunningMode(NIGHT)` / `DAY` (DAY_OR_NIGHT, `0x80000e1`) only set a flag: the open interrupt handler never raised tuning event `0x4000003`, which the OEM frame-end case sends to reload the day or night set (T30X b19-b21: night not monochrome, vendor U = V = 128.00).
+- The frame-end interrupt now raises it like the OEM. The reload itself is rewritten in C from the OEM `isp_core_tuning_event` (`0x4628`-`0x5f58`): the lift had 62 of the 93 calibration tables (one at a wrong offset), wrote through a NULL stack slot (QEMU oops "Fatal exception in interrupt" once the event was raised) and lost everything after the tables. Now: UV clip 512 at night / full range by day, all 93 tables of the new set, the 44 customer register fields, system items 37/41, the Iridix / AE limit items from the tables, the module enables in `0x40` (and `0x4e0` / `0x500` / `0x620` / `0x720` / `0x44`), then the CSC preset again when one is set.
+- QEMU T30: day -> night -> day: UV clip `0x200` at night, `0x000`/`0x3ff` by day; no oops, no sleeping call in the interrupt. Host tests green.
+
 ## 2026-11-04: T30 CSC presets (beyond vendor, opt-in; QEMU T30, T30X device test pending)
 
 - `IMP_ISP_Tuning_SetCsc_Attr` / `GetCsc_Attr` (tuning control `0x80000a6`) now work on T30 as on T10/T20: presets 0-3 (BT.601 / BT.709, full / TV range) or a user matrix with offsets and Y/UV clip. The vendor T30 driver rejects the control (-1) and libimp 1.0.5 has no such call. The preset goes into calibration table RGB2YUV_CONVERSION (API id 139 = firmware table 276) through the vendor calibration API, the YUV matrix is recomputed by re-setting the current saturation, and the cs_conv clip registers of the FR/DS1/DS2 channels (`0x578`/`0x6b8`/`0x7b8` + 0..12) get the preset range. The UV clip stays as the day/night switch sets it at night; after the day/night table reload the preset is applied again.

@@ -663,6 +663,173 @@ static int tctl_csc_get(void *core, int32_t value)
 	return copy_to_user(tctl_uptr(value), attr, sizeof(attr)) ? -EFAULT : 0;
 }
 
+/*
+ * Day/night reload, OEM isp_core_tuning_event(0x4000003) at 0x4628..0x5f58.
+ * Raised from the frame-end interrupt when DAY_OR_NIGHT changed: UV clip
+ * (512 at night = monochrome), the 93 calibration tables of the new set,
+ * the customer register block, the AE/Iridix system items and the module
+ * enables in 0x40 follow the day or night parameter set.  The lift had 62 of
+ * the 93 tables (one with a wrong offset), wrote through a NULL stack slot
+ * and lost everything after the tables.
+ */
+static const u16 tctl_dn_tables[][2] = {	/* table index, calibration API id */
+	{ 266, 0x59 }, { 267, 0x58 }, { 264, 0x5c }, { 263, 0x5b }, { 257, 0x5e }, { 258, 0x5f },
+	{ 259, 0x60 }, { 260, 0x61 }, { 265, 0x87 }, { 269, 0x85 }, { 270, 0x86 }, { 91, 0x62 },
+	{ 92, 0x63 }, { 208, 0x64 }, { 209, 0x65 }, { 210, 0x66 }, { 211, 0x67 }, { 36, 0x68 },
+	{ 37, 0x69 }, { 41, 0x6a }, { 42, 0x6b }, { 206, 0x6c }, { 46, 0x6d }, { 47, 0x6e },
+	{ 51, 0x6f }, { 52, 0x70 }, { 56, 0x71 }, { 57, 0x72 }, { 61, 0x73 }, { 62, 0x74 },
+	{ 66, 0x75 }, { 67, 0x76 }, { 71, 0x77 }, { 72, 0x78 }, { 101, 0x79 }, { 102, 0x7a },
+	{ 106, 0x7b }, { 107, 0x7c }, { 81, 0x7f }, { 82, 0x80 }, { 202, 0x81 }, { 86, 0x82 },
+	{ 205, 0x84 }, { 201, 0x57 }, { 136, 0x53 }, { 137, 0x54 }, { 141, 0x55 }, { 142, 0x56 },
+	{ 146, 0x88 }, { 147, 0x89 }, { 261, 0x8a }, { 276, 0x8b }, { 151, 0x1e }, { 152, 0x1f },
+	{ 243, 0x20 }, { 156, 0x2e }, { 161, 0x2f }, { 166, 0x30 }, { 171, 0x31 }, { 176, 0x32 },
+	{ 181, 0x33 }, { 186, 0x34 }, { 191, 0x35 }, { 196, 0x36 }, { 157, 0x37 }, { 162, 0x38 },
+	{ 167, 0x39 }, { 172, 0x3a }, { 177, 0x3b }, { 182, 0x3c }, { 187, 0x3d }, { 192, 0x3e },
+	{ 197, 0x3f }, { 1, 0x43 }, { 6, 0x44 }, { 2, 0x45 }, { 7, 0x46 }, { 27, 0x47 },
+	{ 32, 0x48 }, { 116, 0x21 }, { 131, 0x22 }, { 126, 0x23 }, { 121, 0x24 }, { 117, 0x49 },
+	{ 132, 0x4a }, { 127, 0x4b }, { 122, 0x4c }, { 11, 0x4d }, { 12, 0x4e }, { 203, 0x4f },
+	{ 204, 0x50 }, { 207, 0x51 }, { 268, 0x52 },
+};
+static const u16 tctl_dn_regs[][3] = {	/* customer word, register, field bits */
+	{ 1, 0x1c4, 8 }, { 2, 0x1d0, 12 }, { 3, 0x1d8, 12 }, { 4, 0x1dc, 8 }, { 6, 0x1e0, 12 },
+	{ 7, 0x1e4, 12 }, { 8, 0x1e8, 8 }, { 9, 0x400, 8 }, { 10, 0x404, 8 }, { 11, 0x408, 8 },
+	{ 12, 0x40c, 8 }, { 13, 0x410, 8 }, { 14, 0x414, 12 }, { 15, 0x418, 12 }, { 16, 0x41c, 12 },
+	{ 17, 0x420, 12 }, { 18, 0x424, 12 }, { 19, 0x428, 12 }, { 20, 0x42c, 12 }, { 21, 0x430, 12 },
+	{ 22, 0x434, 12 }, { 23, 0x438, 12 }, { 24, 0x444, 12 }, { 25, 0x448, 8 }, { 26, 0x44c, 8 },
+	{ 27, 0x450, 12 }, { 28, 0x454, 8 }, { 29, 0x458, 12 }, { 30, 0x45c, 8 }, { 31, 0x460, 8 },
+	{ 32, 0x464, 8 }, { 35, 0x244, 12 }, { 36, 0x248, 12 }, { 37, 0x24c, 12 }, { 38, 0x250, 8 },
+	{ 39, 0x254, 16 }, { 40, 0x258, 16 }, { 41, 0x268, 16 }, { 42, 0x264, 12 }, { 43, 0x260, 12 },
+};
+
+static u16 tctl_dn_first(const struct tx_isp_t30_lookup_table *t)
+{
+	return ((const u16 *)t->ptr)[1];
+}
+
+/* OEM indexes the last element with the element count of another table */
+static u16 tctl_dn_last(const struct tx_isp_t30_lookup_table *data,
+			const struct tx_isp_t30_lookup_table *dims)
+{
+	return ((const u16 *)data->ptr)[(u32)dims->rows * dims->cols - 1];
+}
+
+static void tctl_dn_field(u32 reg, u32 bits, u32 value)
+{
+	u32 mask = (1U << bits) - 1;
+
+	APICAL_WRITE_32(reg, (APICAL_READ_32(reg) & ~mask) | (value & mask));
+}
+
+static void tx_isp_t30_daynight_reload(void *tuning,
+				       struct tx_isp_t30_param_manager *param)
+{
+	u32 night = TCTL_U32(tuning, TCTL_OFF_DAYNIGHT);
+	u32 top = APICAL_READ_32(0x40);
+	struct tx_isp_t30_lookup_table **tbl;
+	const u32 *cust;
+	u32 mask, r = 0, ret;
+	unsigned int i;
+
+	if (night) {
+		tctl_dn_field(0x580, 10, 0x200);
+		tctl_dn_field(0x584, 10, 0x200);
+		tctl_dn_field(0x6c0, 10, 0x200);
+		tctl_dn_field(0x6c4, 10, 0x200);
+		cust = param->customer ? (const u32 *)((u8 *)param->customer + 0xd0) : NULL;
+	} else {
+		tctl_dn_field(0x580, 10, 0);
+		tctl_dn_field(0x584, 10, 0x3ff);
+		tctl_dn_field(0x6c0, 10, 0);
+		tctl_dn_field(0x6c4, 10, 0x3ff);
+		cust = param->customer;
+	}
+	tbl = param->isp_param[night ? 1 : 0].table;
+	if (!cust)
+		goto out;
+	mask = ~cust[0] & (top | 0x0c02da6c);
+
+	for (i = 0; i < ARRAY_SIZE(tctl_dn_tables); i++) {
+		const struct tx_isp_t30_lookup_table *t = tbl[tctl_dn_tables[i][0]];
+
+		ret = 0;
+		apical_api_calibration(tctl_dn_tables[i][1], TCTL_DIR_SET,
+				       (uintptr_t)t->ptr,
+				       (u32)t->rows * t->cols * t->width,
+				       (uintptr_t)&ret);
+	}
+
+	for (i = 0; i < 4; i++)
+		tctl_dn_field(tctl_dn_regs[i][1], tctl_dn_regs[i][2],
+			      cust[tctl_dn_regs[i][0]]);
+	/* OEM order: 0x1c0 bit 2 comes after 0x1dc */
+	APICAL_WRITE_32(0x1c0, (APICAL_READ_32(0x1c0) & ~4U) |
+			((cust[5] << 2) & 4));
+	for (i = 4; i < 31; i++)
+		tctl_dn_field(tctl_dn_regs[i][1], tctl_dn_regs[i][2],
+			      cust[tctl_dn_regs[i][0]]);
+	APICAL_WRITE_32(0x46c, (APICAL_READ_32(0x46c) & ~0x7fU) |
+			(cust[33] & 0x3f));
+	APICAL_WRITE_32(0x46c, (APICAL_READ_32(0x46c) & ~0x80U) |
+			(((cust[33] >> 6) & 1) << 7));
+	tctl_dn_field(0x2cc, 4, cust[34]);
+	for (i = 31; i < ARRAY_SIZE(tctl_dn_regs); i++)
+		tctl_dn_field(tctl_dn_regs[i][1], tctl_dn_regs[i][2],
+			      cust[tctl_dn_regs[i][0]]);
+
+	if (apical_command(1, 41, cust[44], TCTL_DIR_SET, &r))
+		pr_err("tx-isp-t30: day/night item 41 failed %u\n", r);
+	if (apical_command(1, 37, cust[45], TCTL_DIR_SET, &r))
+		pr_err("tx-isp-t30: day/night item 37 failed %u\n", r);
+	if (apical_command(2, 69, -1, TCTL_DIR_GET, &r))
+		pr_err("tx-isp-t30: day/night image mode get failed\n");
+	if (r == 14) {
+		stab[45] = tctl_dn_first(tbl[46]);
+		stab[44] = tctl_dn_last(tbl[46], tbl[46]);
+		stab[35] = tctl_dn_first(tbl[66]);
+		stab[36] = tctl_dn_last(tbl[66], tbl[66]);
+		stab[38] = tctl_dn_first(tbl[71]);
+		stab[39] = tctl_dn_last(tbl[71], tbl[71]);
+		stab[41] = *(const u8 *)tbl[91]->ptr;
+	} else if (r == 15) {
+		stab[45] = tctl_dn_first(tbl[47]);
+		stab[44] = tctl_dn_last(tbl[47], tbl[46]);
+		stab[35] = tctl_dn_first(tbl[67]);
+		stab[36] = tctl_dn_last(tbl[67], tbl[66]);
+		stab[38] = tctl_dn_first(tbl[72]);
+		stab[39] = tctl_dn_last(tbl[72], tbl[71]);
+		stab[41] = *(const u8 *)tbl[92]->ptr;
+	}
+	stab[48] = tctl_dn_first(tbl[205]);
+	stab[47] = tctl_dn_last(tbl[205], tbl[205]);
+	TCTL_U32(tuning, 0xec4) = tctl_dn_last(tbl[205], tbl[205]);
+	TCTL_U32(tuning, 0xec8) = tctl_dn_first(tbl[205]);
+	stab[42] = *(const u8 *)tbl[210]->ptr;
+	APICAL_WRITE_32(0x40, mask);
+
+	if (cust[0] & BIT(19)) {
+		APICAL_WRITE_32(0x40, APICAL_READ_32(0x40) & ~BIT(19));
+		APICAL_WRITE_32(0x4e0, APICAL_READ_32(0x4e0) | 1);
+	} else {
+		APICAL_WRITE_32(0x40, APICAL_READ_32(0x40) | BIT(19));
+		APICAL_WRITE_32(0x4e0, APICAL_READ_32(0x4e0) & ~1U);
+	}
+	if (cust[0] & BIT(20)) {
+		APICAL_WRITE_32(0x40, APICAL_READ_32(0x40) & ~BIT(20));
+		APICAL_WRITE_32(0x500, APICAL_READ_32(0x500) | 1);
+	} else {
+		APICAL_WRITE_32(0x500, APICAL_READ_32(0x500) | 1);
+		APICAL_WRITE_32(0x40, APICAL_READ_32(0x40) & ~BIT(20));
+		APICAL_WRITE_32(0x44, APICAL_READ_32(0x44) | 0x10);
+		APICAL_WRITE_32(0x720, APICAL_READ_32(0x720) & ~1U);
+	}
+	if (cust[0] & BIT(27))
+		APICAL_WRITE_32(0x620, APICAL_READ_32(0x620) | 1);
+	else
+		APICAL_WRITE_32(0x620, APICAL_READ_32(0x620) & ~1U);
+out:
+	tx_isp_t30_csc_reapply(tuning);	/* beyond vendor: CSC preset survives the reload */
+}
+
 static int tx_isp_t30_tuning_ctl_get(void *tuning, void *core,
 				     struct v4l2_control *c)
 {
