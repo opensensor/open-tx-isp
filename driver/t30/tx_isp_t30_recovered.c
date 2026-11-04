@@ -45337,14 +45337,20 @@ int32_t color_matrix_write(void *arg1)
 static const s16 *tx_isp_t30_color_ccm(
 	const struct tx_isp_t30_color_matrix_fsm *fsm, u8 mode)
 {
+	/*
+	 * OEM color_matrix_update (fw 0x10c0c) / color_matrix_change_CCMs (0x1109c): 1 -> +0x62,
+	 * 2 -> +0x74, 3 -> +0x86, any other light-source index -> the identity bank +0x98.
+	 * The lift returned the D40 bank for the default case.
+	 */
 	switch (mode) {
 	case 1:
 		return fsm->ccm_a;
+	case 2:
+		return fsm->ccm_d40;
 	case 3:
 		return fsm->ccm_d50;
-	case 2:
 	default:
-		return fsm->ccm_d40;
+		return fsm->identity_ccm;
 	}
 }
 
@@ -54195,6 +54201,12 @@ shared_counter:
         result = *(uint8_t *)((char *)arg1 + 0x77d);
         goto epilogue;
     } else {
+        /*
+         * OEM awb_process_light_source (fw 0x25d0, 0x262c..0x2644): the light-source counter
+         * 0x77e is incremented here too; the lift stored 0, so with 0x1c >= 61 the CCM bank
+         * index (colour fsm +0x5c..0x5f = isp+0xf44..0xf47) never followed AWB / low light.
+         */
+        next = (uint8_t)(*(uint8_t *)((char *)arg1 + 0x77e) + 1);
         *(uint8_t *)((char *)arg1 + 0x77e) = next;
         if ((uint32_t)next < (uint32_t)limit) {
             result = *(uint8_t *)((char *)arg1 + 0x77d);
