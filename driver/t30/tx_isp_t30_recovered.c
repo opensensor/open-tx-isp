@@ -11765,7 +11765,7 @@ int32_t apical_isp_gamma_s_attr_isra_0(uint32_t a0)
     if (a0 != 0) { goto apical_isp_gamma_s_attr_isra_00x64; }
 
     /* fragment 4: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t, uintptr_t))(int32_t *)apical_api_calibration)(77, 1, &local_18, 258); /* jalr target resolved by relocation */
+    v0 = (uintptr_t *)(uintptr_t)apical_api_calibration(77, 1, (uintptr_t)&local_18, 258, (uintptr_t)&local_11c); /* 5th arg (status, OEM sw s2,16(sp)) was dropped by the lift */
 
     /* fragment 5: StackAccess */
     v0 = local_11c;
@@ -11797,7 +11797,7 @@ apical_isp_gamma_s_attr_isra_00x64:
 
 apical_isp_gamma_s_attr_isra_00xb4:
     /* fragment 12: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t, uintptr_t))(int32_t *)apical_api_calibration)(77, 0, &local_18, 258); /* jalr target resolved by relocation */
+    v0 = (uintptr_t *)(uintptr_t)apical_api_calibration(77, 0, (uintptr_t)&local_18, 258, (uintptr_t)&local_11c); /* 5th arg (status) was dropped by the lift */
 
     /* fragment 13: Branch */
     v0 = local_11c;
@@ -13667,7 +13667,7 @@ apical_isp_core_ops_g_ctrl0x884:
 apical_isp_core_ops_g_ctrl0x8d0:
     /* fragment 174: CallSetup */
     local_10 = (uint32_t *)&local_18;
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t, uintptr_t))(int32_t *)apical_api_calibration)(136, 1, s0, s2); /* jalr target resolved by relocation */
+    v0 = (uintptr_t *)(uintptr_t)apical_api_calibration(136, 1, (uintptr_t)s0, (uint32_t)(uintptr_t)s2, (uintptr_t)local_10); /* 5th arg = the stack slot local_10 (status), dropped by the lift */
 
     /* fragment 175: StackAccess */
     v1 = local_18;
@@ -13907,7 +13907,7 @@ apical_isp_core_ops_g_ctrl0xb84:
 apical_isp_core_ops_g_ctrl0xb98:
     /* fragment 230: CallSetup */
     local_10 = (uint32_t *)&local_3c;
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t, uintptr_t))(uintptr_t)apical_api_calibration)(s4 & 255, 1, local_2c, (uintptr_t)s0); /* jalr target resolved by relocation */
+    v0 = (uintptr_t *)(uintptr_t)apical_api_calibration(s4 & 255, 1, (uintptr_t)local_2c, (uint32_t)(uintptr_t)s0, (uintptr_t)local_10); /* 5th arg = the stack slot local_10 (status), dropped by the lift */
 
     /* fragment 231: StackAccess */
     v1 = local_3c;
