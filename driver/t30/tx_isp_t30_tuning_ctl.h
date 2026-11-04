@@ -38,6 +38,8 @@
 #define TCTL_OFF_FPS		0x40a8
 #define TCTL_OFF_DAYNIGHT	0x40ac
 #define TCTL_OFF_ANTIFOG	0x4090
+#define TCTL_OFF_DRC_MODE	0x0ed4
+#define TCTL_OFF_DRC_ATTR	0x0ed8	/* 12 bytes: mode, strength, slope max/min, black, white */
 
 #define TCTL_U32(t, off)	(*(u32 *)((u8 *)(t) + (off)))
 
@@ -217,6 +219,15 @@ static int tctl_weight_set(u32 base, int32_t value)
 static struct tx_isp_t30_param_manager *tctl_param(void *core)
 {
 	return ((struct tx_isp_t30_core_tuning_view *)core)->param;
+}
+
+/* first byte of calibration table idx of the day (0) / night (1) set */
+static u8 tctl_lut_byte(void *core, u32 daynight, u32 idx)
+{
+	struct tx_isp_t30_param_manager *param = tctl_param(core);
+	struct tx_isp_t30_lookup_table *t = param->isp_param[daynight ? 1 : 0].table[idx];
+
+	return t && t->ptr ? *(u8 *)t->ptr : 0;
 }
 
 /* customer parameter block of day (0) or night (1) mode, 0xd0 bytes each */
@@ -478,6 +489,17 @@ static int tx_isp_t30_tuning_ctl_get(void *tuning, void *core,
 
 	tctl_check_abi();
 	switch (c->id) {
+	case 0x080000a0: {	/* RAW DRC attribute: OEM g_ctrl 0x8d34 (Iridix registers) */
+		u8 *a = (u8 *)tuning + TCTL_OFF_DRC_ATTR;
+		u32 v = APICAL_READ_32(0x3c8);
+
+		a[4] = APICAL_READ_32(0x3c4);
+		a[5] = v >> 8;
+		a[6] = v >> 16;
+		*(u16 *)(a + 8) = APICAL_READ_32(0x3d0) & 0xfff;
+		*(u16 *)(a + 10) = APICAL_READ_32(0x3d4) & 0xfff;
+		return copy_to_user(tctl_uptr(c->value), a, 12) ? -EFAULT : 0;
+	}
 	case V4L2_CID_POWER_LINE_FREQUENCY:
 		c->value = TCTL_U32(tuning, TCTL_OFF_FLICKER);
 		return 0;
@@ -955,6 +977,40 @@ static int tx_isp_t30_tuning_ctl_set(void *tuning, void *core,
 	}
 	case 0x08000161:	/* ISP_TABLE_ATTR */
 		return tctl_table_set(core, c->value);
+	case 0x08000168: {	/* DRC mode: OEM s_ctrl 0x7b90 */
+		u32 m = c->value, dn = TCTL_U32(tuning, TCTL_OFF_DAYNIGHT);
+
+		TCTL_U32(tuning, TCTL_OFF_DRC_MODE) = m;
+		stab[9] = m == 0;			/* manual Iridix */
+		if (tctl_param(core)) {
+			if (m == 0) {
+				stab[42] = 0;
+				stab[41] = 0xff;
+			} else {
+				/* Iridix strength limits of the WDR mode in use */
+				if (tctl_cmd(TCTL_T_IMAGE, 0x45, (u32)-1, TCTL_DIR_GET, &r))
+					pr_err("tx-isp-t30: drc mode get ret err %u\n", r);
+				if (r == 14)
+					stab[41] = tctl_lut_byte(core, dn, 91);
+				else if (r == 15)
+					stab[41] = tctl_lut_byte(core, dn, 92);
+				else
+					pr_err("tx-isp-t30: drc: unknown wdr mode %u\n", r);
+				stab[42] = tctl_lut_byte(core, dn, 210);
+			}
+		}
+		tctl_reg_field(0x40, 15, 1, m == 5);	/* DISABLE: Iridix off */
+		TCTL_U32(tuning, TCTL_OFF_DRC_ATTR) = m;
+		return 0;
+	}
+	case 0x080000a0: {	/* RAW DRC attribute: OEM s_ctrl 0x7cc8 */
+		u8 *a = (u8 *)tuning + TCTL_OFF_DRC_ATTR;
+
+		if (copy_from_user(a, tctl_uptr(c->value), 12))
+			return -EFAULT;
+		tctl_cmd(TCTL_T_ALGO, 0x6a, a[4], TCTL_DIR_SET, NULL);	/* strength */
+		return 0;
+	}
 	case 0x08000163: {	/* ANTIFOG: OEM s_ctrl 0x76d0 */
 		u32 v = c->value;
 
