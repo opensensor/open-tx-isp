@@ -28,6 +28,11 @@ marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned 
 - The calibrated AWB publishes its red/blue factors (halved) into system table items 49/50 while AWB is not manual, so `GetWB` no longer reports the 50/50 initial values (T30X: 175/92 while the vendor reads 132/124 on the same scene: the calibrated AWB settles on another balance, an algorithm difference, not the getter; #202 stays open).
 - Evidence: T30 QEMU picture area 67 cases, no oops, no slab report; T30X apitest `isp` area 48 PASS / 0 FAIL, 0 oopses; host tests green.
 
+## 2026-11-04: T30 compact AE keeps the exposure history, Iridix gets its linear ratio (`claude/t30-ae-exphistory`; QEMU T30, device b21 pending)
+
+- `iridix_fsm_process_interrupt` compares the current frame exposure with the previous one (OEM ring of 8 exposure sets, `cmos_store_frame_exposure_set` / `cmos_move_exposure_history`). The compact AE bypasses `cmos_update_exposure_history()` and the open firmware IRQ gate keeps the CMOS frame-start event off, so the ring never filled or moved: previous = 0 against the current 0x1e828, linear ratio exp2(negative) = 0, register 0x3dc stayed 0 and the Iridix strength (0x3c4) was never written (RawDRC without effect; vendor 0x3dc = 0x100).
+- The AE cycle (once per frame) now stores the applied exposure as the pending set and advances the ring (`tx_isp_t30_ae_store_exposure_history`), also on frames without statistics. QEMU T30 debug kernel: before cur=1e828 prev=0 ratio=0 0x3dc=0 0x3c4=0x46; after cur=prev, ratio 0x100, 0x3dc=0x100, 0x3c4 written (0x58, 0x62, 0x63, 0x64 ...). apitest isp 48/0, 0 oopses. Not ported: the 0x400a0/0x400a8 gain mirrors of the OEM function.
+
 ## 2026-11-04: T30 system table accessors as the vendor, compact AE honours AE compensation and the manual items (#202; host + QEMU T30, picture effect pending a device batch)
 
 - 21 of the 51 lifted `system_*` accessors (`apical_command` type 1) had lost the SET arm or answered the GET wrongly (manual exposure, manual integration time/gains/sharpening/AWB/saturation, dark/bright target, limits, anti-flicker, bad pixels; `GetExpr` mode was always 0). Each vendor accessor is the same code, so all 51 are now `t30_system_item()` on the vendor item offset (`tx_isp_t30_system_item.h`, host test, `check_t30_system_items.sh`).

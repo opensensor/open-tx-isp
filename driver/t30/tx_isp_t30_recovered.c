@@ -52282,6 +52282,47 @@ static void tx_isp_t30_ae_partition_exposure(
 		max_isp_digital_gain_log2);
 }
 
+/*
+ * OEM cmos_update_exposure_history(), history part: the exposure that was just
+ * applied (integration time, analog / digital / ISP gain, all already in the
+ * CMOS fields) is stored as the pending frame exposure set, which
+ * cmos_move_exposure_history() copies into the 8-entry ring at the sensor
+ * delay.  The compact AE bypasses the OEM CMOS FSM, so without this the ring
+ * stayed zero: iridix_fsm_process_interrupt saw previous = 0 against the
+ * current exposure, computed a linear ratio of exp2(negative) = 0 and left
+ * 0x3dc at 0 and the Iridix strength (0x3c4) never written, i.e. RawDRC had no
+ * effect.  The stab items and the 0x400a0/0x400a8 gain mirrors of the OEM
+ * function are not part of this step (the compact AE publishes the stab items).
+ */
+static void tx_isp_t30_ae_store_exposure_history(u32 integration_time)
+{
+	struct apical_isp *ai = (void *)TX_ISP_T30_ISP_PTR(0);
+	int32_t *cmos = (int32_t *)&ai->cmos;
+	u8 *base = (u8 *)(uintptr_t)cmos[0];
+	unsigned long flags;
+	unsigned int i;
+
+	if (!base)
+		return;
+	local_irq_save(flags);
+	if (cmos[0x1a4 / 4] < 0) {
+		cmos[0x1a4 / 4] = 0;
+		for (i = 0; i <= base[0x7e]; i++)
+			cmos_store_frame_exposure_set(cmos,
+				cmos_get_frame_exposure_set(cmos, i));
+	}
+	cmos[0x1c0 / 4] = *(u16 *)((u8 *)cmos + 0x1c4);	/* previous integration time */
+	*(u16 *)((u8 *)cmos + 0x1c4) = (u16)integration_time;
+	cmos_store_frame_exposure_set(cmos, &cmos[0x20 / 4]);
+	/*
+	 * The OEM advances the ring at the frame-start interrupt of the CMOS FSM;
+	 * the open firmware IRQ gate keeps that source off (frame end, AE and AWB
+	 * only), so the AE cycle, which runs once per frame, moves it.
+	 */
+	cmos_move_exposure_history((uint32_t *)cmos);
+	local_irq_restore(flags);
+}
+
 static void tx_isp_t30_simple_ae_update(void)
 {
 	struct tx_isp_t30_core_sensor_view *core = ispcore;
@@ -52353,8 +52394,16 @@ static void tx_isp_t30_simple_ae_update(void)
 	BUILD_BUG_ON(offsetof(struct tx_isp_t30_ae_statistics_view,
 			      histogram_total) != 0x738);
 	mean = tx_isp_t30_histogram_metered_mean(ae[2], statistics);
-	if (!mean)
+	if (!mean) {
+		/*
+		 * No statistics yet (or an empty frame): the exposure the sensor runs
+		 * with still belongs in the history, as the OEM CMOS FSM stores it
+		 * every cycle whatever the AE decides.
+		 */
+		tx_isp_t30_ae_store_exposure_history(state->ae_initialized ?
+			state->integration_time : attr->integration_time);
 		return;
+	}
 	if (!state->ae_initialized) {
 		/*
 		 * Sensor timing and limits come from the sensor attribute ABI.  If
@@ -52470,6 +52519,7 @@ static void tx_isp_t30_simple_ae_update(void)
 	isp->sensor_analog_gain = state->analog_gain_log2;
 	isp->sensor_digital_gain = 0;
 	isp->isp_digital_gain = state->isp_digital_gain_log2;
+	tx_isp_t30_ae_store_exposure_history(state->integration_time);
 	statistics->exposure_log2 = state->total_exposure_request_log2;
 	APICAL_WRITE_32(0x01a0,
 		(APICAL_READ_32(0x01a0) & 0xfffff000) |
