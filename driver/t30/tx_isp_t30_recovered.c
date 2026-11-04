@@ -40854,15 +40854,14 @@ int32_t system_manual_awb(int32_t arg1, char arg2, char arg3, int32_t *arg4)
 {
     uint32_t v = (uint32_t)(uint8_t)arg3;
 
-    if (v != 1) {
-        if (v != 0) {
-            stab[12] = (uint8_t)arg2;
-            return 2;
-        }
+    *arg4 = 0;
+    if (v == 1) {
+        *arg4 = (int32_t)stab[12];
         return 0;
     }
-
-    *arg4 = (int32_t)stab[12];
+    if (v != 0)
+        return 2;
+    stab[12] = (uint8_t)arg2;
     return 0;
 }
 
@@ -54361,6 +54360,15 @@ static void tx_isp_t30_simple_awb_update(int32_t *awb_fsm)
 	state->awb_blue_scale = clamp_t(u32,
 		(state->blue_target_sum + coefficient / 2) / coefficient,
 		0x40, 0x400);
+	/* OEM awb_normalise(): manual AWB (system item 12) takes the red/blue
+	 * feedback factors from the system items 49/50 (halved Q8), and the
+	 * filter continues from them when AWB returns to auto */
+	if (stab[12]) {
+		state->awb_red_scale = (u32)stab[49] << 1;
+		state->awb_blue_scale = (u32)stab[50] << 1;
+		state->red_target_sum = coefficient * state->awb_red_scale;
+		state->blue_target_sum = coefficient * state->awb_blue_scale;
+	}
 	/* OEM awb_normalise(): with AWB not manual (system item 12) the red/blue feedback factors
 	 * are published halved into the system items 49/50, which back GetWB (#202) */
 	if (!stab[12]) {
