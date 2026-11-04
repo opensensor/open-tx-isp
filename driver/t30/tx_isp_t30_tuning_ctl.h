@@ -495,7 +495,8 @@ static int tctl_table_set(void *core, int32_t value)
  */
 #define TCTL_CAL_RGB2YUV		139	/* API2FRM_IDX[139] = table 276 */
 
-static DEFINE_MUTEX(tctl_csc_mutex);
+/* the day/night reload runs from the frame-end interrupt: no sleeping lock */
+static DEFINE_SPINLOCK(tctl_csc_lock);
 static int tctl_csc_active;
 static u16 tctl_csc_lut[12];
 static u16 tctl_csc_clip[4];	/* Y min, Y max, UV min, UV max */
@@ -515,7 +516,7 @@ static void tctl_csc_write_clip(const u16 *clip, bool night)
 	}
 }
 
-/* caller holds tctl_csc_mutex */
+/* caller holds tctl_csc_lock */
 static int tctl_csc_program(bool night)
 {
 	u32 ret = 0, sat = 0;
@@ -536,11 +537,13 @@ static int tctl_csc_program(bool night)
 /* After the day/night table reload (tuning event 0x4000003). */
 static void tx_isp_t30_csc_reapply(void *tuning)
 {
-	mutex_lock(&tctl_csc_mutex);
+	unsigned long flags;
+
+	spin_lock_irqsave(&tctl_csc_lock, flags);
 	if (tctl_csc_active &&
 	    tctl_csc_program(TCTL_U32(tuning, TCTL_OFF_DAYNIGHT) != 0))
 		pr_warn("tx-isp-t30: CSC preset not re-applied\n");
-	mutex_unlock(&tctl_csc_mutex);
+	spin_unlock_irqrestore(&tctl_csc_lock, flags);
 }
 
 static int tctl_csc_ready(void *core)
@@ -559,6 +562,7 @@ static int tctl_csc_set(void *tuning, void *core, int32_t value)
 	u32 attr[TX_ISP_CSC_ATTR_WORDS];
 	int32_t p[TX_ISP_CSC_WORDS];
 	u16 old_lut[12], old_clip[4];
+	unsigned long flags;
 	int old_active, ret;
 
 	if (copy_from_user(attr, tctl_uptr(value), sizeof(attr)))
@@ -570,7 +574,7 @@ static int tctl_csc_set(void *tuning, void *core, int32_t value)
 		return ret;
 	tx_isp_csc_params(attr, p);
 
-	mutex_lock(&tctl_csc_mutex);
+	spin_lock_irqsave(&tctl_csc_lock, flags);
 	old_active = tctl_csc_active;
 	memcpy(old_lut, tctl_csc_lut, sizeof(old_lut));
 	memcpy(old_clip, tctl_csc_clip, sizeof(old_clip));
@@ -583,7 +587,7 @@ static int tctl_csc_set(void *tuning, void *core, int32_t value)
 		memcpy(tctl_csc_lut, old_lut, sizeof(old_lut));
 		memcpy(tctl_csc_clip, old_clip, sizeof(old_clip));
 	}
-	mutex_unlock(&tctl_csc_mutex);
+	spin_unlock_irqrestore(&tctl_csc_lock, flags);
 	return ret;
 }
 
@@ -591,23 +595,24 @@ static int tctl_csc_get(void *core, int32_t value)
 {
 	u32 attr[TX_ISP_CSC_ATTR_WORDS];
 	u16 lut[12], clip[4];
+	unsigned long flags;
 	u32 ret = 0;
 	int err;
 
 	err = tctl_csc_ready(core);
 	if (err)
 		return err;
-	mutex_lock(&tctl_csc_mutex);
+	spin_lock_irqsave(&tctl_csc_lock, flags);
 	if (!tctl_csc_active) {
 		/* vendor behaviour until a preset was set */
-		mutex_unlock(&tctl_csc_mutex);
+		spin_unlock_irqrestore(&tctl_csc_lock, flags);
 		return -1;
 	}
 	/* what is in effect: the firmware table and the day clip */
 	apical_api_calibration(TCTL_CAL_RGB2YUV, TCTL_DIR_GET, (uintptr_t)lut,
 			       sizeof(lut), (uintptr_t)&ret);
 	memcpy(clip, tctl_csc_clip, sizeof(clip));
-	mutex_unlock(&tctl_csc_mutex);
+	spin_unlock_irqrestore(&tctl_csc_lock, flags);
 	if (ret)
 		return -EIO;
 	tx_isp_csc_from_apical(lut, clip, attr);
