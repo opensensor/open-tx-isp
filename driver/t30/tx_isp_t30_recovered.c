@@ -19117,7 +19117,27 @@ static int tx_isp_t30_ispcore_interrupt(struct tx_isp_t30_subdev *sd)
 		ret = IRQ_WAKE_THREAD;
 	}
 	if (irq_status & BIT(0)) {
+		u32 bayer = APICAL_READ_32(0x18) & 3;
+
 		core->frame_state = 0;
+		/*
+		 * OEM frame-end case: mirror changes requested by s_ctrl take effect
+		 * here.  0x40 bit 1 is set for the unmirrored picture; a horizontal
+		 * mirror also moves the bayer phase by one column, a vertical sensor
+		 * flip by one row when the input format changed.
+		 */
+		if (core->hflip_change == 1) {
+			core->hflip_change = 0;
+			APICAL_WRITE_32(0x40, (APICAL_READ_32(0x40) & ~2U) |
+					((core->hflip_state == 0) << 1));
+			bayer ^= 1;
+		}
+		if (core->vflip_change == 1) {
+			if (core->vin.mbus_change == 1)
+				bayer ^= 2;
+			core->vflip_change = 0;
+		}
+		APICAL_WRITE_32(0x18, (APICAL_READ_32(0x18) & ~3U) | bayer);
 		/*
 		 * OEM enables the FR writer from the first frame-end interrupt.
 		 * Omitting this leaves both writers at zero and starves LFB/NCU.
