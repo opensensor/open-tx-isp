@@ -3,7 +3,7 @@ CC ?= cc
 CFLAGS ?= -O2
 CFLAGS += -std=c99 -Wall -Wextra -Werror
 
-.PHONY: all check check-oracles clean t40_vic_layout_check t40_lost_tail_host lifted_ptr_scale_check t40_hardcoded_anchor_check t30_storage_audit t30_fw_irq_gate t30_fmt5c_check t30_tuning_ctl_check t30_callarg_check t40_af_stats_host t40_bcsh_dn_host t40_tstp_host t40_ccm_conv_host t40_ccm_chain_host t40_ct_chain_host t40_dmsc_chain_host t40_mdns_chain_host t40_ysp_chain_host t40_ydns_host t40_gib_host t40_lsc_host t40_blc_host t40_clm_host t40_ae_leaf_host t40_bitexact_host t40_callarg_check t41_sensor_barrier_check t40_hardcoded_anchor_check t40_clk_teardown_check t40_tstp_init_check t40_custom_algo_wake_check t41_custom_ae_check t41_custom_awb_check t41_awb_algo_host t41_af_gate_check lifted_ptr_scale_check t40_algo_handle_host t40_wdr_log2_host t23_bypass_host t31_defog_bank_host
+.PHONY: all check check-oracles clean t40_vic_layout_check t40_lost_tail_host lifted_ptr_scale_check t40_hardcoded_anchor_check t30_storage_audit t30_fw_irq_gate t30_fmt5c_check t30_tuning_ctl_check t30_system_items_check t30_callarg_check t40_af_stats_host t40_bcsh_dn_host t40_tstp_host t40_ccm_conv_host t40_ccm_chain_host t40_ct_chain_host t40_dmsc_chain_host t40_mdns_chain_host t40_ysp_chain_host t40_ydns_host t40_gib_host t40_lsc_host t40_blc_host t40_clm_host t40_ae_leaf_host t40_bitexact_host t40_callarg_check t41_sensor_barrier_check t40_hardcoded_anchor_check t40_clk_teardown_check t40_tstp_init_check t40_custom_algo_wake_check t41_custom_ae_check t41_custom_awb_check t41_awb_algo_host t41_af_gate_check lifted_ptr_scale_check t40_algo_handle_host t40_wdr_log2_host t23_bypass_host t31_defog_bank_host
 
 # Every host test binary.  A new test is registered with "TESTS += name"
 # (plus its build rule); `check` builds and runs all of them, keeps going
@@ -12,7 +12,7 @@ CFLAGS += -std=c99 -Wall -Wextra -Werror
 # so a test cannot be added and then silently never run.
 TESTS :=
 # Further check steps, run as "$(MAKE) <target>" after the binaries.
-CHECK_TARGETS := t40_vic_layout_check t30_storage_audit t30_fw_irq_gate t30_fmt5c_check t30_tuning_ctl_check t30_callarg_check t41_dfg_host t40_af_stats_host t40_bcsh_dn_host t40_tstp_host t40_ccm_conv_host t40_ccm_chain_host t40_ct_chain_host t40_dmsc_chain_host t40_mdns_chain_host t40_ysp_chain_host t40_ydns_host t40_gib_host t40_lsc_host t40_blc_host t40_clm_host t40_ae_leaf_host t40_bitexact_host t40_callarg_check t41_sensor_barrier_check t40_hardcoded_anchor_check t40_clk_teardown_check t40_tstp_init_check t40_custom_algo_wake_check t41_custom_ae_check t41_custom_awb_check t41_awb_algo_host t41_af_gate_check lifted_ptr_scale_check t40_lost_tail_host t40_algo_handle_host t40_wdr_log2_host t23_bypass_host t31_defog_bank_host
+CHECK_TARGETS := t40_vic_layout_check t30_storage_audit t30_fw_irq_gate t30_fmt5c_check t30_tuning_ctl_check t30_system_items_check t30_callarg_check t41_dfg_host t40_af_stats_host t40_bcsh_dn_host t40_tstp_host t40_ccm_conv_host t40_ccm_chain_host t40_ct_chain_host t40_dmsc_chain_host t40_mdns_chain_host t40_ysp_chain_host t40_ydns_host t40_gib_host t40_lsc_host t40_blc_host t40_clm_host t40_ae_leaf_host t40_bitexact_host t40_callarg_check t41_sensor_barrier_check t40_hardcoded_anchor_check t40_clk_teardown_check t40_tstp_init_check t40_custom_algo_wake_check t41_custom_ae_check t41_custom_awb_check t41_awb_algo_host t41_af_gate_check lifted_ptr_scale_check t40_lost_tail_host t40_algo_handle_host t40_wdr_log2_host t23_bypass_host t31_defog_bank_host
 # Sources that only run on the camera (not built on the host).
 TARGET_TESTS := $(basename $(wildcard t41_v4l2_*_test.c)) t41_antiflicker_ioctl_test
 TEST_TIMEOUT ?= 600
@@ -516,6 +516,16 @@ TESTS += t30_tuning_ctl_host_test
 t30_tuning_ctl_host_test: t30_tuning_ctl_host_test.c ../driver/t30/tx_isp_t30_tuning_math.h
 	$(CC) $(CFLAGS) -o $@ $<
 
+TESTS += t30_ae_manual_host_test
+
+t30_ae_manual_host_test: t30_ae_manual_host_test.c ../driver/t30/tx_isp_t30_ae_manual.h
+	$(CC) $(CFLAGS) -o $@ $<
+
+TESTS += t30_system_item_host_test
+
+t30_system_item_host_test: t30_system_item_host_test.c ../driver/t30/tx_isp_t30_system_item.h
+	$(CC) $(CFLAGS) -o $@ $<
+
 TESTS += t20_expr_time_host_test
 
 t20_expr_time_host_test: t20_expr_time_host_test.c ../driver/t20/sdk/tx-isp-expr-time.h
@@ -635,6 +645,9 @@ t30_fmt5c_check:
 # T30 tuning controls the lifted switch had lost: host test + mutations + arm/dispatch guard (Lu-Fi/openimp#177)
 t30_tuning_ctl_check:
 	sh ./check_t30_tuning_ctl.sh ../driver/t30
+
+t30_system_items_check:
+	sh ./check_t30_system_items.sh ../driver/t30
 
 # T30 lifted calls with dropped arguments (gamma s_ctrl wrote its status through NULL): only new findings fail
 t30_callarg_check:
@@ -804,7 +817,7 @@ clean:
 	$(RM) tx_isp_t41_awb_runtime_test
 	$(RM) tx_isp_t41_awb_detect_test
 	$(RM) tx_isp_t41_awb_long_test
-	$(RM) t30_tuning_ctl_host_test t31_awb_simd_host_test t31_awb_defs.inc t31_awb_region.inc tx_isp_t41_tuning_ctl_test t21_sepia_host_test t21_it_block_host_test t30_stab_host_test t20_expr_time_host_test t31_sharpness_host_test t31_ae_step_host_test sinfo_vendor_host_test
+	$(RM) t30_tuning_ctl_host_test t30_ae_manual_host_test t30_system_item_host_test t31_awb_simd_host_test t31_awb_defs.inc t31_awb_region.inc tx_isp_t41_tuning_ctl_test t21_sepia_host_test t21_it_block_host_test t30_stab_host_test t20_expr_time_host_test t31_sharpness_host_test t31_ae_step_host_test sinfo_vendor_host_test
 	$(RM) tx_isp_t41_awb_stats_test
 	$(RM) tx_isp_math_test tx_isp_modulation_test \
 		tx_isp_awb_mesh_test \
