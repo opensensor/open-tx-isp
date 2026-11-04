@@ -18,6 +18,7 @@
 #define TX_ISP_T30_TUNING_CTL_H
 
 #include "tx_isp_t30_tuning_math.h"
+#include "../common/tx_isp_csc.h"
 
 #define TCTL_UNHANDLED 0x7fff0001
 
@@ -480,6 +481,139 @@ static int tctl_table_set(void *core, int32_t value)
 }
 
 /* ---------------------------------------------------------------- get --- */
+/*
+ * Beyond vendor: CSC presets (0x80000a6, ../common/tx_isp_csc.h), as on T20.
+ * The stock T30 s_ctrl rejects the id (-1) and libimp 1.0.5 has no API.
+ * A preset is written into calibration table RGB2YUV_CONVERSION (API id
+ * 139 = firmware table 276) with the vendor calibration API, the YUV matrix
+ * is recomputed by re-setting the current saturation (276 is not in the
+ * post-SET apply list), and the cs_conv clip registers of every channel get
+ * the preset's range.  The UV clip is left alone at night (the day/night
+ * reload pins it to 512 for mono); that reload also restores table 276 from
+ * the tuning bin, so tx_isp_t30_csc_reapply() puts the preset back.  Until
+ * CSC_ATTR is set nothing differs from stock.
+ */
+#define TCTL_CAL_RGB2YUV		139	/* API2FRM_IDX[139] = table 276 */
+
+static DEFINE_MUTEX(tctl_csc_mutex);
+static int tctl_csc_active;
+static u16 tctl_csc_lut[12];
+static u16 tctl_csc_clip[4];	/* Y min, Y max, UV min, UV max */
+
+static void tctl_csc_write_clip(const u16 *clip, bool night)
+{
+	static const u32 base[] = { 0x578, 0x6b8, 0x7b8 };	/* fr, ds1, ds2 */
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(base); i++) {
+		tctl_reg_field(base[i], 0, 0x3ff, clip[0]);
+		tctl_reg_field(base[i] + 4, 0, 0x3ff, clip[1]);
+		if (night)
+			continue;
+		tctl_reg_field(base[i] + 8, 0, 0x3ff, clip[2]);
+		tctl_reg_field(base[i] + 12, 0, 0x3ff, clip[3]);
+	}
+}
+
+/* caller holds tctl_csc_mutex */
+static int tctl_csc_program(bool night)
+{
+	u32 ret = 0, sat = 0;
+
+	apical_api_calibration(TCTL_CAL_RGB2YUV, TCTL_DIR_SET,
+			       (uintptr_t)tctl_csc_lut, sizeof(tctl_csc_lut),
+			       (uintptr_t)&ret);
+	if (ret)
+		return -EIO;
+	tctl_csc_write_clip(tctl_csc_clip, night);
+	if (!tctl_cmd(TCTL_T_SCENE, TCTL_SCENE_SATURATION, 0, TCTL_DIR_GET,
+		      &sat))
+		tctl_cmd(TCTL_T_SCENE, TCTL_SCENE_SATURATION, sat & 0xff,
+			 TCTL_DIR_SET, NULL);
+	return 0;
+}
+
+/* After the day/night table reload (tuning event 0x4000003). */
+static void tx_isp_t30_csc_reapply(void *tuning)
+{
+	mutex_lock(&tctl_csc_mutex);
+	if (tctl_csc_active &&
+	    tctl_csc_program(TCTL_U32(tuning, TCTL_OFF_DAYNIGHT) != 0))
+		pr_warn("tx-isp-t30: CSC preset not re-applied\n");
+	mutex_unlock(&tctl_csc_mutex);
+}
+
+static int tctl_csc_ready(void *core)
+{
+	struct tx_isp_t30_core_video_view *vcore = core;
+
+	if (vcore->vin.mbus.code == V4L2_MBUS_FMT_YUYV8_1X16)
+		return -EPERM;	/* YUV sensor: cs_conv is not in the path */
+	if (!tctl_param(core))
+		return -EBUSY;
+	return 0;
+}
+
+static int tctl_csc_set(void *tuning, void *core, int32_t value)
+{
+	u32 attr[TX_ISP_CSC_ATTR_WORDS];
+	int32_t p[TX_ISP_CSC_WORDS];
+	u16 old_lut[12], old_clip[4];
+	int old_active, ret;
+
+	if (copy_from_user(attr, tctl_uptr(value), sizeof(attr)))
+		return -EFAULT;
+	ret = tx_isp_csc_check(attr);
+	if (!ret)
+		ret = tctl_csc_ready(core);
+	if (ret)
+		return ret;
+	tx_isp_csc_params(attr, p);
+
+	mutex_lock(&tctl_csc_mutex);
+	old_active = tctl_csc_active;
+	memcpy(old_lut, tctl_csc_lut, sizeof(old_lut));
+	memcpy(old_clip, tctl_csc_clip, sizeof(old_clip));
+	tx_isp_csc_to_apical(p, tctl_csc_lut, tctl_csc_clip);
+	tctl_csc_active = 1;
+	ret = tctl_csc_program(TCTL_U32(tuning, TCTL_OFF_DAYNIGHT) != 0);
+	if (ret) {
+		/* table rejected: nothing was written, keep the old state */
+		tctl_csc_active = old_active;
+		memcpy(tctl_csc_lut, old_lut, sizeof(old_lut));
+		memcpy(tctl_csc_clip, old_clip, sizeof(old_clip));
+	}
+	mutex_unlock(&tctl_csc_mutex);
+	return ret;
+}
+
+static int tctl_csc_get(void *core, int32_t value)
+{
+	u32 attr[TX_ISP_CSC_ATTR_WORDS];
+	u16 lut[12], clip[4];
+	u32 ret = 0;
+	int err;
+
+	err = tctl_csc_ready(core);
+	if (err)
+		return err;
+	mutex_lock(&tctl_csc_mutex);
+	if (!tctl_csc_active) {
+		/* vendor behaviour until a preset was set */
+		mutex_unlock(&tctl_csc_mutex);
+		return -1;
+	}
+	/* what is in effect: the firmware table and the day clip */
+	apical_api_calibration(TCTL_CAL_RGB2YUV, TCTL_DIR_GET, (uintptr_t)lut,
+			       sizeof(lut), (uintptr_t)&ret);
+	memcpy(clip, tctl_csc_clip, sizeof(clip));
+	mutex_unlock(&tctl_csc_mutex);
+	if (ret)
+		return -EIO;
+	tx_isp_csc_from_apical(lut, clip, attr);
+	return copy_to_user(tctl_uptr(value), attr, sizeof(attr)) ? -EFAULT : 0;
+}
+
 static int tx_isp_t30_tuning_ctl_get(void *tuning, void *core,
 				     struct v4l2_control *c)
 {
@@ -746,6 +880,8 @@ ev_err:
 	}
 	case 0x08000161:	/* ISP_TABLE_ATTR */
 		return tctl_table_get(tuning, core, c->value);
+	case 0x080000a6:	/* CSC_ATTR, beyond vendor */
+		return tctl_csc_get(core, c->value);
 	}
 	return TCTL_UNHANDLED;
 }
@@ -976,6 +1112,8 @@ static int tx_isp_t30_tuning_ctl_set(void *tuning, void *core,
 	}
 	case 0x08000161:	/* ISP_TABLE_ATTR */
 		return tctl_table_set(core, c->value);
+	case 0x080000a6:	/* CSC_ATTR, beyond vendor */
+		return tctl_csc_set(tuning, core, c->value);
 	case 0x08000168: {	/* DRC mode: OEM s_ctrl 0x7b90 */
 		u32 m = c->value, dn = TCTL_U32(tuning, TCTL_OFF_DAYNIGHT);
 

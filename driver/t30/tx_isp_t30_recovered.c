@@ -11868,6 +11868,7 @@ int32_t apical_isp_gamma_g_attr_isra_0(void *arg1)
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_00000000000044e4 origin=model_output original=isp_core_tuning_event */
+static void tx_isp_t30_csc_reapply(void *tuning);
 int32_t isp_core_tuning_event(int32_t *arg1, int32_t arg2, int32_t arg3)
 {
     int32_t ret = 0;
@@ -12383,6 +12384,7 @@ int32_t isp_core_tuning_event(int32_t *arg1, int32_t arg2, int32_t arg3)
 
             *(int32_t *)((char *)s6 + 0x40cc) = 0;
         }
+        tx_isp_t30_csc_reapply(s6);	/* beyond vendor: CSC preset survives the reload */
     }
     return ret;
 }

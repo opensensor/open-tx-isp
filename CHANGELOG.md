@@ -4,6 +4,12 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-04: T30 CSC presets (beyond vendor, opt-in; QEMU T30, T30X device test pending)
+
+- `IMP_ISP_Tuning_SetCsc_Attr` / `GetCsc_Attr` (tuning control `0x80000a6`) now work on T30 as on T10/T20: presets 0-3 (BT.601 / BT.709, full / TV range) or a user matrix with offsets and Y/UV clip. The vendor T30 driver rejects the control (-1) and libimp 1.0.5 has no such call. The preset goes into calibration table RGB2YUV_CONVERSION (API id 139 = firmware table 276) through the vendor calibration API, the YUV matrix is recomputed by re-setting the current saturation, and the cs_conv clip registers of the FR/DS1/DS2 channels (`0x578`/`0x6b8`/`0x7b8` + 0..12) get the preset range. The UV clip stays as the day/night switch sets it at night; after the day/night table reload the preset is applied again.
+- Default unchanged: until a preset is set the getter returns -1 and nothing differs from the vendor (the stock tuning-bin table stays in place).
+- QEMU T30: presets 0-3 and a user matrix change the colour matrix registers and the clip ranges (TV range: Y 64..940, UV 64..960), the getter reports the preset; 0 oopses. Host tests green.
+
 ## 2026-11-04: T30 horizontal mirror, manual white balance and scene mode as the vendor (QEMU T30; T30X lab camera b20: mirror and scene; manual WB recovery: b21 pending)
 
 - Horizontal mirror: the OEM ISP interrupt applies a pending HFLIP control in its frame-end case (`0x40` bit 1 = not mirrored, bayer phase in `0x18` moved by one column; one row for a vertical flip when the input format changed). The open interrupt handler had no such step, so `IMP_ISP_Tuning_SetISPHflip` stored the state but never changed the picture (T30X b19: mirrored picture = base). QEMU: `0x40` `0x33242193` -> `0x33242191`, bayer 3 -> 2 and back on every toggle.
