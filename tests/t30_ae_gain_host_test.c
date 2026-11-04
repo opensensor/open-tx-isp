@@ -138,6 +138,17 @@ int main(void)
 	isp_session(&m, true);
 	CK(m.r3e08 == 0x1f && m.r3e09 == 0x1e);
 
+	/* Part 3: Iridix collection correction clamp as the OEM fw
+	 * (iridix_hist_func.c.o 0x94 bltz -> 0x100, 0x9c slti 4096 / movz -> 0x1000) */
+	CK(t30_iridix_collection_correction(0x100) == 0x100);
+	CK(t30_iridix_collection_correction(0xfe) == 0xfe);
+	CK(t30_iridix_collection_correction(0) == 0);
+	CK(t30_iridix_collection_correction(0xfff) == 0xfff);
+	CK(t30_iridix_collection_correction(0x1000) == 0x1000);
+	CK(t30_iridix_collection_correction(0x7fffffff) == 0x1000);
+	CK(t30_iridix_collection_correction(0x80000000u) == 0x100);	/* lift gave 0x1000 */
+	CK(t30_iridix_collection_correction(0xffffff00u) == 0x100);
+
 	if (bad) { printf("t30_ae_gain_host_test: %d FAILED\n", bad); return 1; }
 	printf("t30_ae_gain_host_test: PASS\n");
 	return 0;

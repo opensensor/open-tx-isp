@@ -37422,6 +37422,9 @@ int32_t apical_fw_interrupts_init(void *arg1)
 	return 0;
 }
 
+/* #202 debug: number of traced Iridix frame-end interrupts since the last ISP open */
+static unsigned int tx_isp_t30_iridix_trace;
+
 /* WHOLE_DRIVER_CANDIDATE fn_000000000001cea8 origin=model_output original=apical_fw_init */
 int32_t apical_fw_init(int32_t *arg1)
 {
@@ -37438,6 +37441,7 @@ int32_t apical_fw_init(int32_t *arg1)
      * message, and the gain never reached the sensor again (Lu-Fi/openimp#202).
      */
     memset(&tx_isp_t30_simple_3a, 0, sizeof(tx_isp_t30_simple_3a));
+    tx_isp_t30_iridix_trace = 0;
     pr_err("tx-isp-t30 fw-init: state cleared\n");
     init_semaphore((int32_t *)(arg1 + 3));
     pr_err("tx-isp-t30 fw-init: semaphore initialized\n");
@@ -45612,12 +45616,23 @@ void iridix_fsm_process_interrupt(int32_t *arg1, char arg2)
     s5 = (APICAL_READ_32(0x2c0) & 0x80) ? 0 : -1;
     s4 = *(int32_t *)cmos_get_frame_exposure_set((uintptr_t)s3, (APICAL_READ_32(0x2c0) & 0x80) ? 1 : 0);
     val = *(int32_t *)cmos_get_frame_exposure_set((void *)s3, s5);
-    s0 = (uintptr_t *)math_exp2(val - s4, 0x10, 8);
+    s0 = (void *)(uintptr_t)t30_iridix_collection_correction(
+        math_exp2(val - s4, 0x10, 8));
 
-    if (s0 < 0)
-        s0 = 0x100;
-    else if (s0 >= 0x1000)
-        s0 = 0x1000;
+    /*
+     * #202: on the T30X the open stack showed 0x3dc = 0 and the init Iridix
+     * strength 0x3c4 = 0x19 in the first picture after stream start (vendor
+     * 0xfe / 0x22; Y 134 vs 100) while the sensor exposure and gain were
+     * already at their final values.  Trace the ring inputs for the first
+     * frames after each ISP open so a device run shows where the 0 comes from.
+     */
+    if (tx_isp_t30_iridix_trace < 48) {
+        tx_isp_t30_iridix_trace++;
+        pr_info("tx-isp-t30: iridix trace %u t2=%u ring=%d val=%d prev=%d 3dc=0x%x 3c4=0x%x\n",
+            tx_isp_t30_iridix_trace, s5 == 0,
+            *(int32_t *)((char *)s3 + 0x1a4), val, s4,
+            (unsigned int)(uintptr_t)s0, APICAL_READ_32(0x3c4) & 0xff);
+    }
 
     APICAL_WRITE_32(0x3dc, ((uintptr_t)s0 & 0xfff) | (APICAL_READ_32(0x3dc) & 0xfffff000));
 
@@ -52173,7 +52188,8 @@ static void tx_isp_t30_simple_ae_update(void)
 	state->ae_cooldown = max_t(u8, attr->integration_time_apply_delay,
 				   attr->again_apply_delay);
 	state->ae_updates++;
-	if (state->ae_updates <= 8 || !(state->ae_updates & 0x1f))
+	/* #202: every update of the first 40 after an ISP open = AE trace per frame */
+	if (state->ae_updates <= 40 || !(state->ae_updates & 0x1f))
 		pr_info("tx-isp-t30: calibrated AE mean=%u target=%u curve=%u int=%u again=%d isp=%d code=0x%x limits=%u/%u\n",
 			mean, target, curve_value, state->integration_time,
 			state->analog_gain_log2,
