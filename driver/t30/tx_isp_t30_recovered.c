@@ -1494,10 +1494,10 @@ struct _get_size_entry {
     uint16_t f6;
     uint16_t f8;
 };
-struct tx_isp_customer_parameter {
-    uint32_t field_0x1a80;
-};
-static struct tx_isp_customer_parameter tx_isp_customer_parameter;
+/* SDK apical_custom_initialization.c: static TXispPrivCustomerParamer *customer (OEM .bss+0x1a80).
+ * The lift kept it as "tx_isp_customer_parameter + 0x1a80" of a 4-byte object, i.e. a store 0x1a80 bytes past it
+ * (into isp_kfifo_out in the built ko); it is its own variable now. */
+static uint32_t tx_isp_t30_customer;
 #ifndef TX_ISP_T30_SHARED_IO
 static void *apical_io_base;
 #endif
@@ -15111,8 +15111,10 @@ static int32_t ispcore_irq_thread_handle_body(void *arg1)
 			for (i = 0; i != 3; i++) {
 				if (entry[0] != 0) {
 					uint32_t cmd = entry[1];
-					uint32_t event = i == 0 ? 0x2000005 :
-							 i == 1 ? 0x2000007 : 0x2000006;
+					/* SDK ispcore_irq_thread_handle: slot AGAIN 0 -> TX_ISP_EVENT_SENSOR_AGAIN,
+					 * DGAIN 1 -> .._DGAIN, INTEGRATION 2 -> .._INT_TIME (vendor order: gain before time) */
+					uint32_t event = i == 0 ? 0x2000006 :
+							 i == 1 ? 0x2000007 : 0x2000005;
 					((void **)entry)[0] = 0;
 					((int (*)(void *, uint32_t, void *))ispcore_sensor_ops_ioctl)(arg1, event, &cmd);
 				}
@@ -21653,9 +21655,9 @@ load_tx_isp_parameters0x6a8:
 /* WHOLE_DRIVER_CANDIDATE fn_000000000000fd70 origin=fragment_seed original=apical_custom_initialization */
 uint32_t apical_custom_initialization(void)
 {
-    /* #202: the customer table pointer is tx_isp_customer_parameter + 0x1a80 (init_tx_isp_customer_parameter; OEM lw 6784(s2) of .bss);
+    /* #202: the customer table pointer set by init_tx_isp_customer_parameter (OEM lw 6784(s2) of .bss);
      * the lift read the unrelated static array "customer" (always 0), so the whole customer initialisation was skipped */
-    uint32_t customer_ptr = *(uint32_t *)((char *)&tx_isp_customer_parameter + 0x1a80);
+    uint32_t customer_ptr = tx_isp_t30_customer;
     uint32_t *local_10 = 0;
     uint32_t *local_18 = 0;
     uint32_t local_24 = 0;
@@ -22228,9 +22230,8 @@ apical_custom_initialization0x92c:
 /* WHOLE_DRIVER_CANDIDATE fn_00000000000106b0 origin=model_output original=init_tx_isp_customer_parameter */
 int32_t init_tx_isp_customer_parameter(uint32_t arg1)
 {
-    struct tx_isp_customer_parameter *p = &tx_isp_customer_parameter;
-    *(unsigned long *)((char *)p + 0x1a80) = (unsigned long)(arg1);
-    return (int32_t)p;
+    tx_isp_t30_customer = arg1;
+    return (int32_t)(uintptr_t)&tx_isp_t30_customer;
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_00000000000106bc origin=fragment_seed original=apical_custom_sequence */
@@ -22525,12 +22526,25 @@ int32_t sensor_alloc_analog_gain(int32_t arg1, int16_t *arg2)
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000010980 origin=model_output original=sensor_alloc_digital_gain */
 int32_t sensor_alloc_digital_gain(int32_t arg1, void *arg2)
 {
-    int32_t var_10 = 0;
-    int32_t *ops = (int32_t *)((char *)ispcore + 0x120);
-    int32_t (*fn)(int32_t, int32_t, int32_t *) = (int32_t (*)(int32_t, int32_t, int32_t *))(*(int32_t *)(ops + 0x88));
-    int32_t result = ((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t))fn)((uintptr_t)(arg1), (uintptr_t)(0x10), (uintptr_t)(&var_10));
-    *(uint16_t *)((char *)arg2 + 2) = (uint16_t)var_10;
-    return result;
+	/* SDK sensor_drv.c sensor_alloc_digital_gain: attr->sensor_ctrl.alloc_dgain(gain, LOG2_GAIN_SHIFT, &dgain),
+	 * p_ctx->dgain = dgain (OEM 0x10994..0x109b4: lw 288(ispcore), lw 136(attr), sh 2(p_ctx)).
+	 * The lift indexed an int32_t pointer with the byte offset 0x88 and called the word at ispcore+0x340. */
+	struct tx_isp_t30_core_sensor_view *core = ispcore;
+	struct tx_isp_t30_sensor_attribute_view *attr;
+	u32 sensor_code = 0;
+	u32 (*alloc_dgain)(u32, u8, u32 *);
+
+	BUILD_BUG_ON(offsetof(struct tx_isp_t30_sensor_attribute_view,
+			      alloc_dgain) != 0x88);
+	if (!core || !arg2)
+		return arg1;
+	attr = (void *)(uintptr_t)core->sensor_attr;
+	if (!attr || !attr->alloc_dgain)
+		return arg1;
+	alloc_dgain = (void *)(uintptr_t)attr->alloc_dgain;
+	arg1 = alloc_dgain(arg1, 16, &sensor_code);
+	*(uint16_t *)((char *)arg2 + 2) = (uint16_t)sensor_code;
+	return arg1;
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_00000000000109c8 origin=fragment_seed original=sensor_alloc_integration_time */
@@ -22563,7 +22577,7 @@ sensor_alloc_integration_time0x28:
     /* fragment 4: MemoryAccess */
     v1 = *(uint16_t *)((char *)a1 + 108);
     v1 = v1 - 1;
-    v0 = v1 < v0;
+    v0 = (int32_t)v1 < (int32_t)(uintptr_t)v0;	/* OEM 0x109f8 slt (signed: native max 0 clamps to 0xffff as the SDK) */
 
     /* fragment 5: Branch */
     if (v0 == 0) { goto sensor_alloc_integration_time0x40; }
@@ -22596,8 +22610,8 @@ uint32_t sensor_set_integration_time(uint32_t a0, uint32_t a1)
 		return 0;
 	if (attr->integration_time != a1) {
 		attr->integration_time = a1;
-		core->messages[0].value = a1;
-		core->messages[0].pending = 1;
+		core->messages[2].value = a1;	/* TX_ISP_I2C_SET_INTEGRATION (OEM sw 400/404) */
+		core->messages[2].pending = 1;
 	}
 	return (u32)(uintptr_t)core;
 }
@@ -22616,8 +22630,8 @@ uint32_t sensor_set_analog_gain(uint32_t a0, uint32_t a1)
 		return 0;
 	if (attr->again != a1) {
 		attr->again = a1;
-		core->messages[2].value = a1;
-		core->messages[2].pending = 1;
+		core->messages[0].value = a1;	/* TX_ISP_I2C_SET_AGAIN (OEM sw 384/388) */
+		core->messages[0].pending = 1;
 	}
 	return (u32)(uintptr_t)core;
 }
@@ -44390,7 +44404,8 @@ uint32_t cmos_fsm_process_interrupt(int32_t *arg1, char arg2)
 		if (sv3 == 1 || sv3 == 3) {
 			int32_t field_5c = *(int32_t *)((char *)arg1 + 0x5c);
 			APICAL_WRITE_32(0x24c, (APICAL_READ_32(0x24c) & 0xfffff000) | (field_5c & 0xfff));
-			APICAL_WRITE_32(((char *)&apical_downscaler_lut + 0x29c), (uint32_t)APICAL_READ_32(((char *)&apical_downscaler_lut + 0x29c)) | ((uint32_t)(uint16_t)field_5c << 0x10));
+			/* OEM 0x25744..0x25764: register 0x400ac (lui 0x4 | 0xac; the lift turned it into a data address) */
+			APICAL_WRITE_32(0x400ac, (APICAL_READ_32(0x400ac) & 0xffff) | ((uint32_t)(uint16_t)field_5c << 0x10));
 		}
 
 		int32_t exp_set_val = *(int32_t *)((char *)cmos_get_frame_exposure_set(arg1, 0) + 0x10);
@@ -44416,17 +44431,18 @@ uint32_t cmos_fsm_process_interrupt(int32_t *arg1, char arg2)
 		var_58 = exp_set_1;
 		var_48 = *(int32_t *)((char *)cmos_get_frame_exposure_set(arg1, 1) + 0x20);
 
-		if (APICAL_READ_32(0x7c) & 1) {
-			reg_val = (uint32_t)APICAL_READ_32(((char *)&apical_downscaler_lut + 0x294));
-			APICAL_WRITE_32(((char *)&apical_downscaler_lut + 0x294), reg_val | ((uint32_t)exp_set_1 << 0x10));
-		} else {
-			APICAL_WRITE_32(((char *)&apical_downscaler_lut + 0x294), reg_val | ((uint32_t)(uint16_t)exp_set_1));
-		}
+		/* OEM 0x252e4..0x25334: register 0x400a4 (lui 0x4 | 0xa4); the lift used a data address and lost both masks */
+		reg_val = (uint32_t)APICAL_READ_32(0x400a4);
+		if (APICAL_READ_32(0x7c) & 1)
+			APICAL_WRITE_32(0x400a4, (reg_val & 0xffff) | ((uint32_t)exp_set_1 << 0x10));
+		else
+			APICAL_WRITE_32(0x400a4, (reg_val & 0xffff0000u) | ((uint32_t)(uint16_t)exp_set_1));
 		var_44 = exp_set_1;
 	} else {
 		int32_t exp_set_2 = *(int32_t *)((char *)cmos_get_frame_exposure_set(arg1, (int32_t)idx_7e) + 0x10);
 		var_58 = exp_set_2;
-		APICAL_WRITE_32(((char *)&apical_downscaler_lut + 0x294), (uint32_t)APICAL_READ_32(((char *)&apical_downscaler_lut + 0x294)) | ((uint32_t)exp_set_2 << 0x10));
+		/* OEM 0x25344..0x25370: register 0x400a4 high half = integration time (linear) */
+		APICAL_WRITE_32(0x400a4, ((uint32_t)APICAL_READ_32(0x400a4) & 0xffff) | ((uint32_t)exp_set_2 << 0x10));
 		var_44 = exp_set_2;
 		var_48 = 0x40;
 	}
@@ -51297,32 +51313,34 @@ uint32_t sensor_sync_get_output_resolution(void *arg1, int16_t *arg2)
 /* WHOLE_DRIVER_CANDIDATE fn_00000000000314bc origin=model_output original=apply_dvi_sync_param */
 int32_t apply_dvi_sync_param(int16_t *arg1)
 {
+	/* OEM fw 0x30bec: registers 0x40000-0x40010 (lui 0x4); the lift had made them data addresses
+	 * (&apical_downscaler_lut + 0x1f0..0x200) */
 	volatile uint32_t r;
 
-	r = APICAL_READ_32(((char *)&apical_downscaler_lut + 0x1f4));
-	APICAL_WRITE_32(((char *)&apical_downscaler_lut + 0x1f4), (r & 0xffff0000u) | (uint32_t)(uint16_t)arg1[2]);
-	r = APICAL_READ_32(((char *)&apical_downscaler_lut + 0x1f4));
-	APICAL_WRITE_32(((char *)&apical_downscaler_lut + 0x1f4), r | ((uint32_t)(uint16_t)arg1[3] << 16));
+	r = APICAL_READ_32(0x40004);
+	APICAL_WRITE_32(0x40004, (r & 0xffff0000u) | (uint32_t)(uint16_t)arg1[2]);
+	r = APICAL_READ_32(0x40004);
+	APICAL_WRITE_32(0x40004, (r & 0xffffu) | ((uint32_t)(uint16_t)arg1[3] << 16));
 
-	r = APICAL_READ_32(((char *)&apical_downscaler_lut + 0x1f8));
-	APICAL_WRITE_32(((char *)&apical_downscaler_lut + 0x1f8), (r & 0xffff0000u) | (uint32_t)(uint16_t)arg1[0]);
-	r = APICAL_READ_32(((char *)&apical_downscaler_lut + 0x1f8));
-	APICAL_WRITE_32(((char *)&apical_downscaler_lut + 0x1f8), r | ((uint32_t)(uint16_t)arg1[1] << 16));
+	r = APICAL_READ_32(0x40008);
+	APICAL_WRITE_32(0x40008, (r & 0xffff0000u) | (uint32_t)(uint16_t)arg1[0]);
+	r = APICAL_READ_32(0x40008);
+	APICAL_WRITE_32(0x40008, (r & 0xffffu) | ((uint32_t)(uint16_t)arg1[1] << 16));
 
-	r = APICAL_READ_32(((char *)&apical_downscaler_lut + 0x1fc));
-	APICAL_WRITE_32(((char *)&apical_downscaler_lut + 0x1fc), (r & 0xfffff000u) | ((uint32_t)(uint16_t)arg1[6] & 0xfffu));
-	r = APICAL_READ_32(((char *)&apical_downscaler_lut + 0x1fc));
-	APICAL_WRITE_32(((char *)&apical_downscaler_lut + 0x1fc), (r & 0xf000ffffu) | (((uint32_t)(uint16_t)arg1[7] & 0xfffu) << 16));
+	r = APICAL_READ_32(0x4000c);
+	APICAL_WRITE_32(0x4000c, (r & 0xfffff000u) | ((uint32_t)(uint16_t)arg1[6] & 0xfffu));
+	r = APICAL_READ_32(0x4000c);
+	APICAL_WRITE_32(0x4000c, (r & 0xf000ffffu) | (((uint32_t)(uint16_t)arg1[7] & 0xfffu) << 16));
 
-	r = APICAL_READ_32(((char *)&apical_downscaler_lut + 0x200));
-	APICAL_WRITE_32(((char *)&apical_downscaler_lut + 0x200), (r & 0xfffff000u) | ((uint32_t)(uint16_t)arg1[8] & 0xfffu));
-	r = APICAL_READ_32(((char *)&apical_downscaler_lut + 0x200));
-	APICAL_WRITE_32(((char *)&apical_downscaler_lut + 0x200), (r & 0xf000ffffu) | (((uint32_t)(uint16_t)arg1[9] & 0xfffu) << 16));
+	r = APICAL_READ_32(0x40010);
+	APICAL_WRITE_32(0x40010, (r & 0xfffff000u) | ((uint32_t)(uint16_t)arg1[8] & 0xfffu));
+	r = APICAL_READ_32(0x40010);
+	APICAL_WRITE_32(0x40010, (r & 0xf000ffffu) | (((uint32_t)(uint16_t)arg1[9] & 0xfffu) << 16));
 
-	r = APICAL_READ_32(((char *)&apical_downscaler_lut + 0x1f0));
-	APICAL_WRITE_32(((char *)&apical_downscaler_lut + 0x1f0), (r & 0xfffff000u) | ((uint32_t)(uint16_t)arg1[4] & 0xfffu));
-	r = APICAL_READ_32(((char *)&apical_downscaler_lut + 0x1f0));
-	return APICAL_WRITE_32(((char *)&apical_downscaler_lut + 0x1f0), (r & 0xf000ffffu) | (((uint32_t)(uint16_t)arg1[5] & 0xfffu) << 16));
+	r = APICAL_READ_32(0x40000);
+	APICAL_WRITE_32(0x40000, (r & 0xfffff000u) | ((uint32_t)(uint16_t)arg1[4] & 0xfffu));
+	r = APICAL_READ_32(0x40000);
+	return APICAL_WRITE_32(0x40000, (r & 0xf000ffffu) | (((uint32_t)(uint16_t)arg1[5] & 0xfffu) << 16));
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000031674 origin=model_output original=apply_dvi_fpga_sync_param */
@@ -53107,8 +53125,9 @@ uint32_t awb_init(void *arg1)
 	*p764 = 0;
 	*p768 = 0;
 	*p76c = 0;
-	val = APICAL_READ_32(((char *)&apical_downscaler_lut + 0x1f8));
-	lut_ptr = APICAL_READ_32(((char *)&apical_downscaler_lut + 0x1f8));
+	/* OEM 0x32b28/0x32b4c: register 0x40008 (was a data address, &apical_downscaler_lut + 0x1f8) */
+	val = APICAL_READ_32(0x40008);
+	lut_ptr = APICAL_READ_32(0x40008);
 	if (*p10 == 0) {
 		*p40 = 0;
 	} else {

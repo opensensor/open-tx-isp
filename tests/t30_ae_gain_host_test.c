@@ -9,7 +9,7 @@
  * Part 2 is a MODEL with a sensor mock, not the driver code: it reproduces the
  * message path of driver/t30/tx_isp_t30_recovered.c (sensor_set_analog_gain:
  * post only when the value differs from the attribute shadow attr->again;
- * ispcore_irq_thread_handle_body: deliver pending slot 2 as
+ * ispcore_irq_thread_handle_body: deliver pending slot 0 (SDK TX_ISP_I2C_SET_AGAIN) as
  * TX_ISP_EVENT_SENSOR_AGAIN) and the SC4236 sensor driver (init table writes
  * 0x3e08/0x3e09 = 03/10, set_analog_gain writes 0x3e09 = v & 0xff,
  * 0x3e08 = (v >> 8 << 2) | 3).  It shows that a compact AE state kept across
@@ -33,7 +33,7 @@ typedef int32_t s32;
 struct mock {
 	u8 r3e08, r3e09;	/* SC4236 gain registers */
 	u32 attr_again;		/* tx_isp_sensor_attribute.again (static in the sensor ko) */
-	u32 msg_pending, msg_value;	/* core i2c message slot 2 */
+	u32 msg_pending, msg_value;	/* core i2c message slot 0 (AGAIN) */
 	/* compact AE state (tx_isp_t30_simple_3a) */
 	bool ae_init;
 	u32 code;
