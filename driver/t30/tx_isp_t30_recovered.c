@@ -44630,45 +44630,29 @@ int64_t apical_api_read_buffer(uintptr_t a0)
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000024cd8 origin=model_output original=apical_sensor_calibration_update */
 int32_t apical_sensor_calibration_update(int32_t sensor_id, char mode, void *buf, int32_t len, int32_t *status)
 {
-	int32_t ret;
-	int32_t expected;
-	uint8_t *dst;
-	uint8_t *src;
+	/* OEM 0x243f8: mode 1 copies the table out (get), else into the table (set);
+	 * 0 on success, otherwise *status = 1 (bad id/buffer) or 2 (wrong size) and 5 */
+	uint8_t *dst, *src;
 	int32_t i;
 
 	*status = 0;
-
-	if (sensor_id >= 277 || buf == 0) {
-		ret = 1;
-		goto out;
+	if ((uint32_t)sensor_id >= 277 || buf == 0) {
+		*status = 1;
+		return 5;
 	}
-
-	expected = _GET_SIZE(sensor_id);
-	if (len != expected) {
-		ret = 2;
-		goto store;
+	if (len != _GET_SIZE(sensor_id)) {
+		*status = 2;
+		return 5;
 	}
-
 	dst = (uint8_t *)_GET_LUT_PTR(sensor_id);
 	src = (uint8_t *)buf;
-
 	if ((uint8_t)mode == 1) {
 		src = (uint8_t *)_GET_LUT_PTR(sensor_id);
 		dst = (uint8_t *)buf;
 	}
-
-	for (i = 0; (uintptr_t)i != len; i = (uintptr_t)i + 1)
+	for (i = 0; i != len; i++)
 		dst[i] = src[i];
-
-	*status = 0;
-	ret = 0;
-	goto out;
-
-store:
-	*status = ret;
-
-out:
-	return 5;
+	return 0;
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000024db8 origin=model_output original=get_calibration_description */
@@ -44716,315 +44700,72 @@ out:
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000024ed0 origin=fragment_seed original=apical_api_calibration */
 int32_t apical_api_calibration(uint32_t a0, uint32_t a1, uintptr_t a2, uint32_t a3, uintptr_t arg4)
 {
-    /*
-     * Before the first sensor is initialised the firmware instance and its
-     * calibration tables do not exist (core + 0x19c is set by the core init
-     * event together with apical_init).  Tuning controls that reach this
-     * function then followed null table pointers (QEMU, no sensor: oops in
-     * the t30-tune smoke test); report "not available" like the other
-     * invalid-argument exits.
-     */
-    if (!ispcore || !*(void **)((char *)ispcore + 0x19c))
-        return 5;
-    {
-    uint32_t *local_10 = 0;
-    uint32_t *local_18 = 0;
-    uint32_t local_24 = 0;
-    uint32_t local_28 = 0;
-    uint32_t local_2c = 0;
-    uint32_t local_30 = 0;
-    uint32_t local_34 = 0;
-    uint32_t local_38 = 0;
-    uint32_t local_3c = 0;
-    uint32_t local_40 = 0;
-    uint32_t local_44 = 0;
-    uint32_t local_58 = 0;
-    uint32_t ra = 0;
-    uint32_t *s0 = 0;
-    uint32_t *s1 = 0;
-    uint32_t *s2 = 0;
-    uintptr_t *s3 = 0;
-    uint32_t s4 = 0;
-    uint32_t s5 = 0;
-    uint32_t s6 = 0;
-    uintptr_t s7 = 0;
-    uintptr_t *v0 = 0;
-    uint32_t v1 = 0;
-
-    /* fragment 0: Prologue */
-    /* function prologue: stack frame and callee-saved register setup */
-
-    /* fragment 1: CallSetup */
-    local_18 = a3;
-    s2 = a1 & 255;
-    s4 = a2;
-    s3 = local_58;
-    s0 = a0 & 255;
-    v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)GET_API2FRM_IDX)(a0); /* jalr target resolved by relocation */
-
-    /* fragment 2: CallSetup */
-    s7 = v0;
-    v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)apical_get_fw)(a0); /* jalr target resolved by relocation */
-
-    /* fragment 3: MemoryAccess */
-    s6 = *(uint32_t *)((char *)v0 + 0);
-    s5 = v0;
-    v0 = s2 < 2;
-    *(uint32_t *)((char *)&frame_delay_10417) = 0;
-
-    /* fragment 4: Branch */
-    a3 = local_18;
-    if (v0 != 0) { goto apical_api_calibration0x84; }
-
-    /* fragment 5: Arithmetic */
-    v0 = 1;
-
-    /* fragment 6: MemoryAccess */
-    *(uint32_t *)((char *)&frame_delay_10417) = v0;
-
-    /* fragment 7: Branch */
-    s1 = 5;
-    goto apical_api_calibration0x20c;
-
-apical_api_calibration0x84:
-    /* fragment 8: Arithmetic */
-    v0 = s0 < 140;
-
-    /* fragment 9: Branch */
-    s1 = 5;
-    if (v0 == 0) { goto apical_api_calibration0x20c; }
-
-    /* fragment 10: Arithmetic */
-    s0 = (uintptr_t)s0 << 1;
-    s7 = s7 + (uintptr_t)s0;
-
-    /* fragment 11: MemoryAccess */
-    s0 = *(uint16_t *)((char *)s7 + 0);
-    v0 = -1;
-
-    /* fragment 12: Branch */
-    int _bc_s0_12 = s0 == v0;
-    v0 = (uintptr_t *)&apical_sensor_calibration_update;
-    if (_bc_s0_12) { goto apical_api_calibration0x20c; }
-
-    /* fragment 13: CallSetup */
-    v0 = (uintptr_t *)(uintptr_t)apical_sensor_calibration_update((int32_t)s0, (char)s2, (void *)(uintptr_t)s4, (int32_t)a3, (int32_t *)(uintptr_t)arg4); /* len and status were dropped by the lift: the callee wrote its status through a stale register */
-
-    /* fragment 14: Branch */
-    s1 = v0;
-    if (s2 != 0) { goto apical_api_calibration0x20c; }
-
-    /* fragment 15: Arithmetic */
-    v0 = 12216;
-    v1 = s6 * (uintptr_t)v0;
-    v0 = v1 + s5;
-    v1 = s0 < 30;
-
-    /* fragment 16: Branch */
-    a0 = v0 + 24;
-    if (v1 == 0) { goto apical_api_calibration0x13c; }
-
-    /* fragment 17: Arithmetic */
-    v1 = s0 < 26;
-
-    /* fragment 18: Unknown */
-    /* unmatched fragment 18 (Unknown): no deterministic matcher for Unknown */
-    /* asm: 24fb4:	50600031 	beqzl	v1,2507c <apical_api_calibration+0x1ac> */
-
-    /* fragment 19: MemoryAccess */
-    v0 = *(uint32_t *)((char *)a0 + 5352);
-    v1 = s0 < 15;
-
-    /* fragment 20: Branch */
-    int _bc_v1_20 = v1 == 0;
-    v1 = s0 < 17;
-    if (_bc_v1_20) { goto apical_api_calibration0x11c; }
-
-    /* fragment 21: Arithmetic */
-    v1 = s0 < 11;
-
-    /* fragment 22: Unknown */
-    /* unmatched fragment 22 (Unknown): no deterministic matcher for Unknown */
-    /* asm: 24fcc:	5060002b 	beqzl	v1,2507c <apical_api_calibration+0x1ac> */
-
-    /* fragment 23: MemoryAccess */
-    v0 = *(uint32_t *)((char *)a0 + 5352);
-
-    /* fragment 24: Branch */
-    v1 = s0 < 5;
-    if (s0 <= 0) { goto apical_api_calibration0x208; }
-
-    /* fragment 25: Branch */
-    s0 = s0 - 6;
-    if (v1 == 0) { goto apical_api_calibration0x16c; }
-
-    /* fragment 26: Branch */
-    v0 = *(uint32_t *)((char *)(a0) + 5352);
-    goto apical_api_calibration0x1ac;
-
-apical_api_calibration0x11c:
-    /* fragment 27: Unknown */
-    /* unmatched fragment 27 (Unknown): no deterministic matcher for Unknown */
-    /* asm: 24fec:	5460003b 	bnezl	v1,250dc <apical_api_calibration+0x20c> */
-
-    /* fragment 28: Arithmetic */
-    s1 = 0;
-    v1 = s0 < 20;
-
-    /* fragment 29: Unknown */
-    /* unmatched fragment 29 (Unknown): no deterministic matcher for Unknown */
-    /* asm: 24ff8:	54600020 	bnezl	v1,2507c <apical_api_calibration+0x1ac> */
-
-    /* fragment 30: MemoryAccess */
-    v0 = *(uint32_t *)((char *)a0 + 5352);
-    s0 = s0 - 22;
-
-    /* fragment 31: Branch */
-    v1 = 2;
-    goto apical_api_calibration0x170;
-
-apical_api_calibration0x13c:
-    /* fragment 32: Arithmetic */
-    v1 = s0 < 221;
-
-    /* fragment 33: Branch */
-    int _bc_v1_33 = v1 == 0;
-    v1 = 242;
-    if (_bc_v1_33) { goto apical_api_calibration0x184; }
-
-    /* fragment 34: Arithmetic */
-    v1 = s0 < 219;
-
-    /* fragment 35: Branch */
-    v0 = (uintptr_t *)&color_matrix_change_CCMs;
-    if (v1 == 0) { goto apical_api_calibration0x1a0; }
-
-    /* fragment 36: Arithmetic */
-    v1 = 207;
-
-    /* fragment 37: Branch */
-    int _bc_s0_37 = s0 == v1;
-    v1 = s0 < 208;
-    if (_bc_s0_37) { goto apical_api_calibration0x1bc; }
-
-    /* fragment 38: Branch */
-    int _bc_v1_38 = v1 == 0;
-    v1 = 213;
-    if (_bc_v1_38) { goto apical_api_calibration0x194; }
-
-    /* fragment 39: Arithmetic */
-    s0 = s0 - 31;
-
-apical_api_calibration0x16c:
-    /* fragment 40: Arithmetic */
-    v1 = 3;
-
-apical_api_calibration0x170:
-    /* fragment 41: Arithmetic */
-    s0 = v1 < s0;
-
-    /* fragment 42: Unknown */
-    /* unmatched fragment 42 (Unknown): no deterministic matcher for Unknown */
-    /* asm: 25044:	56000025 	bnezl	s0,250dc <apical_api_calibration+0x20c> */
-
-    /* fragment 43: Arithmetic */
-    s1 = 0;
-
-    /* fragment 44: Branch */
-    v0 = *(uint32_t *)((char *)(a0) + 5352);
-    goto apical_api_calibration0x1ac;
-
-apical_api_calibration0x184:
-    /* fragment 45: Branch */
-    int _bc_s0_45 = s0 == v1;
-    v1 = 268;
-    if (_bc_s0_45) { goto apical_api_calibration0x19c; }
-
-    /* fragment 46: Branch */
-    int _bc_s0_46 = s0 == v1;
-    v1 = 237;
-    if (_bc_s0_46) { goto apical_api_calibration0x1d8; }
-
-apical_api_calibration0x194:
-    /* fragment 47: Unknown */
-    /* unmatched fragment 47 (Unknown): no deterministic matcher for Unknown */
-    /* asm: 25064:	5603001d 	bnel	s0,v1,250dc <apical_api_calibration+0x20c> */
-
-    /* fragment 48: Arithmetic */
-    s1 = 0;
-
-apical_api_calibration0x19c:
-    /* fragment 49: Arithmetic */
-    v0 = (uintptr_t *)&color_matrix_change_CCMs;
-
-apical_api_calibration0x1a0:
-    /* fragment 50: Arithmetic */
-    a0 = a0 + 3816;
-
-    /* fragment 51: Branch */
-    v0 = (uintptr_t *)&color_matrix_change_CCMs;
-    goto apical_api_calibration0x1c8;
-
-apical_api_calibration0x1ac:
-    /* The lift chains two loads here (v0 = *(a0 + 5352); byte at v0 + 5412); v0 is a small
-     * integer when the per-set table is not populated yet, and the byte read oopsed at
-     * 0x1526 (QEMU, tuning control on a stale sensor).  Report "not available". */
-    if ((uintptr_t)v0 < PAGE_SIZE)
-        return 5;
-    /* fragment 52: MemoryAccess */
-    a0 = *(uint8_t *)((char *)v0 + 5412);
-    v0 = (uintptr_t *)&apical_switch_wdr_mode;
-
-    /* fragment 53: Branch */
-    v0 = (uintptr_t *)&apical_switch_wdr_mode;
-    goto apical_api_calibration0x1c8;
-
-apical_api_calibration0x1bc:
-    /* fragment 54: CallSetup */
-    v0 = (uintptr_t *)&iridix_initialize;
-    a0 = a0 + 4052;
-    v0 = v0;
-
-apical_api_calibration0x1c8:
-    /* fragment 55: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)iridix_initialize)(a0); /* jalr target resolved by relocation */
-
-    /* fragment 56: Branch */
-    goto apical_api_calibration0x210;
-
-apical_api_calibration0x1d8:
-    /* fragment 57: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(int32_t *))(uintptr_t)_GET_LEN)(268); /* jalr target resolved by relocation */
-
-    /* fragment 58: CallSetup */
-    v0 = (uintptr_t *)((uintptr_t (*)(uintptr_t, uintptr_t))(int32_t *)defect_pixel_table_write)(s4, v0); /* jalr target resolved by relocation */
-
-    /* fragment 59: Arithmetic */
-    s1 = 5;
-
-    /* fragment 60: Branch */
-    goto apical_api_calibration0x20c;
-
-apical_api_calibration0x208:
-    /* fragment 61: Arithmetic */
-    s1 = 0;
-
-apical_api_calibration0x20c:
-    /* fragment 62: Epilogue */
-    /* function epilogue: restore registers and return */
-    return (int32_t)v0;
-
-apical_api_calibration0x210:
-    /* fragment 63: Arithmetic */
-    v0 = s1;
-
-    /* fragment 64: Epilogue */
-    /* function epilogue: restore registers and return */
-
-    return 0;
-    }
+	/*
+	 * Rewritten from the OEM disassembly (vendor tx-isp-t30.ko 0x245f0): the lift had
+	 * dropped the branch-likely jumps after the table copy, wrote the status into a
+	 * global instead of *status and always called iridix_initialize, so a SET of a
+	 * calibration table (gamma, CCM, iridix, defect pixels) never reached the hardware.
+	 *
+	 * a0 = API table id, a1 = 0 set / 1 get, a2 = buffer, a3 = length, arg4 = status.
+	 * After a SET the OEM re-applies what the table feeds, by firmware table index:
+	 *   1-4, 6-9, 11-14, 17-19, 22-24, 26-29, 31-34  apical_switch_wdr_mode (reloads gamma etc.)
+	 *   207  iridix_initialize;  213, 219, 220, 237, 242  color_matrix_change_CCMs
+	 *   268  defect_pixel_table_write;  any other index: nothing to apply.
+	 */
+	uint32_t id = a0 & 0xff, dir = a1 & 0xff, *status = (uint32_t *)arg4;
+	uint8_t *ctx, *set;
+	int32_t ret;
+	int16_t lut;
+
+	/*
+	 * Before the first sensor is initialised the firmware instance and its
+	 * calibration tables do not exist (core + 0x19c is set by the core init
+	 * event together with apical_init).  Tuning controls that reach this
+	 * function then followed null table pointers (QEMU, no sensor: oops in
+	 * the t30-tune smoke test); report "not available" like the other
+	 * invalid-argument exits.
+	 */
+	if (!ispcore || !*(void **)((char *)ispcore + 0x19c))
+		return 5;
+	*status = 0;
+	if (dir >= 2) {
+		*status = 1;
+		return 5;
+	}
+	if (id >= 140)
+		return 5;
+	lut = ((int16_t *)(uintptr_t)GET_API2FRM_IDX())[id];
+	if (lut == -1)
+		return 5;
+	ret = apical_sensor_calibration_update(lut, (char)dir, (void *)a2, (int32_t)a3, (int32_t *)status);
+	if (dir != 0)
+		return ret;
+
+	ctx = (uint8_t *)(uintptr_t)apical_get_fw();
+	ctx += *(uint32_t *)ctx * 12216 + 24;
+	if ((lut >= 1 && lut <= 4) || (lut >= 6 && lut <= 9) || (lut >= 11 && lut <= 14) ||
+	    (lut >= 17 && lut <= 19) || (lut >= 22 && lut <= 24) || (lut >= 26 && lut <= 29) ||
+	    (lut >= 31 && lut <= 34)) {
+		set = *(uint8_t **)(ctx + 5352);
+		/* the per-set table is not populated before the first sensor mode (QEMU, stale
+		 * sensor: the byte read oopsed at 0x1526); report "not available" */
+		if ((uintptr_t)set < PAGE_SIZE)
+			return 5;
+		apical_switch_wdr_mode(set[5412]);
+		return ret;
+	}
+	if (lut == 207) {
+		iridix_initialize((int32_t *)(ctx + 4052));
+		return ret;
+	}
+	if (lut == 213 || lut == 219 || lut == 220 || lut == 237 || lut == 242) {
+		color_matrix_change_CCMs((int32_t *)(ctx + 3816));
+		return ret;
+	}
+	if (lut == 268)
+		return defect_pixel_table_write((void *)a2, (void *)(uintptr_t)_GET_LEN(268)) ? 5 : 0;
+	return 0;
 }
-
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000025110 origin=model_output original=cmos_store_frame_exposure_set */
 int32_t cmos_store_frame_exposure_set(int32_t *arg1, int32_t *arg2)
 {

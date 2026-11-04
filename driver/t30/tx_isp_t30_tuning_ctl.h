@@ -37,6 +37,7 @@
 #define TCTL_OFF_COLORFX	0x40a4
 #define TCTL_OFF_FPS		0x40a8
 #define TCTL_OFF_DAYNIGHT	0x40ac
+#define TCTL_OFF_ANTIFOG	0x4090
 
 #define TCTL_U32(t, off)	(*(u32 *)((u8 *)(t) + (off)))
 
@@ -954,6 +955,19 @@ static int tx_isp_t30_tuning_ctl_set(void *tuning, void *core,
 	}
 	case 0x08000161:	/* ISP_TABLE_ATTR */
 		return tctl_table_set(core, c->value);
+	case 0x08000163: {	/* ANTIFOG: OEM s_ctrl 0x76d0 */
+		u32 v = c->value;
+
+		TCTL_U32(tuning, TCTL_OFF_ANTIFOG) = v;
+		if (v) {	/* 1 strong, 2 medium, 3 weak -> preset 47/48/49 */
+			tctl_cmd(TCTL_T_ALGO, 0x5f, v == 2 ? 48 : v == 3 ? 49 : 47,
+				 TCTL_DIR_SET, NULL);
+			tctl_cmd(TCTL_T_ALGO, 0x5e, 46, TCTL_DIR_SET, NULL);
+		} else {
+			tctl_cmd(TCTL_T_ALGO, 0x5e, 45, TCTL_DIR_SET, NULL);
+		}
+		return 0;
+	}
 	case 0x08000165:	/* CUSTOM_ISP_FREEZE */
 		TCTL_U32(tuning, TCTL_OFF_FREEZE) = c->value;
 		tctl_reg_field(0x40100, 0, 1, c->value);
