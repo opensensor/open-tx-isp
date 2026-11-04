@@ -236,5 +236,14 @@ with tempfile.TemporaryDirectory() as t:
     for stub in ('asm/io.h', 'asm/div64.h', 'linux/math64.h'): open(os.path.join(t, stub), 'w').close()
     bad += compare('scene_math', build(t, 'sc_sdk', sdk_src, SDK_INC), build(t, 'sc_drv', drv_src, []))
 
+# ---- lift_reg_addr: no ISP register access through a data-symbol address (lift class: OEM "lui 0x4" register
+#      0x4xxxx became &apical_downscaler_lut + off; the write then lands at ISP base + a kernel address)
+rc = recovered
+if MUT == 'lift_reg_addr':
+    rc += '\nAPICAL_WRITE_32(((char *)&apical_downscaler_lut + 0x294), 0);\n'
+hits = re.findall(r'APICAL_(?:READ|WRITE)_(?:8|16|32)\(\s*\(*\s*(?:\(char \*\)|\(uint8_t \*\))?\s*&\w+', rc)
+print('lift_reg_addr: %d register accesses through a data-symbol address: %s' % (len(hits), 'FAIL' if hits else 'OK'))
+bad += bool(hits)
+
 print('t30_sdk_exec_oracle: %s' % ('FAIL' if bad else 'OK'))
 sys.exit(1 if bad else 0)

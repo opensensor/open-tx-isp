@@ -44404,7 +44404,8 @@ uint32_t cmos_fsm_process_interrupt(int32_t *arg1, char arg2)
 		if (sv3 == 1 || sv3 == 3) {
 			int32_t field_5c = *(int32_t *)((char *)arg1 + 0x5c);
 			APICAL_WRITE_32(0x24c, (APICAL_READ_32(0x24c) & 0xfffff000) | (field_5c & 0xfff));
-			APICAL_WRITE_32(((char *)&apical_downscaler_lut + 0x29c), (uint32_t)APICAL_READ_32(((char *)&apical_downscaler_lut + 0x29c)) | ((uint32_t)(uint16_t)field_5c << 0x10));
+			/* OEM 0x25744..0x25764: register 0x400ac (lui 0x4 | 0xac; the lift turned it into a data address) */
+			APICAL_WRITE_32(0x400ac, (APICAL_READ_32(0x400ac) & 0xffff) | ((uint32_t)(uint16_t)field_5c << 0x10));
 		}
 
 		int32_t exp_set_val = *(int32_t *)((char *)cmos_get_frame_exposure_set(arg1, 0) + 0x10);
@@ -44430,17 +44431,18 @@ uint32_t cmos_fsm_process_interrupt(int32_t *arg1, char arg2)
 		var_58 = exp_set_1;
 		var_48 = *(int32_t *)((char *)cmos_get_frame_exposure_set(arg1, 1) + 0x20);
 
-		if (APICAL_READ_32(0x7c) & 1) {
-			reg_val = (uint32_t)APICAL_READ_32(((char *)&apical_downscaler_lut + 0x294));
-			APICAL_WRITE_32(((char *)&apical_downscaler_lut + 0x294), reg_val | ((uint32_t)exp_set_1 << 0x10));
-		} else {
-			APICAL_WRITE_32(((char *)&apical_downscaler_lut + 0x294), reg_val | ((uint32_t)(uint16_t)exp_set_1));
-		}
+		/* OEM 0x252e4..0x25334: register 0x400a4 (lui 0x4 | 0xa4); the lift used a data address and lost both masks */
+		reg_val = (uint32_t)APICAL_READ_32(0x400a4);
+		if (APICAL_READ_32(0x7c) & 1)
+			APICAL_WRITE_32(0x400a4, (reg_val & 0xffff) | ((uint32_t)exp_set_1 << 0x10));
+		else
+			APICAL_WRITE_32(0x400a4, (reg_val & 0xffff0000u) | ((uint32_t)(uint16_t)exp_set_1));
 		var_44 = exp_set_1;
 	} else {
 		int32_t exp_set_2 = *(int32_t *)((char *)cmos_get_frame_exposure_set(arg1, (int32_t)idx_7e) + 0x10);
 		var_58 = exp_set_2;
-		APICAL_WRITE_32(((char *)&apical_downscaler_lut + 0x294), (uint32_t)APICAL_READ_32(((char *)&apical_downscaler_lut + 0x294)) | ((uint32_t)exp_set_2 << 0x10));
+		/* OEM 0x25344..0x25370: register 0x400a4 high half = integration time (linear) */
+		APICAL_WRITE_32(0x400a4, ((uint32_t)APICAL_READ_32(0x400a4) & 0xffff) | ((uint32_t)exp_set_2 << 0x10));
 		var_44 = exp_set_2;
 		var_48 = 0x40;
 	}
@@ -51311,32 +51313,34 @@ uint32_t sensor_sync_get_output_resolution(void *arg1, int16_t *arg2)
 /* WHOLE_DRIVER_CANDIDATE fn_00000000000314bc origin=model_output original=apply_dvi_sync_param */
 int32_t apply_dvi_sync_param(int16_t *arg1)
 {
+	/* OEM fw 0x30bec: registers 0x40000-0x40010 (lui 0x4); the lift had made them data addresses
+	 * (&apical_downscaler_lut + 0x1f0..0x200) */
 	volatile uint32_t r;
 
-	r = APICAL_READ_32(((char *)&apical_downscaler_lut + 0x1f4));
-	APICAL_WRITE_32(((char *)&apical_downscaler_lut + 0x1f4), (r & 0xffff0000u) | (uint32_t)(uint16_t)arg1[2]);
-	r = APICAL_READ_32(((char *)&apical_downscaler_lut + 0x1f4));
-	APICAL_WRITE_32(((char *)&apical_downscaler_lut + 0x1f4), r | ((uint32_t)(uint16_t)arg1[3] << 16));
+	r = APICAL_READ_32(0x40004);
+	APICAL_WRITE_32(0x40004, (r & 0xffff0000u) | (uint32_t)(uint16_t)arg1[2]);
+	r = APICAL_READ_32(0x40004);
+	APICAL_WRITE_32(0x40004, (r & 0xffffu) | ((uint32_t)(uint16_t)arg1[3] << 16));
 
-	r = APICAL_READ_32(((char *)&apical_downscaler_lut + 0x1f8));
-	APICAL_WRITE_32(((char *)&apical_downscaler_lut + 0x1f8), (r & 0xffff0000u) | (uint32_t)(uint16_t)arg1[0]);
-	r = APICAL_READ_32(((char *)&apical_downscaler_lut + 0x1f8));
-	APICAL_WRITE_32(((char *)&apical_downscaler_lut + 0x1f8), r | ((uint32_t)(uint16_t)arg1[1] << 16));
+	r = APICAL_READ_32(0x40008);
+	APICAL_WRITE_32(0x40008, (r & 0xffff0000u) | (uint32_t)(uint16_t)arg1[0]);
+	r = APICAL_READ_32(0x40008);
+	APICAL_WRITE_32(0x40008, (r & 0xffffu) | ((uint32_t)(uint16_t)arg1[1] << 16));
 
-	r = APICAL_READ_32(((char *)&apical_downscaler_lut + 0x1fc));
-	APICAL_WRITE_32(((char *)&apical_downscaler_lut + 0x1fc), (r & 0xfffff000u) | ((uint32_t)(uint16_t)arg1[6] & 0xfffu));
-	r = APICAL_READ_32(((char *)&apical_downscaler_lut + 0x1fc));
-	APICAL_WRITE_32(((char *)&apical_downscaler_lut + 0x1fc), (r & 0xf000ffffu) | (((uint32_t)(uint16_t)arg1[7] & 0xfffu) << 16));
+	r = APICAL_READ_32(0x4000c);
+	APICAL_WRITE_32(0x4000c, (r & 0xfffff000u) | ((uint32_t)(uint16_t)arg1[6] & 0xfffu));
+	r = APICAL_READ_32(0x4000c);
+	APICAL_WRITE_32(0x4000c, (r & 0xf000ffffu) | (((uint32_t)(uint16_t)arg1[7] & 0xfffu) << 16));
 
-	r = APICAL_READ_32(((char *)&apical_downscaler_lut + 0x200));
-	APICAL_WRITE_32(((char *)&apical_downscaler_lut + 0x200), (r & 0xfffff000u) | ((uint32_t)(uint16_t)arg1[8] & 0xfffu));
-	r = APICAL_READ_32(((char *)&apical_downscaler_lut + 0x200));
-	APICAL_WRITE_32(((char *)&apical_downscaler_lut + 0x200), (r & 0xf000ffffu) | (((uint32_t)(uint16_t)arg1[9] & 0xfffu) << 16));
+	r = APICAL_READ_32(0x40010);
+	APICAL_WRITE_32(0x40010, (r & 0xfffff000u) | ((uint32_t)(uint16_t)arg1[8] & 0xfffu));
+	r = APICAL_READ_32(0x40010);
+	APICAL_WRITE_32(0x40010, (r & 0xf000ffffu) | (((uint32_t)(uint16_t)arg1[9] & 0xfffu) << 16));
 
-	r = APICAL_READ_32(((char *)&apical_downscaler_lut + 0x1f0));
-	APICAL_WRITE_32(((char *)&apical_downscaler_lut + 0x1f0), (r & 0xfffff000u) | ((uint32_t)(uint16_t)arg1[4] & 0xfffu));
-	r = APICAL_READ_32(((char *)&apical_downscaler_lut + 0x1f0));
-	return APICAL_WRITE_32(((char *)&apical_downscaler_lut + 0x1f0), (r & 0xf000ffffu) | (((uint32_t)(uint16_t)arg1[5] & 0xfffu) << 16));
+	r = APICAL_READ_32(0x40000);
+	APICAL_WRITE_32(0x40000, (r & 0xfffff000u) | ((uint32_t)(uint16_t)arg1[4] & 0xfffu));
+	r = APICAL_READ_32(0x40000);
+	return APICAL_WRITE_32(0x40000, (r & 0xf000ffffu) | (((uint32_t)(uint16_t)arg1[5] & 0xfffu) << 16));
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000031674 origin=model_output original=apply_dvi_fpga_sync_param */
@@ -53121,8 +53125,9 @@ uint32_t awb_init(void *arg1)
 	*p764 = 0;
 	*p768 = 0;
 	*p76c = 0;
-	val = APICAL_READ_32(((char *)&apical_downscaler_lut + 0x1f8));
-	lut_ptr = APICAL_READ_32(((char *)&apical_downscaler_lut + 0x1f8));
+	/* OEM 0x32b28/0x32b4c: register 0x40008 (was a data address, &apical_downscaler_lut + 0x1f8) */
+	val = APICAL_READ_32(0x40008);
+	lut_ptr = APICAL_READ_32(0x40008);
 	if (*p10 == 0) {
 		*p40 = 0;
 	} else {
