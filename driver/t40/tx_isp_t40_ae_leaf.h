@@ -463,4 +463,95 @@ int32_t *tisp_ae_algo_init(int32_t arg1, int32_t arg2, void *arg3)
     return NULL;
 }
 
+/* Class C (issue #204 part 2): the ROI window of the AE statistics.  OEM tisp_ae_roi_point (vendor image 0x3175c): the window must be
+ * ordered (x1 >= x0, y1 >= y0) and its quarter area (x1-x0)*(y1-y0)>>2 below 0x100000, else a message and -1.  Otherwise the
+ * quarter area goes to cache+468, its ratio to the quarter area of the main-sensor frame (pstMainAeOri+60 -> {w,h}; the OEM uses the
+ * main frame for both channels) as 10-bit fixed point to cache+472, the window to the AE statistics registers of the channel
+ * (ch 0: 0x19054 = x1<<16|x0, 0x19058 = y1<<16|y0, then 0x19000 = 1; ch != 0: 0x19254, 0x19258, 0x19200) and cache+477 = (cache+700 == 1).
+ * Differences to the OEM, none visible to a correct caller: a channel without ae_cache or a main frame size pointer that is not
+ * usable returns -EINVAL instead of an oops (after the window check, as the OEM); bottom is the 16-bit stack argument of the OEM. */
+int32_t tisp_ae_roi_point(uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t arg4)
+{
+    uint32_t x0 = a1, y0 = a2, x1 = a3, y1 = arg4 & 0xffffU;
+    uint8_t *cache;
+    const uint8_t *dim;
+    int32_t area, tot;
+    uint32_t lt, rb;
+
+    if (x1 < x0 || y1 < y0) {
+        isp_printf(1, "Abnormal input coordinates !!!, x0 is %d, x1 is %d, y0 is %d, y1 is %d \n", x0, x1, y0, y1);
+        return -1;
+    }
+    cache = (uint8_t *)T40_AE_CACHE(a0);
+    dim = t40_ae_p(pstMainAeOri_storage, 60);
+    if (!T40_AE_OK(cache) || !T40_AE_OK(dim))
+        return -EINVAL;
+    area = (int32_t)((x1 - x0) * (y1 - y0)) >> 2;
+    *(int32_t *)(cache + 468) = area;
+    tot = (int32_t)((uint32_t)*(const uint16_t *)dim * *(const uint16_t *)(dim + 2)) >> 2;
+    *(int32_t *)(cache + 472) = fix_point_div_32(10, (int32_t)((uint32_t)area << 10), (int32_t)((uint32_t)tot << 10));
+    if (*(uint32_t *)(cache + 468) >= 0x100000U) {
+        isp_printf(1, "The size entered is out of range !!!\n");
+        isp_printf(1, "x0 is %d, x1 is %d, y0 is %d, y2 is %d\n", x0, x1, y0, y1);
+        return -1;
+    }
+    lt = y1 << 16 | y0;
+    rb = x1 << 16 | x0;
+    if (a0 == 0) {
+        system_reg_write(0x19054, rb);
+        system_reg_write(0x19058, lt);
+        system_reg_write(0x19000, 1);
+    } else {
+        system_reg_write(0x19254, rb);
+        system_reg_write(0x19258, lt);
+        system_reg_write(0x19200, 1);
+    }
+    cache[477] = *(uint32_t *)(cache + 700) == 1U;
+    return 0;
+}
+
+/* OEM tisp_ae_sepc_area (vendor image 0x39c98): sets a face/special AE window.  f = {enable, x0, y0, x1, y1, target}.  Odd edges are
+ * rounded down; an odd RIGHT edge decrements the LEFT edge once more (OEM, right stays raw).  Right/bottom are clamped to the frame
+ * size - 100 and left/top to >= 100 (frame size of the channel, pstXxxAeOri+60 -> {w,h}), the window goes to tisp_ae_roi_point, the
+ * target is clamped to 10..200 and written back to f[5], and cache gets target (+476), the raw f[1..5] (+680..+696) and f[0] (+700).
+ * The OEM has no return value (stale register) and no argument checks: channel >= 2, f == 0, unusable cache or frame size return -EINVAL here. */
+int32_t tisp_ae_sepc_area(uint32_t a0, uintptr_t a1)
+{
+    uint32_t *f = (uint32_t *)a1;
+    const uint8_t *dim;
+    uint8_t *cache;
+    uint32_t x0, y0, x1, y1, w, h, tgt;
+
+    if (a0 >= 2 || !T40_AE_OK(f))
+        return -EINVAL;
+    dim = t40_ae_p(t40_ae_ctx(a0), 60);
+    cache = (uint8_t *)T40_AE_CACHE(a0);
+    if (!T40_AE_OK(dim) || !T40_AE_OK(cache))
+        return -EINVAL;
+    x0 = f[1]; y0 = f[2]; x1 = f[3]; y1 = f[4];
+    if (x0 & 1) x0--;
+    if (y0 & 1) y0--;
+    if (x1 & 1) x0--;
+    if (y1 & 1) y1--;
+    w = *(const uint16_t *)dim;
+    h = *(const uint16_t *)(dim + 2);
+    if (x1 > w - 100) x1 = w - 100;
+    if (y0 < 100) y0 = 100;
+    if (x0 < 100) x0 = 100;
+    if (y1 > h - 100) y1 = h - 100;
+    tisp_ae_roi_point(a0 & 0xffU, x0 & 0xffffU, y0 & 0xffffU, x1 & 0xffffU, y1 & 0xffffU);
+    tgt = f[5];
+    if (tgt > 200) tgt = 200;
+    else if (tgt < 10) tgt = 10;
+    f[5] = tgt;
+    cache[476] = (uint8_t)tgt;
+    *(uint32_t *)(cache + 680) = f[1];
+    *(uint32_t *)(cache + 684) = f[2];
+    *(uint32_t *)(cache + 688) = f[3];
+    *(uint32_t *)(cache + 692) = f[4];
+    *(uint32_t *)(cache + 696) = tgt;
+    *(uint32_t *)(cache + 700) = f[0];
+    return 0;
+}
+
 #endif /* TX_ISP_T40_AE_LEAF_H */

@@ -11,6 +11,10 @@ defined), every byte of the whole heap and of the globals, and the sequence of c
 (tisp_ae_set_hardware_param, tisp_ae_par_calc, tisp_ae_set_exprinfo_attr, the AE locks).
 tisp_ae_sensor_trig and tisp_ae_ev_start_set (and so tisp_s_ae_scence_attr, which calls it) differ between the two OEM builds (the vendor image moved the ae_cache fields and has an
 extra store); the driver uses the factory layout, so they are compared with --fac (the factory Eufy module).
+Class C (tisp_ae_roi_point, tisp_ae_sepc_area; system_reg_write and isp_printf are logged: register, value, message text and arguments): the
+vendor image is the reference; roi_point_fac compares the valid-window path with the factory build, whose roi_point has no early return on a bad or too large
+window (it prints and then writes the registers anyway).  The factory sepc_area is a different function body (other clamp/store
+order, extra printk): the driver follows the vendor image, so it is not compared with it.
 Not compared: OEM tisp_ae_g_luma with an empty geometry (divu by zero, undefined result; counted as skipped), the return value of
 g_luma / g_comp / ev_start_set (the OEM leaves a stale register), channels >= 2 (the OEM indexes tables without a bound).
 --mutate is done by the caller (tests/t40_ae_leaf_host.sh edits a copy of the header).  Nothing of the vendor module is stored here.
@@ -19,14 +23,14 @@ import argparse, os, random, struct, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from ko_emu import KoEmu, HEAP
 from unicorn import UC_HOOK_CODE
-from unicorn.mips_const import UC_MIPS_REG_A0, UC_MIPS_REG_A1, UC_MIPS_REG_A2, UC_MIPS_REG_V0, UC_MIPS_REG_PC, UC_MIPS_REG_RA
+from unicorn.mips_const import UC_MIPS_REG_SP, UC_MIPS_REG_A3, UC_MIPS_REG_A0, UC_MIPS_REG_A1, UC_MIPS_REG_A2, UC_MIPS_REG_V0, UC_MIPS_REG_PC, UC_MIPS_REG_RA
 
 ap = argparse.ArgumentParser(); ap.add_argument("oem"); ap.add_argument("our"); ap.add_argument("--fac")
 ap.add_argument("--n", type=int, default=1000); ap.add_argument("--seed", type=int, default=7)
 ap.add_argument("--fn", default="g_luma,g_comp,get_state,sensor_trig,ev_start_set,algo_deinit,get_hist_bin,set_hist_bin,get_y_zone,"
-                "g_scene_luma,s_comp,api_set_exp_list,s_explist,s_exprinfo,s_scence,g_scence,g_exprinfo,algo_init")
+                "g_scene_luma,s_comp,api_set_exp_list,s_explist,s_exprinfo,s_scence,g_scence,g_exprinfo,algo_init,roi_point,sepc_area,roi_point_fac")
 a = ap.parse_args(); rnd = random.Random(a.seed); M32 = 0xffffffff
-FAC_ONLY = ("sensor_trig", "ev_start_set", "s_scence")
+FAC_ONLY = ("sensor_trig", "ev_start_set", "s_scence", "roi_point_fac")
 skip_case = {"v": False}
 
 logs = {"ref": [], "our": []}
@@ -49,16 +53,28 @@ def build(path, tag, oem):
     def hw(e): L.append(("hw", ctx_idx(e, g(e, 0), oem), g(e, 1))); return 0
     def pc(e): L.append(("pc", g(e, 0), ctx_idx(e, g(e, 1), oem))); return 0
     def ei(e): L.append(("ei", g(e, 0), g(e, 1))); return 0
+    def regw(e): L.append(("reg", g(e, 0), g(e, 1))); return 0
+    def cstr(e, ad):
+        s = b""
+        while len(s) < 200:
+            c = e.read(ad + len(s), 1)
+            if c == b"\0": break
+            s += c
+        return s
+    def prn(e):         # isp_printf(level, fmt, a2, a3, stack...): level, the text and the 4 word arguments
+        sp = e.get_reg(UC_MIPS_REG_SP); f = cstr(e, g(e, 1))
+        w = [g(e, 2), e.get_reg(UC_MIPS_REG_A3)] + list(struct.unpack("<II", e.read(sp + 16, 8)))
+        L.append(("prn", g(e, 0), f, tuple(w[:f.count(b"%d")]))); return 0
     def fdiv(e):
         if g(e, 2) == 0: skip_case["v"] = True
         return holder["ref"].call("fix_point_div_32", g(e, 0), g(e, 1), g(e, 2)).v0
     def fmul(e): return holder["ref"].call("fix_point_mult2_32", g(e, 0), g(e, 1), g(e, 2)).v0
     def flog(e): return holder["ref"].call("tisp_log2_fixed_to_fixed", g(e, 0), g(e, 1), g(e, 2)).v0
-    h = {"fix_point_div_32": fdiv, "fix_point_mult2_32": fmul, "tisp_log2_fixed_to_fixed": flog}
-    if not oem: h.update({"emu_lock": lock, "emu_unlock": unlock, "tisp_ae_set_hardware_param": hw, "tisp_ae_par_calc": pc, "tisp_ae_set_exprinfo_attr": ei})
+    h = {"printk": lambda e: 0, "_printk": lambda e: 0, "fix_point_div_32": fdiv, "fix_point_mult2_32": fmul, "tisp_log2_fixed_to_fixed": flog}
+    if not oem: h.update({"emu_lock": lock, "emu_unlock": unlock, "tisp_ae_set_hardware_param": hw, "tisp_ae_par_calc": pc, "tisp_ae_set_exprinfo_attr": ei, "system_reg_write": regw, "isp_printf": prn})
     e = KoEmu(path, hle=h, max_insns=2_000_000)
     if oem:
-        for nm, f in (("tisp_ae_set_hardware_param", hw), ("tisp_ae_par_calc", pc), ("tisp_ae_set_exprinfo_attr", ei),
+        for nm, f in (("tisp_ae_set_hardware_param", hw), ("tisp_ae_par_calc", pc), ("tisp_ae_set_exprinfo_attr", ei), ("system_reg_write", regw), ("isp_printf", prn),
                       ("__private_spin_lock_irqsave", lock), ("private_spin_unlock_irqrestore", unlock)):
             def mk(f):
                 def _hook(uc, addr, size, ud):
@@ -96,6 +112,7 @@ PTR_SLOTS = (4, 8, 12, 48, 52, 56, 60, 68, 72, 104, 140, 152, 160, 164, 172, 176
 def slot_content(off):
     d = bytearray(rbytes(SLOT_SIZE.get(off, 96)))
     if off == 4: d[0:2] = u16s([rnd.choice([0, 1, 2, 5, 8, 10, 12, 16, 20, 23, 23, 24, 31, 40])])
+    elif off == 60: d[0:4] = u16s([rnd.choice([0, 100, 199, 200, 640, 1280, 1920, 2560, 3840, rnd.getrandbits(12), rnd.getrandbits(16)]), rnd.choice([0, 100, 199, 200, 480, 720, 1080, 1440, 2160, rnd.getrandbits(12), rnd.getrandbits(16)])])
     elif off == 56: d[0:60] = u32s([rnd.choice([0, 1, 255, 1000, rnd.getrandbits(14), r32()]) for _ in range(15)])
     elif off == 104:
         mode = rnd.choice([0, 1, 2]); d[0:1024] = u32s([rnd.choice([0, 1, 5, rnd.getrandbits(8)]) if mode == 0 else rnd.getrandbits(18) if mode == 1 else
@@ -137,7 +154,9 @@ def universe(refkey):
     outer = [outer_blk() for _ in (0, 1)]
     for i, e in enumerate(E):
         e.write(e.symaddr["stMainAeOuter"], struct.pack("<I", outer[0])); e.write(e.symaddr["stSecAeOuter"], struct.pack("<I", outer[1]))
-    cache = [alloc(rbytes(0x518 + 16)) for _ in (0, 1)]; tp = [alloc(rbytes(2048)) for _ in (0, 1)]
+    cb = [bytearray(rbytes(0x518 + 16)) for _ in (0, 1)]
+    for b in cb: b[700:704] = u32s([rnd.choice([0, 1, 1, 2, r32()])])
+    cache = [alloc(bytes(b)) for b in cb]; tp = [alloc(rbytes(2048)) for _ in (0, 1)]
     for p in tp:
         v = u16s([rnd.choice([0, 1, 100, 200, 1000, 4095, 0xffff, rnd.getrandbits(16)])])
         for e in E: e.write(p + 1024, v)
@@ -166,6 +185,8 @@ def universe(refkey):
     sc = bytearray(rbytes(40)); sc[0:4] = u32s([rnd.choice([0, 1, 2, 3, 4, r32()])]); sc[8:12] = u32s([rnd.choice([0, 1, 2, 3, 4, r32()])])
     sc[16:20] = u32s([rnd.choice([0, 1, 2, 3, 4, r32()])]); sc[24:28] = u32s([rnd.choice([0, 1, 2, 3, r32()])]); sc[20:22] = u16s([small()])
     U["scene"] = alloc(bytes(sc))
+    def c16(): return rnd.choice([0, 1, 99, 100, 101, 150, 199, 200, 201, 640, 1000, 1919, 1920, 2047, 2560, 3000, 3839, 3840, 4095, rnd.getrandbits(12), rnd.getrandbits(16), r32()])
+    U["face"] = alloc(u32s([rnd.choice([0, 1, 1, 2, r32()]), c16(), c16(), c16(), c16(), rnd.choice([0, 5, 9, 10, 11, 100, 199, 200, 201, 5000, r32()])]))
     ex = bytearray(rbytes(180)); U["expo"] = alloc(bytes(ex))
     return U
 
@@ -197,11 +218,15 @@ def run(name, fn, refkey, args_fn, cmp_ret=True, zero_geo=False, den_skip=False,
         pi = ref.read(gsym(ref, True, 2) + 152 * ch, 152); p44 = struct.unpack_from("<I", pi, 44)[0]; p70 = struct.unpack_from("<H", pi, 70)[0]
         if ((p70 * p44) & M32) >> 16 == 0: skipped[name] = skipped.get(name, 0) + 1; return
     logs["ref"].clear(); logs["our"].clear(); skip_case["v"] = False
-    ro = ref.call(fn, *args); ru = our.call(fn, *args)
+    sa = ()
+    if name.startswith("roi_point"): args, sa = args[:4], args[4:]       # 5th argument (bottom) on the stack
+    ro = ref.call(fn, *args, stack_args=sa); ru = our.call(fn, *args, stack_args=sa)
     if mask:                                       # tisp_ae_algo_init: 2 bytes at u+112+14 the OEM copies from uninitialised stack
         for e in (ref, our): e.write(args[2] + 126, b"\0\0")
     if skip_case["v"]:
         skipped[name] = skipped.get(name, 0) + 1; return
+    if name.endswith("_fac") and any(x[0] == "prn" for x in logs["ref"] + logs["our"]):
+        skipped[name] = skipped.get(name, 0) + 1; return          # the factory build has no early return on a bad window (see roi_point_fac)
     stats[name] = stats.get(name, 0) + 1
     for r, who in ((ro, "oem"), (ru, "our")):
         if r.stop: rec(name, "emulation stopped (%s): %s args %s" % (who, r.stop, [hex(x) for x in args])); return
@@ -212,6 +237,14 @@ def run(name, fn, refkey, args_fn, cmp_ret=True, zero_geo=False, den_skip=False,
         if do[k] != du[k]:
             i = next(j for j in range(len(do[k])) if do[k][j] != du[k][j])
             rec(name, "%s differs at +%#x (oem %02x our %02x) args %s ch %d" % (lab, i, do[k][i], du[k][i], [hex(x) for x in args], ch)); return
+
+def roi_args():
+    def c(): return rnd.choice([0, 1, 99, 100, 101, 200, 640, 1000, 1919, 1920, 2047, 2048, 4000, 4095, rnd.getrandbits(12), rnd.getrandbits(16), r32()])
+    x0 = c(); y0 = c()
+    if rnd.random() < 0.8: x1 = (x0 + c()) & M32 if rnd.random() < 0.5 else (x0 + rnd.getrandbits(11)) & M32; y1 = (y0 + rnd.getrandbits(11)) & M32
+    else: x1 = c(); y1 = c()
+    if rnd.random() < 0.1: y1 = r32()
+    return x0, y0, x1, y1
 
 ARGS = {
     "g_luma": ("tisp_ae_g_luma", "vnd", lambda U, ch: (ch, U["out"]), False, True),
@@ -231,6 +264,9 @@ ARGS = {
     "s_scence": ("tisp_s_ae_scence_attr", "fac", lambda U, ch: (ch, U["scene"]), True, False),
     "g_scence": ("tisp_g_ae_scence_attr", "vnd", lambda U, ch: (ch, U["out"]), True, True),
     "g_exprinfo": ("tisp_g_ae_exprinfo_attr", "vnd", lambda U, ch: (ch, U["out"]), True, False, True),
+    "roi_point": ("tisp_ae_roi_point", "vnd", lambda U, ch: (ch, *roi_args()), True, False),
+    "sepc_area": ("tisp_ae_sepc_area", "vnd", lambda U, ch: (ch, U["face"]), False, False),
+    "roi_point_fac": ("tisp_ae_roi_point", "fac", lambda U, ch: (ch, *roi_args()), True, False),
     "algo_init": ("tisp_ae_algo_init", "vnd", lambda U, ch: (ch, rnd.choice([0, 1, 1, 1, 2, r32()]), U["u"]), False, False, False, True),
 }
 for it in range(a.n):
@@ -239,5 +275,5 @@ for it in range(a.n):
         if key == "fac" and "fac" not in refs: continue
         run(name, fn, key, af, cr, zg, *rest)
 for k in sorted(stats):
-    print("%-16s %6d calls  %d mismatches%s" % (k, stats[k], bad.get(k, 0), ("  (%d skipped: division by zero in the OEM)" % skipped[k]) if k in skipped else ""))
+    print("%-16s %6d calls  %d mismatches%s" % (k, stats[k], bad.get(k, 0), ("  (%d skipped: division by zero in the OEM or the factory build error path)" % skipped[k]) if k in skipped else ""))
 sys.exit(1 if bad else 0)

@@ -34,6 +34,8 @@ extern int32_t tisp_log2_fixed_to_fixed(uint32_t, uint32_t, uint32_t);
 extern int64_t tisp_ae_set_hardware_param(uintptr_t ctx, uint32_t ch);
 extern int32_t tisp_ae_par_calc(uint32_t ch, uintptr_t ctx);
 extern int32_t tisp_ae_set_exprinfo_attr(uint32_t ch, uintptr_t buf);
+extern int32_t system_reg_write(uint32_t reg, uint32_t val);
+extern int32_t isp_printf(uint32_t level, const char *fmt, ...);
 
 #define T40_AE_OK(p) 1
 #define T40_AE_LOCK(l, f) emu_lock((l), (f))

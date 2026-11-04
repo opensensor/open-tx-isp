@@ -71,3 +71,9 @@ and of the globals, the return value and the calls to the not-converted callees 
 `tisp_ae_sensor_trig`, `ev_start_set` and (through it) `s_scence_attr` differ between the two Eufy builds: the vendor image moved the ae_cache fields (trigger flag
 at +1296 instead of +1292) and stores `ae_cache[ch] + 1297` in ev_start_set. The driver uses the factory layout, so those three are compared with the factory module
 (`T40_OEM_KO_FAC`); without it they are not compared (a note, a failure with `T40_ORACLE_STRICT=1`). Skipped calls: an empty zone geometry (OEM `divu` by zero).
+
+Class C (2026-11-04, #204 part 2): `tisp_ae_roi_point` and `tisp_ae_sepc_area` (vendor image `0x3175c` / `0x39c98`) are in the same header and oracle; `system_reg_write` and
+`isp_printf` are logged on both sides (register, value, message text, arguments), 19 more mutations. The vendor image is the reference. The factory build differs: its
+`tisp_ae_roi_point` has no early return on a bad or too large window (it prints and then writes the registers anyway; `roi_point_fac` compares only the valid-window
+path with it) and its `tisp_ae_sepc_area` is another body (other clamp/store order, extra `printk`), so that one is not compared with it. Skipped calls: a zero frame size
+(OEM division by zero in `fix_point_div_32`).
