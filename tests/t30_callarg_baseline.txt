@@ -1,9 +1,6 @@
 # check_ioctl_ptr_scale.py --call-args baseline for the lifted T30 driver: findings present when the
 # apical_api_calibration status argument was restored (gamma s_ctrl NULL write).  NOT audited yet:
 # the APICAL_WRITE_32 1/2 keys still need a per-site OEM check.  Only NEW findings fail make check.
-argc apical_custom_initialization APICAL_WRITE_32 1/2
-argc apical_custom_initialization APICAL_WRITE_32 1/2
-argc apical_custom_initialization APICAL_WRITE_32 1/2
 argc apical_sbus_read_data_u32 apical_sbus_read_u32 1/2
 argc cmos_fsm_clear log2_fixed_to_fixed 1/3
 argc frame_chan_event_raw private_spin_unlock_irqrestore 1/2
