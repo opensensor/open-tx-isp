@@ -28,6 +28,12 @@ marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned 
 - The calibrated AWB publishes its red/blue factors (halved) into system table items 49/50 while AWB is not manual, so `GetWB` no longer reports the 50/50 initial values (T30X: 175/92 while the vendor reads 132/124 on the same scene: the calibrated AWB settles on another balance, an algorithm difference, not the getter; #202 stays open).
 - Evidence: T30 QEMU picture area 67 cases, no oops, no slab report; T30X apitest `isp` area 48 PASS / 0 FAIL, 0 oopses; host tests green.
 
+## 2026-11-04: T30 system table accessors as the vendor, compact AE honours AE compensation and the manual items (#202; host + QEMU T30, picture effect pending a device batch)
+
+- 21 of the 51 lifted `system_*` accessors (`apical_command` type 1) had lost the SET arm or answered the GET wrongly (manual exposure, manual integration time/gains/sharpening/AWB/saturation, dark/bright target, limits, anti-flicker, bad pixels; `GetExpr` mode was always 0). Each vendor accessor is the same code, so all 51 are now `t30_system_item()` on the vendor item offset (`tx_isp_t30_system_item.h`, host test, `check_t30_system_items.sh`).
+- The compact AE ignored the AE compensation (item 53; OEM `ae_calculate_target` adds `(item-0x80)<<11` to the Q16 log2 target), the manual exposure (items 1, 16), integration time (3, 24) and gains (4, 6, 28, 32), and overwrote the table items each frame. `tx_isp_t30_ae_manual.h` (host-tested) carries the arithmetic.
+- QEMU T30 (debug kernel): `SetExpr(manual, 100 lines)` GetExpr mode 0 -> 1, it 100, held 3 s; `SetIntegrationTime` manual likewise; apitest isp 48/0, 0 oopses. Vendor-equal, unchanged: `SetExpr` in microseconds is -1 while the sensor reports 0 us/line.
+
 ## 2026-11-03: T40 CDNS (chroma denoise) runs like the vendor, day and night (#203; host + QEMU + Eufy T40 camera)
 
 - `enable_cdns` is no longer opt-in: it follows the tuning bank flag 19 (TOP bit 19) like YDNS/SDNS, as the OEM `tisp_main_init` does (both sc830ai banks have the flag clear, so the vendor runs CDNS in day and night). `t40_force_active` / `t40_force_bypass` bit 19 override. The day/night bank refresh now reloads the section and repacks at the remembered gain (OEM `tisp_cdns_dn_params_refresh`).
