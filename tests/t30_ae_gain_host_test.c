@@ -149,6 +149,26 @@ int main(void)
 	CK(t30_iridix_collection_correction(0x80000000u) == 0x100);	/* lift gave 0x1000 */
 	CK(t30_iridix_collection_correction(0xffffff00u) == 0x100);
 
+	/* Part 4 (#202): 0x3dc from the exposure ring pair (older, newer), values
+	 * from the SDK-built vendor ko iridix_fsm_process_interrupt 0x27810 run in
+	 * Unicorn (tools/ko_emu/diff_t30_iridix.py); pairs from the b26 open trace
+	 * (audit/t30/b26/pic/start-dmesg.txt), where the open ko wrote 0 for every
+	 * rising exposure (shared exp2 rejects a negative log2 input). */
+	CK(t30_iridix_collection_ratio(131072, 131072) == 0x100);
+	CK(t30_iridix_collection_ratio(131072, 697555) == 0);		/* 2^-8.64 */
+	CK(t30_iridix_collection_ratio(697555, 717606) == 0xcf);	/* b26 open: 0 */
+	CK(t30_iridix_collection_ratio(927346, 942502) == 0xda);	/* b26 open: 0 */
+	CK(t30_iridix_collection_ratio(5, 6) == 0xff);
+	CK(t30_iridix_collection_ratio(6, 5) == 0x100);
+	CK(t30_iridix_collection_ratio(717606, 697555) == 0x13c);
+	CK(t30_iridix_collection_ratio(942502, 927346) == 0x12c);
+	CK((t30_iridix_collection_ratio(600000, 0) & 0xfff) == 0);	/* >= 0x1000 */
+	CK((t30_iridix_collection_ratio(65536 * 8, 0) & 0xfff) == 0);
+	CK(t30_iridix_collection_ratio(0, 65536 * 9) == 0);
+	CK(t30_oem_math_exp2(0, 16, 8) == 0x100);
+	CK(t30_oem_math_exp2(65536, 16, 8) == 0x200);
+	CK(t30_oem_math_exp2((u32)-65536, 16, 8) == 0x80);
+
 	if (bad) { printf("t30_ae_gain_host_test: %d FAILED\n", bad); return 1; }
 	printf("t30_ae_gain_host_test: PASS\n");
 	return 0;

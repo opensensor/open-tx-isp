@@ -45617,8 +45617,8 @@ void iridix_fsm_process_interrupt(int32_t *arg1, char arg2)
     s5 = (APICAL_READ_32(0x2c0) & 0x80) ? 0 : -1;
     s4 = *(int32_t *)cmos_get_frame_exposure_set((uintptr_t)s3, (APICAL_READ_32(0x2c0) & 0x80) ? 1 : 0);
     val = *(int32_t *)cmos_get_frame_exposure_set((void *)s3, s5);
-    s0 = (void *)(uintptr_t)t30_iridix_collection_correction(
-        math_exp2(val - s4, 0x10, 8));
+    /* OEM math_exp2 semantics: older < newer gives a ratio < 0x100, not 0 */
+    s0 = (void *)(uintptr_t)t30_iridix_collection_ratio(val, s4);
 
     /*
      * #202: on the T30X the open stack showed 0x3dc = 0 and the init Iridix
