@@ -15,6 +15,8 @@
 #ifndef TX_ISP_T30_AE_MANUAL_H
 #define TX_ISP_T30_AE_MANUAL_H
 
+#include "../include/tx_isp/tx_isp_math.h"
+
 struct t30_ae_manual {
 	u8 exposure;		/* item 1: manual exposure (total exposure from item 16) */
 	u8 integration;		/* item 3: manual integration time (item 24) */
@@ -166,6 +168,35 @@ static inline u32 t30_iridix_collection_correction(u32 ratio_q8)
 	if ((s32)ratio_q8 < 0)
 		return 0x100;
 	return (s32)ratio_q8 < 0x1000 ? ratio_q8 : 0x1000;
+}
+
+/*
+ * OEM math_exp2 (SDK-built tx-isp-t30.ko 0x1d184, lift R math_exp2): no range
+ * check, the final right shift is srlv by (30 - out - (value >> in)) & 31.
+ * A negative log2 input (two's complement) therefore gives 2^value, e.g.
+ * value = -0.31 (Q16) -> 0xcf in Q8.  The shared tx_isp_exp2_u32() (T30
+ * math_exp2 via tx_isp_t30_math.c) rejects value >> in > 30 - out and returns
+ * 0, i.e. 2^negative = 0.  The mantissa (table + interpolation) is the shared
+ * one, only the shift differs.
+ */
+static inline u32 t30_oem_math_exp2(u32 value, u8 in, u8 out)
+{
+	u32 mant = tx_isp_exp2_u32(value & ((1U << (in & 31U)) - 1U), in, 30);
+
+	return mant >> ((30U - out - (value >> (in & 31U))) & 31U);
+}
+
+/*
+ * iridix_fsm_process_interrupt (SDK ko 0x27810..0x278bc): 0x3dc =
+ * clamp(math_exp2(older - newer exposure log2, 16, 8)).  older / newer are
+ * exposure ring slots (-1, 0), or (0, 1) with temper2 mode (0x2c0 bit 7).
+ * While the exposure rises (older < newer) the vendor writes a ratio below
+ * 0x100; the shared exp2 gave 0 (#202: 0x3dc = 0, 0x3c4 never updated).
+ */
+static inline u32 t30_iridix_collection_ratio(s32 older, s32 newer)
+{
+	return t30_iridix_collection_correction(
+		t30_oem_math_exp2((u32)older - (u32)newer, 16, 8));
 }
 
 #endif /* TX_ISP_T30_AE_MANUAL_H */
