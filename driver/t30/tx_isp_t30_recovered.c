@@ -18599,6 +18599,7 @@ static void tx_isp_t30_ispcore_enable_lfb_channel(
  * acknowledged by the caller and dropped here.
  */
 static int tx_isp_t30_fw_ready;
+static void tx_isp_t30_frame_start_ring(void);
 
 static void tx_isp_t30_dispatch_firmware_irqs(u32 status)
 {
@@ -18620,6 +18621,8 @@ static void tx_isp_t30_dispatch_firmware_irqs(u32 status)
 		pr_err("tx-isp-t30: APICAL dispatch status=%04x fe=%p ae=%p awb=%p ctx=%p\n",
 		       status, isr_func[0], isr_func[3], isr_func[4],
 		       isr_param[0]);
+	if (status & BIT(7))
+		tx_isp_t30_frame_start_ring();
 	status &= recovered_sources;
 	for (source = 0; source < ARRAY_SIZE(isr_func); source++) {
 		if ((status & BIT(source)) && isr_func[source]) {
@@ -51957,13 +51960,36 @@ static void tx_isp_t30_ae_store_exposure_history(u32 integration_time)
 	cmos[0x1c0 / 4] = *(u16 *)((u8 *)cmos + 0x1c4);	/* previous integration time */
 	*(u16 *)((u8 *)cmos + 0x1c4) = (u16)integration_time;
 	cmos_store_frame_exposure_set(cmos, &cmos[0x20 / 4]);
-	/*
-	 * The OEM advances the ring at the frame-start interrupt of the CMOS FSM;
-	 * the open firmware IRQ gate keeps that source off (frame end, AE and AWB
-	 * only), so the AE cycle, which runs once per frame, moves it.
-	 */
-	cmos_move_exposure_history((uint32_t *)cmos);
+	/* the ring moves at frame start: tx_isp_t30_frame_start_ring() */
 	local_irq_restore(flags);
+}
+
+/*
+ * Frame start (firmware source 7), the parts of OEM cmos_fsm_process_interrupt(7)
+ * that do not touch the sensor: advance the exposure history ring every frame
+ * (Iridix compares the newest two entries: with the ring moved once per AE
+ * update the delay slots held stale values and the Iridix strength stayed at
+ * its initial value), refresh the black level for the current gain, and the
+ * anti-flicker tail (event 2 when item 52 changes while item 13 is set).  The
+ * compact AE stays the only sensor writer, so the OEM sensor callbacks of this
+ * source are not called.
+ */
+static void tx_isp_t30_frame_start_ring(void)
+{
+	struct apical_isp *ai = (void *)TX_ISP_T30_ISP_PTR(0);
+	int32_t *cmos = (int32_t *)&ai->cmos;
+	u8 *owner = (u8 *)(uintptr_t)cmos[0];
+	u32 flicker;
+
+	if (!owner || cmos[0x1a4 / 4] < 0)	/* ring not set up by the AE yet */
+		return;
+	cmos_move_exposure_history((uint32_t *)cmos);
+	sensor_update_black((int32_t *)(owner + 0xc));
+	flicker = stab[13] ? (u32)stab[52] << 8 : 0;
+	if (flicker != *(u16 *)((u8 *)cmos + 0x1b4)) {
+		*(u16 *)((u8 *)cmos + 0x1b4) = (u16)flicker;
+		apical_isp_raise_event(owner, 2);
+	}
 }
 
 static void tx_isp_t30_simple_ae_update(void)

@@ -4,6 +4,12 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-05: T30 exposure history ring moves every frame (Iridix strength; QEMU T30, T30X device test pending)
+
+- The compact AE stored and moved the exposure history ring once per AE update; Iridix compares the newest ring entries every frame, so its strength (0x3c4) stayed at the initial value (T30X b26/b27: 0x19 against the vendor 0x21/0x22).
+- Firmware source 7 (frame start) now runs a minimal handler as option A of the IRQ dispatch study: advance the ring, refresh the black level for the current gain, and the anti-flicker tail (event 2 when item 52 changes while item 13 is set). The OEM sensor callbacks of that source stay off: the compact AE remains the only sensor writer; the AE cycle only stores the pending exposure set.
+- QEMU T30: the ring moves every frame, the Iridix strength rises from 0x46 to 0x2b in 12 frames, `isp` area 48 / 0, 0 oopses. Host tests, T30 checks and the call-argument baseline green.
+
 ## 2026-11-05: T30 Iridix collection correction 0 while the exposure rises: OEM math_exp2 shift (`claude/t30-iridix`; Unicorn + host test + QEMU; T30X device proof pending)
 
 - T30X b26 (SC4236): AE/gain/exposure matched the vendor, but at the first picture `0x3dc` = 0 and `0x3c4` frozen at 0x19 (vendor 0xff / 0x21). The b26 `iridix trace` shows ring pairs like older 697555 / newer 717606 (Q16 log2 of integration lines x gains: 2^10.64 = 800 lines x 2.0) and 3dc = 0 for every frame in which the exposure rose.
