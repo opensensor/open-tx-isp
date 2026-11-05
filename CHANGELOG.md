@@ -4,6 +4,11 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-05: T30 Iridix strength: negative histogram strength clamped like the OEM, input trace (QEMU T30; device data pending)
+
+- `iridix_control_strength_calculate()`: the histogram strength is a 16-bit value and a negative result becomes 0, as at OEM `0x106dc` (the open code let a negative strength pull the target below the minimum item).
+- Trace for #202 (open base strength 0x43 against the vendor 0x1c..0x22): once a second for 20 s after the frame-end trace, the strength inputs (exposure target at `isp+0x11c` against the calibration limits `0xd3` and HDR table `0x24`, items 41 / 42 / 9 / 40, the written target and `0x3c4`). QEMU: `exp=131072 min=500000 max=1800000 s41=100 s42=20`, target 0x6400. Host tests, T30 checks and the call-argument baseline green.
+
 ## 2026-11-05: T30 exposure history ring moves every frame (Iridix strength; QEMU T30, T30X device test pending)
 
 - The compact AE stored and moved the exposure history ring once per AE update; Iridix compares the newest ring entries every frame, so its strength (0x3c4) stayed at the initial value (T30X b26/b27: 0x19 against the vendor 0x21/0x22).

@@ -45637,6 +45637,26 @@ void iridix_fsm_process_interrupt(int32_t *arg1, char arg2)
             *(int32_t *)((char *)s3 + 0x1a4), val, s4,
             (unsigned int)(uintptr_t)s0, APICAL_READ_32(0x3c4) & 0xff);
     }
+    /*
+     * #202 Iridix strength at base (open 0x43, vendor 0x1c..0x22): the inputs of
+     * iridix_control_strength_calculate() - exposure target at isp+0x11c against
+     * the calibration limits 0xd3 / HDR table 0x24, the strength limits stab[41]
+     * / stab[42] and the target written to iridix+0x10 - once a second for 20 s.
+     */
+    if (tx_isp_t30_iridix_trace >= 48 && tx_isp_t30_iridix_trace < 48 + 20 * 15) {
+        tx_isp_t30_iridix_trace++;
+        if (!(tx_isp_t30_iridix_trace % 15)) {
+            u8 *own = (u8 *)(uintptr_t)s1[0];
+            u8 mode = own ? own[0x1524] : 0;
+
+            pr_info("tx-isp-t30: iridix in exp=%u min=%u max=%u s41=%u s42=%u s9=%u s40=%u tgt=0x%x 3c4=0x%x\n",
+                own ? *(u32 *)(own + 0x11c) : 0,
+                *(u32 *)(uintptr_t)_GET_UINT_PTR(0xd3),
+                *(u32 *)(uintptr_t)_GET_UINT_PTR(_GET_HDR_TABLE_INDEX(0x24, mode)),
+                stab[41], stab[42], stab[9], stab[40],
+                *(uint16_t *)((char *)s1 + 0x10), APICAL_READ_32(0x3c4) & 0xff);
+        }
+    }
 
     APICAL_WRITE_32(0x3dc, ((uintptr_t)s0 & 0xfff) | (APICAL_READ_32(0x3dc) & 0xfffff000));
 
@@ -45879,6 +45899,10 @@ unsigned int iridix_control_strength_calculate(int32_t *arg1)
 	if (divisor == 0)
 		divisor = 1;
 	strength = ((int32_t)average - 1) * 100 / (int32_t)divisor;
+	/* OEM 0x106dc: the histogram strength is a 16-bit value, negative -> 0 */
+	strength = (int16_t)strength;
+	if (strength < 0)
+		strength = 0;
 
 	exposure_max = *(uint32_t *)(uintptr_t)_GET_UINT_PTR(
 		_GET_HDR_TABLE_INDEX(0x24, mode));
