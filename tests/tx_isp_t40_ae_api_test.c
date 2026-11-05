@@ -331,6 +331,211 @@ static void test_expr(void)
 	       t40_ae_ld32(out, 216) == 0xaf6a0);
 }
 
+/* ---------------- #211 antiflicker rung flip-flop ---------------- */
+
+/* regtrace_gc4653_again_log2_gain (tx_isp_t40_recovered.c): log2 16.16 per gain index */
+static const u32 gc_lut[26] = {
+	0U, 14995U, 31177U, 47704U, 65535U, 81158U, 97241U,
+	113239U, 131070U, 147006U, 162776U, 178774U, 196605U,
+	212541U, 228311U, 244420U, 262140U, 278154U, 293912U,
+	309955U, 327675U, 343689U, 359480U, 375518U, 393210U,
+	409243U,
+};
+
+static u32 t_log2_gain(u32 i)
+{
+	return gc_lut[i > 25U ? 25U : i];
+}
+
+static double t_exp2(double x)
+{
+	double r = 1.0, term = 1.0, f;
+	int i, n = (int)x;
+
+	f = (x - n) * 0.69314718055994531;
+	for (i = 1; i < 16; i++) {
+		term *= f / i;
+		r += term;
+	}
+	for (i = 0; i < n; i++)
+		r *= 2.0;
+	return r;
+}
+
+struct af_sim {
+	u32 it, ag;
+};
+
+/*
+ * One frame-3A AE sample of the antiflicker branch of the T40-AE-API loop
+ * (tx_isp_t40_recovered.c, regtrace_frame_3a_sample) with the ISP dgain
+ * fixed at 1x, nothing manual, no highlight guard.  legacy = the rules of
+ * origin/next d09dc553 (rung up while the prediction stays inside
+ * target + again_band, rung down at target + deadband, no gain trade).
+ * Eufy T40XP run: 50 Hz rung 450 lines, cap 1350, deadband 4.
+ */
+static void af_sim_step(struct af_sim *s, u32 luma, u32 target, int legacy)
+{
+	const u32 deadband = 4, step = 450, cap = 1350, max_ag = 25, min_ag = 0;
+	u32 band = legacy ? target * 9U / 100U : (target * 9U + 99U) / 100U;
+	unsigned int moves = (luma * 2U < target || luma > target * 2U) ? 2U : 1U, n;
+
+	if (band < deadband)
+		band = deadband;
+	for (n = 0; n < moves; n++) {
+		if (luma + deadband < target) {
+			u32 nit = s->it, nag = s->ag;
+
+			if (s->it < cap) {
+				u32 up = s->it + step > cap ? cap : s->it + step;
+
+				if (legacy) {
+					if ((u64)luma * up <= (u64)(target + band) * s->it)
+						nit = up;
+				} else {
+					u32 uag = t40_ae_af_trade_again(s->it, up, s->ag, min_ag, max_ag, t_log2_gain);
+					u32 ev = t40_ae_af_trade_log2(s->it, up, s->ag, uag, t_log2_gain);
+
+					if (ev <= t40_ae_log2_ratio(target + band, luma)) {
+						nit = up;
+						nag = uag;
+					}
+				}
+			}
+			if (nit != s->it) {
+				s->it = nit;
+				s->ag = nag;
+				break;
+			} else if (s->ag < max_ag && luma + band < target) {
+				s->ag++;
+			} else {
+				break;
+			}
+		} else if (luma > target + deadband) {
+			if (s->ag > min_ag && luma > target + band) {
+				s->ag--;
+			} else if (s->ag > min_ag || s->it <= step) {
+				break;
+			} else {
+				u32 dn = s->it - step;
+
+				if (!legacy) {
+					if (luma <= target + band)
+						break;
+					s->ag = t40_ae_af_trade_again(s->it, dn, s->ag, min_ag, max_ag, t_log2_gain);
+				}
+				s->it = dn;
+				break;
+			}
+		} else {
+			break;
+		}
+	}
+}
+
+/*
+ * Plant: frame luma linear in the exposure (it x analog gain), scaled by
+ * luma_per_line, plus a repeating noise pattern of +-amp levels.  Runs 300
+ * samples from 450 lines / 1x (lag 1: the sample sees the previous
+ * sample's exposure) and reports the exposure spread (max/min) and
+ * the integration time range of the last 150.
+ */
+static double af_sim_run(double luma_per_line, u32 target, int amp, int lag, int legacy,
+			 u32 *it_lo, u32 *it_hi)
+{
+	double ev_prev = 450.0;
+	static const int pat[8] = { 0, 1, -1, 1, 0, -1, 1, -1 };
+	struct af_sim s = { 450U, 0U };
+	double ev_lo = 1e30, ev_hi = 0;
+	int k;
+
+	*it_lo = ~0U;
+	*it_hi = 0;
+	for (k = 0; k < 300; k++) {
+		double ev = s.it * t_exp2(t_log2_gain(s.ag) / 65536.0);
+		int l = (int)(luma_per_line * (lag ? ev_prev : ev) + 0.5) + pat[k & 7] * amp;
+
+		ev_prev = ev;
+
+		if (k >= 150) {
+			if (ev < ev_lo)
+				ev_lo = ev;
+			if (ev > ev_hi)
+				ev_hi = ev;
+			if (s.it < *it_lo)
+				*it_lo = s.it;
+			if (s.it > *it_hi)
+				*it_hi = s.it;
+		}
+		af_sim_step(&s, l < 1 ? 1U : (u32)l, target, legacy);
+	}
+	return ev_hi / ev_lo;
+}
+
+static void test_af_trade(void)
+{
+	setvbuf(stdout, NULL, _IONBF, 0);
+	/* comp 58 on the default target 122 (regtrace_frame_3a_target): 55 */
+	const u32 t58 = t40_ae_comp_target(122, 58, 8, 250);
+	/* logged comp 48 point (b84-open-T40-1105c expose step 1): IT 900, AeAGain 1200 at target 45 */
+	const double c48 = (double)t40_ae_comp_target(122, 48, 8, 250) / (900.0 * 1200.0 / 1024.0);
+	u32 lo, hi;
+	double r;
+
+	assert(t58 == 55);
+	assert(t40_ae_log2_ratio(2, 1) == 65536U);
+	assert(t40_ae_log2_ratio(1350, 900) >= 38335U && t40_ae_log2_ratio(1350, 900) <= 38339U);
+	assert(t40_ae_log2_ratio(900, 900) == 0 && t40_ae_log2_ratio(5, 0) == 0);
+	/* rung down 1350 -> 900 at 1x: two gain indices (1.39x, exposure 1251 of 1350) */
+	assert(t40_ae_af_trade_again(1350, 900, 0, 0, 25, t_log2_gain) == 2);
+	/* 900 -> 450: four indices (exactly 2x, 65535 <= 65536) */
+	assert(t40_ae_af_trade_again(900, 450, 0, 0, 25, t_log2_gain) == 4);
+	/* rung up 900 -> 1350 from index 1 (the logged 1350 / AGain 1200 state) and 3 */
+	assert(t40_ae_af_trade_again(900, 1350, 1, 0, 25, t_log2_gain) == 0);
+	assert(t40_ae_af_trade_again(900, 1350, 3, 0, 25, t_log2_gain) == 1);
+	assert(t40_ae_af_trade_again(900, 1350, 0, 0, 25, t_log2_gain) == 0);
+	assert(t40_ae_af_trade_again(1350, 900, 24, 0, 25, t_log2_gain) == 25);	/* capped */
+	assert(t40_ae_af_trade_log2(900, 1350, 0, 0, t_log2_gain) == t40_ae_log2_ratio(1350, 900));
+	assert(t40_ae_af_trade_log2(1350, 900, 0, 2, t_log2_gain) ==
+	       t40_ae_log2_ratio(1350, 900) - 31177U);
+
+	/* default target 122, luma 128 at 1350 / 1x (in (T+deadband, T+band]): legacy flips 900 <-> 1350 */
+	r = af_sim_run(128.0 / 1350.0, 122, 0, 0, 1, &lo, &hi);
+	printf("af211 T122 noise0 legacy: ev spread %.3f it %u..%u\n", r, lo, hi);
+	assert(lo == 900 && hi == 1350 && r >= 1.49);
+	r = af_sim_run(128.0 / 1350.0, 122, 0, 0, 0, &lo, &hi);
+	printf("af211 T122 noise0 fixed:  ev spread %.3f it %u..%u\n", r, lo, hi);
+	assert(lo == hi && r < 1.0001);
+
+	/*
+	 * comp 58 with the plant calibrated on the logged comp 48 point (1350 / 1x -> luma 58) and a
+	 * one-sample statistics lag: legacy hunts 900 <-> 1350 (the logged 1350 / AGain 1200 state,
+	 * exposure 1582 vs 900) and with +-2 noise also 450 lines; the traded loop holds one exposure.
+	 */
+	r = af_sim_run(c48, t58, 0, 1, 1, &lo, &hi);
+	printf("af211 T55 lag1 noise0 legacy: ev spread %.3f it %u..%u\n", r, lo, hi);
+	assert(lo == 900 && hi == 1350 && r >= 1.75);
+	r = af_sim_run(c48, t58, 2, 1, 1, &lo, &hi);
+	printf("af211 T55 lag1 noise2 legacy: ev spread %.3f it %u..%u\n", r, lo, hi);
+	assert(lo == 450 && hi == 1350 && r >= 3.0);
+	r = af_sim_run(c48, t58, 0, 1, 0, &lo, &hi);
+	assert(lo == hi && r < 1.0001);
+	r = af_sim_run(c48, t58, 2, 1, 0, &lo, &hi);
+	assert(lo == hi && r < 1.0001);
+	{
+		int amp, lag;
+
+		/* any lag / noise up to +-4: at most one traded rung (exposure 1251 <-> 1350) */
+		for (lag = 0; lag < 2; lag++)
+			for (amp = 0; amp < 5; amp++) {
+				r = af_sim_run(c48, t58, amp, lag, 0, &lo, &hi);
+				printf("af211 T55 lag%d noise%d fixed: ev spread %.3f it %u..%u\n",
+				       lag, amp, r, lo, hi);
+				assert(r <= 1.08 && lo >= 900);
+			}
+	}
+}
+
 int main(void)
 {
 	test_comp();
@@ -339,6 +544,7 @@ int main(void)
 	test_meter();
 	test_af_speed();
 	test_expr();
+	test_af_trade();
 	puts("tx_isp_t40_ae_api tests passed");
 	return 0;
 }

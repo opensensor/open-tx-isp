@@ -4,6 +4,12 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-05: T40 AE antiflicker rungs traded against the analog gain, no rung flip-flop (#211; host test, Eufy T40XP device test pending)
+
+- Cause (Eufy T40XP comp 58, IT 450/900/1350 lines, frame means 32..82): the frame AE moved the integration time by a whole 50 Hz rung (450 lines, exposure x1.5 / x0.67) without touching the gain, accepted a rung up while the prediction stayed inside target + again_band, but stepped down already at target + deadband. An exposure that landed in between stepped down and up again; with one sample of statistics lag the loop also passed the 1350 / AGain 1200 state (exposure 1582) and 450 lines.
+- Now like the OEM ladder allocation (`tisp_ae_long_tune2` 0x35b58: time = highest rung not above the exposure, analog gain = exposure / time): a rung move trades the analog gain (`t40_ae_af_trade_again`, 1350 -> 900 at 1x gives 900 / 1.39x), the rung-up test uses the traded exposure change, a rung down needs the same band (target + again_band), and the gain band is rounded up so it holds one 1.17x step at low targets (comp 58: target 55, band 5).
+- Host test `tx_isp_t40_ae_api_test`: legacy rules flip 900 <-> 1350 (exposure spread 1.5 at target 122, 1.76 / 4.17 at target 55 with one sample lag); the new rules hold one exposure (spread <= 1.08 up to +-4 noise).
+
 ## 2026-11-05: T30 Iridix strength: negative histogram strength clamped like the OEM, input trace (QEMU T30; device data pending)
 
 - `iridix_control_strength_calculate()`: the histogram strength is a 16-bit value and a negative result becomes 0, as at OEM `0x106dc` (the open code let a negative strength pull the target below the minimum item).

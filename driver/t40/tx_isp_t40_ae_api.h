@@ -404,6 +404,86 @@ static inline u32 t40_ae_af_floor(u32 it, u32 step)
 	return it - it % step;
 }
 
+/* log2(num / den) in 16.16 for num >= den > 0 (0 otherwise). */
+static inline u32 t40_ae_log2_ratio(u32 num, u32 den)
+{
+	u64 x;
+	u32 r = 0, bit;
+
+	if (!den || num <= den)
+		return 0;
+	x = t40_ae_div64((u64)num << 30, den);	/* Q30 */
+	while (x >= (2ULL << 30)) {
+		x >>= 1;
+		r += 1U << 16;
+	}
+	for (bit = 1U << 15; bit; bit >>= 1) {
+		x = (x * x) >> 30;		/* x < 2^31: no overflow */
+		if (x >= (2ULL << 30)) {
+			x >>= 1;
+			r |= bit;
+		}
+	}
+	return r;
+}
+
+/*
+ * #211: an antiflicker integration step traded against the sensor analog
+ * gain.  The OEM allocator (vendor tx-isp-t40.ko tisp_ae_long_tune2
+ * 0x35b58, deflicker ladder branch) sets the integration time to the
+ * highest ladder entry not above the wanted exposure and the analog gain to
+ * exposure / time, so a move to another rung keeps the exposure value
+ * continuous and the gain fills the remainder.  The frame AE moves one rung
+ * per sample; this returns the gain index that keeps the exposure as close
+ * as whole gain indices allow without crossing the old value: new_it < it
+ * raises the gain by at most it / new_it (exposure ends <= old), new_it > it
+ * lowers it by at most new_it / it (exposure ends >= old).  log2_gain gives
+ * the 16.16 log2 gain of an index; lo / hi bound the index.
+ */
+static inline u32 t40_ae_af_trade_again(u32 it, u32 new_it, u32 again,
+					u32 lo, u32 hi,
+					u32 (*log2_gain)(u32 idx))
+{
+	u32 room, g0;
+
+	if (!it || !new_it || it == new_it || !log2_gain)
+		return again;
+	g0 = log2_gain(again);
+	if (new_it < it) {
+		room = t40_ae_log2_ratio(it, new_it);
+		while (again < hi && log2_gain(again + 1U) - g0 <= room)
+			again++;
+	} else {
+		room = t40_ae_log2_ratio(new_it, it);
+		while (again > lo && g0 - log2_gain(again - 1U) <= room)
+			again--;
+	}
+	return again;
+}
+
+/*
+ * 16.16 log2 of the exposure change of a rung move (it, again) ->
+ * (new_it, new_again) traded as above: its magnitude (up for new_it > it,
+ * down otherwise).
+ */
+static inline u32 t40_ae_af_trade_log2(u32 it, u32 new_it, u32 again,
+				       u32 new_again,
+				       u32 (*log2_gain)(u32 idx))
+{
+	u32 g = log2_gain ? log2_gain(again) : 0;
+	u32 ng = log2_gain ? log2_gain(new_again) : 0;
+	u32 l, d;
+
+	if (new_it >= it) {
+		l = t40_ae_log2_ratio(new_it, it);
+		d = g > ng ? g - ng : 0;
+	} else {
+		l = t40_ae_log2_ratio(it, new_it);
+		d = ng > g ? ng - g : 0;
+	}
+	return l > d ? l - d : 0;
+}
+
 /* ---------------- IMPISPAEExprInfo ---------------- */
 
 struct t40_ae_expr {

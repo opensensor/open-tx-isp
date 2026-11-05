@@ -77213,10 +77213,11 @@ static void regtrace_frame_3a_sample(int channel, uint32_t y_phys, uint32_t uv_p
          * target 118, day temporal noise 4.2 vs 0.5 at equal brightness).
          * A gain stage therefore moves only when the error exceeds half its
          * own step (9 % / 5 % of the target); integration keeps the fine
-         * deadband.
+         * deadband.  #211: rounded up, so at low targets (comp 58: 55) the
+         * window (target +- band) still holds one 1.17x gain step.
          */
         uint32_t again_band = max_t(uint32_t, deadband,
-                                    target * 9U / 100U);
+                                    (target * 9U + 99U) / 100U);
         uint32_t dgain_band = max_t(uint32_t, deadband,
                                     target * 5U / 100U);
 
@@ -77232,18 +77233,30 @@ static void regtrace_frame_3a_sample(int channel, uint32_t y_phys, uint32_t uv_p
         for (n = 0; n < moves; n++) {
         if (!protect_highlights &&
             luma_ae + deadband < target) {
-            uint32_t next_it = it;
+            uint32_t next_it = it, next_ag = again;
 
             if (!it_fixed && it < it_cap) {
                 if (af_step && it >= af_step) {
-                    /* whole flicker steps; one that overshoots more than it gains is left to the gain stages */
-                    uint64_t pred_x_it = (uint64_t)luma_ae * min_t(uint32_t, it + af_step, it_cap);
+                    /*
+                     * whole flicker steps; one that overshoots more than it gains is left to the gain stages.
+                     * #211: the rung is traded against the analog gain like the OEM ladder allocation
+                     * (t40_ae_af_trade_again), so the overshoot test uses the traded exposure change.
+                     */
+                    uint32_t up_it = min_t(uint32_t, it + af_step, it_cap);
+                    uint32_t up_ag = ag_fixed ? again :
+                        t40_ae_af_trade_again(it, up_it, again, min_again, max_again,
+                                              regtrace_gc4653_again_log2_gain);
+                    uint32_t ev_up = t40_ae_af_trade_log2(it, up_it, again, up_ag,
+                                                          regtrace_gc4653_again_log2_gain);
 
-                    next_it = min_t(uint32_t, it + af_step, it_cap);
-                    if (pred_x_it > (uint64_t)(target + again_band) * it &&
+                    next_it = up_it;
+                    next_ag = up_ag;
+                    if (ev_up > t40_ae_log2_ratio(target + again_band, luma_ae) &&
                         (((!ag_fixed && again < max_again) || (!dg_fixed && dgain < dgain_max)) ||
-                         pred_x_it - (uint64_t)target * it > (uint64_t)(target - luma_ae) * it))
+                         ev_up > t40_ae_log2_ratio(2U * target - luma_ae, luma_ae))) {
                         next_it = it;
+                        next_ag = again;
+                    }
                 } else {
                     uint32_t error = target - luma_ae;
                     uint32_t step = (uint32_t)div64_u64(
@@ -77263,6 +77276,7 @@ static void regtrace_frame_3a_sample(int channel, uint32_t y_phys, uint32_t uv_p
             }
             if (next_it != it) {
                 it = next_it;
+                again = next_ag;
                 changed = true;
                 break;
             } else if (!ag_fixed && again < max_again &&
@@ -77294,7 +77308,21 @@ static void regtrace_frame_3a_sample(int channel, uint32_t y_phys, uint32_t uv_p
                 break;
             } else if (!it_fixed && it > it_floor) {
                 if (af_step && it > af_step) {
-                    it = max_t(uint32_t, it - af_step, af_step);
+                    /*
+                     * #211: one rung down, traded against the analog gain (OEM ladder allocation), and only
+                     * outside the band the rung-up test accepts (target + again_band): with the old
+                     * target + deadband trigger an exposure that landed in (deadband, again_band] above the
+                     * target stepped down 1/3, the next sample stepped up again (Eufy T40 comp 58: IT
+                     * 900 <-> 1350 lines at gain 1x, frame means 32..82).
+                     */
+                    uint32_t dn_it = max_t(uint32_t, it - af_step, af_step);
+
+                    if (!protect_highlights && luma_ae <= target + again_band)
+                        break;
+                    if (!ag_fixed)
+                        again = t40_ae_af_trade_again(it, dn_it, again, min_again, max_again,
+                                                      regtrace_gc4653_again_log2_gain);
+                    it = dn_it;
                 } else {
                     uint32_t error = luma_ae > target ?
                         luma_ae - target : deadband;
