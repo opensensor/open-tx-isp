@@ -4,6 +4,19 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-05: T30 ISP bypass graph served end to end (raw channel through the core DMA writer; QEMU T30, T30X device proof pending)
+
+- Used by OpenIMP's opt-in `OPENIMP_T30_BYPASS_GRAPH` (`SetISPBypass(DISABLE)` = link graph 1, ISP_PROCESS 0, frame channel straight on the core). Without it nothing changes: the normal graph never reaches these paths.
+- Raw output entry: the last entry of the output format table now carries the 12-bit Bayer fourcc of the sensor pattern (BG12/GB12/BA12/RG12), 16 bits per pixel, `DMA_FORMAT_RAW16` (SDK `isp_core_input_port_config`; the OEM writes were collapsed onto `tx_isp_platform_device` by the lift and the typed video start dropped them). While bypassed the format check looks at that entry only (SDK `try_fmt`).
+- Core pad events in typed C after the SDK, because they run only when a frame channel is linked to the core directly. GET_FORMAT: the lifted bypass branch wrote into unrelated globals. SET_BANKS: it returned the bank count instead of 0, so REQBUFS freed its buffers; it now caps at 5 banks. QUEUE/FREE_BUFFER: the preempt count went to an unrelated global and the IRQ flags were lost ("scheduling while atomic", panic in QEMU). The DMA writer and the channel stream-on gain the raw (single writer) case.
+- Link destroy stops a frame channel that still streams through a link before unlinking it. Without this, a graph rebuild on a running channel left that channel's buffers in the mscaler fifo, and user space freed them (QEMU: slab "Poison overwritten" in kmalloc-128).
+- QEMU T30 (the model has no core DMA writer, so no raw frames there):
+  - vendor sample order: DISABLE 0 before the raw channel; BG12 channel created, buffers queued, stream on/off; ENABLE 0.
+  - Run time: NV12 10/10, DISABLE 0, raw channel up, ENABLE 0, a new NV12 channel 25/25.
+  - Without the variable DISABLE stays -1.
+  - `isp` area 48 / 0; slab validate and dmesg clean in every run.
+  - Host tests (`make -C tests check`) green.
+
 ## 2026-11-05: T30 Iridix strength: negative histogram strength clamped like the OEM, input trace (QEMU T30; device data pending)
 
 - `iridix_control_strength_calculate()`: the histogram strength is a 16-bit value and a negative result becomes 0, as at OEM `0x106dc` (the open code let a negative strength pull the target below the minimum item).
