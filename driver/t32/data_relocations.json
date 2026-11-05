@@ -1,0 +1,5360 @@
+[
+  {
+    "section": ".rodata",
+    "offset": "0x130",
+    "initializer": ".value = 0x000012c8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x134",
+    "initializer": ".value = 0x000012fcU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x138",
+    "initializer": ".value = 0x0000131cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x13c",
+    "initializer": ".value = 0x00001350U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x140",
+    "initializer": ".value = 0x00001380U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x144",
+    "initializer": ".value = 0x000013a0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x148",
+    "initializer": ".value = 0x000013b0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x14c",
+    "initializer": ".value = 0x000013e4U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x150",
+    "initializer": ".value = 0x00001400U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x154",
+    "initializer": ".value = 0x00001410U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x158",
+    "initializer": ".value = 0x00001420U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x15c",
+    "initializer": ".value = 0x00001460U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x160",
+    "initializer": ".value = 0x0000148cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x164",
+    "initializer": ".value = 0x0000149cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x168",
+    "initializer": ".value = 0x000014b4U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x16c",
+    "initializer": ".pointer = ref___this_module + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x170",
+    "initializer": ".pointer = ref_seq_lseek + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x174",
+    "initializer": ".pointer = ref_seq_read + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x198",
+    "initializer": ".pointer = ref_sinfo_count_open + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1a0",
+    "initializer": ".pointer = ref_single_release + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1d8",
+    "initializer": ".pointer = ref___this_module + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1dc",
+    "initializer": ".pointer = ref_seq_lseek + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1e0",
+    "initializer": ".pointer = ref_seq_read + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x204",
+    "initializer": ".pointer = ref_sinfo_open + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x20c",
+    "initializer": ".pointer = ref_single_release + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x244",
+    "initializer": ".pointer = ref_t32_data_c37e8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x248",
+    "initializer": ".pointer = ref_t32_data_c37f0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x24c",
+    "initializer": ".pointer = ref_t32_data_c37f8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x250",
+    "initializer": ".pointer = ref_t32_data_c3804 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x254",
+    "initializer": ".pointer = ref_t32_data_c3810 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x258",
+    "initializer": ".pointer = ref_t32_data_c3818 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x25c",
+    "initializer": ".pointer = ref_t32_data_c3820 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x260",
+    "initializer": ".pointer = ref_t32_data_c3824 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x264",
+    "initializer": ".pointer = ref_t32_data_c382c + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x268",
+    "initializer": ".pointer = ref_t32_data_c3834 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x26c",
+    "initializer": ".pointer = ref_t32_data_c383c + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x270",
+    "initializer": ".pointer = ref_t32_data_c3844 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x274",
+    "initializer": ".pointer = ref_t32_data_c384c + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x278",
+    "initializer": ".pointer = ref_t32_data_c385c + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x27c",
+    "initializer": ".pointer = ref_t32_data_c3868 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x280",
+    "initializer": ".value = 0x00002810U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x284",
+    "initializer": ".value = 0x00002910U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x288",
+    "initializer": ".value = 0x000027d8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x28c",
+    "initializer": ".value = 0x000027ecU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x290",
+    "initializer": ".value = 0x00002910U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x294",
+    "initializer": ".value = 0x00002910U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x298",
+    "initializer": ".value = 0x00002910U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x29c",
+    "initializer": ".value = 0x00002868U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2a0",
+    "initializer": ".value = 0x00002910U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2a4",
+    "initializer": ".value = 0x00002910U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2a8",
+    "initializer": ".value = 0x00002910U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2ac",
+    "initializer": ".value = 0x00002910U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2b0",
+    "initializer": ".value = 0x00002910U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2b4",
+    "initializer": ".value = 0x00002910U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2b8",
+    "initializer": ".value = 0x00002910U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2bc",
+    "initializer": ".value = 0x00002910U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2c0",
+    "initializer": ".value = 0x0000289cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2c4",
+    "initializer": ".value = 0x000028e8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2c8",
+    "initializer": ".value = 0x0000309cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2cc",
+    "initializer": ".value = 0x00003088U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2d0",
+    "initializer": ".value = 0x00003a60U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2d4",
+    "initializer": ".value = 0x000030d0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2d8",
+    "initializer": ".value = 0x00003a60U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2dc",
+    "initializer": ".value = 0x00003a60U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2e0",
+    "initializer": ".value = 0x00003a60U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2e4",
+    "initializer": ".value = 0x00003260U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2e8",
+    "initializer": ".value = 0x000032b0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2ec",
+    "initializer": ".value = 0x00003a60U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2f0",
+    "initializer": ".value = 0x000032dcU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2f4",
+    "initializer": ".value = 0x00003a60U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2f8",
+    "initializer": ".value = 0x00003440U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2fc",
+    "initializer": ".value = 0x000034d8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x300",
+    "initializer": ".value = 0x000037b4U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x304",
+    "initializer": ".value = 0x000036acU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x308",
+    "initializer": ".value = 0x000038a0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x450",
+    "initializer": ".value = 0x0000673cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x454",
+    "initializer": ".value = 0x00006cccU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x458",
+    "initializer": ".value = 0x0000670cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x45c",
+    "initializer": ".value = 0x0000671cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x460",
+    "initializer": ".value = 0x0000672cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x464",
+    "initializer": ".value = 0x00006fc8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x468",
+    "initializer": ".value = 0x00006fc8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x46c",
+    "initializer": ".value = 0x00006fc8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x470",
+    "initializer": ".value = 0x00006fc8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x474",
+    "initializer": ".value = 0x00006fc8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x478",
+    "initializer": ".value = 0x00006fc8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x47c",
+    "initializer": ".value = 0x00006fc8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x480",
+    "initializer": ".value = 0x00006f34U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x484",
+    "initializer": ".value = 0x00006fc8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x488",
+    "initializer": ".value = 0x00006fc8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x48c",
+    "initializer": ".value = 0x00006fc8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x490",
+    "initializer": ".value = 0x00006fc8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x494",
+    "initializer": ".value = 0x00006cdcU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x498",
+    "initializer": ".value = 0x00006d3cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x49c",
+    "initializer": ".value = 0x00006ec8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x4a0",
+    "initializer": ".value = 0x00006fc8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x4a4",
+    "initializer": ".value = 0x00006fc8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x4a8",
+    "initializer": ".value = 0x00006fc8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x4ac",
+    "initializer": ".value = 0x00006fc8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x4b0",
+    "initializer": ".value = 0x00006fc8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x4b4",
+    "initializer": ".value = 0x00006fc8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x4b8",
+    "initializer": ".value = 0x00006e00U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x4bc",
+    "initializer": ".value = 0x00006e64U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x4c0",
+    "initializer": ".value = 0x00006de0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x4c4",
+    "initializer": ".value = 0x00006fc8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x4c8",
+    "initializer": ".value = 0x00006fc8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x4cc",
+    "initializer": ".value = 0x00006fc8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x4d0",
+    "initializer": ".value = 0x00006f9cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0xf50",
+    "initializer": ".value = 0x0000f184U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0xf54",
+    "initializer": ".value = 0x0000f1a0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0xf58",
+    "initializer": ".value = 0x0000f5c4U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0xf5c",
+    "initializer": ".value = 0x0000f6ecU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0xf60",
+    "initializer": ".value = 0x0000f874U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0xf64",
+    "initializer": ".value = 0x0000f86cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0xf68",
+    "initializer": ".value = 0x0000f8a8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0xf6c",
+    "initializer": ".value = 0x0000fb98U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1798",
+    "initializer": ".pointer = ref_vpuBs_fops_read + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1804",
+    "initializer": ".pointer = ref_ivdcbuf_fops_read + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1870",
+    "initializer": ".pointer = ref_ispbuf_fops_read + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x18dc",
+    "initializer": ".pointer = ref_camera_mode_fops_read + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1900",
+    "initializer": ".pointer = ref_camera_mode_fops_open + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1940",
+    "initializer": ".pointer = ref_t32_data_cee40 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1944",
+    "initializer": ".pointer = ref_t32_data_cef80 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1948",
+    "initializer": ".pointer = ref_t32_data_cecb0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x194c",
+    "initializer": ".pointer = ref_t32_data_d8b60 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1950",
+    "initializer": ".pointer = ref_t32_data_cf2f0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1954",
+    "initializer": ".pointer = ref_t32_data_cf140 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1958",
+    "initializer": ".pointer = ref_t32_data_cf490 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x195c",
+    "initializer": ".pointer = ref_t32_data_cfb18 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1964",
+    "initializer": ".pointer = ref_t32_data_cfadc + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x196c",
+    "initializer": ".pointer = ref_t32_data_cfaa0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1974",
+    "initializer": ".pointer = ref_t32_data_cfa64 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x197c",
+    "initializer": ".pointer = ref_t32_data_cfa14 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1984",
+    "initializer": ".pointer = ref_t32_data_cf9c4 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x198c",
+    "initializer": ".pointer = ref_t32_data_cf974 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1994",
+    "initializer": ".pointer = ref_t32_data_cf924 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x199c",
+    "initializer": ".pointer = ref_t32_data_cf8ac + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x19a4",
+    "initializer": ".pointer = ref_t32_data_cf834 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x19ac",
+    "initializer": ".pointer = ref_t32_data_cf7bc + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x19b4",
+    "initializer": ".pointer = ref_t32_data_cf744 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1b10",
+    "initializer": ".value = 0x0001f1acU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1b14",
+    "initializer": ".value = 0x0001f1e8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1b18",
+    "initializer": ".value = 0x0001f874U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1b1c",
+    "initializer": ".value = 0x0001f8c4U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1b20",
+    "initializer": ".value = 0x0001f928U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1b24",
+    "initializer": ".value = 0x0001f938U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1b28",
+    "initializer": ".value = 0x0001fa54U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1b2c",
+    "initializer": ".value = 0x0001f9a0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1b30",
+    "initializer": ".value = 0x0001f9ecU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1b34",
+    "initializer": ".value = 0x0001f270U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1b38",
+    "initializer": ".value = 0x0001f570U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1b3c",
+    "initializer": ".value = 0x0001f284U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1b40",
+    "initializer": ".value = 0x0001f2acU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1b44",
+    "initializer": ".value = 0x0001f298U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1b48",
+    "initializer": ".value = 0x0001f2c0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1b4c",
+    "initializer": ".value = 0x0001f2d4U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1b50",
+    "initializer": ".value = 0x0001f570U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1b54",
+    "initializer": ".value = 0x0001f2e8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1b58",
+    "initializer": ".value = 0x0001f410U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1b5c",
+    "initializer": ".value = 0x0001f2fcU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1b60",
+    "initializer": ".value = 0x0001f310U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1b64",
+    "initializer": ".value = 0x0001f324U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1b68",
+    "initializer": ".value = 0x0001f338U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1b6c",
+    "initializer": ".value = 0x0001f35cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1b70",
+    "initializer": ".value = 0x0001f370U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1b74",
+    "initializer": ".value = 0x0001f384U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1b78",
+    "initializer": ".value = 0x0001f3fcU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1b7c",
+    "initializer": ".value = 0x0001f398U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1b80",
+    "initializer": ".value = 0x0001f3acU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1b84",
+    "initializer": ".value = 0x0001f3d4U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1b88",
+    "initializer": ".value = 0x0001f3e8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1b8c",
+    "initializer": ".value = 0x0001f424U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1b90",
+    "initializer": ".value = 0x0001f3c0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1b94",
+    "initializer": ".value = 0x0001f438U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1b98",
+    "initializer": ".value = 0x0001f458U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1b9c",
+    "initializer": ".value = 0x0001f570U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1ba0",
+    "initializer": ".value = 0x0001f46cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1ba4",
+    "initializer": ".value = 0x0001f570U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1ba8",
+    "initializer": ".value = 0x0001f570U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1bac",
+    "initializer": ".value = 0x0001f570U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1bb0",
+    "initializer": ".value = 0x0001f570U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1bb4",
+    "initializer": ".value = 0x0001f570U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1bb8",
+    "initializer": ".value = 0x0001f570U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1bbc",
+    "initializer": ".value = 0x0001f570U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1bc0",
+    "initializer": ".value = 0x0001f490U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1bc4",
+    "initializer": ".value = 0x0001f49cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1bc8",
+    "initializer": ".value = 0x0001f598U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1bcc",
+    "initializer": ".value = 0x0001f4e4U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1bd0",
+    "initializer": ".value = 0x0001f4bcU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1bd4",
+    "initializer": ".value = 0x0001f4d0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1bd8",
+    "initializer": ".value = 0x0001f4f8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1bdc",
+    "initializer": ".value = 0x0001f51cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1be0",
+    "initializer": ".value = 0x0001f530U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1be4",
+    "initializer": ".value = 0x0001f550U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1be8",
+    "initializer": ".value = 0x0001f600U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1bec",
+    "initializer": ".value = 0x0001f844U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1bf0",
+    "initializer": ".value = 0x0001f610U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1bf4",
+    "initializer": ".value = 0x0001f634U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1bf8",
+    "initializer": ".value = 0x0001f624U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1bfc",
+    "initializer": ".value = 0x0001f644U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1c00",
+    "initializer": ".value = 0x0001f654U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1c04",
+    "initializer": ".value = 0x0001f844U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1c08",
+    "initializer": ".value = 0x0001f664U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1c0c",
+    "initializer": ".value = 0x0001f744U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1c10",
+    "initializer": ".value = 0x0001f674U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1c14",
+    "initializer": ".value = 0x0001f684U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1c18",
+    "initializer": ".value = 0x0001f694U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1c1c",
+    "initializer": ".value = 0x0001f6a4U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1c20",
+    "initializer": ".value = 0x0001f6c4U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1c24",
+    "initializer": ".value = 0x0001f6d4U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1c28",
+    "initializer": ".value = 0x0001f6e4U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1c2c",
+    "initializer": ".value = 0x0001f734U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1c30",
+    "initializer": ".value = 0x0001f6f4U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1c34",
+    "initializer": ".value = 0x0001f704U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1c38",
+    "initializer": ".value = 0x0001f724U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1c3c",
+    "initializer": ".value = 0x0001f754U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1c40",
+    "initializer": ".value = 0x0001f764U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1c44",
+    "initializer": ".value = 0x0001f714U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1c48",
+    "initializer": ".value = 0x0001f774U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1c4c",
+    "initializer": ".value = 0x0001f78cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1c50",
+    "initializer": ".value = 0x0001f844U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1c54",
+    "initializer": ".value = 0x0001f79cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1c58",
+    "initializer": ".value = 0x0001f844U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1c5c",
+    "initializer": ".value = 0x0001f844U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1c60",
+    "initializer": ".value = 0x0001f844U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1c64",
+    "initializer": ".value = 0x0001f844U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1c68",
+    "initializer": ".value = 0x0001f844U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1c6c",
+    "initializer": ".value = 0x0001f844U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1c70",
+    "initializer": ".value = 0x0001f844U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1c74",
+    "initializer": ".value = 0x0001f7b4U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1c78",
+    "initializer": ".value = 0x0001fae4U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1c7c",
+    "initializer": ".value = 0x0001fae4U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1c80",
+    "initializer": ".value = 0x0001f7ecU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1c84",
+    "initializer": ".value = 0x0001f7ccU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1c88",
+    "initializer": ".value = 0x0001f7dcU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1c8c",
+    "initializer": ".value = 0x0001f7fcU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1c90",
+    "initializer": ".value = 0x0001f818U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1c94",
+    "initializer": ".value = 0x0001f828U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1f20",
+    "initializer": ".value = 0x0002bb78U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1f24",
+    "initializer": ".value = 0x0002bcd4U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1f28",
+    "initializer": ".value = 0x0002be10U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1f2c",
+    "initializer": ".value = 0x0002bf0cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1f30",
+    "initializer": ".value = 0x0002c034U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1f34",
+    "initializer": ".value = 0x0002c128U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1f38",
+    "initializer": ".value = 0x0002c254U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1f3c",
+    "initializer": ".value = 0x0002cb60U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1f40",
+    "initializer": ".value = 0x0002cd50U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1f44",
+    "initializer": ".value = 0x0002cf7cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1f48",
+    "initializer": ".value = 0x0002d154U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1f4c",
+    "initializer": ".value = 0x0002d37cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1f50",
+    "initializer": ".value = 0x0002d558U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1f54",
+    "initializer": ".value = 0x0002d768U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1f58",
+    "initializer": ".value = 0x0002e094U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1f5c",
+    "initializer": ".value = 0x0002e1d4U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1f60",
+    "initializer": ".value = 0x0002e2f4U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1f64",
+    "initializer": ".value = 0x0002e3c0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1f68",
+    "initializer": ".value = 0x0002e4c4U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1f6c",
+    "initializer": ".value = 0x0002e59cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x1f70",
+    "initializer": ".value = 0x0002e6a0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2000",
+    "initializer": ".value = 0x0003f858U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2004",
+    "initializer": ".value = 0x0003f860U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2008",
+    "initializer": ".value = 0x0003f868U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x200c",
+    "initializer": ".value = 0x0003f880U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2010",
+    "initializer": ".value = 0x0003f898U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2014",
+    "initializer": ".value = 0x0003f8b0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2018",
+    "initializer": ".value = 0x0003f8c8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x201c",
+    "initializer": ".value = 0x0003f8e0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2020",
+    "initializer": ".value = 0x0003f8f8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2024",
+    "initializer": ".value = 0x0003f910U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2040",
+    "initializer": ".value = 0x00042838U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2044",
+    "initializer": ".value = 0x000424fcU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2048",
+    "initializer": ".value = 0x00042544U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x204c",
+    "initializer": ".value = 0x00042590U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2050",
+    "initializer": ".value = 0x00042838U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2054",
+    "initializer": ".value = 0x00042838U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2058",
+    "initializer": ".value = 0x00042838U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x205c",
+    "initializer": ".value = 0x00042838U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2060",
+    "initializer": ".value = 0x00042838U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2064",
+    "initializer": ".value = 0x00042838U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2068",
+    "initializer": ".value = 0x00042838U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x206c",
+    "initializer": ".value = 0x00042838U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2070",
+    "initializer": ".value = 0x000425d4U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2074",
+    "initializer": ".value = 0x00042624U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2078",
+    "initializer": ".value = 0x00042670U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x207c",
+    "initializer": ".value = 0x000426bcU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2080",
+    "initializer": ".value = 0x00042700U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2084",
+    "initializer": ".value = 0x0004274cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2088",
+    "initializer": ".value = 0x0004279cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x208c",
+    "initializer": ".value = 0x000427e8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2a80",
+    "initializer": ".value = 0x0008df98U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2a84",
+    "initializer": ".value = 0x0008dfa4U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2a88",
+    "initializer": ".value = 0x0008dfb0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2a8c",
+    "initializer": ".value = 0x0008dfbcU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2a90",
+    "initializer": ".value = 0x0008dfc8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2a94",
+    "initializer": ".value = 0x0008dfd4U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2aa0",
+    "initializer": ".pointer = ref_t32_data_d7ffc + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2aa4",
+    "initializer": ".pointer = ref_t32_data_d7fa0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2aa8",
+    "initializer": ".pointer = ref_t32_data_d7f44 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2aac",
+    "initializer": ".pointer = ref_t32_data_d7ee8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2ab0",
+    "initializer": ".pointer = ref_t32_data_d7e8c + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2ab4",
+    "initializer": ".pointer = ref_t32_data_d7e30 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2ac4",
+    "initializer": ".pointer = ref_t32_data_d80f8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2ac8",
+    "initializer": ".pointer = ref_t32_data_d80ec + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x2acc",
+    "initializer": ".pointer = ref_t32_data_d80e0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x30a8",
+    "initializer": ".value = 0x0009e948U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x30ac",
+    "initializer": ".value = 0x0009e958U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x30b0",
+    "initializer": ".value = 0x0009e968U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x30b4",
+    "initializer": ".value = 0x0009e978U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x30b8",
+    "initializer": ".value = 0x0009e988U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x30bc",
+    "initializer": ".value = 0x0009e998U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x30c0",
+    "initializer": ".value = 0x0009e9a8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x30c4",
+    "initializer": ".value = 0x0009e9b8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x30c8",
+    "initializer": ".value = 0x0009e9c8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x30cc",
+    "initializer": ".value = 0x0009e9d8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x30d0",
+    "initializer": ".value = 0x0009ea50U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x30d4",
+    "initializer": ".value = 0x0009ea6cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x30d8",
+    "initializer": ".value = 0x0009ea88U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x30dc",
+    "initializer": ".value = 0x0009eaa4U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x30e0",
+    "initializer": ".value = 0x0009eac0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x30e4",
+    "initializer": ".value = 0x0009eadcU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x30e8",
+    "initializer": ".value = 0x0009eaf8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x30ec",
+    "initializer": ".value = 0x0009eb14U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x30f0",
+    "initializer": ".value = 0x0009eb30U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x30f4",
+    "initializer": ".value = 0x0009eb4cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5ae0",
+    "initializer": ".value = 0x000b2aa8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5ae4",
+    "initializer": ".value = 0x000b2accU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5ae8",
+    "initializer": ".value = 0x000b2b00U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5aec",
+    "initializer": ".value = 0x000b2b54U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5af0",
+    "initializer": ".value = 0x000b2b54U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5af4",
+    "initializer": ".value = 0x000b2b54U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5af8",
+    "initializer": ".value = 0x000b2b54U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5afc",
+    "initializer": ".value = 0x000b2b2cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5b00",
+    "initializer": ".value = 0x000b2b54U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5b04",
+    "initializer": ".value = 0x000b2bc8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5b08",
+    "initializer": ".value = 0x000b2b90U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5b0c",
+    "initializer": ".value = 0x000b2bacU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5b10",
+    "initializer": ".value = 0x000b2bacU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5b14",
+    "initializer": ".value = 0x000b2bacU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5b18",
+    "initializer": ".value = 0x000b2bacU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5b1c",
+    "initializer": ".value = 0x000b2bacU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5b20",
+    "initializer": ".value = 0x000b2bacU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5b24",
+    "initializer": ".value = 0x000b2c78U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5b28",
+    "initializer": ".value = 0x000b2c90U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5b2c",
+    "initializer": ".value = 0x000b2cc8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5b30",
+    "initializer": ".value = 0x000b2cf4U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5b34",
+    "initializer": ".value = 0x000b2dc0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5b38",
+    "initializer": ".value = 0x000b2f34U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5b3c",
+    "initializer": ".value = 0x000b31f0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5b40",
+    "initializer": ".value = 0x000b2fc0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5b44",
+    "initializer": ".value = 0x000b3008U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5b48",
+    "initializer": ".value = 0x000b31bcU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5b4c",
+    "initializer": ".value = 0x000b3088U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5b50",
+    "initializer": ".value = 0x000b30bcU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5b54",
+    "initializer": ".value = 0x000b30f0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5b58",
+    "initializer": ".value = 0x000b3124U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5b5c",
+    "initializer": ".value = 0x000b3158U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5b60",
+    "initializer": ".value = 0x000b3198U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5b64",
+    "initializer": ".value = 0x000b3198U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5c00",
+    "initializer": ".pointer = ref_isp_info_system + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5c04",
+    "initializer": ".pointer = ref_isp_info_sensor + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5c08",
+    "initializer": ".pointer = ref_isp_info_base + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5c0c",
+    "initializer": ".pointer = ref_isp_info_tisp + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5c1c",
+    "initializer": ".pointer = ref_isp_info_err + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5c20",
+    "initializer": ".pointer = ref_isp_info_bin + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5c24",
+    "initializer": ".pointer = ref_isp_info_ae + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5c28",
+    "initializer": ".pointer = ref_isp_info_awb + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5c2c",
+    "initializer": ".pointer = ref_isp_info_lsc + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5c30",
+    "initializer": ".pointer = ref_isp_info_gib + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5c80",
+    "initializer": ".value = 0x000b50ecU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5c84",
+    "initializer": ".value = 0x000b5144U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5c88",
+    "initializer": ".value = 0x000b5088U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5c8c",
+    "initializer": ".value = 0x000b5150U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5c90",
+    "initializer": ".value = 0x000b5094U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5c94",
+    "initializer": ".value = 0x000b50c4U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5c98",
+    "initializer": ".value = 0x000b50a0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5c9c",
+    "initializer": ".value = 0x000b50acU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5ca0",
+    "initializer": ".value = 0x000b50d8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5ca4",
+    "initializer": ".value = 0x000b50b8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5ca8",
+    "initializer": ".value = 0x000b528cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5cac",
+    "initializer": ".value = 0x000b52e8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5cb0",
+    "initializer": ".value = 0x000b5240U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5cb4",
+    "initializer": ".value = 0x000b52f4U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5cb8",
+    "initializer": ".value = 0x000b524cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5cbc",
+    "initializer": ".value = 0x000b5264U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5cc0",
+    "initializer": ".value = 0x000b5258U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5cc4",
+    "initializer": ".value = 0x000b5430U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5cc8",
+    "initializer": ".value = 0x000b548cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5ccc",
+    "initializer": ".value = 0x000b53e4U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5cd0",
+    "initializer": ".value = 0x000b5498U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5cd4",
+    "initializer": ".value = 0x000b53f0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5cd8",
+    "initializer": ".value = 0x000b5408U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5cdc",
+    "initializer": ".value = 0x000b53fcU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5ce0",
+    "initializer": ".value = 0x000b55d4U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5ce4",
+    "initializer": ".value = 0x000b5630U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5ce8",
+    "initializer": ".value = 0x000b5588U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5cec",
+    "initializer": ".value = 0x000b563cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5cf0",
+    "initializer": ".value = 0x000b5594U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5cf4",
+    "initializer": ".value = 0x000b55acU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5cf8",
+    "initializer": ".value = 0x000b55a0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5cfc",
+    "initializer": ".pointer = ref_t32_data_ccb2c + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5d00",
+    "initializer": ".pointer = ref_t32_data_ccb34 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5d04",
+    "initializer": ".pointer = ref_t32_data_ccb3c + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5d08",
+    "initializer": ".pointer = ref_t32_data_ccb48 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5d0c",
+    "initializer": ".value = 0x000b86dcU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5d10",
+    "initializer": ".value = 0x000b8744U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5d14",
+    "initializer": ".value = 0x000b89b8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5d18",
+    "initializer": ".value = 0x000b8c34U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5d1c",
+    "initializer": ".value = 0x000b8c4cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5d20",
+    "initializer": ".value = 0x000b873cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5d24",
+    "initializer": ".value = 0x000b9228U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5d28",
+    "initializer": ".value = 0x000b932cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5d2c",
+    "initializer": ".value = 0x000bbb1cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5d30",
+    "initializer": ".value = 0x000bbb24U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5d34",
+    "initializer": ".value = 0x000bbb38U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5d38",
+    "initializer": ".value = 0x000bbb40U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5d3c",
+    "initializer": ".value = 0x000bbb1cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5d40",
+    "initializer": ".value = 0x000bbb24U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5d44",
+    "initializer": ".value = 0x000bbb38U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5d48",
+    "initializer": ".value = 0x000bbb40U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5d4c",
+    "initializer": ".value = 0x000bbb1cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5d50",
+    "initializer": ".value = 0x000bbb24U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5d54",
+    "initializer": ".value = 0x000bbb38U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5d58",
+    "initializer": ".value = 0x000bbb40U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5d5c",
+    "initializer": ".value = 0x000bbb1cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5d60",
+    "initializer": ".value = 0x000bbb24U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5d64",
+    "initializer": ".value = 0x000bbb38U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5d68",
+    "initializer": ".value = 0x000bbb40U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5d6c",
+    "initializer": ".value = 0x000bbb1cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5d70",
+    "initializer": ".value = 0x000bbb24U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5d74",
+    "initializer": ".value = 0x000bbb38U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5d78",
+    "initializer": ".value = 0x000bbb40U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5d7c",
+    "initializer": ".value = 0x000bbc40U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5d80",
+    "initializer": ".value = 0x000bbc28U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5d84",
+    "initializer": ".value = 0x000bbc8cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5d88",
+    "initializer": ".value = 0x000bbc64U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5d8c",
+    "initializer": ".value = 0x000bbc8cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5d90",
+    "initializer": ".value = 0x000bbc8cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5d94",
+    "initializer": ".value = 0x000bbc8cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5d98",
+    "initializer": ".value = 0x000bbc64U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5d9c",
+    "initializer": ".value = 0x000bbc64U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5da0",
+    "initializer": ".value = 0x000bbc8cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5da4",
+    "initializer": ".value = 0x000bbc64U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5da8",
+    "initializer": ".value = 0x000bbc8cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5dac",
+    "initializer": ".value = 0x000bbc64U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5db0",
+    "initializer": ".value = 0x000bbc64U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5db4",
+    "initializer": ".value = 0x000bbc64U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5db8",
+    "initializer": ".value = 0x000bbc64U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5dbc",
+    "initializer": ".value = 0x000bbc64U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5dc0",
+    "initializer": ".value = 0x000bbcf4U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5dc4",
+    "initializer": ".value = 0x000bbcdcU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5dc8",
+    "initializer": ".value = 0x000bbbe0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5dcc",
+    "initializer": ".value = 0x000bbd18U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5dd0",
+    "initializer": ".value = 0x000bbbe0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5dd4",
+    "initializer": ".value = 0x000bbdd0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5dd8",
+    "initializer": ".value = 0x000bbeccU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5ddc",
+    "initializer": ".value = 0x000bbbe0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5de0",
+    "initializer": ".value = 0x000bbbe0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5de4",
+    "initializer": ".value = 0x000bbe68U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5de8",
+    "initializer": ".value = 0x000bbbe0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5dec",
+    "initializer": ".value = 0x000bc040U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5df0",
+    "initializer": ".value = 0x000bbbe0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5df4",
+    "initializer": ".value = 0x000bbbe0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5df8",
+    "initializer": ".value = 0x000bbf30U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5dfc",
+    "initializer": ".value = 0x000bbfa0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5e00",
+    "initializer": ".value = 0x000bc028U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5e04",
+    "initializer": ".value = 0x000bbbe0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5e08",
+    "initializer": ".value = 0x000bbbe0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5e0c",
+    "initializer": ".value = 0x000bbbe0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5e10",
+    "initializer": ".value = 0x000bc270U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5e14",
+    "initializer": ".value = 0x000bc358U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5e18",
+    "initializer": ".value = 0x000bc370U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5e1c",
+    "initializer": ".value = 0x000bc490U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5e20",
+    "initializer": ".value = 0x000bc50cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5e24",
+    "initializer": ".value = 0x000bc518U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5e28",
+    "initializer": ".value = 0x000bc538U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5e2c",
+    "initializer": ".value = 0x000bc6b8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5e30",
+    "initializer": ".value = 0x000bbbe0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5e34",
+    "initializer": ".value = 0x000bbbe0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5e38",
+    "initializer": ".value = 0x000bc758U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5e3c",
+    "initializer": ".value = 0x000bcc08U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5e40",
+    "initializer": ".value = 0x000bcc08U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5e44",
+    "initializer": ".value = 0x000bbbe0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5e48",
+    "initializer": ".value = 0x000bbd38U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5e4c",
+    "initializer": ".value = 0x000bbbe0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5e50",
+    "initializer": ".value = 0x000bbdecU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5e54",
+    "initializer": ".value = 0x000bbec8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5e58",
+    "initializer": ".value = 0x000bbbe0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5e5c",
+    "initializer": ".value = 0x000bbbe0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5e60",
+    "initializer": ".value = 0x000bbe78U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5e64",
+    "initializer": ".value = 0x000bbbe0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5e68",
+    "initializer": ".value = 0x000bc050U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5e6c",
+    "initializer": ".value = 0x000bbbe0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5e70",
+    "initializer": ".value = 0x000bbbe0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5e74",
+    "initializer": ".value = 0x000bbf40U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5e78",
+    "initializer": ".value = 0x000bbfb0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5e7c",
+    "initializer": ".value = 0x000bc028U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5e80",
+    "initializer": ".value = 0x000bbbe0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5e84",
+    "initializer": ".value = 0x000bbbe0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5e88",
+    "initializer": ".value = 0x000bbbe0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5e8c",
+    "initializer": ".value = 0x000bc280U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5e90",
+    "initializer": ".value = 0x000bc358U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5e94",
+    "initializer": ".value = 0x000bc380U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5e98",
+    "initializer": ".value = 0x000bc490U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5e9c",
+    "initializer": ".value = 0x000bc50cU",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5ea0",
+    "initializer": ".value = 0x000bc518U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5ea4",
+    "initializer": ".value = 0x000bc548U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5ea8",
+    "initializer": ".value = 0x000bc6b8U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5eac",
+    "initializer": ".value = 0x000bbbe0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5eb0",
+    "initializer": ".value = 0x000bbbe0U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".rodata",
+    "offset": "0x5eb4",
+    "initializer": ".value = 0x000bc768U",
+    "kind": "C control-flow label"
+  },
+  {
+    "section": ".data",
+    "offset": "0x0",
+    "initializer": ".pointer = ref_t32_data_c3724 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x4",
+    "initializer": ".pointer = ref_t32_data_c372c + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x8",
+    "initializer": ".pointer = ref_t32_data_c3734 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xc",
+    "initializer": ".pointer = ref___this_module + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x2c",
+    "initializer": ".pointer = ref_t32_data_c372c + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x30",
+    "initializer": ".pointer = ref_t32_data_c3724 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x34",
+    "initializer": ".pointer = ref_t32_data_c3724 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x38",
+    "initializer": ".pointer = ref_t32_data_c372c + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x3c",
+    "initializer": ".pointer = ref_t32_data_c372c + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x54",
+    "initializer": ".pointer = ref_t32_data_ce274 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x58",
+    "initializer": ".pointer = ref_t32_data_ce274 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x60",
+    "initializer": ".pointer = ref_t32_data_c3874 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xb8",
+    "initializer": ".pointer = ref_t32_data_ce378 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xdc",
+    "initializer": ".pointer = ref_t32_data_ceca8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x134",
+    "initializer": ".pointer = ref_tx_isp_release_device + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x160",
+    "initializer": ".pointer = ref_t32_data_ce384 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x164",
+    "initializer": ".pointer = ref_t32_data_ce790 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x168",
+    "initializer": ".pointer = ref_t32_data_ce918 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x16c",
+    "initializer": ".pointer = ref_t32_data_cea58 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x170",
+    "initializer": ".pointer = ref_t32_data_ceba0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x174",
+    "initializer": ".pointer = ref_t32_data_ce3a0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x178",
+    "initializer": ".pointer = ref_t32_data_ce618 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x17c",
+    "initializer": ".pointer = ref_t32_data_ce4f0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x180",
+    "initializer": ".pointer = ref_t32_data_c387c + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1d8",
+    "initializer": ".pointer = ref_t32_data_ce4d0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1fc",
+    "initializer": ".pointer = ref_t32_data_ceca8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x254",
+    "initializer": ".pointer = ref_tx_isp_release_device + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x264",
+    "initializer": ".pointer = ref_t32_data_ce498 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x280",
+    "initializer": ".pointer = ref_t32_data_c3884 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x29c",
+    "initializer": ".pointer = ref_t32_data_c3890 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x2c0",
+    "initializer": ".pointer = ref_t32_data_ce4e4 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x2d0",
+    "initializer": ".pointer = ref_t32_data_c389c + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x328",
+    "initializer": ".pointer = ref_t32_data_ce5e8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x34c",
+    "initializer": ".pointer = ref_t32_data_ceca8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x3a4",
+    "initializer": ".pointer = ref_tx_isp_release_device + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x3d8",
+    "initializer": ".pointer = ref_t32_data_ce5fc + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x3f8",
+    "initializer": ".pointer = ref_t32_data_c38a4 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x450",
+    "initializer": ".pointer = ref_t32_data_ce710 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x474",
+    "initializer": ".pointer = ref_t32_data_ceca8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x4cc",
+    "initializer": ".pointer = ref_tx_isp_release_device + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x4dc",
+    "initializer": ".pointer = ref_t32_data_ce754 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x4f8",
+    "initializer": ".pointer = ref_t32_data_ce734 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x500",
+    "initializer": ".pointer = ref_t32_data_ce724 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x514",
+    "initializer": ".pointer = ref_t32_data_c38b0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x51c",
+    "initializer": ".pointer = ref_t32_data_c38bc + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x524",
+    "initializer": ".pointer = ref_t32_data_c38c4 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x52c",
+    "initializer": ".pointer = ref_t32_data_c38d0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x53c",
+    "initializer": ".pointer = ref_t32_data_c3884 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x558",
+    "initializer": ".pointer = ref_t32_data_c3890 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x570",
+    "initializer": ".pointer = ref_t32_data_c38dc + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x5c8",
+    "initializer": ".pointer = ref_t32_data_ce888 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x5ec",
+    "initializer": ".pointer = ref_t32_data_ceca8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x644",
+    "initializer": ".pointer = ref_tx_isp_release_device + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x654",
+    "initializer": ".pointer = ref_t32_data_ce8e0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x670",
+    "initializer": ".pointer = ref_t32_data_ce8b8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x678",
+    "initializer": ".pointer = ref_t32_data_ce89c + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x698",
+    "initializer": ".pointer = ref_t32_data_c38e4 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x6a0",
+    "initializer": ".pointer = ref_t32_data_c38ec + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x6a8",
+    "initializer": ".pointer = ref_t32_data_c38f8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x6b0",
+    "initializer": ".pointer = ref_t32_data_c3900 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x6b8",
+    "initializer": ".pointer = ref_t32_data_c390c + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x6c8",
+    "initializer": ".pointer = ref_t32_data_c3884 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x6e4",
+    "initializer": ".pointer = ref_t32_data_c3890 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x6f8",
+    "initializer": ".pointer = ref_t32_data_c3918 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x750",
+    "initializer": ".pointer = ref_t32_data_cea10 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x774",
+    "initializer": ".pointer = ref_t32_data_ceca8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x7cc",
+    "initializer": ".pointer = ref_tx_isp_release_device + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x7dc",
+    "initializer": ".pointer = ref_t32_data_cea1c + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x804",
+    "initializer": ".pointer = ref_t32_data_c3884 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x820",
+    "initializer": ".pointer = ref_t32_data_c3890 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x838",
+    "initializer": ".pointer = ref_t32_data_c3920 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x890",
+    "initializer": ".pointer = ref_t32_data_ceb50 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x8b4",
+    "initializer": ".pointer = ref_t32_data_ceca8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x90c",
+    "initializer": ".pointer = ref_tx_isp_release_device + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x91c",
+    "initializer": ".pointer = ref_t32_data_ceb64 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x938",
+    "initializer": ".pointer = ref_t32_data_ceb5c + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x93c",
+    "initializer": ".pointer = ref_t32_data_c3928 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x94c",
+    "initializer": ".pointer = ref_t32_data_c3884 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x968",
+    "initializer": ".pointer = ref_t32_data_c3884 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x980",
+    "initializer": ".pointer = ref_t32_data_c3934 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x9d8",
+    "initializer": ".pointer = ref_t32_data_cec98 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x9fc",
+    "initializer": ".pointer = ref_t32_data_ceca8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xa54",
+    "initializer": ".pointer = ref_tx_isp_release_device + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xa90",
+    "initializer": ".pointer = ref_tx_isp_vic_probe + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xa94",
+    "initializer": ".pointer = ref_tx_isp_vic_remove + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xaa4",
+    "initializer": ".pointer = ref_t32_data_c40ec + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xaf0",
+    "initializer": ".pointer = ref_private_seq_lseek + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xaf4",
+    "initializer": ".pointer = ref_private_seq_read + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xaf8",
+    "initializer": ".pointer = ref_isp_vic_cmd_set + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xb0c",
+    "initializer": ".pointer = ref_tisp_vic_ctrl_ioctl + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xb14",
+    "initializer": ".pointer = ref_tisp_vic_mmap + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xb18",
+    "initializer": ".pointer = ref_dump_isp_vic_frd_open + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xb20",
+    "initializer": ".pointer = ref_tisp_vic_ctrl_release + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xb5c",
+    "initializer": ".pointer = ref_t32_data_cedc8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xb60",
+    "initializer": ".pointer = ref_t32_data_cedbc + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xb68",
+    "initializer": ".pointer = ref_t32_data_cedac + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xb6c",
+    "initializer": ".pointer = ref_t32_data_ced90 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xb70",
+    "initializer": ".pointer = ref_tx_isp_vic_activate_subdev + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xb74",
+    "initializer": ".pointer = ref_tx_isp_vic_slake_subdev + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xb90",
+    "initializer": ".pointer = ref_vic_sensor_ops_sync_sensor_attr + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xb94",
+    "initializer": ".pointer = ref_vic_sensor_ops_ioctl + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xb9c",
+    "initializer": ".pointer = ref_vic_core_s_stream + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xbac",
+    "initializer": ".pointer = ref_vic_core_ops_init + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xbc8",
+    "initializer": ".pointer = ref_vic_core_ops_ioctl + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xbcc",
+    "initializer": ".pointer = ref_isp_vic_interrupt_service_routine + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xbd8",
+    "initializer": ".pointer = ref_t32_data_cedf8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xbdc",
+    "initializer": ".pointer = ref_t32_data_cedf8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xbe0",
+    "initializer": ".pointer = ref_ispcore_irq_fs_work3 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xbe8",
+    "initializer": ".pointer = ref_t32_data_cee08 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xbec",
+    "initializer": ".pointer = ref_t32_data_cee08 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xbf0",
+    "initializer": ".pointer = ref_ispcore_irq_fs_work2 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xbf8",
+    "initializer": ".pointer = ref_t32_data_cee18 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xbfc",
+    "initializer": ".pointer = ref_t32_data_cee18 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xc00",
+    "initializer": ".pointer = ref_ispcore_irq_fs_work1 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xc08",
+    "initializer": ".pointer = ref_t32_data_cee28 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xc0c",
+    "initializer": ".pointer = ref_t32_data_cee28 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xc10",
+    "initializer": ".pointer = ref_ispcore_irq_fs_work0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xc20",
+    "initializer": ".pointer = ref_tx_isp_vin_probe + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xc24",
+    "initializer": ".pointer = ref_tx_isp_vin_remove + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xc34",
+    "initializer": ".pointer = ref_t32_data_c4684 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xc80",
+    "initializer": ".pointer = ref_private_seq_lseek + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xc84",
+    "initializer": ".pointer = ref_private_seq_read + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xc88",
+    "initializer": ".pointer = ref_video_input_cmd_set + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xca8",
+    "initializer": ".pointer = ref_video_input_cmd_open + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xcb0",
+    "initializer": ".pointer = ref_private_single_release + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xce8",
+    "initializer": ".pointer = ref_t32_data_cef38 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xcec",
+    "initializer": ".pointer = ref_t32_data_cef2c + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xcf4",
+    "initializer": ".pointer = ref_t32_data_cef1c + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xcf8",
+    "initializer": ".pointer = ref_t32_data_cef64 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xcfc",
+    "initializer": ".pointer = ref_subdev_sensor_ops_release_all_sensor + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xd04",
+    "initializer": ".pointer = ref_subdev_sensor_ops_ioctl + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xd0c",
+    "initializer": ".pointer = ref_vin_s_stream + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xd1c",
+    "initializer": ".pointer = ref_tx_isp_vin_init + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xd20",
+    "initializer": ".pointer = ref_tx_isp_vin_reset + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xd38",
+    "initializer": ".pointer = ref_vin_core_ops_ioctl + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xd44",
+    "initializer": ".pointer = ref_tx_isp_vin_activate_subdev + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xd48",
+    "initializer": ".pointer = ref_tx_isp_vin_slake_subdev + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xd60",
+    "initializer": ".pointer = ref_tx_isp_csi_probe + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xd64",
+    "initializer": ".pointer = ref_tx_isp_csi_remove + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xd74",
+    "initializer": ".pointer = ref_t32_data_c4ab8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xdc0",
+    "initializer": ".pointer = ref_private_seq_lseek + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xdc4",
+    "initializer": ".pointer = ref_private_seq_read + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xdc8",
+    "initializer": ".pointer = ref_isp_csi_cmd_set + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xde8",
+    "initializer": ".pointer = ref_dump_isp_csi_open + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xdf0",
+    "initializer": ".pointer = ref_private_single_release + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xe28",
+    "initializer": ".pointer = ref_t32_data_cf078 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xe2c",
+    "initializer": ".pointer = ref_t32_data_cf06c + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xe34",
+    "initializer": ".pointer = ref_t32_data_cf05c + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xe38",
+    "initializer": ".pointer = ref_t32_data_cf0a4 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xe40",
+    "initializer": ".pointer = ref_csi_sensor_ops_sync_sensor_attr + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xe44",
+    "initializer": ".pointer = ref_csi_sensor_ops_ioctl + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xe4c",
+    "initializer": ".pointer = ref_csi_video_s_stream + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xe5c",
+    "initializer": ".pointer = ref_csi_core_ops_init + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xe78",
+    "initializer": ".pointer = ref_tx_isp_csi_core_ops_ioctl + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xe84",
+    "initializer": ".pointer = ref_tx_isp_csi_activate_subdev + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xe88",
+    "initializer": ".pointer = ref_tx_isp_csi_slake_subdev + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xec0",
+    "initializer": ".pointer = ref_isp_core_tunning_unlocked_ioctl + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xecc",
+    "initializer": ".pointer = ref_isp_core_tunning_open + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xed4",
+    "initializer": ".pointer = ref_isp_core_tunning_release + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xf0c",
+    "initializer": ".pointer = ref_t32_data_cf12c + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xf10",
+    "initializer": ".pointer = ref_t32_data_cf12c + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xf14",
+    "initializer": ".pointer = ref_t32_data_cf134 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xf18",
+    "initializer": ".pointer = ref_t32_data_cf134 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xf20",
+    "initializer": ".pointer = ref_tx_isp_ivdc_probe + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xf24",
+    "initializer": ".pointer = ref_tx_isp_ivdc_remove + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xf34",
+    "initializer": ".pointer = ref_t32_data_c5d48 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xf84",
+    "initializer": ".pointer = ref_ivdc_misc_read + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xf9c",
+    "initializer": ".pointer = ref_ivdc_misc_unlocked_ioctl + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xfa8",
+    "initializer": ".pointer = ref_ivdc_misc_open + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xfb0",
+    "initializer": ".pointer = ref_ivdc_misc_release + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xfec",
+    "initializer": ".pointer = ref_private_seq_lseek + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xff0",
+    "initializer": ".pointer = ref_private_seq_read + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1014",
+    "initializer": ".pointer = ref_proc_ivdc_open + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x101c",
+    "initializer": ".pointer = ref_private_single_release + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1054",
+    "initializer": ".pointer = ref_t32_data_cf2b0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1058",
+    "initializer": ".pointer = ref_t32_data_cf2a4 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1064",
+    "initializer": ".pointer = ref_t32_data_cf288 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1068",
+    "initializer": ".pointer = ref_ivdc_activate_module + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x106c",
+    "initializer": ".pointer = ref_ivdc_slake_module + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1084",
+    "initializer": ".pointer = ref_ivdc_video_s_stream + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x108c",
+    "initializer": ".pointer = ref_ivdc_link_setup + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1094",
+    "initializer": ".pointer = ref_ivdc_core_ops_init + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x10b0",
+    "initializer": ".pointer = ref_ivdc_core_ops_ioctl + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x10b4",
+    "initializer": ".pointer = ref_ivdc_core_interrupt_service_routine + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x10d0",
+    "initializer": ".pointer = ref_tx_isp_ldc_probe + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x10d4",
+    "initializer": ".pointer = ref_tx_isp_ldc_remove + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x10e4",
+    "initializer": ".pointer = ref_t32_data_c5ea4 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x114c",
+    "initializer": ".pointer = ref_ldc_offline_unlocked_ioctl + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1158",
+    "initializer": ".pointer = ref_ldc_offline_open + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1160",
+    "initializer": ".pointer = ref_ldc_offline_release + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x119c",
+    "initializer": ".pointer = ref_private_seq_lseek + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x11a0",
+    "initializer": ".pointer = ref_private_seq_read + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x11a4",
+    "initializer": ".pointer = ref_ldc_cmd_set + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x11c4",
+    "initializer": ".pointer = ref_dump_ldc_frd_open + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x11cc",
+    "initializer": ".pointer = ref_private_single_release + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1204",
+    "initializer": ".pointer = ref_t32_data_cf454 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1208",
+    "initializer": ".pointer = ref_t32_data_cf480 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1214",
+    "initializer": ".pointer = ref_t32_data_cf438 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1218",
+    "initializer": ".pointer = ref_ldc_activate_module + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x121c",
+    "initializer": ".pointer = ref_ldc_slake_module + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1238",
+    "initializer": ".pointer = ref_ldc_core_ops_init + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1254",
+    "initializer": ".pointer = ref_ldc_core_ops_ioctl + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1258",
+    "initializer": ".pointer = ref_ldc_interrupt_service_routine + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1260",
+    "initializer": ".pointer = ref_ldc_video_s_stream + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1270",
+    "initializer": ".pointer = ref_tx_isp_fs_probe + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1274",
+    "initializer": ".pointer = ref_tx_isp_fs_remove + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1284",
+    "initializer": ".pointer = ref_t32_data_c69a8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x12d0",
+    "initializer": ".pointer = ref_private_seq_lseek + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x12d4",
+    "initializer": ".pointer = ref_private_seq_read + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x12f8",
+    "initializer": ".pointer = ref_dump_isp_framesource_open + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1300",
+    "initializer": ".pointer = ref_private_single_release + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1338",
+    "initializer": ".pointer = ref_t32_data_cf588 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1348",
+    "initializer": ".pointer = ref_t32_data_cf56c + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x134c",
+    "initializer": ".pointer = ref_fs_activate_module + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1350",
+    "initializer": ".pointer = ref_fs_slake_module + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1388",
+    "initializer": ".pointer = ref_fs_core_ops_ioctl + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x13b4",
+    "initializer": ".pointer = ref_frame_channel_unlocked_ioctl + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x13c0",
+    "initializer": ".pointer = ref_frame_channel_open + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x13c8",
+    "initializer": ".pointer = ref_frame_channel_release + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1400",
+    "initializer": ".pointer = ref_tx_isp_probe + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1404",
+    "initializer": ".pointer = ref_tx_isp_remove + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1414",
+    "initializer": ".pointer = ref_t32_data_c7630 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x145c",
+    "initializer": ".pointer = ref_tx_isp_prepare + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1460",
+    "initializer": ".pointer = ref_tx_isp_complete + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1464",
+    "initializer": ".pointer = ref_tx_isp_suspend + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1468",
+    "initializer": ".pointer = ref_tx_isp_resume + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1480",
+    "initializer": ".pointer = ref_tx_isp_resume_early + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x14d8",
+    "initializer": ".pointer = ref_tx_isp_unlocked_ioctl + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x14e4",
+    "initializer": ".pointer = ref_tx_isp_open + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x14ec",
+    "initializer": ".pointer = ref_tx_isp_release + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1524",
+    "initializer": ".pointer = ref_t32_data_c77a0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x152c",
+    "initializer": ".pointer = ref_t32_data_c77a8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1538",
+    "initializer": ".pointer = ref_t32_data_c77a8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1540",
+    "initializer": ".pointer = ref_t32_data_c77b0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x154c",
+    "initializer": ".pointer = ref_t32_data_c77a0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1554",
+    "initializer": ".pointer = ref_t32_data_c77a8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1560",
+    "initializer": ".pointer = ref_t32_data_c77a8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1568",
+    "initializer": ".pointer = ref_t32_data_c77b0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1574",
+    "initializer": ".pointer = ref_t32_data_c77a0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x157c",
+    "initializer": ".pointer = ref_t32_data_c77a8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1588",
+    "initializer": ".pointer = ref_t32_data_c77a8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1590",
+    "initializer": ".pointer = ref_t32_data_c77b0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x159c",
+    "initializer": ".pointer = ref_t32_data_c77a0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x15a4",
+    "initializer": ".pointer = ref_t32_data_c77a8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x15b0",
+    "initializer": ".pointer = ref_t32_data_c77a8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x15b8",
+    "initializer": ".pointer = ref_t32_data_c77b0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x15c4",
+    "initializer": ".pointer = ref_t32_data_c77a0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x15cc",
+    "initializer": ".pointer = ref_t32_data_c77a8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x15d8",
+    "initializer": ".pointer = ref_t32_data_c77a8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x15e0",
+    "initializer": ".pointer = ref_t32_data_c77b0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x15ec",
+    "initializer": ".pointer = ref_t32_data_c77a0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x15f4",
+    "initializer": ".pointer = ref_t32_data_c77a8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1600",
+    "initializer": ".pointer = ref_t32_data_c77a8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1608",
+    "initializer": ".pointer = ref_t32_data_c77b0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1614",
+    "initializer": ".pointer = ref_t32_data_c77a0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x161c",
+    "initializer": ".pointer = ref_t32_data_c77a8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1628",
+    "initializer": ".pointer = ref_t32_data_c77a8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1630",
+    "initializer": ".pointer = ref_t32_data_c77b0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x163c",
+    "initializer": ".pointer = ref_t32_data_c77a0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1644",
+    "initializer": ".pointer = ref_t32_data_c77a8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1650",
+    "initializer": ".pointer = ref_t32_data_c77a8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1658",
+    "initializer": ".pointer = ref_t32_data_c77b0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1664",
+    "initializer": ".pointer = ref_t32_data_c77a0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x166c",
+    "initializer": ".pointer = ref_t32_data_c77a8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1678",
+    "initializer": ".pointer = ref_t32_data_c77a8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1680",
+    "initializer": ".pointer = ref_t32_data_c77b0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x168c",
+    "initializer": ".pointer = ref_t32_data_c77a0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1694",
+    "initializer": ".pointer = ref_t32_data_c77a8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x16a0",
+    "initializer": ".pointer = ref_t32_data_c77a8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x16a8",
+    "initializer": ".pointer = ref_t32_data_c77b0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x16b4",
+    "initializer": ".pointer = ref_t32_data_c77a0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x16bc",
+    "initializer": ".pointer = ref_t32_data_c77a8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x16c8",
+    "initializer": ".pointer = ref_t32_data_c77a8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x16d0",
+    "initializer": ".pointer = ref_t32_data_c77b0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x16dc",
+    "initializer": ".pointer = ref_t32_data_c77a0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x16e4",
+    "initializer": ".pointer = ref_t32_data_c77a8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x16f0",
+    "initializer": ".pointer = ref_t32_data_c77a8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x16f8",
+    "initializer": ".pointer = ref_t32_data_c77b0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1704",
+    "initializer": ".pointer = ref_t32_data_c77a0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x170c",
+    "initializer": ".pointer = ref_t32_data_c77b8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1718",
+    "initializer": ".pointer = ref_t32_data_c77b8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1720",
+    "initializer": ".pointer = ref_t32_data_c77b0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x172c",
+    "initializer": ".pointer = ref_t32_data_c77a0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1734",
+    "initializer": ".pointer = ref_t32_data_c77b0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1740",
+    "initializer": ".pointer = ref_t32_data_c77a0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1748",
+    "initializer": ".pointer = ref_t32_data_c77b0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1754",
+    "initializer": ".pointer = ref_t32_data_c77a0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x175c",
+    "initializer": ".pointer = ref_t32_data_c77b8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1768",
+    "initializer": ".pointer = ref_t32_data_c77b8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1770",
+    "initializer": ".pointer = ref_t32_data_c77b0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x177c",
+    "initializer": ".pointer = ref_t32_data_c77a0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1784",
+    "initializer": ".pointer = ref_t32_data_c77b0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1790",
+    "initializer": ".pointer = ref_t32_data_c77a0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1798",
+    "initializer": ".pointer = ref_t32_data_c77b0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x17a4",
+    "initializer": ".pointer = ref_t32_data_c77a0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x17ac",
+    "initializer": ".pointer = ref_t32_data_c77b8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x17b8",
+    "initializer": ".pointer = ref_t32_data_c77b8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x17c0",
+    "initializer": ".pointer = ref_t32_data_c77b0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x17cc",
+    "initializer": ".pointer = ref_t32_data_c77a0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x17d4",
+    "initializer": ".pointer = ref_t32_data_c77b0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x17e0",
+    "initializer": ".pointer = ref_t32_data_c77a0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x17e8",
+    "initializer": ".pointer = ref_t32_data_c77b0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x17f4",
+    "initializer": ".pointer = ref_t32_data_c77a0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x17fc",
+    "initializer": ".pointer = ref_t32_data_c77b8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1808",
+    "initializer": ".pointer = ref_t32_data_c77b8 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1810",
+    "initializer": ".pointer = ref_t32_data_c77b0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x181c",
+    "initializer": ".pointer = ref_t32_data_c77a0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1824",
+    "initializer": ".pointer = ref_t32_data_c77b0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1830",
+    "initializer": ".pointer = ref_t32_data_c77a0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1838",
+    "initializer": ".pointer = ref_t32_data_c77b0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1844",
+    "initializer": ".pointer = ref_t32_data_c77a0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x184c",
+    "initializer": ".pointer = ref_t32_data_c77b0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1858",
+    "initializer": ".pointer = ref_t32_data_c77a0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1860",
+    "initializer": ".pointer = ref_t32_data_c77b0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x186c",
+    "initializer": ".pointer = ref_t32_data_c77a0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1874",
+    "initializer": ".pointer = ref_t32_data_c77b0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1880",
+    "initializer": ".pointer = ref_t32_data_c77a0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1888",
+    "initializer": ".pointer = ref_t32_data_c77b0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1894",
+    "initializer": ".pointer = ref_t32_data_c77a0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x189c",
+    "initializer": ".pointer = ref_t32_data_c77b0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x18a8",
+    "initializer": ".pointer = ref_t32_data_c77a0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x18b0",
+    "initializer": ".pointer = ref_t32_data_c77b0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x18bc",
+    "initializer": ".pointer = ref_t32_data_c77a0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x18c4",
+    "initializer": ".pointer = ref_t32_data_c77b0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x18d0",
+    "initializer": ".pointer = ref_t32_data_c77a0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x18d8",
+    "initializer": ".pointer = ref_t32_data_c77b0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x18e4",
+    "initializer": ".pointer = ref_t32_data_c77a0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x18ec",
+    "initializer": ".pointer = ref_t32_data_c77b0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x18f8",
+    "initializer": ".pointer = ref_t32_data_c77a0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1900",
+    "initializer": ".pointer = ref_t32_data_c77b0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x190c",
+    "initializer": ".pointer = ref_t32_data_c77a0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1914",
+    "initializer": ".pointer = ref_t32_data_c77b0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1920",
+    "initializer": ".pointer = ref_t32_data_c77a0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x1928",
+    "initializer": ".pointer = ref_t32_data_c77b0 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x25f4",
+    "initializer": ".pointer = ref_seq_lseek + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x25f8",
+    "initializer": ".pointer = ref_seq_read + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x25fc",
+    "initializer": ".pointer = ref_tisp_write_proc + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x261c",
+    "initializer": ".pointer = ref_tisp_show_debug_info_open + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x2624",
+    "initializer": ".pointer = ref_single_release + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x2664",
+    "initializer": ".pointer = ref_isp_tunning_read + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x2668",
+    "initializer": ".pointer = ref_isp_tunning_write + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x2678",
+    "initializer": ".pointer = ref_isp_tunning_poll + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x267c",
+    "initializer": ".pointer = ref_tisp_code_tuning_ioctl + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x2684",
+    "initializer": ".pointer = ref_tisp_code_tuning_mmap + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x2688",
+    "initializer": ".pointer = ref_tisp_code_tuning_open + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x2690",
+    "initializer": ".pointer = ref_tisp_code_tuning_release + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x26cc",
+    "initializer": ".pointer = ref_t32_data_d08ec + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0x26d0",
+    "initializer": ".pointer = ref_t32_data_d08ec + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xa940",
+    "initializer": ".pointer = ref_tx_isp_core_probe + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xa944",
+    "initializer": ".pointer = ref_tx_isp_core_remove + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xa954",
+    "initializer": ".pointer = ref_t32_data_cd738 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xa9a0",
+    "initializer": ".pointer = ref_private_seq_lseek + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xa9a4",
+    "initializer": ".pointer = ref_private_seq_read + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xa9a8",
+    "initializer": ".pointer = ref_isp_save_cmd_set + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xa9c8",
+    "initializer": ".pointer = ref_dump_isp_info_open + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xa9d0",
+    "initializer": ".pointer = ref_private_single_release + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xaa08",
+    "initializer": ".pointer = ref_t32_data_d8c74 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xaa0c",
+    "initializer": ".pointer = ref_t32_data_d8c58 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xaa14",
+    "initializer": ".pointer = ref_t32_data_d8c64 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xaa18",
+    "initializer": ".pointer = ref_t32_data_d8c3c + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xaa1c",
+    "initializer": ".pointer = ref_ispcore_activate_module + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xaa20",
+    "initializer": ".pointer = ref_ispcore_slake_module + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xaa38",
+    "initializer": ".pointer = ref_ispcore_video_s_stream + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xaa40",
+    "initializer": ".pointer = ref_ispcore_link_setup + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xaa44",
+    "initializer": ".pointer = ref_ispcore_sensor_ops_release_all_sensor + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xaa48",
+    "initializer": ".pointer = ref_ispcore_sync_sensor_attr + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xaa4c",
+    "initializer": ".pointer = ref_ispcore_sensor_ops_ioctl + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xaa58",
+    "initializer": ".pointer = ref_ispcore_core_ops_init + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xaa74",
+    "initializer": ".pointer = ref_ispcore_core_ops_ioctl + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xaa78",
+    "initializer": ".pointer = ref_ispcore_interrupt_service_routine + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xaa7c",
+    "initializer": ".pointer = ref_ispcore_irq_thread_handle + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xaa84",
+    "initializer": ".pointer = ref_t32_data_d8ca4 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xaa88",
+    "initializer": ".pointer = ref_t32_data_d8ca4 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xaa8c",
+    "initializer": ".pointer = ref_ispcore_irq_fd_work3 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xaa94",
+    "initializer": ".pointer = ref_t32_data_d8cb4 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xaa98",
+    "initializer": ".pointer = ref_t32_data_d8cb4 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xaa9c",
+    "initializer": ".pointer = ref_ispcore_irq_fd_work2 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xaaa4",
+    "initializer": ".pointer = ref_t32_data_d8cc4 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xaaa8",
+    "initializer": ".pointer = ref_t32_data_d8cc4 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xaaac",
+    "initializer": ".pointer = ref_ispcore_irq_fd_work1 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xaab4",
+    "initializer": ".pointer = ref_t32_data_d8cd4 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xaab8",
+    "initializer": ".pointer = ref_t32_data_d8cd4 + 0",
+    "kind": "pointer"
+  },
+  {
+    "section": ".data",
+    "offset": "0xaabc",
+    "initializer": ".pointer = ref_ispcore_irq_fd_work0 + 0",
+    "kind": "pointer"
+  }
+]
