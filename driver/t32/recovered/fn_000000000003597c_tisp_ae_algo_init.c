@@ -1,0 +1,206 @@
+/* Mechanical C translation of decoded MIPS/MXU2 instructions.
+ * Control flow and delay slots are explicit; runtime equivalence is unverified.
+ * No executable OEM bytes or assembly implementation are linked. */
+#include "../compat.h"
+extern unsigned char ref_t32_data_e15b8[] __asm__("t32_data_e15b8");
+extern unsigned char ref_t32_data_e15a8[] __asm__("t32_data_e15a8");
+extern unsigned char ref_private_init_completion[] __asm__("private_init_completion");
+extern unsigned char ref_t32_data_d03a0[] __asm__("t32_data_d03a0");
+extern unsigned char ref_tisp_reg_read[] __asm__("tisp_reg_read");
+extern unsigned char ref_t32_data_d0950[] __asm__("t32_data_d0950");
+extern unsigned char ref_memcpy[] __asm__("memcpy");
+u64 tisp_ae_algo_init(u32 a0, u32 a1, u32 a2, u32 a3)
+{
+    u32 stack[78] __aligned(16) = {0};
+    u32 at = 0, v0 = 0, v1 = 0, t0 = 0, t1 = 0, t2 = 0, t3 = 0, t4 = 0, t5 = 0, t6 = 0, t7 = 0, s0 = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0, s5 = 0, s6 = 0, s7 = 0, t8 = 0, t9 = 0, gp = (u32)(unsigned long)current_thread_info(), sp = 0, s8 = 0, ra = 0;
+    u32 hi = 0, lo = 0, callee, ll_addr, ll_value;
+    u64 result, product;
+    int branch;
+    const u32 hi_3597c = ((u32)(unsigned long)ref_t32_data_e15b8 + 0x8000U) & 0xffff0000U;
+    const u32 hi_359a4 = ((u32)(unsigned long)ref_t32_data_e15a8 + 0x8000U) & 0xffff0000U;
+    const u32 hi_359c4 = ((u32)(unsigned long)ref_private_init_completion + 0x8000U) & 0xffff0000U;
+    const u32 hi_35b04 = ((u32)(unsigned long)ref_t32_data_d03a0 + 0x8000U) & 0xffff0000U;
+    const u32 hi_35b1c = ((u32)(unsigned long)ref_tisp_reg_read + 0x8000U) & 0xffff0000U;
+    const u32 hi_35b3c = ((u32)(unsigned long)ref_t32_data_d03a0 + 0x8000U) & 0xffff0000U;
+    const u32 hi_35b54 = ((u32)(unsigned long)ref_tisp_reg_read + 0x8000U) & 0xffff0000U;
+    const u32 hi_35b8c = ((u32)(unsigned long)ref_t32_data_d0950 + 0x8000U) & 0xffff0000U;
+    const u32 hi_35b94 = (((u32)(unsigned long)ref_memcpy + (0)) + 0x8000U) & 0xffff0000U;
+    sp = (u32)(unsigned long)&stack[14];
+L_3597c:
+    v1 = hi_3597c;
+    v0 = a0 << (0x2 & 31);
+    v1 = v1 - hi_3597c + (u32)(unsigned long)ref_t32_data_e15b8;
+    v1 = v0 + v1;
+    *(volatile u32 *)(unsigned long)(v1 + (0)) = a1;
+    v1 = 1;
+    branch = (a1 != v1); ;
+    if (branch) goto L_35bd4;
+    goto L_3599c;
+L_3599c:
+    sp = sp + -56;
+    *(volatile u32 *)(unsigned long)(sp + (48)) = s2;
+    s2 = hi_359a4;
+    s2 = s2 - hi_359a4 + (u32)(unsigned long)ref_t32_data_e15a8;
+    *(volatile u32 *)(unsigned long)(sp + (44)) = s1;
+    *(volatile u32 *)(unsigned long)(sp + (40)) = s0;
+    s2 = v0 + s2;
+    *(volatile u32 *)(unsigned long)(sp + (52)) = ra;
+    s1 = a0;
+    a0 = *(volatile u32 *)(unsigned long)(s2 + (0));
+    v0 = hi_359c4;
+    v0 = v0 - hi_359c4 + (u32)(unsigned long)ref_private_init_completion;
+    a0 = a0 + 2008;
+    callee = v0; s0 = a2;
+    result = ((u64 (*)(u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32))(unsigned long)callee)(a0,a1,a2,a3, *(u32 *)(unsigned long)(sp + 16), *(u32 *)(unsigned long)(sp + 20), *(u32 *)(unsigned long)(sp + 24), *(u32 *)(unsigned long)(sp + 28), *(u32 *)(unsigned long)(sp + 32), *(u32 *)(unsigned long)(sp + 36), *(u32 *)(unsigned long)(sp + 40), *(u32 *)(unsigned long)(sp + 44), *(u32 *)(unsigned long)(sp + 48), *(u32 *)(unsigned long)(sp + 52), *(u32 *)(unsigned long)(sp + 56), *(u32 *)(unsigned long)(sp + 60), *(u32 *)(unsigned long)(sp + 64), *(u32 *)(unsigned long)(sp + 68), *(u32 *)(unsigned long)(sp + 72), *(u32 *)(unsigned long)(sp + 76), *(u32 *)(unsigned long)(sp + 80), *(u32 *)(unsigned long)(sp + 84), *(u32 *)(unsigned long)(sp + 88), *(u32 *)(unsigned long)(sp + 92), *(u32 *)(unsigned long)(sp + 96), *(u32 *)(unsigned long)(sp + 100), *(u32 *)(unsigned long)(sp + 104), *(u32 *)(unsigned long)(sp + 108), *(u32 *)(unsigned long)(sp + 112), *(u32 *)(unsigned long)(sp + 116), *(u32 *)(unsigned long)(sp + 120), *(u32 *)(unsigned long)(sp + 124), *(u32 *)(unsigned long)(sp + 128), *(u32 *)(unsigned long)(sp + 132), *(u32 *)(unsigned long)(sp + 136), *(u32 *)(unsigned long)(sp + 140), *(u32 *)(unsigned long)(sp + 144), *(u32 *)(unsigned long)(sp + 148), *(u32 *)(unsigned long)(sp + 152), *(u32 *)(unsigned long)(sp + 156), *(u32 *)(unsigned long)(sp + 160), *(u32 *)(unsigned long)(sp + 164), *(u32 *)(unsigned long)(sp + 168), *(u32 *)(unsigned long)(sp + 172), *(u32 *)(unsigned long)(sp + 176), *(u32 *)(unsigned long)(sp + 180), *(u32 *)(unsigned long)(sp + 184), *(u32 *)(unsigned long)(sp + 188), *(u32 *)(unsigned long)(sp + 192), *(u32 *)(unsigned long)(sp + 196), *(u32 *)(unsigned long)(sp + 200), *(u32 *)(unsigned long)(sp + 204), *(u32 *)(unsigned long)(sp + 208), *(u32 *)(unsigned long)(sp + 212), *(u32 *)(unsigned long)(sp + 216), *(u32 *)(unsigned long)(sp + 220), *(u32 *)(unsigned long)(sp + 224), *(u32 *)(unsigned long)(sp + 228), *(u32 *)(unsigned long)(sp + 232), *(u32 *)(unsigned long)(sp + 236), *(u32 *)(unsigned long)(sp + 240), *(u32 *)(unsigned long)(sp + 244), *(u32 *)(unsigned long)(sp + 248), *(u32 *)(unsigned long)(sp + 252));
+    v0 = result; v1 = result >> 32;
+    goto L_359d8;
+L_359d8:
+    v0 = *(volatile u32 *)(unsigned long)(s2 + (0));
+    *(volatile u32 *)(unsigned long)(s0 + (8)) = 0;
+    v1 = *(volatile u32 *)(unsigned long)(v0 + (4));
+    v1 = *(volatile u32 *)(unsigned long)(v1 + (8608));
+    *(volatile u32 *)(unsigned long)(s0 + (12)) = v1;
+    v1 = *(volatile u32 *)(unsigned long)(v0 + (4));
+    v1 = *(volatile u32 *)(unsigned long)(v1 + (8612));
+    *(volatile u32 *)(unsigned long)(s0 + (16)) = v1;
+    v1 = *(volatile u32 *)(unsigned long)(v0 + (4));
+    v1 = *(volatile u32 *)(unsigned long)(v1 + (8616));
+    *(volatile u32 *)(unsigned long)(s0 + (20)) = v1;
+    v1 = *(volatile u32 *)(unsigned long)(v0 + (4));
+    v1 = *(volatile u32 *)(unsigned long)(v1 + (8620));
+    *(volatile u32 *)(unsigned long)(s0 + (24)) = v1;
+    a0 = *(volatile u32 *)(unsigned long)(v0 + (4));
+    a0 = *(volatile u32 *)(unsigned long)(a0 + (8624));
+    *(volatile u32 *)(unsigned long)(s0 + (60)) = a0;
+    a0 = *(volatile u32 *)(unsigned long)(v0 + (4));
+    a0 = *(volatile u32 *)(unsigned long)(a0 + (8628));
+    *(volatile u32 *)(unsigned long)(s0 + (64)) = a0;
+    a0 = *(volatile u32 *)(unsigned long)(v0 + (4));
+    a0 = *(volatile u32 *)(unsigned long)(a0 + (8632));
+    *(volatile u32 *)(unsigned long)(s0 + (68)) = a0;
+    a0 = *(volatile u32 *)(unsigned long)(v0 + (4));
+    a0 = *(volatile u32 *)(unsigned long)(a0 + (8636));
+    *(volatile u32 *)(unsigned long)(s0 + (72)) = a0;
+    a0 = *(volatile u32 *)(unsigned long)(v0 + (0));
+    a0 = *(volatile u32 *)(unsigned long)(a0 + (448));
+    *(volatile u32 *)(unsigned long)(s0 + (28)) = a0;
+    a0 = *(volatile u32 *)(unsigned long)(v0 + (0));
+    a0 = *(volatile u32 *)(unsigned long)(a0 + (452));
+    *(volatile u32 *)(unsigned long)(s0 + (32)) = a0;
+    a0 = *(volatile u32 *)(unsigned long)(v0 + (0));
+    a0 = *(volatile u32 *)(unsigned long)(a0 + (456));
+    *(volatile u32 *)(unsigned long)(s0 + (36)) = a0;
+    a0 = *(volatile u32 *)(unsigned long)(v0 + (0));
+    a0 = *(volatile u32 *)(unsigned long)(a0 + (460));
+    *(volatile u32 *)(unsigned long)(s0 + (40)) = a0;
+    a0 = *(volatile u32 *)(unsigned long)(v0 + (0));
+    a0 = *(volatile u32 *)(unsigned long)(a0 + (464));
+    *(volatile u32 *)(unsigned long)(s0 + (44)) = a0;
+    a0 = *(volatile u32 *)(unsigned long)(v0 + (0));
+    a0 = *(volatile u32 *)(unsigned long)(a0 + (468));
+    *(volatile u32 *)(unsigned long)(s0 + (48)) = a0;
+    a0 = *(volatile u32 *)(unsigned long)(v0 + (0));
+    a0 = *(volatile u32 *)(unsigned long)(a0 + (472));
+    *(volatile u32 *)(unsigned long)(s0 + (52)) = a0;
+    a0 = *(volatile u32 *)(unsigned long)(v0 + (0));
+    a0 = *(volatile u32 *)(unsigned long)(a0 + (476));
+    *(volatile u32 *)(unsigned long)(s0 + (56)) = a0;
+    a0 = *(volatile u32 *)(unsigned long)(v0 + (0));
+    a0 = *(volatile u32 *)(unsigned long)(a0 + (480));
+    *(volatile u32 *)(unsigned long)(s0 + (76)) = a0;
+    a0 = *(volatile u32 *)(unsigned long)(v0 + (0));
+    a0 = *(volatile u32 *)(unsigned long)(a0 + (484));
+    *(volatile u32 *)(unsigned long)(s0 + (80)) = a0;
+    a0 = *(volatile u32 *)(unsigned long)(v0 + (0));
+    a0 = *(volatile u32 *)(unsigned long)(a0 + (488));
+    *(volatile u32 *)(unsigned long)(s0 + (84)) = a0;
+    a0 = *(volatile u32 *)(unsigned long)(v0 + (0));
+    a0 = *(volatile u32 *)(unsigned long)(a0 + (492));
+    *(volatile u32 *)(unsigned long)(s0 + (88)) = a0;
+    a0 = *(volatile u32 *)(unsigned long)(v0 + (0));
+    a0 = *(volatile u32 *)(unsigned long)(a0 + (496));
+    *(volatile u32 *)(unsigned long)(s0 + (92)) = a0;
+    a0 = *(volatile u32 *)(unsigned long)(v0 + (0));
+    a0 = *(volatile u32 *)(unsigned long)(a0 + (500));
+    *(volatile u32 *)(unsigned long)(s0 + (96)) = a0;
+    a0 = *(volatile u32 *)(unsigned long)(v0 + (0));
+    a0 = *(volatile u32 *)(unsigned long)(a0 + (504));
+    *(volatile u32 *)(unsigned long)(s0 + (100)) = a0;
+    v0 = *(volatile u32 *)(unsigned long)(v0 + (0));
+    v0 = *(volatile u32 *)(unsigned long)(v0 + (508));
+    branch = (v1 != 0); *(volatile u32 *)(unsigned long)(s0 + (104)) = v0;
+    if (branch) goto L_35b30;
+    goto L_35b04;
+L_35b04:
+    v0 = hi_35b04;
+    a1 = *(volatile u8 *)(unsigned long)(v0 - hi_35b04 + (u32)(unsigned long)ref_t32_data_d03a0);
+    v1 = 491;
+    v0 = 12376;
+    if (a1 != 0) v0 = v1;
+    a1 = v0;
+    v0 = hi_35b1c;
+    v0 = v0 - hi_35b1c + (u32)(unsigned long)ref_tisp_reg_read;
+    callee = v0; a0 = s1;
+    result = ((u64 (*)(u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32))(unsigned long)callee)(a0,a1,a2,a3, *(u32 *)(unsigned long)(sp + 16), *(u32 *)(unsigned long)(sp + 20), *(u32 *)(unsigned long)(sp + 24), *(u32 *)(unsigned long)(sp + 28), *(u32 *)(unsigned long)(sp + 32), *(u32 *)(unsigned long)(sp + 36), *(u32 *)(unsigned long)(sp + 40), *(u32 *)(unsigned long)(sp + 44), *(u32 *)(unsigned long)(sp + 48), *(u32 *)(unsigned long)(sp + 52), *(u32 *)(unsigned long)(sp + 56), *(u32 *)(unsigned long)(sp + 60), *(u32 *)(unsigned long)(sp + 64), *(u32 *)(unsigned long)(sp + 68), *(u32 *)(unsigned long)(sp + 72), *(u32 *)(unsigned long)(sp + 76), *(u32 *)(unsigned long)(sp + 80), *(u32 *)(unsigned long)(sp + 84), *(u32 *)(unsigned long)(sp + 88), *(u32 *)(unsigned long)(sp + 92), *(u32 *)(unsigned long)(sp + 96), *(u32 *)(unsigned long)(sp + 100), *(u32 *)(unsigned long)(sp + 104), *(u32 *)(unsigned long)(sp + 108), *(u32 *)(unsigned long)(sp + 112), *(u32 *)(unsigned long)(sp + 116), *(u32 *)(unsigned long)(sp + 120), *(u32 *)(unsigned long)(sp + 124), *(u32 *)(unsigned long)(sp + 128), *(u32 *)(unsigned long)(sp + 132), *(u32 *)(unsigned long)(sp + 136), *(u32 *)(unsigned long)(sp + 140), *(u32 *)(unsigned long)(sp + 144), *(u32 *)(unsigned long)(sp + 148), *(u32 *)(unsigned long)(sp + 152), *(u32 *)(unsigned long)(sp + 156), *(u32 *)(unsigned long)(sp + 160), *(u32 *)(unsigned long)(sp + 164), *(u32 *)(unsigned long)(sp + 168), *(u32 *)(unsigned long)(sp + 172), *(u32 *)(unsigned long)(sp + 176), *(u32 *)(unsigned long)(sp + 180), *(u32 *)(unsigned long)(sp + 184), *(u32 *)(unsigned long)(sp + 188), *(u32 *)(unsigned long)(sp + 192), *(u32 *)(unsigned long)(sp + 196), *(u32 *)(unsigned long)(sp + 200), *(u32 *)(unsigned long)(sp + 204), *(u32 *)(unsigned long)(sp + 208), *(u32 *)(unsigned long)(sp + 212), *(u32 *)(unsigned long)(sp + 216), *(u32 *)(unsigned long)(sp + 220), *(u32 *)(unsigned long)(sp + 224), *(u32 *)(unsigned long)(sp + 228), *(u32 *)(unsigned long)(sp + 232), *(u32 *)(unsigned long)(sp + 236), *(u32 *)(unsigned long)(sp + 240), *(u32 *)(unsigned long)(sp + 244), *(u32 *)(unsigned long)(sp + 248), *(u32 *)(unsigned long)(sp + 252));
+    v0 = result; v1 = result >> 32;
+    goto L_35b2c;
+L_35b2c:
+    *(volatile u32 *)(unsigned long)(s0 + (24)) = v0;
+L_35b30:
+    v0 = *(volatile u32 *)(unsigned long)(s0 + (72));
+    branch = (v0 != 0); v0 = 1;
+    if (branch) goto L_35b6c;
+    goto L_35b3c;
+L_35b3c:
+    v0 = hi_35b3c;
+    a1 = *(volatile u8 *)(unsigned long)(v0 - hi_35b3c + (u32)(unsigned long)ref_t32_data_d03a0);
+    v1 = 572;
+    v0 = 12808;
+    if (a1 != 0) v0 = v1;
+    a1 = v0;
+    v0 = hi_35b54;
+    v0 = v0 - hi_35b54 + (u32)(unsigned long)ref_tisp_reg_read;
+    callee = v0; a0 = s1;
+    result = ((u64 (*)(u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32))(unsigned long)callee)(a0,a1,a2,a3, *(u32 *)(unsigned long)(sp + 16), *(u32 *)(unsigned long)(sp + 20), *(u32 *)(unsigned long)(sp + 24), *(u32 *)(unsigned long)(sp + 28), *(u32 *)(unsigned long)(sp + 32), *(u32 *)(unsigned long)(sp + 36), *(u32 *)(unsigned long)(sp + 40), *(u32 *)(unsigned long)(sp + 44), *(u32 *)(unsigned long)(sp + 48), *(u32 *)(unsigned long)(sp + 52), *(u32 *)(unsigned long)(sp + 56), *(u32 *)(unsigned long)(sp + 60), *(u32 *)(unsigned long)(sp + 64), *(u32 *)(unsigned long)(sp + 68), *(u32 *)(unsigned long)(sp + 72), *(u32 *)(unsigned long)(sp + 76), *(u32 *)(unsigned long)(sp + 80), *(u32 *)(unsigned long)(sp + 84), *(u32 *)(unsigned long)(sp + 88), *(u32 *)(unsigned long)(sp + 92), *(u32 *)(unsigned long)(sp + 96), *(u32 *)(unsigned long)(sp + 100), *(u32 *)(unsigned long)(sp + 104), *(u32 *)(unsigned long)(sp + 108), *(u32 *)(unsigned long)(sp + 112), *(u32 *)(unsigned long)(sp + 116), *(u32 *)(unsigned long)(sp + 120), *(u32 *)(unsigned long)(sp + 124), *(u32 *)(unsigned long)(sp + 128), *(u32 *)(unsigned long)(sp + 132), *(u32 *)(unsigned long)(sp + 136), *(u32 *)(unsigned long)(sp + 140), *(u32 *)(unsigned long)(sp + 144), *(u32 *)(unsigned long)(sp + 148), *(u32 *)(unsigned long)(sp + 152), *(u32 *)(unsigned long)(sp + 156), *(u32 *)(unsigned long)(sp + 160), *(u32 *)(unsigned long)(sp + 164), *(u32 *)(unsigned long)(sp + 168), *(u32 *)(unsigned long)(sp + 172), *(u32 *)(unsigned long)(sp + 176), *(u32 *)(unsigned long)(sp + 180), *(u32 *)(unsigned long)(sp + 184), *(u32 *)(unsigned long)(sp + 188), *(u32 *)(unsigned long)(sp + 192), *(u32 *)(unsigned long)(sp + 196), *(u32 *)(unsigned long)(sp + 200), *(u32 *)(unsigned long)(sp + 204), *(u32 *)(unsigned long)(sp + 208), *(u32 *)(unsigned long)(sp + 212), *(u32 *)(unsigned long)(sp + 216), *(u32 *)(unsigned long)(sp + 220), *(u32 *)(unsigned long)(sp + 224), *(u32 *)(unsigned long)(sp + 228), *(u32 *)(unsigned long)(sp + 232), *(u32 *)(unsigned long)(sp + 236), *(u32 *)(unsigned long)(sp + 240), *(u32 *)(unsigned long)(sp + 244), *(u32 *)(unsigned long)(sp + 248), *(u32 *)(unsigned long)(sp + 252));
+    v0 = result; v1 = result >> 32;
+    goto L_35b64;
+L_35b64:
+    *(volatile u32 *)(unsigned long)(s0 + (72)) = v0;
+    v0 = 1;
+L_35b6c:
+    *(volatile u32 *)(unsigned long)(sp + (16)) = v0;
+    *(volatile u32 *)(unsigned long)(sp + (20)) = v0;
+    *(volatile u32 *)(unsigned long)(sp + (24)) = v0;
+    a0 = 1052;
+    v0 = 15;
+    *(volatile u8 *)(unsigned long)(sp + (28)) = v0;
+    *(volatile u8 *)(unsigned long)(sp + (29)) = v0;
+    v0 = s1 * a0;
+    a1 = hi_35b8c;
+    a1 = a1 - hi_35b8c + (u32)(unsigned long)ref_t32_data_d0950;
+    s1 = hi_35b94;
+    a0 = sp + 36;
+    s1 = s1 - hi_35b94 + ((u32)(unsigned long)ref_memcpy + (0));
+    a2 = 4;
+    a1 = v0 + a1;
+    callee = s1; a1 = a1 + 1044;
+    result = ((u64 (*)(u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32))(unsigned long)callee)(a0,a1,a2,a3, *(u32 *)(unsigned long)(sp + 16), *(u32 *)(unsigned long)(sp + 20), *(u32 *)(unsigned long)(sp + 24), *(u32 *)(unsigned long)(sp + 28), *(u32 *)(unsigned long)(sp + 32), *(u32 *)(unsigned long)(sp + 36), *(u32 *)(unsigned long)(sp + 40), *(u32 *)(unsigned long)(sp + 44), *(u32 *)(unsigned long)(sp + 48), *(u32 *)(unsigned long)(sp + 52), *(u32 *)(unsigned long)(sp + 56), *(u32 *)(unsigned long)(sp + 60), *(u32 *)(unsigned long)(sp + 64), *(u32 *)(unsigned long)(sp + 68), *(u32 *)(unsigned long)(sp + 72), *(u32 *)(unsigned long)(sp + 76), *(u32 *)(unsigned long)(sp + 80), *(u32 *)(unsigned long)(sp + 84), *(u32 *)(unsigned long)(sp + 88), *(u32 *)(unsigned long)(sp + 92), *(u32 *)(unsigned long)(sp + 96), *(u32 *)(unsigned long)(sp + 100), *(u32 *)(unsigned long)(sp + 104), *(u32 *)(unsigned long)(sp + 108), *(u32 *)(unsigned long)(sp + 112), *(u32 *)(unsigned long)(sp + 116), *(u32 *)(unsigned long)(sp + 120), *(u32 *)(unsigned long)(sp + 124), *(u32 *)(unsigned long)(sp + 128), *(u32 *)(unsigned long)(sp + 132), *(u32 *)(unsigned long)(sp + 136), *(u32 *)(unsigned long)(sp + 140), *(u32 *)(unsigned long)(sp + 144), *(u32 *)(unsigned long)(sp + 148), *(u32 *)(unsigned long)(sp + 152), *(u32 *)(unsigned long)(sp + 156), *(u32 *)(unsigned long)(sp + 160), *(u32 *)(unsigned long)(sp + 164), *(u32 *)(unsigned long)(sp + 168), *(u32 *)(unsigned long)(sp + 172), *(u32 *)(unsigned long)(sp + 176), *(u32 *)(unsigned long)(sp + 180), *(u32 *)(unsigned long)(sp + 184), *(u32 *)(unsigned long)(sp + 188), *(u32 *)(unsigned long)(sp + 192), *(u32 *)(unsigned long)(sp + 196), *(u32 *)(unsigned long)(sp + 200), *(u32 *)(unsigned long)(sp + 204), *(u32 *)(unsigned long)(sp + 208), *(u32 *)(unsigned long)(sp + 212), *(u32 *)(unsigned long)(sp + 216), *(u32 *)(unsigned long)(sp + 220), *(u32 *)(unsigned long)(sp + 224), *(u32 *)(unsigned long)(sp + 228), *(u32 *)(unsigned long)(sp + 232), *(u32 *)(unsigned long)(sp + 236), *(u32 *)(unsigned long)(sp + 240), *(u32 *)(unsigned long)(sp + 244), *(u32 *)(unsigned long)(sp + 248), *(u32 *)(unsigned long)(sp + 252));
+    v0 = result; v1 = result >> 32;
+    goto L_35bb0;
+L_35bb0:
+    a1 = sp + 16;
+    a0 = s0 + 112;
+    callee = s1; a2 = 24;
+    result = ((u64 (*)(u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32,u32))(unsigned long)callee)(a0,a1,a2,a3, *(u32 *)(unsigned long)(sp + 16), *(u32 *)(unsigned long)(sp + 20), *(u32 *)(unsigned long)(sp + 24), *(u32 *)(unsigned long)(sp + 28), *(u32 *)(unsigned long)(sp + 32), *(u32 *)(unsigned long)(sp + 36), *(u32 *)(unsigned long)(sp + 40), *(u32 *)(unsigned long)(sp + 44), *(u32 *)(unsigned long)(sp + 48), *(u32 *)(unsigned long)(sp + 52), *(u32 *)(unsigned long)(sp + 56), *(u32 *)(unsigned long)(sp + 60), *(u32 *)(unsigned long)(sp + 64), *(u32 *)(unsigned long)(sp + 68), *(u32 *)(unsigned long)(sp + 72), *(u32 *)(unsigned long)(sp + 76), *(u32 *)(unsigned long)(sp + 80), *(u32 *)(unsigned long)(sp + 84), *(u32 *)(unsigned long)(sp + 88), *(u32 *)(unsigned long)(sp + 92), *(u32 *)(unsigned long)(sp + 96), *(u32 *)(unsigned long)(sp + 100), *(u32 *)(unsigned long)(sp + 104), *(u32 *)(unsigned long)(sp + 108), *(u32 *)(unsigned long)(sp + 112), *(u32 *)(unsigned long)(sp + 116), *(u32 *)(unsigned long)(sp + 120), *(u32 *)(unsigned long)(sp + 124), *(u32 *)(unsigned long)(sp + 128), *(u32 *)(unsigned long)(sp + 132), *(u32 *)(unsigned long)(sp + 136), *(u32 *)(unsigned long)(sp + 140), *(u32 *)(unsigned long)(sp + 144), *(u32 *)(unsigned long)(sp + 148), *(u32 *)(unsigned long)(sp + 152), *(u32 *)(unsigned long)(sp + 156), *(u32 *)(unsigned long)(sp + 160), *(u32 *)(unsigned long)(sp + 164), *(u32 *)(unsigned long)(sp + 168), *(u32 *)(unsigned long)(sp + 172), *(u32 *)(unsigned long)(sp + 176), *(u32 *)(unsigned long)(sp + 180), *(u32 *)(unsigned long)(sp + 184), *(u32 *)(unsigned long)(sp + 188), *(u32 *)(unsigned long)(sp + 192), *(u32 *)(unsigned long)(sp + 196), *(u32 *)(unsigned long)(sp + 200), *(u32 *)(unsigned long)(sp + 204), *(u32 *)(unsigned long)(sp + 208), *(u32 *)(unsigned long)(sp + 212), *(u32 *)(unsigned long)(sp + 216), *(u32 *)(unsigned long)(sp + 220), *(u32 *)(unsigned long)(sp + 224), *(u32 *)(unsigned long)(sp + 228), *(u32 *)(unsigned long)(sp + 232), *(u32 *)(unsigned long)(sp + 236), *(u32 *)(unsigned long)(sp + 240), *(u32 *)(unsigned long)(sp + 244), *(u32 *)(unsigned long)(sp + 248), *(u32 *)(unsigned long)(sp + 252));
+    v0 = result; v1 = result >> 32;
+    goto L_35bc0;
+L_35bc0:
+    ra = *(volatile u32 *)(unsigned long)(sp + (52));
+    s2 = *(volatile u32 *)(unsigned long)(sp + (48));
+    s1 = *(volatile u32 *)(unsigned long)(sp + (44));
+    s0 = *(volatile u32 *)(unsigned long)(sp + (40));
+    sp = sp + 56;
+L_35bd4:
+    ;
+    return ((u64)v1 << 32) | v0;
+}

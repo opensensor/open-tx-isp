@@ -1,0 +1,47 @@
+{
+  "date_utc": "2026-11-05T06:57:32.361715+00:00",
+  "base_commit": "2fb6534b",
+  "oem_sha256": "b1f3ecf114d401b8792606a5a01b0b701387d612fe6660a30a47fe95f1b3ccee",
+  "module_sha256": "8a1a773480606d49534ad47b636e55991638817d2dbf47f4e70679cf13bd956e",
+  "module_bytes": 8474848,
+  "kernel": "4.4.94",
+  "kernel_source_revision": "470050ba3702da8bac092f26b327f590abcf976c",
+  "toolchain": "mipsel-linux-gcc.br_real (Buildroot -g62b5743a) 16.2.0",
+  "build": "passed; clean build and final rebuild",
+  "checks": [
+    {
+      "check": "test_mxu_lower.py",
+      "exit_code": 0,
+      "output": "PASS: 57 MXU2 operations, 17100 boundary/random/aliasing cases; UBSan enabled"
+    },
+    {
+      "check": "test_integer_lower.py",
+      "exit_code": 0,
+      "output": "PASS: delay slots, branch-likely annulment, branch into delay slot, signed division edge cases, four unaligned load/store offsets, split stack frame, atomic counter"
+    },
+    {
+      "check": "verify_lowered.py",
+      "exit_code": 0,
+      "output": "PASS: 1382 complete decoded function bodies reproduce exactly"
+    },
+    {
+      "check": "check_module.py",
+      "exit_code": 0,
+      "output": "PASS: 1591 C entry points, 33 OEM exports, 21 module parameters, 143 resolved kernel imports"
+    },
+    {
+      "check": "check_ko_symbols.sh",
+      "exit_code": 0,
+      "output": "OK   tx-isp-t32.ko: 143 undefined symbols all resolved"
+    },
+    {
+      "check": "check_isp_exports.sh",
+      "exit_code": 0,
+      "output": "check_isp_exports: tx-isp-t32.ko: 33 known imports exported"
+    }
+  ],
+  "stack_frame_warnings": 16,
+  "largest_reported_frame_bytes": 2320,
+  "device_tested": false,
+  "runtime_equivalence_proven": false
+}
