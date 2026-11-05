@@ -1494,10 +1494,10 @@ struct _get_size_entry {
     uint16_t f6;
     uint16_t f8;
 };
-struct tx_isp_customer_parameter {
-    uint32_t field_0x1a80;
-};
-static struct tx_isp_customer_parameter tx_isp_customer_parameter;
+/* SDK apical_custom_initialization.c: static TXispPrivCustomerParamer *customer (OEM .bss+0x1a80).
+ * The lift kept it as "tx_isp_customer_parameter + 0x1a80" of a 4-byte object, i.e. a store 0x1a80 bytes past it
+ * (into isp_kfifo_out in the built ko); it is its own variable now. */
+static uint32_t tx_isp_t30_customer;
 #ifndef TX_ISP_T30_SHARED_IO
 static void *apical_io_base;
 #endif
@@ -11452,7 +11452,7 @@ int32_t apical_isp_awb_weight_g_attr_isra_0(uintptr_t arg1)
     uint32_t *result;
     uint32_t gp_mask;
 
-    for (i = (uintptr_t)&LC11; (uintptr_t)i != 0x1fe1; i = (uintptr_t)i + 0xf) {
+    for (i = (uint32_t *)0x1f00; (uintptr_t)i != 0x1fe1; i = (uintptr_t)i + 0xf) {
         for (j = 0; j != 0xf; j++) {
             val = APICAL_READ_32((uintptr_t)i & 0xfffffffc);
             ((void **)buf)[j] = (uint8_t)(val >> (((uintptr_t)i << 3) & 0x1f));
@@ -11495,7 +11495,7 @@ int32_t apical_isp_awb_weight_s_attr_isra_0(uint32_t a0)
         copy_from_user(buf, (const void __user *)(uintptr_t)((void __user *)a0), 0xe1);
     }
 
-    for (i = (uintptr_t)&LC11; (uintptr_t)i != 0x1fe1; i = (uintptr_t)i + 0xf) {
+    for (i = (uint32_t *)0x1f00; (uintptr_t)i != 0x1fe1; i = (uintptr_t)i + 0xf) {
         for (j = 0; j != 0xf; j++) {
             addr = (uintptr_t)i & 0xfffffffc;
             shift = ((uintptr_t)i << 3) & 0x1f;
@@ -14889,7 +14889,8 @@ int32_t isp_info_show(struct seq_file *m)
 		val_78 = cmd_val;
 
 		apical_api_calibration(0x58, 1, &cal_byte, 1, &cal_int);
-		exp_val = math_exp2(*(uint8_t *)((char *)&cal_byte + 0) + *(uint8_t *)((char *)&cal_byte + 2) + *(uint8_t *)((char *)&cal_byte + 4), 5, 8);
+		/* #202 symval: OEM ko 0xab1c..0xab24 sums lbu 28/30/32(stab) (s8 = stab, 0xaaec); the lift read cal_byte+0/2/4, i.e. the stack past a 1-byte local */
+		exp_val = math_exp2(stab[0x1c] + stab[0x1e] + stab[0x20], 5, 8);
 
 		sensor_name = *(const char **)((char *)sensor + 0x120);
 		sensor_w = *(uint32_t *)((char *)sensor + 0xec);
@@ -21653,9 +21654,9 @@ load_tx_isp_parameters0x6a8:
 /* WHOLE_DRIVER_CANDIDATE fn_000000000000fd70 origin=fragment_seed original=apical_custom_initialization */
 uint32_t apical_custom_initialization(void)
 {
-    /* #202: the customer table pointer is tx_isp_customer_parameter + 0x1a80 (init_tx_isp_customer_parameter; OEM lw 6784(s2) of .bss);
+    /* #202: the customer table pointer set by init_tx_isp_customer_parameter (OEM lw 6784(s2) of .bss);
      * the lift read the unrelated static array "customer" (always 0), so the whole customer initialisation was skipped */
-    uint32_t customer_ptr = *(uint32_t *)((char *)&tx_isp_customer_parameter + 0x1a80);
+    uint32_t customer_ptr = tx_isp_t30_customer;
     uint32_t *local_10 = 0;
     uint32_t *local_18 = 0;
     uint32_t local_24 = 0;
@@ -22228,9 +22229,8 @@ apical_custom_initialization0x92c:
 /* WHOLE_DRIVER_CANDIDATE fn_00000000000106b0 origin=model_output original=init_tx_isp_customer_parameter */
 int32_t init_tx_isp_customer_parameter(uint32_t arg1)
 {
-    struct tx_isp_customer_parameter *p = &tx_isp_customer_parameter;
-    *(unsigned long *)((char *)p + 0x1a80) = (unsigned long)(arg1);
-    return (int32_t)p;
+    tx_isp_t30_customer = arg1;
+    return (int32_t)(uintptr_t)&tx_isp_t30_customer;
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_00000000000106bc origin=fragment_seed original=apical_custom_sequence */
@@ -40187,12 +40187,12 @@ int32_t selftest_isp_interface(int32_t arg1, int32_t arg2, char arg3, int32_t *a
 
 	int32_t v1 = APICAL_READ_32(0x10);
 	int32_t v2 = APICAL_READ_32(0x10);
-	APICAL_WRITE_32(0x10, (v2 & 0xffff0000) | (uintptr_t)&LC32);
+	APICAL_WRITE_32(0x10, (v2 & 0xffff0000) | 0x1234); /* OEM ko 0x1f7c8: ori a1,v0,0x1234; the lift had the string LC32 address */
 	int32_t v3 = APICAL_READ_32(0x10);
 	int32_t v4 = APICAL_READ_32(0x10);
 	APICAL_WRITE_32(0x10, (v4 & 0xffff0000) | (v1 & 0xffff));
 
-	if ((v3 & 0xffff) == (uintptr_t)&LC32)
+	if ((v3 & 0xffff) == 0x1234) /* OEM ko 0x1f804: xori v0,v0,0x1234 */
 		return 0;
 
 	return 5;
@@ -41582,7 +41582,6 @@ int32_t ae_mode(void *arg1, int32_t arg2, char arg3, int32_t *arg4)
     int32_t mode = (uint8_t)arg3;
     int32_t ret;
     int32_t val;
-    uint8_t *stab;
     uint8_t field_110;
 
     *arg4 = 0;
@@ -41591,10 +41590,11 @@ int32_t ae_mode(void *arg1, int32_t arg2, char arg3, int32_t *arg4)
         if (mode != 1)
             return 2;
 
-        stab = *(uint8_t *)((char *)&stab + 0x3);
+        /* #202 symval: the lift declared a local `stab` that shadowed the system table, so the get read an
+         * uninitialised pointer and the set wrote into the stack frame (OEM ko 0x215c8: lbu 3(stab)) */
         field_110 = *(uint8_t *)((char *)arg1 + 0x110);
 
-        if (stab[0] == 0) {
+        if (stab[3] == 0) {
             if (field_110 == 0)
                 val = 0x25;
             else
@@ -52436,7 +52436,9 @@ void *ae_calculate_target(int32_t *arg1)
 	int32_t s1_shifted = (s1_val - 0x80) << 0xb;
 	*(int32_t *)(arg1 + 4) = log_diff + s4_shifted + s1_shifted;
 
-	return (void *)((char *)&isp_kfifo_in + 0x8dc);
+	/* #202 symval: the OEM function has no defined return value (SDK ko 0x31cc8: jr ra with a leftover v0); the lift turned that register into
+	 * &isp_kfifo_in + 0x8dc. The only caller (AE_fsm_switch_state) discards it. */
+	return NULL;
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_00000000000325b0 origin=model_output original=set_integrator_ae */
@@ -54289,7 +54291,6 @@ int32_t awb_update(void)
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000034fb4 origin=model_output original=awb_normalise */
 int32_t *awb_normalise(int32_t *arg1)
 {
-	int32_t *stab;
 	int32_t val_770;
 	int32_t val_772;
 	int32_t val_774;
@@ -54317,18 +54318,19 @@ int32_t *awb_normalise(int32_t *arg1)
 	r3 = log2_fixed_to_fixed(val_776, 8, 0x10);
 	r4 = log2_fixed_to_fixed(*(uint16_t *)((char *)arg1 + 0x778), 8, 0x10);
 
-	stab = (int32_t *)((char *)&stab + 0xc);
+	/* #202 symval: the lift declared a local `stab` and took the address of that local (stab = &stab + 0xc), so the flag was read
+	 * from and the 0x31/0x32 bytes written to the kernel stack; OEM ko 0x34770/0x3477c/0x3478c: lbu 12/49/50(stab) */
 
-	if (*(uint8_t *)stab == 0) {
+	if (stab[12] == 0) {
 		sum0 = log2_fixed_to_fixed(*(uint16_t *)((char *)arg1 + 0x18), 8, 0x10) + r0;
 		sum1 = log2_fixed_to_fixed(*(uint16_t *)((char *)arg1 + 0x1a), 8, 0x10) + r3;
-		*(uint8_t *)((uintptr_t)stab + 0x31) = (uint8_t)(*(uint16_t *)((char *)arg1 + 0x18) >> 1);
-		*(uint8_t *)((uintptr_t)stab + 0x32) = (uint8_t)(*(uint16_t *)((char *)arg1 + 0x1a) >> 1);
+		stab[0x31] = (uint8_t)(*(uint16_t *)((char *)arg1 + 0x18) >> 1);
+		stab[0x32] = (uint8_t)(*(uint16_t *)((char *)arg1 + 0x1a) >> 1);
 	} else {
-		sum0 = log2_fixed_to_fixed(*(uint8_t *)((char *)stab + 0x31), 7, 0x10) + r0;
-		sum1 = log2_fixed_to_fixed(*(uint8_t *)((char *)stab + 0x32), 7, 0x10) + r3;
-		*(uint16_t *)((char *)arg1 + 0x18) = (uint16_t)(*(uint8_t *)((uintptr_t)stab + 0x31) << 1);
-		*(uint16_t *)((char *)arg1 + 0x1a) = (uint16_t)(*(uint8_t *)((uintptr_t)stab + 0x32) << 1);
+		sum0 = log2_fixed_to_fixed(stab[0x31], 7, 0x10) + r0;
+		sum1 = log2_fixed_to_fixed(stab[0x32], 7, 0x10) + r3;
+		*(uint16_t *)((char *)arg1 + 0x18) = (uint16_t)(stab[0x31] << 1);
+		*(uint16_t *)((char *)arg1 + 0x1a) = (uint16_t)(stab[0x32] << 1);
 	}
 
 	min_val = sum0;
@@ -55023,52 +55025,52 @@ uint32_t sharpening_initialize(int32_t *arg1)
 
 	if (result == 1) {
 		mod_ptr = (int32_t *)_GET_MOD_ENTRY16_PTR(0x43);
-		*(uint8_t *)((char *)((char *)&fsp_9008 + 0x7)) = (uint8_t)(*(uint16_t *)((char *)mod_ptr + 2));
+		stab[35] = (uint8_t)(*(uint16_t *)((char *)mod_ptr + 2));
 		mod_ptr2 = (int32_t *)_GET_MOD_ENTRY16_PTR(0x43);
 		rows = _GET_ROWS(0x43);
-		*(uint8_t *)(uintptr_t)&csp_9009 = (uint8_t)(*(uint16_t *)((char *)((uintptr_t)mod_ptr2 + ((rows - 1) << 2)) + 2));
+		stab[36] = (uint8_t)(*(uint16_t *)((char *)((uintptr_t)mod_ptr2 + ((rows - 1) << 2)) + 2));
 		mod_ptr = (int32_t *)_GET_MOD_ENTRY16_PTR(0x48);
-		*(uint8_t *)((char *)((char *)&csp_9009 + 0x2)) = (uint8_t)(*(uint16_t *)((char *)mod_ptr + 2));
+		stab[38] = (uint8_t)(*(uint16_t *)((char *)mod_ptr + 2));
 		mod_ptr2 = (int32_t *)_GET_MOD_ENTRY16_PTR(0x48);
 		rows = _GET_ROWS(0x48);
 		result = (uintptr_t)(uint8_t)(*(uint16_t *)((char *)((uintptr_t)mod_ptr2 + ((rows - 1) << 2)) + 2));
-		*(uint8_t *)((char *)((char *)&csp_9009 + 0x3)) = (uint8_t)result;
+		stab[39] = (uint8_t)result;
 	} else if (result == 0) {
 		mod_ptr = (int32_t *)_GET_MOD_ENTRY16_PTR(0x42);
-		*(uint8_t *)((char *)((char *)&fsp_9008 + 0x7)) = (uint8_t)(*(uint16_t *)((char *)mod_ptr + 2));
+		stab[35] = (uint8_t)(*(uint16_t *)((char *)mod_ptr + 2));
 		mod_ptr2 = (int32_t *)_GET_MOD_ENTRY16_PTR(0x42);
 		rows = _GET_ROWS(0x42);
-		*(uint8_t *)(uintptr_t)&csp_9009 = (uint8_t)(*(uint16_t *)((char *)((uintptr_t)mod_ptr2 + ((rows - 1) << 2)) + 2));
+		stab[36] = (uint8_t)(*(uint16_t *)((char *)((uintptr_t)mod_ptr2 + ((rows - 1) << 2)) + 2));
 		mod_ptr = (int32_t *)_GET_MOD_ENTRY16_PTR(0x47);
-		*(uint8_t *)((char *)((char *)&csp_9009 + 0x2)) = (uint8_t)(*(uint16_t *)((char *)mod_ptr + 2));
+		stab[38] = (uint8_t)(*(uint16_t *)((char *)mod_ptr + 2));
 		mod_ptr2 = (int32_t *)_GET_MOD_ENTRY16_PTR(0x47);
 		rows = _GET_ROWS(0x47);
 		result = (uintptr_t)(uint8_t)(*(uint16_t *)((char *)((uintptr_t)mod_ptr2 + ((rows - 1) << 2)) + 2));
-		*(uint8_t *)((char *)((char *)&csp_9009 + 0x3)) = (uint8_t)result;
+		stab[39] = (uint8_t)result;
 	} else if (result == 2) {
 		mod_ptr = (int32_t *)_GET_MOD_ENTRY16_PTR(0x44);
-		*(uint8_t *)((char *)((char *)&fsp_9008 + 0x7)) = (uint8_t)(*(uint16_t *)((char *)mod_ptr + 2));
+		stab[35] = (uint8_t)(*(uint16_t *)((char *)mod_ptr + 2));
 		mod_ptr2 = (int32_t *)_GET_MOD_ENTRY16_PTR(0x44);
 		rows = _GET_ROWS(0x44);
-		*(uint8_t *)(uintptr_t)&csp_9009 = (uint8_t)(*(uint16_t *)((char *)((uintptr_t)mod_ptr2 + ((rows - 1) << 2)) + 2));
+		stab[36] = (uint8_t)(*(uint16_t *)((char *)((uintptr_t)mod_ptr2 + ((rows - 1) << 2)) + 2));
 		mod_ptr = (int32_t *)_GET_MOD_ENTRY16_PTR(0x49);
-		*(uint8_t *)((char *)((char *)&csp_9009 + 0x2)) = (uint8_t)(*(uint16_t *)((char *)mod_ptr + 2));
+		stab[38] = (uint8_t)(*(uint16_t *)((char *)mod_ptr + 2));
 		mod_ptr2 = (int32_t *)_GET_MOD_ENTRY16_PTR(0x49);
 		rows = _GET_ROWS(0x49);
 		result = (uintptr_t)(uint8_t)(*(uint16_t *)((char *)((uintptr_t)mod_ptr2 + ((rows - 1) << 2)) + 2));
-		*(uint8_t *)((char *)((char *)&csp_9009 + 0x3)) = (uint8_t)result;
+		stab[39] = (uint8_t)result;
 	} else if (result == 3) {
 		mod_ptr = (int32_t *)_GET_MOD_ENTRY16_PTR(0x45);
-		*(uint8_t *)((char *)((char *)&fsp_9008 + 0x7)) = (uint8_t)(*(uint16_t *)((char *)mod_ptr + 2));
+		stab[35] = (uint8_t)(*(uint16_t *)((char *)mod_ptr + 2));
 		mod_ptr2 = (int32_t *)_GET_MOD_ENTRY16_PTR(0x45);
 		rows = _GET_ROWS(0x45);
-		*(uint8_t *)(uintptr_t)&csp_9009 = (uint8_t)(*(uint16_t *)((char *)((uintptr_t)mod_ptr2 + ((rows - 1) << 2)) + 2));
+		stab[36] = (uint8_t)(*(uint16_t *)((char *)((uintptr_t)mod_ptr2 + ((rows - 1) << 2)) + 2));
 		mod_ptr = (int32_t *)_GET_MOD_ENTRY16_PTR(0x4a);
-		*(uint8_t *)((char *)((char *)&csp_9009 + 0x2)) = (uint8_t)(*(uint16_t *)((char *)mod_ptr + 2));
+		stab[38] = (uint8_t)(*(uint16_t *)((char *)mod_ptr + 2));
 		mod_ptr2 = (int32_t *)_GET_MOD_ENTRY16_PTR(0x4a);
 		rows = _GET_ROWS(0x4a);
 		result = (uintptr_t)(uint8_t)(*(uint16_t *)((char *)((uintptr_t)mod_ptr2 + ((rows - 1) << 2)) + 2));
-		*(uint8_t *)((char *)((char *)&csp_9009 + 0x3)) = (uint8_t)result;
+		stab[39] = (uint8_t)result;
 	}
 
 	return result;
@@ -55307,41 +55309,39 @@ common_tail:
 	v0_30 = (int16_t *)_GET_MOD_ENTRY16_PTR(a0_13);
 
 	{
-		uint8_t *stab = (uint8_t *)0;
-		stab_val = *(uint8_t *)((char *)((char *)&_qlock1 + 0x3));
+		stab_val = stab[7];
 		if (stab_val == 0) {
-			uint8_t b35 = *(uint8_t *)((char *)((char *)&fsp_9008 + 0x7));
-			uint8_t b36 = *(uint8_t *)((char *)&csp_9009);
+			uint8_t b35 = stab[35];
+			uint8_t b36 = stab[36];
 			rows = _GET_ROWS(0x42);
 			uint32_t scaled = calc_scaled_modulation_u16((int16_t)(s5_3 & 0xffff), (int16_t)b35, (int16_t)b36, s2_5, (int32_t)rows);
 			uint16_t w20 = *(uint16_t *)((char *)arg1 + 0x20);
 			s1_7 = (uint16_t)((scaled * w20) >> 7);
 			if (s1_7 >= 0x100)
 				s1_7 = 0xff;
-			*(uint8_t *)((char *)((char *)&fsp_9008 + 0x6)) = (uint8_t)s1_7;
+			stab[34] = (uint8_t)s1_7;
 			s1_4 = s1_7;
 		} else {
-			s1_4 = *(uint8_t *)((char *)((char *)&fsp_9008 + 0x6));
+			s1_4 = stab[34];
 		}
 	}
 
 	{
-		uint8_t *stab2 = (uint8_t *)0;
-		uint8_t flag2 = *(uint8_t *)((char *)&_qlock2);
+		uint8_t flag2 = stab[8];
 		if (flag2 == 0) {
-			uint8_t b38 = *(uint8_t *)((char *)((char *)&csp_9009 + 0x2));
-			uint8_t b39 = *(uint8_t *)((char *)((char *)&csp_9009 + 0x3));
-			uint8_t b37 = *(uint8_t *)((char *)((char *)&csp_9009 + 0x1));
+			uint8_t b38 = stab[38];
+			uint8_t b39 = stab[39];
+			uint8_t b37 = stab[37];
 			rows = _GET_ROWS(0x47);
 			uint32_t scaled2 = calc_scaled_modulation_u16((int16_t)(s5_3 & 0xffff), (int16_t)b38, (int16_t)b39, v0_30, (int32_t)rows);
 			uint16_t w20b = *(uint16_t *)((char *)arg1 + 0x20);
 			fp_3 = (uint16_t)((scaled2 * w20b) >> 7);
 			if (fp_3 >= 0x100)
 				fp_3 = 0xff;
-			*(uint8_t *)((char *)((char *)&csp_9009 + 0x1)) = (uint8_t)fp_3;
+			stab[37] = (uint8_t)fp_3;
 			fp_1 = fp_3;
 		} else {
-			fp_1 = *(uint8_t *)((char *)((char *)&csp_9009 + 0x1));
+			fp_1 = stab[37];
 		}
 	}
 
