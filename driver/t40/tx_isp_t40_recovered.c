@@ -7816,7 +7816,7 @@ int32_t tisp_ae_set_hist_bin(int32_t arg1, int32_t arg2);
 int32_t tisp_ae_get_y_zone(uint32_t a0, uint32_t a1);
 int32_t tisp_ae_set_weight(int32_t arg1, int32_t *arg2);
 int32_t tisp_ae_get_weight(uint32_t a0, uint32_t a1);
-int64_t tisp_ae_set_exprinfo_attr(uint32_t a0, uintptr_t a1);
+int32_t tisp_ae_set_exprinfo_attr(uint32_t a0, uintptr_t a1);
 int64_t tisp_ae_api_get_faceae(uint32_t a0, uintptr_t a1);
 int32_t * tisp_ae_algo_init(int32_t arg1, int32_t arg2, void *arg3);
 int32_t tisp_ae_algo_handle(uintptr_t a0, uintptr_t a1);
@@ -69666,11 +69666,13 @@ tisp_ae_main_deinit0x90:
 /* T40 AE leaf / parameter functions (issue #85): plain C, Unicorn-checked against the OEM (tests/t40_ae_leaf_host.sh).  The old lifted
    bodies of tisp_ae_g_luma, g_comp, get_state, sensor_trig, ev_start_set, algo_deinit_internal, get/set_hist_bin, get_y_zone, g_scene_luma,
    s_comp, api_set_exp_list, tisp_s_ae_explist, tisp_s_ae_exprinfo_attr, tisp_s_ae_scence_attr, tisp_g_ae_scence_attr, tisp_g_ae_exprinfo_attr
-   and tisp_ae_algo_init are gone. */
+   and tisp_ae_algo_init are gone; tisp_ae_main/sec_min_max_set and tisp_ae_set_exprinfo_attr moved here too (#204). */
 #define T40_AE_OK(p) regtrace_is_kernel_ptr_any((const void *)(uintptr_t)(p))
 #define T40_AE_LOCK(l, f) __private_spin_lock_irqsave((uint32_t)(uintptr_t)(l), (uintptr_t)(f))
 #define T40_AE_UNLOCK(l, f) private_spin_unlock_irqrestore()
 #define T40_AE_CACHE(ch) regtrace_ae_cache_for_channel(ch)
+#define T40_AE_CTRLS_LOCK(f) spin_lock_irqsave(&t40_ae_ctrls_lock, f)
+#define T40_AE_CTRLS_UNLOCK(f) spin_unlock_irqrestore(&t40_ae_ctrls_lock, f)
 #include "tx_isp_t40_ae_leaf.h"
 
 
@@ -73225,40 +73227,7 @@ int32_t tisp_ae_main_manual_get(uint32_t a0)
     return 0;
 }
 
-/* WHOLE_DRIVER_CANDIDATE fn_0000000000029cd4 origin=fragment_seed original=tisp_ae_main_min_max_set */
-/*
- * T40-TISP-NODE (#139b): hand translation of OEM tisp_ae_main_min_max_set 0x29244 / tisp_ae_sec_min_max_set
- * (0x2a3f0), the AE min/max block of the tuning node (tisp_set_ae_minmax).  The OEM takes the 164-byte block
- * BY VALUE: words 0..3 in a0..a3, word k >= 4 at caller sp+16+4(k-4) = callee sp+144+4k.  It loads callee
- * sp+164..176, 224..236, 256..284 = words 5..8, 20..23, 28..35 and stores each to tisp_ae_{main,sec}_ctrls at
- * byte offset 4k (sw t5,20(v0) ... sw s0,140(v0)), prints the words, then clears the AE re-sync byte
- * *(u8 *)*(pst{Main,Sec}AeOri + 0xac) (OEM .bss+14780 / +14424 = ori +0xac, as in tisp_ae_*_manual_set).
- * The lift took 16 int arguments and wrote them as bytes into unused stand-in variables.
- */
-static int t40_ae_min_max_set(uint32_t *c, unsigned char *ori, const uint32_t *w, int sec)
-{
-    static const unsigned char idx[] = { 5, 6, 7, 8, 20, 21, 22, 23, 28, 29, 30, 31, 32, 33, 34, 35 };
-    uint8_t *flag;
-    unsigned int i;
-    unsigned long lflags;
-
-    isp_printf(0, "%s:%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n", sec ? "Sec" : "Main",
-               w[5], w[6], w[7], w[8], w[20], w[21], w[22], w[23], w[28], w[29], w[30], w[31],
-               w[32], w[33], w[34], w[35]);
-    spin_lock_irqsave(&t40_ae_ctrls_lock, lflags);   /* #165: the 16 words are applied as one set */
-    for (i = 0; i < sizeof(idx); i++)
-        c[idx[i]] = w[idx[i]];
-    flag = *(uint8_t **)(ori + 0xac);
-    if (flag)
-        *flag = 0;
-    spin_unlock_irqrestore(&t40_ae_ctrls_lock, lflags);
-    return 0;
-}
-
-int tisp_ae_main_min_max_set(const uint32_t *w)
-{
-    return t40_ae_min_max_set(tisp_ae_main_ctrls_storage, pstMainAeOri_storage, w, 0);
-}
+/* tisp_ae_main_min_max_set / tisp_ae_sec_min_max_set: plain C in tx_isp_t40_ae_leaf.h (#204, Unicorn oracle tests/t40_ae_leaf_host.sh). */
 
 
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000029edc origin=fragment_seed original=tisp_ae_main_s_max_again */
@@ -73719,11 +73688,6 @@ int32_t tisp_ae_sec_manual_get(uint32_t a0)
     return 0;
 }
 
-/* WHOLE_DRIVER_CANDIDATE fn_000000000002ae88 origin=fragment_seed original=tisp_ae_sec_min_max_set */
-int tisp_ae_sec_min_max_set(const uint32_t *w)
-{
-    return t40_ae_min_max_set(tisp_ae_sec_ctrls_storage, pstSecAeOri_storage, w, 1);
-}
 
 /* WHOLE_DRIVER_CANDIDATE fn_000000000002b01c origin=fragment_seed original=tisp_ae_sec_s_max_again */
 int64_t tisp_ae_sec_s_max_again(uint32_t a0)
@@ -74085,89 +74049,7 @@ int32_t tisp_ae_get_weight(uint32_t a0, uint32_t a1)
     return 0;
 }
 
-/* T40-AE-EXPRINFO: hand translation of OEM tisp_ae_set_exprinfo_attr (Eufy tx-isp-t40.ko 0x2afd0).
- * The lifted body used v0 uninitialised and dropped the divu (oops at +0x100 on SetAeExprInfo).
- * a1 = kernel copy of the 220-byte IMPISPAEExprInfo (A[n] = word n), a0 = vinum (0 main, 1 sec).
- * Time values given in us (A[0] != 0) are converted to lines: lines = us / (1e6 * fps_num_lo16 /
- * (line_len * fps)), all from tisp_par_info[vinum] (stride 152) exactly as the OEM. */
-int64_t tisp_ae_set_exprinfo_attr(uint32_t a0, uintptr_t a1)
-{
-    const uint32_t *A = (const uint32_t *)a1;
-    uint32_t *c = a0 ? tisp_ae_sec_ctrls_storage : tisp_ae_main_ctrls_storage;
-    unsigned char *ori = a0 ? pstSecAeOri_storage : pstMainAeOri_storage;
-    const unsigned char *pi = tisp_par_info + a0 * 152U;
-    const unsigned char *tp = (const unsigned char *)(uintptr_t)tparamsN[a0];
-    uint32_t p44 = *(const uint32_t *)(pi + 44);
-    uint32_t den = ((uint32_t)*(const uint16_t *)(pi + 70) * p44) >> 16;
-    uint32_t div = den ? ((p44 & 0xffffU) * 1000000U) / den : 0;
-    uint8_t *flag;
-
-#define T40_EXPR_US(v) ((A[0] && div) ? (uint32_t)(v) / div : (uint32_t)(v))
-    if (a0 > 1 || !A)
-        return -1;
-    c[0] = A[1];
-    if (A[1] == 1) {
-        c[3] = T40_EXPR_US(A[6]);
-        c[1] = A[7];
-        c[4] = A[9];
-        c[2] = A[8];
-    } else {
-        c[13] = A[2];
-        if (A[2] == 1)
-            c[3] = T40_EXPR_US(A[6]);
-        c[14] = A[3];
-        if (A[3] == 1)
-            c[1] = A[7];
-        c[15] = A[5];
-        if (A[5] == 1)
-            c[4] = A[9];
-        c[36] = A[4];
-        if (A[4] == 1)
-            c[2] = A[8];
-    }
-    c[24] = A[26];
-    if (A[26] == 1) {
-        c[19] = T40_EXPR_US(A[31]);
-        c[18] = A[32];
-        c[27] = A[34];
-        c[25] = A[33];
-    } else {
-        c[16] = A[27];
-        if (A[27] == 1)
-            c[19] = T40_EXPR_US(A[31]);
-        c[17] = A[28];
-        if (A[28] == 1)
-            c[18] = A[32];
-        c[26] = A[30];
-        if (A[30] == 1)
-            c[27] = A[34];
-        c[37] = A[29];
-        if (A[29] == 1)
-            c[25] = A[33];
-    }
-    c[5] = (A[15] == 1) ? A[23] : *(const uint32_t *)(pi + 28);
-    c[6] = (A[16] == 1) ? A[24] : *(const uint32_t *)(pi + 32);
-    c[7] = (A[14] == 1) ? T40_EXPR_US(A[22]) : *(const uint16_t *)(pi + 72);
-    c[8] = (A[17] == 1) ? A[25] : (tp ? *(const uint32_t *)(tp + 308) : c[8]);
-    c[20] = (A[40] == 1) ? A[48] : *(const uint32_t *)(pi + 92);
-    c[21] = (A[39] == 1) ? T40_EXPR_US(A[47]) : *(const uint16_t *)(pi + 84);
-    c[22] = (A[41] == 1) ? A[49] : *(const uint32_t *)(pi + 32);
-    c[23] = (A[42] == 1) ? A[50] : *(const uint32_t *)(pi + 32);
-    c[28] = (A[11] == 1) ? A[19] : 1024;
-    c[29] = (A[12] == 1) ? A[20] : 1024;
-    c[30] = (A[10] == 1) ? T40_EXPR_US(A[18]) : *(const uint16_t *)(pi + 56);
-    c[31] = (A[13] == 1) ? A[21] : 1024;
-    c[32] = (A[36] == 1) ? A[44] : 1024;
-    c[33] = (A[35] == 1) ? T40_EXPR_US(A[43]) : *(const uint16_t *)(pi + 82);
-    c[34] = (A[37] == 1) ? A[45] : 1024;
-    c[35] = (A[38] == 1) ? A[46] : 1024;
-#undef T40_EXPR_US
-    /* OEM: *(u8 *)pst{Main,Sec}AeOri[+0xac] = 0 (re-sync request for the AE thread) */
-    flag = *(uint8_t **)(ori + 0xac);
-    if (flag)
-        *flag = 0;
-    return 0;
-}
+/* tisp_ae_set_exprinfo_attr: plain C in tx_isp_t40_ae_leaf.h (#204, Unicorn oracle tests/t40_ae_leaf_host.sh). */
 
 /* WHOLE_DRIVER_CANDIDATE fn_000000000002c3b0 origin=fragment_seed original=tisp_ae_api_get_faceae */
 int64_t tisp_ae_api_get_faceae(uint32_t a0, uintptr_t a1)

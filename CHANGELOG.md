@@ -4,6 +4,13 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-06: T40 AE min/max and exposure info setters as checked C (#204; host oracle only, Eufy probe pending)
+
+- `tisp_ae_main_min_max_set`, `tisp_ae_sec_min_max_set` and `tisp_ae_set_exprinfo_attr` moved from `tx_isp_t40_recovered.c` into `driver/t40/tx_isp_t40_ae_leaf.h` and now follow the vendor image (`0x29d64` / `0x2af18` / `0x2bde4`) including its level-0 `isp_printf` messages ("second:" for the sec min/max block; the vendor prints the short ae_manual flag in "short it_manual"). Behaviour for valid input is unchanged; the min/max set keeps the #165 ctrls lock.
+- Reachable from user space through the sec channel only: SetAeExprInfo with vinum 1 (vinum 0 is the driver's own frame-AE hook) and `/dev/tisp` ioctl `0x20007406` (word 3 != 0 = sec; word 3 = 0 is the main block).
+- The two Eufy builds have the same instructions for these functions (only the `.bss` offset of `pst{Main,Sec}AeOri` and string labels differ), so the "builds differ" note from part 2/3 does not apply to them.
+- Proof: `tools/ko_emu/diff_ae_leaf.py` (`tests/t40_ae_leaf_host.sh`, in `make check` / `check-oracles`): `min_max`, `set_exprinfo` and their `_fac` variants 1000 random calls each, 0 mismatches against the vendor image and the factory module (memory, return value, every `isp_printf` argument); `tisp_s_ae_exprinfo_attr` now runs the real setter on both sides; 22 new source mutations detected. Module symbol set unchanged, `.text` +496 B (the messages). Device probe `audit/issue204/devproof_ae_setters.sh` not run yet.
+
 ## 2026-11-06: T40 vendor gamma EV follow-up and WDR EV store (#204 part 3; host oracle only, Eufy proof pending)
 
 - New `driver/t40/tx_isp_t40_gamma_ev.h`: OEM `tisp_gamma_interp_by_ev`, `tisp_gamma_strength_transform` and the `tisp_gamma_ev_update` gate as plain C. The EV fan-out (`t40_main_long_ev_update`, TOP bit 10 clear) now interpolates the bin gamma strength over the bin EV nodes (gamma section tparams+0x106ec: nodes +0x204, strengths +0x22c) and, on a change past the OEM `gamma_wlut_frequency` cadence, rewrites the soft-gamma LUT with the curve blended toward the identity ramp. Init and day/night writes apply the current strength too. A user/sRGB/HDR curve (SetGammaAttr mode 1..3) stops the follow-up like the OEM manual mode.
