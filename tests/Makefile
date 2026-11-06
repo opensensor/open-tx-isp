@@ -523,7 +523,7 @@ t30_ae_manual_host_test: t30_ae_manual_host_test.c ../driver/t30/tx_isp_t30_ae_m
 
 TESTS += t30_ae_gain_host_test
 
-t30_ae_gain_host_test: t30_ae_gain_host_test.c ../driver/t30/tx_isp_t30_ae_manual.h
+t30_ae_gain_host_test: t30_ae_gain_host_test.c t30_ae_item16_oracle.h ../driver/t30/tx_isp_t30_ae_manual.h
 	$(CC) $(CFLAGS) -o $@ $<
 
 TESTS += t30_system_item_host_test

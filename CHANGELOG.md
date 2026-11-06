@@ -4,6 +4,13 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-06: T30 GetEVAttr ev: the automatic AE publishes system item 16 as the vendor (#202; Unicorn oracle, device proof pending)
+
+- Cause: `IMP_ISP_Tuning_GetEVAttr().ev` reads system item 16 (`SYSTEM_MANUAL_EXPOSURE_TIME`, SDK `apical_isp_ev_g_attr`). The vendor `ae_calculate_exposure` (SDK-built ko 0x31cdc, store at 0x31ec0) writes `math_exp2(max(exposure, 0), 16, 6)` there on every automatic AE run (lines x total gain, Q6); the compact AE never did, so ev read 0 (T30X b9: open 0, vendor 8314092 = 3195 lines x 40.7).
+- Fix: `t30_ae_exposure_time_item()` (tx_isp_t30_ae_manual.h, OEM exp2 shift) written from `tx_isp_t30_simple_ae_update` unless the manual exposure (item 1) is set.
+- Proof: `tools/ko_emu/diff_t30_ae_exposure_item.py` runs the vendor function on 3000 random PI states; 600 (exposure, item 16) pairs are the table `tests/t30_ae_item16_oracle.h`, checked in `t30_ae_gain_host_test` part 5 (602 failures with a wrong Q); `check_t30_ae_gain.sh` guards the call site (fails on next). Not device-tested.
+- Already fixed earlier on next (checked in code): AE at the minimum (12ab6edf), gain ceilings 130/125 from the bin customer init (f33a3568), GetExpr/GetIntegrationTime item 24 (6c98bc0b), GetWB items 49/50 (02cf2e16). Still open: AWB gains in the dark scene (open 175/92, vendor 132-136/120-124) = algorithm difference of the compact AWB.
+
 ## 2026-11-06: T40 AE rung trade: black frame and gain-ladder bound (Opus review C2, C3; host test, Eufy proof pending)
 
 - C2: with a black frame (`luma_ae` 0) the rung-up overshoot test divided by zero, `t40_ae_log2_ratio` returned 0 and every rung up was refused (integration time stayed on its rung in total darkness). The denominator is now at least 1 (`max_t(luma_ae, 1)`).

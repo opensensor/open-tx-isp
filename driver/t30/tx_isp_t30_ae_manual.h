@@ -187,6 +187,18 @@ static inline u32 t30_oem_math_exp2(u32 value, u8 in, u8 out)
 }
 
 /*
+ * ae_calculate_exposure (SDK ko 0x31cdc..0x31ec0), automatic exposure (item 1 = 0):
+ * the vendor clamps the Q16 log2 exposure at 0 and stores math_exp2(exposure,
+ * 16, 6) into system item 16 (exposure time in lines x gain, Q6), which backs
+ * GetEVAttr().ev (apical_isp_ev_g_attr, SYSTEM_MANUAL_EXPOSURE_TIME).  The
+ * compact AE never wrote it, so ev read 0 (#202; vendor b9 ev 8314092).
+ */
+static inline u32 t30_ae_exposure_time_item(s32 exposure_log2)
+{
+	return t30_oem_math_exp2(exposure_log2 < 0 ? 0U : (u32)exposure_log2, 16, 6);
+}
+
+/*
  * iridix_fsm_process_interrupt (SDK ko 0x27810..0x278bc): 0x3dc =
  * clamp(math_exp2(older - newer exposure log2, 16, 8)).  older / newer are
  * exposure ring slots (-1, 0), or (0, 1) with temper2 mode (0x2c0 bit 7).

@@ -5,7 +5,8 @@
 #     analog gain is posted again after the sensor init table reset the sensor to 1x;
 #  2. the anti-flicker tuning control sets item 13 and the compact AE reads the frequency
 #     only through t30_ae_antiflicker_hz (item 13 gate);
-#  3. the automatic analog gain request is capped by item 29, the integration time by item 26.
+#  3. the automatic analog gain request is capped by item 29, the integration time by item 26;
+#  4. the automatic AE publishes its exposure into item 16 (GetEVAttr ev) as ae_calculate_exposure.
 d=${1:-$(dirname "$0")/../driver/t30}
 f=$d/tx_isp_t30_recovered.c
 [ -f "$f" ] || { echo "usage: $0 [driver/t30]" >&2; exit 2; }
@@ -19,5 +20,6 @@ chk 'stab\[13\] = frequency_hz\[mode\] ? 1 : 0;' 'item 13 set by the anti-flicke
 chk 'u32 frequency = t30_ae_antiflicker_hz(stab);' 'item 13 gate in the compact anti-flicker'
 chk 't30_ae_auto_again_cap(stab, attr->max_again)' 'item 29 analog gain cap'
 chk 'max_integration = t30_ae_max_integration(stab, max_integration);' 'item 26 integration cap'
+chk 'T30_STAB32(16) = t30_ae_exposure_time_item(' 'item 16 exposure published by the automatic AE'
 [ $fail = 0 ] && echo "check_t30_ae_gain: ok"
 exit $fail
