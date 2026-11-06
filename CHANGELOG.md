@@ -4,6 +4,18 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-06: T10/T20/T21 review fixes and heap trims (branch claude/t10-t20-t21-impl; device-tested on T10 SP1, T20 Wyze v2 + Pan, T21 PC420)
+
+- T10/T20 (shared `driver/t20` sources): `tx-isp-csi.c`, `tx-isp-vic.c` and `apical-isp/tx-isp-load-parameters.c` are now owned copies under `driver/t20/sdk/source/` (first commit byte-identical .ko). Fixes on top:
+  - `load_tx_isp_parameters()`: the six error paths after the IQ-bin read no longer close the file a second time; a short `vfs_read()` is an error. Device proof (T20 .107): a bind-mounted IQ bin with a broken version string logs "The version of jxf23.bin doesn't match with driver!", streamer keeps running, snapshot 200, 0 oopses.
+  - `apical_fw_init()`: the previous firmware semaphore is freed on re-init (it leaked one allocation per core init).
+  - CSI: a failed clock init leaves no clocks (`clk_num` 0) instead of `clks == NULL` with `clk_num > 0` (oops at stream start); MIPI checks treat a NULL `vin.attr` as not MIPI.
+  - `TOP_IRQ_ENABLE` / `TOP_IRQ_MASK` read-modify-writes all under `slock`; the hard-IRQ "## VIC ERROR" print is rate limited.
+  - Image tuning state (16.3 KiB), IQ parameter manager, bin copy and firmware tables (8.9 + ~60 + ~30 KiB) from vmalloc instead of order-3/2/4/3 kmalloc blocks (CPU-only tables, never DMA).
+- T21: tuning state (0x40d0) and netlink reply buffer (0x10018, was an order-5 kmalloc per `tisp_init`) from vzalloc; statistics DMA buffers from `alloc_pages_exact` (contiguous, the 24 KiB AE buffer no longer holds 32 KiB).
+- Device A/B (runtime module swap, same sequence for the installed agg67a module and the branch module, 5 min stream each, then reboot): `/proc/modules` T10 325488 -> 315864, T20 327760 -> 318120 (.107 and .163), T21 650896 -> 646192 bytes; parameter lists identical (md5); ISP interrupt rate unchanged (T10 125/s, T20 60/s, T21 75/s); VmallocUsed +92..+132 kB while streaming (the moved tables), MemFree streaming +0.3..+1.7 MB (page-cache noise included); 0 oopses, 0 VIC errors; snapshots equal before/after.
+- Not done: T10/T20 `TX_ISP_TRACE=n` as release default (needs a decision, drops three debug parameters), `TX_ISP_FW_ANCHORS=y` (firmware data layout), longer fw-thread timeout when idle (the thread parks by default), parked-thread semaphore count (theoretical).
+
 ## 2026-11-06: T21 VIC error IRQ no longer stores to the NULL page (build + host tests only, branch claude/t21-opt; no device test yet)
 
 - `driver/t21/tx_isp_t21_recovered.c` `isp_vic_interrupt_service_routine`: on a VIC error status (`status & 0x178`) the lift logged (frame id, status) with the byte index scaled twice (`frama + 16 * n`, past the 4000-byte array after 250 errors) and into `vic_status_tmp`, which the lift had declared as a single word, so the store went to address `16 * n`: a NULL-page oops in hard IRQ on the first VIC error. Nothing reads either array; the stores and the 4000-byte `frama` are gone, the error count, the rate-limited "## VIC ERROR" warning and the restart/frame-done handling are unchanged. tx-isp-t21.ko: .bss 367312 -> 363312, .text 232344 -> 231636 (section-anchor offsets), module RAM 649389 -> 644681 bytes, file 431204 -> 427840. Exports, imports, .modinfo and parameters unchanged.
