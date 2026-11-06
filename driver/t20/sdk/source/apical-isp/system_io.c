@@ -26,7 +26,11 @@ uint8_t  system_isp_read_8(uint32_t addr)
 	return tx_isp_readb(apical_io_base, addr);
 }
 
+#ifdef TX_ISP_NO_TRACE
+#define isp_runtime_trace 0	/* TX_ISP_TRACE=n: traces compiled out */
+#else
 extern int isp_runtime_trace;
+#endif
 
 void system_isp_write_32(uint32_t addr, uint32_t data)
 {

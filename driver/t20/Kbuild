@@ -26,7 +26,6 @@ tx-isp-t20-objs := \
 	sdk/system-uart.o \
 	sdk/system-semaphore.o \
 	sdk/sensor-drv.o \
-	sdk/system-chardev.o \
 	tx_isp_t20_sinfo.o \
 	tx_isp_t20_math.o \
 	tx_isp_t20_firmware.o
@@ -37,6 +36,13 @@ ccflags-y += -DREGTRACE_KERNEL_TREE_BUILD
 # release builds: make ... TX_ISP_LOAD_STATS=y
 ifeq ($(TX_ISP_LOAD_STATS),y)
 ccflags-y += -DTX_ISP_LOAD_STATS
+endif
+
+# Bring-up traces (t20_trace, t20_runtime_trace, t20_trace_events: off at
+# runtime by default) stay compiled in.  TX_ISP_TRACE=n compiles them and the
+# three parameters out (the default build is unchanged): make ... TX_ISP_TRACE=n
+ifeq ($(TX_ISP_TRACE),n)
+ccflags-y += -DTX_ISP_NO_TRACE
 endif
 
 # Reproducible builds: __FILE__ in the SDK log macros is shortened to a
@@ -91,4 +97,20 @@ ifneq ($(TX_ISP_GC),n)
 ccflags-y += -ffunction-sections
 LDFLAGS_MODULE += --gc-sections --undefined=init_module --undefined=cleanup_module \
 	-T $(abspath $(src)/../tx_isp_merge.lds)
+# Units whose only unused data are the format strings of functions the GC
+# already drops (register dumps, I2C/sensor-reset helpers, log level table):
+# per-object data sections (CFLAGS_<basename>.o: kbuild keys per-file flags
+# by the base name, not the sdk/ path) let the GC drop those strings too.
+# Not module-wide: -fdata-sections disables -fsection-anchors and grows
+# .text/.rel.text elsewhere.  Same set as driver/t10/Kbuild.
+CFLAGS_tx-isp-vic.o += -fdata-sections
+CFLAGS_tx-isp-csi.o += -fdata-sections
+CFLAGS_system-isp-io.o += -fdata-sections
+CFLAGS_system-i2c.o += -fdata-sections
+CFLAGS_log.o += -fdata-sections
 endif
+
+# Not linked: sdk/system-chardev.o (Apical control-tool char device).
+# Nothing calls system_chardev_*() (the firmware only declares them) and
+# --gc-sections already dropped all of its code; only its two 4 KiB kfifos
+# (.bss) and the misc device stayed.  Same as driver/t10/Kbuild.

@@ -1,1 +1,1 @@
-#include "../../../external/ingenic-sdk/3.10.14/isp/t20/tx-isp-vic.c"
+#include "source/tx-isp-vic.c"

@@ -678,11 +678,17 @@ MODULE_PARM_DESC(isp_clk, "isp core clock");
 
 /* Temporary bring-up aid: identify the last completed FSM before a
  * recovered handler stalls the non-preemptible T20 kernel. */
+#ifdef TX_ISP_NO_TRACE
+#define t20_trace_events 0	/* TX_ISP_TRACE=n: traces compiled out */
+#else
 static int t20_trace_events;
+#endif
 /* OEM AWB progress counters, printed with the T20AWB cmos trace line */
 static unsigned int t20_awb_ev[20], t20_awb_irq4, t20_awb_switch[12];
+#ifndef TX_ISP_NO_TRACE
 module_param(t20_trace_events, int, 0644);
 MODULE_PARM_DESC(t20_trace_events, "trace T20 firmware event dispatch");
+#endif
 static unsigned int t20_fsm_irq_allow_mask = 0xff;
 module_param(t20_fsm_irq_allow_mask, uint, 0644);
 MODULE_PARM_DESC(t20_fsm_irq_allow_mask,
@@ -2768,7 +2774,15 @@ int32_t apical_fw_init(int32_t *arg1)
 {
 	/* Exact OEM immediates: firmware context is 0x2fd0 bytes and the
 	 * semaphore/context offsets are 0x0c/0x18 bytes, respectively. */
+	/* Not OEM: every core init (stream restart, day/night re-init) used to
+	 * leak the previous semaphore, the memset dropped its only pointer.
+	 * The fw thread is stopped here (isp_core_ops_init only re-inits in
+	 * STATE_STOP), so nothing waits on it; free it after the memset, so the
+	 * window with a stale pointer stays the vendor one (NULL). */
+	uintptr_t old_sem = *(uintptr_t *)((uintptr_t)arg1 + 0x0c);
 	memset(arg1, 0, 0x2fd0);
+	if (old_sem)
+		destroy_semaphore((uintptr_t)&old_sem);
 	init_semaphore((uintptr_t)arg1 + 0x0c);
 	apical_fw_interrupts_init(arg1);
 	((void **)arg1)[1] = 1;

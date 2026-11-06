@@ -37,6 +37,18 @@ data of a translation unit, so the recovered Apical firmware unit
 keeps the data layout `tests/t20_fw` verified (`nm` layout identical to a
 build without anchors). `TX_ISP_FW_ANCHORS=y` includes it.
 
+## Heap: large CPU-only tables from vmalloc (T10, T20, T21)
+
+Tables only the CPU reads (copied into the ISP by register writes or into
+an skb) come from vmalloc, so they no longer take power-of-two kmalloc
+blocks: T10/T20 image tuning state (16.3 KiB, was 32 KiB), IQ parameter
+manager, IQ bin copy and firmware tables (8.9 + ~60 + ~30 KiB, were
+16 + 64 + 32 KiB); T21 tuning state (0x40d0) and netlink reply buffer
+(0x10018, was an order-5 block per `tisp_init`). DMA targets stay
+physically contiguous; the T21 statistics buffers use `alloc_pages_exact`
+(the 24 KiB AE buffer no longer holds 32 KiB). Device A/B 2026-11-06:
+VmallocUsed +92..+132 kB while streaming, no change in ISP interrupt rate.
+
 ## Bring-up parameters (T23, T41)
 
 Parameters that only served the bring-up (experiment switches, diagnostic

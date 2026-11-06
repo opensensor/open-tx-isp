@@ -24,9 +24,12 @@ capture.
 
 The module deliberately does not rebuild all 740 generated functions:
 
-- 19 unmodified translation units come directly from the tracked Ingenic T20
+- 16 unmodified translation units come directly from the tracked Ingenic T20
   SDK;
-- eight repaired SDK-derived translation units and their two modified private
+- eleven repaired SDK-derived translation units (since 2026-11-06 also
+  `tx-isp-csi.c`, `tx-isp-vic.c` and `apical-isp/tx-isp-load-parameters.c`:
+  clock-init/NULL-attr guards, rate-limited VIC error print, single
+  `filp_close`, checked IQ-bin read, vmalloc tables) and their two modified private
   headers are versioned under `sdk/source/`, so the open T20 implementation is
   owned and reviewable in this repository rather than hidden in SDK submodule
   changes;

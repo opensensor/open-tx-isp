@@ -740,8 +740,6 @@ static unsigned char __attribute__((aligned(4))) vic_subdev_ops[20] = {
 static uintptr_t dump_vsd;
 static uintptr_t test_addr;
 static uintptr_t err_all;
-static unsigned char frama[4000];
-static uintptr_t vic_status_tmp;
 static uintptr_t async_vf;
 static int8_t vic_frame_id;
 static unsigned char __attribute__((aligned(4))) LC20[4] = {
@@ -7750,7 +7748,6 @@ int32_t isp_vic_interrupt_service_routine(void *arg1)
     void *v0_3;
     uint32_t status;
     uint32_t err_all_val;
-    uint32_t idx;
     uint32_t *ptr;
     uint32_t frame_id;
 
@@ -7765,12 +7762,14 @@ int32_t isp_vic_interrupt_service_routine(void *arg1)
         *(uint32_t *)((char *)v0_3 + 0x108) = status;
 
         if ((status & 0x178) != 0) {
+            /* Stock logs (frame id, status) of the first 1000 errors into
+             * two write-only bss arrays.  The lift scaled the byte index
+             * twice (frama + 16 * n: past the 4000-byte array after 250
+             * errors) and lost the second array (vic_status_tmp is a word,
+             * so the store went to address 16 * n: NULL-page oops in hard
+             * IRQ on the first VIC error).  Nothing reads either array;
+             * only the error count is kept. */
             err_all_val = err_all;
-            if ((int32_t)err_all_val < 0x3e8) {
-                idx = err_all_val << 2;
-                ((void **)frama)[idx] = *(uint32_t *)((char *)s0 + 0x15c);
-                ((void **)vic_status_tmp)[idx] = status;
-            }
             err_all = err_all_val + 1;
             /* Review2 L2: hard IRQ; isp_printf(2) also dumps the stack. */
             printk_ratelimited(KERN_WARNING "## VIC ERROR status = 0x%08x\n", status);
@@ -10096,13 +10095,14 @@ void *isp_core_tuning_init(void *arg1)
     void *ptr;
     void *lock_ptr;
 
-	ptr = private_kmalloc(0x40d0, 208);
+	/* vzalloc: the 16.2 KiB tuning state is CPU-only; kmalloc made it an
+	 * order-3 block (32 KiB). */
+	ptr = vzalloc(0x40d0);
     if (ptr == NULL) {
         isp_printf(2, "Failed to allocate isp image tuning device\n", 0);
         return NULL;
     }
 
-    memset(ptr, 0, 0x40d0);
     *(void **)ptr = arg1;
     lock_ptr = (void *)((char *)ptr + 0x40b8);
     private_spin_lock_init((spinlock_t *)lock_ptr);
@@ -10118,7 +10118,7 @@ int isp_core_tuning_deinit(int32_t arg1)
 {
 	if (arg1 == 0)
 		return 0;
-	private_kfree(arg1);
+	vfree((void *)(uintptr_t)arg1);
 	return 0;
 }
 
@@ -16110,7 +16110,9 @@ int32_t tisp_param_operate_process(void *payload, int payload_len)
 /* WHOLE_DRIVER_CANDIDATE fn_000000000000df00 origin=model_output original=tisp_param_operate_init */
 int32_t tisp_param_operate_init(void)
 {
-    opmsg = (uintptr_t)private_kmalloc(0x10018, 208);
+    /* vzalloc: the 64 KiB + 24 B netlink reply buffer is CPU-only (copied
+     * into the skb); kmalloc made it an order-5 block (128 KiB). */
+    opmsg = (uintptr_t)vzalloc(0x10018);
 
     if (opmsg == NULL) {
         ((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t, uintptr_t))isp_printf)((uintptr_t)(2), (uintptr_t)("%s,%d: private_kmalloc error\n"), (uintptr_t)("tisp_param_operate_init"), (uintptr_t)(270));
@@ -16131,7 +16133,7 @@ int32_t tisp_param_operate_deinit(void)
 	opmsg_1 = (uint32_t)opmsg;
 
 	if (opmsg_1 != 0) {
-		private_kfree((void *)opmsg_1);
+		vfree((void *)opmsg_1);
 		opmsg = 0;
 	}
 
@@ -16661,9 +16663,12 @@ static const size_t t21_tisp_stats_size[5] = {
 
 static void *t21_tisp_stats_buffer(unsigned int index)
 {
+	/* alloc_pages_exact: physically contiguous like kmalloc, but the
+	 * 24 KiB AE buffer no longer occupies a whole order-3 block (32 KiB). */
 	if (!t21_tisp_stats[index])
 		t21_tisp_stats[index] =
-			private_kmalloc(t21_tisp_stats_size[index], GFP_KERNEL);
+			alloc_pages_exact(t21_tisp_stats_size[index],
+					  GFP_KERNEL | __GFP_ZERO);
 	return t21_tisp_stats[index];
 }
 
@@ -16679,7 +16684,8 @@ static void t21_tisp_stats_free(void)
 		return;
 	}
 	for (i = 0; i < ARRAY_SIZE(t21_tisp_stats); i++) {
-		private_kfree(t21_tisp_stats[i]);
+		if (t21_tisp_stats[i])
+			free_pages_exact(t21_tisp_stats[i], t21_tisp_stats_size[i]);
 		t21_tisp_stats[i] = NULL;
 	}
 }

@@ -1,5 +1,6 @@
 #include <linux/videodev2.h>
 #include <linux/delay.h>
+#include <linux/vmalloc.h>
 #include "apical_command_api.h"
 #include <apical-isp/apical_isp_config.h>
 #include <apical-isp/apical_math.h>
@@ -4915,12 +4916,16 @@ struct video_device *tx_isp_image_tuning_device_register(struct v4l2_subdev *par
 	}
 
 	v4l2_dev = parent->v4l2_dev;
-	tuning = (image_tuning_vdrv_t *)kzalloc(sizeof(*tuning), GFP_KERNEL);
+	/*
+	 * vzalloc: the 16.3 KiB driver state (mostly the v4l2 control
+	 * pointers) is CPU-only; kzalloc rounded it up to an order-3 block
+	 * (32 KiB).
+	 */
+	tuning = (image_tuning_vdrv_t *)vzalloc(sizeof(*tuning));
 	if(!tuning){
 		v4l2_err(v4l2_dev,"Failed to allocate isp image tuning device\n");
 		return NULL;
 	}
-	memset(tuning, 0, sizeof(*tuning));
 
 	vfd = video_device_alloc();
 	if (!vfd) {
@@ -5050,7 +5055,7 @@ failed_register:
 handler_error:
 	video_device_release(vfd);
 failed_video_alloc:
-	kfree(tuning);
+	vfree(tuning);
 	return NULL;
 }
 void tx_isp_image_tuning_device_release(struct video_device *vfd)
@@ -5068,5 +5073,5 @@ void tx_isp_image_tuning_device_release(struct video_device *vfd)
 	 */
 	video_unregister_device(vfd);
 	v4l2_ctrl_handler_free(&tuning->ctrls.handler);
-	kfree(tuning);
+	vfree(tuning);
 }
