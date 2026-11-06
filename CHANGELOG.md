@@ -16,6 +16,12 @@ marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned 
 - Strength 255 gives the bin curve bit-exact, so below the first node with a lower strength nothing changes: on the sc830ai bin the day strengths are 255 up to EV 880000 and 160 at 1000000 (EV = IT x total gain, Q10 >> 10). New module parameters `t40_gamma_ev` (default 1; 0 = fixed bin curve as before), read-only `t40_gamma_ev_str`, `t40_gamma_ev_writes`.
 - WDR (TOP bit 3 clear): the OEM `tisp_wdr_main_long_ev_update` store (`wdr_ev_changed`, `ev_wdr_l`) read by `tisp_wdr_main_process`; WDR sensors only.
 - Proof: Unicorn oracle `tools/ko_emu/diff_gamma_ev.py` / `tests/t40_gamma_ev_host.sh` (new in `make check` and `check-oracles`): 3000 random calls (interp with skip/force, transform, full ev_update with cadence and armed write), 0 differences against the vendor image build and the factory Eufy build; 13/13 mutations detected. Module symbol set unchanged (functions inlined), `.text` +1240 B. Not run on a camera yet (EV above 880000 = very dark scene).
+## 2026-11-06: T10/T20 trace parameters compiled out by default, T21 no stack dump on warnings (device-tested on T10 SP1, T20 Wyze v2 + Pan, T21 PC420)
+
+- T10/T20: `TX_ISP_TRACE` defaults to `n`; `t20_trace`, `t20_runtime_trace` / `t10_runtime_trace` and `t20_trace_events` are built only with `TX_ISP_TRACE=y`. Nothing in OpenIMP, the streamer, the tools or `/etc/modules.d` sets them (the 3.10 kernel refuses a module load with an unknown parameter).
+- T21 (beyond vendor, see docs/BEYOND_VENDOR.md): `isp_printf` no longer adds a `dump_stack()` to level >= 2 messages; new parameter `warn_stack=1` restores the vendor behaviour.
+- Device A/B (runtime module swap, installed agg67a module vs this branch, 5 min stream, then reboot): `/proc/modules` T10 325488 -> 305736, T20 327760 -> 307960 (.107 and .163), T21 650896 -> 646240 bytes. Parameter diff (modinfo): T10/T20 lose exactly the three trace parameters, T21 gains `warn_stack`. ISP interrupt rate unchanged (T10 125/s, T20 60/s, T21 76/s), 0 oopses, 0 VIC errors, snapshots normal.
+
 ## 2026-11-06: T10/T20/T21 review fixes and heap trims (branch claude/t10-t20-t21-impl; device-tested on T10 SP1, T20 Wyze v2 + Pan, T21 PC420)
 
 - T10/T20 (shared `driver/t20` sources): `tx-isp-csi.c`, `tx-isp-vic.c` and `apical-isp/tx-isp-load-parameters.c` are now owned copies under `driver/t20/sdk/source/` (first commit byte-identical .ko). Fixes on top:
