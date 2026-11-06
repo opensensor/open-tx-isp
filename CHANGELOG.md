@@ -4,6 +4,12 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-06: T10 module RAM -9.7 KiB, optional trace compile-out (build + host tests only, branch claude/t10-opt; no device test yet)
+
+- `driver/t10/Kbuild`: `sdk/system-chardev.o` is no longer linked. The Apical control-tool char device is off in the firmware config (`ISP_HAS_CONNECTION_CHARDEV 0`), nothing calls `system_chardev_*()`; only its two 4 KiB kfifos and the never-registered misc device (whose fops kept 484 bytes of code alive) were left. Per-object data sections for five units (vic, csi, system-isp-io, system-i2c, log) let `--gc-sections` drop the format strings of functions it already removed. tx-isp-t10.ko: .text 209336 -> 208848, .rodata(.str) 31116 -> 30100, .data 46064 -> 45904, .bss 37136 -> 28856 (module RAM 323652 -> 313708 bytes), file 399752 -> 397452. Exports, imports used by the sensor modules and .modinfo unchanged; imports lose only the kfifo/misc helpers.
+- New build knob `TX_ISP_TRACE=n` (T10 Kbuild; default unchanged): compiles the bring-up traces and their parameters `t20_trace`, `t10_runtime_trace`, `t20_trace_events` out (module RAM 303636 bytes, file 381692). Default builds are section-identical except the `__LINE__` numbers in 26 error printks.
+- Review report with the measured per-frame register traffic, probe allocations and open defects: `audit/t10opt/REPORT.md` (session scratch), issue "[T10] Driver/module review".
+
 ## 2026-11-06: T40 AE rung trade: black frame and gain-ladder bound (Opus review C2, C3; host test, Eufy proof pending)
 
 - C2: with a black frame (`luma_ae` 0) the rung-up overshoot test divided by zero, `t40_ae_log2_ratio` returned 0 and every rung up was refused (integration time stayed on its rung in total darkness). The denominator is now at least 1 (`max_t(luma_ae, 1)`).

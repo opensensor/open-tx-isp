@@ -120,7 +120,11 @@ static void inline cleanup_buffer_fifo(struct list_head *fifo)
  */
 static system_interrupt_handler_t isr_func[APICAL_IRQ_COUNT] = {NULL};
 static void* isr_param[APICAL_IRQ_COUNT] = {NULL};
+#ifdef TX_ISP_NO_TRACE
+#define isp_runtime_trace 0	/* TX_ISP_TRACE=n: traces compiled out */
+#else
 extern int isp_runtime_trace;
+#endif
 static unsigned int t20_irq_trace_count;
 static unsigned int t20_irq_context_guard_count;
 static unsigned int t20_irq_allow_mask = 0xffff;

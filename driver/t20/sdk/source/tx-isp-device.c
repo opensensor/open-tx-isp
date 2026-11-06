@@ -20,7 +20,13 @@
 
 /* Bring-up tracing of the pipeline, subdev notify and video-in paths (the
  * notify trace runs for every frame-channel event, ~5 lines a second while
- * streaming). The vendor module prints none of it: off unless t20_trace=1. */
+ * streaming). The vendor module prints none of it: off unless t20_trace=1.
+ * TX_ISP_TRACE=n (Kbuild, TX_ISP_NO_TRACE) compiles all of these traces and
+ * their t20_trace / t1x_runtime_trace / t20_trace_events parameters out. */
+#ifdef TX_ISP_NO_TRACE
+#define t20_trace 0
+#define isp_runtime_trace 0
+#else
 int t20_trace;
 /* Hot-path progress prints (T20IRQ/T20I2C/T20TOPIRQ/T20IRQGUARD/T20FW write):
  * off by default so the dmesg ring keeps the real warnings/oopses. Errors and
@@ -37,6 +43,7 @@ MODULE_PARM_DESC(t20_runtime_trace, "1: log T20 IRQ/I2C/top-IRQ progress traces"
 #endif
 module_param(t20_trace, int, 0644);
 MODULE_PARM_DESC(t20_trace, "1: log the T20TRACE bring-up trace lines");
+#endif /* TX_ISP_NO_TRACE */
 #define T20_TRACE(fmt, ...) do {                                        \
 		if (unlikely(t20_trace))                                \
 			printk(KERN_INFO "T20TRACE " fmt, ##__VA_ARGS__); \

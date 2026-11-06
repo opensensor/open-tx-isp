@@ -678,11 +678,17 @@ MODULE_PARM_DESC(isp_clk, "isp core clock");
 
 /* Temporary bring-up aid: identify the last completed FSM before a
  * recovered handler stalls the non-preemptible T20 kernel. */
+#ifdef TX_ISP_NO_TRACE
+#define t20_trace_events 0	/* TX_ISP_TRACE=n: traces compiled out */
+#else
 static int t20_trace_events;
+#endif
 /* OEM AWB progress counters, printed with the T20AWB cmos trace line */
 static unsigned int t20_awb_ev[20], t20_awb_irq4, t20_awb_switch[12];
+#ifndef TX_ISP_NO_TRACE
 module_param(t20_trace_events, int, 0644);
 MODULE_PARM_DESC(t20_trace_events, "trace T20 firmware event dispatch");
+#endif
 static unsigned int t20_fsm_irq_allow_mask = 0xff;
 module_param(t20_fsm_irq_allow_mask, uint, 0644);
 MODULE_PARM_DESC(t20_fsm_irq_allow_mask,

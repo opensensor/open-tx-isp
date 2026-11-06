@@ -2,7 +2,11 @@
 #include "tx-isp-interrupt.h"
 
 static unsigned int refcnt = 0;
+#ifdef TX_ISP_NO_TRACE
+#define isp_runtime_trace 0	/* TX_ISP_TRACE=n: traces compiled out */
+#else
 extern int isp_runtime_trace;
+#endif
 static unsigned int t20_top_irq_trace_count;
 static void tx_isp_enable_irq(struct tx_isp_irq_device *irq_dev, int enable)
 {

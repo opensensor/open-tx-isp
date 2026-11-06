@@ -10,7 +10,11 @@
 
 #include "tx-isp-video-in.h"
 
+#ifdef TX_ISP_NO_TRACE
+#define t20_trace 0	/* TX_ISP_TRACE=n: traces compiled out */
+#else
 extern int t20_trace;   /* tx-isp-device.c */
+#endif
 #define T20_TRACE(fmt, ...) do {                                        \
 		if (unlikely(t20_trace))                                \
 			printk(KERN_INFO "T20TRACE " fmt, ##__VA_ARGS__); \
