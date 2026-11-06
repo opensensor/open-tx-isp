@@ -619,6 +619,20 @@ Recommended line for colour work on this board:
 - AutoZoom (CID 0x08000077): per-output source window in the MSCA, applied live. The window must lie inside the sensor and be at least as large as the output (no upscale in the MSCA); invalid requests return `-EINVAL`. Second sensor refused. Parameters/counters: `t40_az_live_max_w/h`, `t40_az_{live,deferred,stored,failed}`. Device-tested on the same board (outputs up to 2560x1440 zoomed, 4K only full window); ch1/ch2 zoom not device-proven.
 - Open: the stop path (`Tzn_Msca_Work_en`) mask is not OEM-exact (harmless in tests); `tisp_gib_ae_write_dgain` still returns -1 per frame (GIB AE dgain not applied).
 
+## AWB thresholds follow the gain and the exposure value like the newer OEM build (2026-11-06, #84)
+
+- The vendor modules compared with on the Eufy (light-box module e48557c2, Eufy firmware H20240605a e64d88e9) are newer than the
+  build the AWB translation came from. Two differences are now followed: `tisp_awb_set_lum_th_freq` / `tisp_awb_tgain_update` take
+  the three luma thresholds of the AWB statistics (register 0x18038) from the exposure value over the nine zones `ctx[21]` when the
+  bin's mode word `ctx[11] + 38` is 1 (`t40_ag_lum_by_ev`), and `tisp_awb_main_ev_update` tail-calls `set_lum_th_freq(ctx, 0)`.
+- The OEM tgain fan-out (`tisp_main_long_tgain_update`, last step) calls `tisp_awb_tgain_update(0, -, tgain)` unless TOP bits
+  0x44 are both bypassed; the open fan-out (`regtrace_gc4653_tuning_again_update`) never did, so the regional and luma thresholds
+  stayed at knot 0 of the bin at every gain. It now hands the 16.16 log2 total gain on every change (`t40_awb_tgain_last`).
+- Effect with the Eufy sc830ai bin (mode word 0): day (total gain < 64x) only the low luma threshold moves (knot 0: 22, knot 1: 20);
+  the regional thresholds move above 64x total gain (knot 7 = 128x: e.g. 90 -> 40, 350 -> 400, 440 -> 480), i.e. at night.
+- This is not the cause of the +5-6 % B/G of the 2026-11-06 light-box comparison (see CHANGELOG): that one follows the exposure
+  point. Proof of the code: `tests/t40_vawb_oracle.sh` (Unicorn, both modules, 0 mismatches, 7 mutations detected).
+
 ## AWB statistics and AE limits (2026-10-19)
 
 - Tuning control `0x8000011` (AWB statistics) fills a kernel-allocated block
