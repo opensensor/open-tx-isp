@@ -4,6 +4,11 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-06: T21 VIC error IRQ no longer stores to the NULL page (build + host tests only, branch claude/t21-opt; no device test yet)
+
+- `driver/t21/tx_isp_t21_recovered.c` `isp_vic_interrupt_service_routine`: on a VIC error status (`status & 0x178`) the lift logged (frame id, status) with the byte index scaled twice (`frama + 16 * n`, past the 4000-byte array after 250 errors) and into `vic_status_tmp`, which the lift had declared as a single word, so the store went to address `16 * n`: a NULL-page oops in hard IRQ on the first VIC error. Nothing reads either array; the stores and the 4000-byte `frama` are gone, the error count, the rate-limited "## VIC ERROR" warning and the restart/frame-done handling are unchanged. tx-isp-t21.ko: .bss 367312 -> 363312, .text 232344 -> 231636 (section-anchor offsets), module RAM 649389 -> 644681 bytes, file 431204 -> 427840. Exports, imports, .modinfo and parameters unchanged.
+- Review report (sizes, allocations, per-frame paths, MEDIUM list, device-test steps): issue "[T21] Driver/module review: performance, memory, load, binary size".
+
 ## 2026-11-06: T20 module RAM -9.7 KiB, optional trace compile-out (build + host tests only, branch claude/t20-opt; no device test yet)
 
 - `driver/t20/Kbuild` gets the same three changes as the T10 Kbuild below (T10 and T20 build the same `driver/t20` sources): `sdk/system-chardev.o` not linked (nothing calls `system_chardev_*()`), per-object data sections for vic, csi, system-isp-io, system-i2c and log, and the `TX_ISP_TRACE=n` knob (drops `t20_trace`, `t20_runtime_trace`, `t20_trace_events`). tx-isp-t20.ko: .text 211348 -> 210872, .rodata(.str) 31376 -> 30316, .data 46064 -> 45904, .bss 37136 -> 28856 (module RAM 325924 -> 315948 bytes), file 402568 -> 400252; with `TX_ISP_TRACE=n` 305840 bytes RAM, file 384440. Exports and .modinfo unchanged; imports lose only the kfifo/misc helpers.

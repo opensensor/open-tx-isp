@@ -740,8 +740,6 @@ static unsigned char __attribute__((aligned(4))) vic_subdev_ops[20] = {
 static uintptr_t dump_vsd;
 static uintptr_t test_addr;
 static uintptr_t err_all;
-static unsigned char frama[4000];
-static uintptr_t vic_status_tmp;
 static uintptr_t async_vf;
 static int8_t vic_frame_id;
 static unsigned char __attribute__((aligned(4))) LC20[4] = {
@@ -7750,7 +7748,6 @@ int32_t isp_vic_interrupt_service_routine(void *arg1)
     void *v0_3;
     uint32_t status;
     uint32_t err_all_val;
-    uint32_t idx;
     uint32_t *ptr;
     uint32_t frame_id;
 
@@ -7765,12 +7762,14 @@ int32_t isp_vic_interrupt_service_routine(void *arg1)
         *(uint32_t *)((char *)v0_3 + 0x108) = status;
 
         if ((status & 0x178) != 0) {
+            /* Stock logs (frame id, status) of the first 1000 errors into
+             * two write-only bss arrays.  The lift scaled the byte index
+             * twice (frama + 16 * n: past the 4000-byte array after 250
+             * errors) and lost the second array (vic_status_tmp is a word,
+             * so the store went to address 16 * n: NULL-page oops in hard
+             * IRQ on the first VIC error).  Nothing reads either array;
+             * only the error count is kept. */
             err_all_val = err_all;
-            if ((int32_t)err_all_val < 0x3e8) {
-                idx = err_all_val << 2;
-                ((void **)frama)[idx] = *(uint32_t *)((char *)s0 + 0x15c);
-                ((void **)vic_status_tmp)[idx] = status;
-            }
             err_all = err_all_val + 1;
             /* Review2 L2: hard IRQ; isp_printf(2) also dumps the stack. */
             printk_ratelimited(KERN_WARNING "## VIC ERROR status = 0x%08x\n", status);
