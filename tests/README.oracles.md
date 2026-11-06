@@ -77,3 +77,12 @@ Class C (2026-11-04, #204 part 2): `tisp_ae_roi_point` and `tisp_ae_sepc_area` (
 `tisp_ae_roi_point` has no early return on a bad or too large window (it prints and then writes the registers anyway; `roi_point_fac` compares only the valid-window
 path with it) and its `tisp_ae_sepc_area` is another body (other clamp/store order, extra `printk`), so that one is not compared with it. Skipped calls: a zero frame size
 (OEM division by zero in `fix_point_div_32`).
+
+Setters (2026-11-06, #204): `tisp_ae_main_min_max_set` / `tisp_ae_sec_min_max_set` (vendor image `0x29d64` / `0x2af18`, `min_max`) and `tisp_ae_set_exprinfo_attr`
+(`0x2bde4`, `set_exprinfo`) moved from `tx_isp_t40_recovered.c` into the header. Reachable from user space: min/max through `/dev/tisp` ioctl `0x20007406`
+(`tisp_set_ae_minmax`, word 3 != 0 = sec), exprinfo through `IMP_ISP_Tuning_SetAeExprInfo` with vinum 1 (vinum 0 is served by the driver's own frame-AE hook).
+The OEM min/max takes the 164-byte block by value (a0..a3 + stack), the C a pointer to the same heap block. `tisp_s_ae_exprinfo_attr` now runs the real
+`set_exprinfo_attr` on both sides (no hook). `isp_printf` is logged with all `%d` arguments; the OEM prints A[26] (not A[27]) in "short it_manual", the C does the same.
+The two Eufy builds have the same instructions for these three (only the `.bss` offset of `pst{Main,Sec}AeOri` and the string labels differ), so they are also
+compared with the factory module (`min_max_fac`, `set_exprinfo_fac`). Skipped calls: times in us (A[0] != 0) with a zero line time (OEM `divu` by zero).
+22 more mutations (113 in total; the roi_point `x1 <= x0` mutation now runs 400 calls, the new buffers changed the random stream).

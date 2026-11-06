@@ -6,6 +6,8 @@
  *   A (cont.): tisp_ae_algo_init
  *   B: tisp_ae_g_scene_luma, s_comp, api_set_exp_list, tisp_s_ae_explist, tisp_s_ae_exprinfo_attr,
  *      tisp_s_ae_scence_attr, tisp_g_ae_scence_attr, tisp_g_ae_exprinfo_attr
+ *   C: tisp_ae_roi_point, tisp_ae_sepc_area
+ *   setters (#204): tisp_ae_main_min_max_set, tisp_ae_sec_min_max_set, tisp_ae_set_exprinfo_attr
  * Context: pstMainAeOri / pstSecAeOri (0x164 bytes of pointers to the live AE objects, filled by tisp_ae_params_transmit),
  * the two stM/SAeOuter pointers, the per-channel ae_cache block and the tisp_tattr copy.
  *
@@ -16,9 +18,10 @@
  *  - Bounds: the OEM indexes ae_cache / tparamsN / ta_custom_en with the raw channel; the callers pass 0 or 1.
  *
  * Includer provides: stdint, string.h, EINVAL, the storage objects named below, T40_AE_OK, T40_AE_LOCK/T40_AE_UNLOCK,
+ * T40_AE_CTRLS_LOCK/T40_AE_CTRLS_UNLOCK(flags) (the tisp_ae_{main,sec}_ctrls lock, #165),
  * T40_AE_CACHE(ch) (the ae_cache block of a channel, 0 if unusable), and the callees tisp_ae_param_now_get,
- * tisp_ae_set_hardware_param, tisp_ae_par_calc, tisp_ae_set_exprinfo_attr, fix_point_div_32, fix_point_mult2_32, tisp_log2_fixed_to_fixed;
- * tisp_ae_{main,sec}_ctrls_storage, tisp_par_info, tisp_tattr for the exposure info calls.
+ * tisp_ae_set_hardware_param, tisp_ae_par_calc, fix_point_div_32, fix_point_mult2_32, tisp_log2_fixed_to_fixed, system_reg_write, isp_printf;
+ * tisp_ae_{main,sec}_ctrls_storage, tisp_par_info, tparamsN, tisp_tattr for the exposure info and min/max calls.
  * Offsets verified against the vendor-image module; tisp_ae_sensor_trig / tisp_ae_ev_start_set are checked against the
  * factory Eufy module (the vendor image moved the ae_cache fields; this driver uses the factory layout).
  */
@@ -270,6 +273,152 @@ int32_t tisp_s_ae_explist(uint32_t a0, uintptr_t a1)
     if (!T40_AE_OK(l))
         return -EINVAL;
     return tisp_ae_api_set_exp_list(a0, l[0], a1 + 4);
+}
+
+/* OEM tisp_ae_main_min_max_set (vendor image 0x29d64) / tisp_ae_sec_min_max_set (0x2af18): the AE min/max block of the tuning
+ * node (tisp_set_ae_minmax, /dev/tisp 0x20007406).  The OEM takes the 164-byte block BY VALUE (words 0..3 in a0..a3, word k >= 4
+ * at callee sp+144+4k); here the caller passes the 41 words as an array.  It prints words 5..8, 20..23, 28..35 (level 0), stores
+ * each to tisp_ae_{main,sec}_ctrls word k and clears the AE re-sync byte *(u8 *)pst{Main,Sec}AeOri[+0xac].  Returns 0.
+ * Differences: the 16 stores and the clear are one set under T40_AE_CTRLS_LOCK (#165, the OEM has no lock), the re-sync
+ * pointer is tested (T40_AE_OK; the sec context of a single-sensor setup has none).
+ * The factory Eufy module has the same instructions (only the .bss offset of pst{Main,Sec}AeOri differs). */
+static int t40_ae_min_max_set(uint32_t *c, uint8_t *ori, const uint32_t *w, int sec)
+{
+    static const uint8_t idx[] = { 5, 6, 7, 8, 20, 21, 22, 23, 28, 29, 30, 31, 32, 33, 34, 35 };
+    uint8_t *flag;
+    unsigned int i;
+    unsigned long lflags;
+
+    isp_printf(0, sec ? "second: %d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n"
+                      : "Main:%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n",
+               w[5], w[6], w[7], w[8], w[20], w[21], w[22], w[23], w[28], w[29], w[30], w[31],
+               w[32], w[33], w[34], w[35]);
+    T40_AE_CTRLS_LOCK(lflags);
+    for (i = 0; i < sizeof(idx); i++)
+        c[idx[i]] = w[idx[i]];
+    flag = t40_ae_p(ori, 0xac);
+    if (T40_AE_OK(flag))
+        *flag = 0;
+    T40_AE_CTRLS_UNLOCK(lflags);
+    return 0;
+}
+
+int tisp_ae_main_min_max_set(const uint32_t *w)
+{
+    return t40_ae_min_max_set(tisp_ae_main_ctrls_storage, pstMainAeOri_storage, w, 0);
+}
+
+int tisp_ae_sec_min_max_set(const uint32_t *w)
+{
+    return t40_ae_min_max_set(tisp_ae_sec_ctrls_storage, pstSecAeOri_storage, w, 1);
+}
+
+/* OEM tisp_ae_set_exprinfo_attr (vendor image 0x2bde4; factory Eufy module 0x2afd0, same instructions, only the .bss offset of
+ * pst{Main,Sec}AeOri differs): the 220-byte IMPISPAEExprInfo (A[n] = word n) into tisp_ae_{main,sec}_ctrls (word index = OEM
+ * byte offset / 4).  A[0] != 0: times are in us and become lines: v / (((par+44 & 0xffff) * 1000000) / ((par+70 * par+44) >> 16)),
+ * all from tisp_par_info[ch] (stride 152).  Long frame: A[1] ae_manual (it A[6], ag A[7], sensor dg A[8], isp dg A[9]), else the
+ * single flags A[2] it, A[3] ag, A[5] isp dg, A[4] sensor dg; short frame the same from A[26] / A[27], A[28], A[30], A[29].  The caps
+ * and minima take the user value when their mode word is 1, else the sensor/bin defaults.  Each manual value is printed (level 0,
+ * raw user value).  Last the AE re-sync byte *(u8 *)pst{Main,Sec}AeOri[+0xac] is cleared.
+ * Differences: ch > 1 and a NULL block return -1 (the OEM uses any ch != 0 as sec and indexes tparamsN/tisp_par_info with it);
+ * a zero line time leaves the value unconverted (the OEM divides by zero); a missing bin (tparamsN[ch]) keeps word 8; the OEM
+ * returns a stale pointer, this returns 0; the re-sync pointer is tested (T40_AE_OK). */
+int32_t tisp_ae_set_exprinfo_attr(uint32_t a0, uintptr_t a1)
+{
+    const uint32_t *A = (const uint32_t *)a1;
+    uint32_t *c = a0 ? tisp_ae_sec_ctrls_storage : tisp_ae_main_ctrls_storage;
+    uint8_t *ori = a0 ? pstSecAeOri_storage : pstMainAeOri_storage;
+    const uint8_t *pi, *tp;
+    uint32_t p44, den, div;
+    uint8_t *flag;
+
+    if (a0 > 1 || !A)
+        return -1;
+    pi = (const uint8_t *)tisp_par_info + a0 * 152U;
+    tp = (const uint8_t *)(uintptr_t)tparamsN[a0];
+    p44 = t40_ae_w(pi, 44);
+    den = (t40_ae_h(pi, 70) * p44) >> 16;
+    div = den ? ((p44 & 0xffffU) * 1000000U) / den : 0;
+#define T40_EXPR_US(v) ((A[0] && div) ? (uint32_t)(v) / div : (uint32_t)(v))
+    c[0] = A[1];
+    if (A[1] == 1) {
+        c[3] = T40_EXPR_US(A[6]);
+        c[1] = A[7];
+        c[4] = A[9];
+        c[2] = A[8];
+        isp_printf(0, "ae_manual is %d:it is %d,ag is %d,sensor dgain is %d,isp dgain is %d\n", A[1], A[6], A[7], A[8], A[9]);
+    } else {
+        c[13] = A[2];
+        if (A[2] == 1) {
+            c[3] = T40_EXPR_US(A[6]);
+            isp_printf(0, "it_manual is %d:it is %d\n", A[2], A[6]);
+        }
+        c[14] = A[3];
+        if (A[3] == 1) {
+            c[1] = A[7];
+            isp_printf(0, "ag_manual is %d:ag is %d\n", A[3], A[7]);
+        }
+        c[15] = A[5];
+        if (A[5] == 1) {
+            c[4] = A[9];
+            isp_printf(0, "dg_manual is %d:isp dg is %d\n", A[5], A[9]);
+        }
+        c[36] = A[4];
+        if (A[4] == 1) {
+            c[2] = A[8];
+            isp_printf(0, "sdg_manual is %d:sensor dg is %d\n", A[4], A[8]);
+        }
+    }
+    c[24] = A[26];
+    if (A[26] == 1) {
+        c[19] = T40_EXPR_US(A[31]);
+        c[18] = A[32];
+        c[27] = A[34];
+        c[25] = A[33];
+        isp_printf(0, "short ae_manual is %d:it is %d,ag is %d,sensor dgain is %d,isp dgain is %d\n", A[26], A[31], A[32], A[33], A[34]);
+    } else {
+        c[16] = A[27];
+        if (A[27] == 1) {
+            c[19] = T40_EXPR_US(A[31]);
+            isp_printf(0, "short it_manual is %d:it is %d\n", A[26], A[31]);   /* OEM prints A[26] (lw a2,104(s0) at 0x2c2ac) */
+        }
+        c[17] = A[28];
+        if (A[28] == 1) {
+            c[18] = A[32];
+            isp_printf(0, "short ag_manual is %d:ag is %d\n", A[28], A[32]);
+        }
+        c[26] = A[30];
+        if (A[30] == 1) {
+            c[27] = A[34];
+            isp_printf(0, "short dg_manual is %d:isp dg is %d\n", A[30], A[34]);
+        }
+        c[37] = A[29];
+        if (A[29] == 1) {
+            c[25] = A[33];
+            isp_printf(0, " short sdg_manual is %d:sensor dg is %d\n", A[29], A[33]);
+        }
+    }
+    c[5] = (A[15] == 1) ? A[23] : t40_ae_w(pi, 28);
+    c[6] = (A[16] == 1) ? A[24] : t40_ae_w(pi, 32);
+    c[7] = (A[14] == 1) ? T40_EXPR_US(A[22]) : t40_ae_h(pi, 72);
+    c[8] = (A[17] == 1) ? A[25] : (tp ? t40_ae_w(tp, 308) : c[8]);
+    c[20] = (A[40] == 1) ? A[48] : t40_ae_w(pi, 92);
+    c[21] = (A[39] == 1) ? T40_EXPR_US(A[47]) : t40_ae_h(pi, 84);
+    c[22] = (A[41] == 1) ? A[49] : t40_ae_w(pi, 32);
+    c[23] = (A[42] == 1) ? A[50] : t40_ae_w(pi, 32);
+    c[28] = (A[11] == 1) ? A[19] : 1024;
+    c[29] = (A[12] == 1) ? A[20] : 1024;
+    c[30] = (A[10] == 1) ? T40_EXPR_US(A[18]) : t40_ae_h(pi, 56);
+    c[31] = (A[13] == 1) ? A[21] : 1024;
+    c[32] = (A[36] == 1) ? A[44] : 1024;
+    c[33] = (A[35] == 1) ? T40_EXPR_US(A[43]) : t40_ae_h(pi, 82);
+    c[34] = (A[37] == 1) ? A[45] : 1024;
+    c[35] = (A[38] == 1) ? A[46] : 1024;
+#undef T40_EXPR_US
+    flag = t40_ae_p(ori, 0xac);
+    if (T40_AE_OK(flag))
+        *flag = 0;
+    return 0;
 }
 
 /* OEM tisp_s_ae_exprinfo_attr: the app's exposure info block into the tuning attribute copy (tisp_tattr + ch * 220), then

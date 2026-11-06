@@ -1,6 +1,7 @@
 #!/bin/bash
 # T40 AE leaf / parameter functions (driver/t40/tx_isp_t40_ae_leaf.h: g_luma, g_comp, get_state, sensor_trig, ev_start_set, algo_deinit_internal,
-# get/set_hist_bin, get_y_zone, g_scene_luma, s_comp, api_set_exp_list, s_explist, s_exprinfo_attr, s/g_scence_attr) built for mipsel and run against
+# get/set_hist_bin, get_y_zone, g_scene_luma, s_comp, api_set_exp_list, s_explist, s_exprinfo_attr, s/g_scence_attr; #204: main/sec_min_max_set,
+# set_exprinfo_attr) built for mipsel and run against
 # the OEM instructions of the vendor tx-isp-t40.ko in Unicorn (tools/ko_emu/diff_ae_leaf.py): identical return values, identical bytes in the whole
 # test heap and in the AE globals, identical calls to the functions outside the header, plus one-token mutations of the header that must be detected (#85).
 # tisp_ae_sensor_trig / ev_start_set / s_scence_attr differ between the vendor image and the factory Eufy module (the driver uses the factory ae_cache
@@ -37,7 +38,7 @@ mut get_state 't40_ae_h(p, 298) != 0' 't40_ae_h(p, 296) != 0'
 mut get_state 'a0 ? stSecAeOuter : stMainAeOuter' 'a0 ? stMainAeOuter : stSecAeOuter'
 mut get_state '*(uint32_t *)a2 = t40_ae_h(p, 296);' '*(uint32_t *)a2 = t40_ae_h(p, 300);'
 mut sensor_trig 'cache[1292] = 1;' 'cache[1296] = 1;'
-mut roi_point 'x1 < x0 || y1 < y0' 'x1 <= x0 || y1 < y0'
+NMUT=400 mut roi_point 'x1 < x0 || y1 < y0' 'x1 <= x0 || y1 < y0'
 mut roi_point 'arg4 & 0xffffU' 'arg4 & 0xffffffffU'
 mut roi_point '(x1 - x0) * (y1 - y0)) >> 2' '(x1 - x0) * (y1 - y0)) >> 3'
 mut roi_point '*(const uint16_t *)(dim + 2)) >> 2' '*(const uint16_t *)(dim + 0)) >> 2'
@@ -119,5 +120,28 @@ mut algo_init 'memcpy(t + 20, hist + 1044, 4);' 'memcpy(t + 20, hist + 1048, 4);
 mut algo_init 't[0] = t[4] = t[8] = 1;' 't[0] = t[4] = 1;'
 mut algo_init 'if (arg2 != 1 ||' 'if (arg2 == 0 ||'
 mut algo_init 'const uint8_t *hist = arg1 ? tisp_ae_sec_hist_last : tisp_ae_main_hist_last;' 'const uint8_t *hist = arg1 ? tisp_ae_main_hist_last : tisp_ae_sec_hist_last;'
+# #204 setters: tisp_ae_main/sec_min_max_set (min_max) and tisp_ae_set_exprinfo_attr (set_exprinfo)
+mut min_max '{ 5, 6, 7, 8, 20,' '{ 4, 6, 7, 8, 20,'
+mut min_max '33, 34, 35 };' '33, 34, 36 };'
+mut min_max 'w[32], w[33], w[34], w[35]);' 'w[32], w[33], w[35], w[34]);'
+mut min_max '"second: %d,' '"Sec: %d,'
+mut min_max 'flag = t40_ae_p(ori, 0xac);' 'flag = t40_ae_p(ori, 0xa8);'
+mut min_max 'return t40_ae_min_max_set(tisp_ae_sec_ctrls_storage, pstSecAeOri_storage, w, 1);' 'return t40_ae_min_max_set(tisp_ae_main_ctrls_storage, pstSecAeOri_storage, w, 1);'
+mut set_exprinfo 'div = den ? ((p44 & 0xffffU) * 1000000U) / den : 0;' 'div = den ? ((p44 & 0xffffU) * 1000000U) / (den + 1U) : 0;'
+mut set_exprinfo 'den = (t40_ae_h(pi, 70) * p44) >> 16;' 'den = (t40_ae_h(pi, 70) * p44) >> 15;'
+mut set_exprinfo '((A[0] && div) ?' '((div) ?'
+mut set_exprinfo 'pi = (const uint8_t *)tisp_par_info + a0 * 152U;' 'pi = (const uint8_t *)tisp_par_info + a0 * 148U;'
+mut set_exprinfo 'uint8_t *ori = a0 ? pstSecAeOri_storage : pstMainAeOri_storage;' 'uint8_t *ori = a0 ? pstMainAeOri_storage : pstSecAeOri_storage;'
+mut set_exprinfo 'c[36] = A[4];' 'c[36] = A[5];'
+mut set_exprinfo 'c[37] = A[29];' 'c[37] = A[28];'
+mut set_exprinfo 'c[5] = (A[15] == 1) ? A[23]' 'c[5] = (A[15] == 1) ? A[22]'
+mut set_exprinfo 'T40_EXPR_US(A[22]) : t40_ae_h(pi, 72);' 'T40_EXPR_US(A[22]) : t40_ae_w(pi, 72);'
+mut set_exprinfo 'tp ? t40_ae_w(tp, 308)' 'tp ? t40_ae_w(tp, 304)'
+mut set_exprinfo 'c[22] = (A[41] == 1) ? A[49] : t40_ae_w(pi, 32);' 'c[22] = (A[41] == 1) ? A[49] : t40_ae_w(pi, 28);'
+mut set_exprinfo 'c[31] = (A[13] == 1) ? A[21] : 1024;' 'c[31] = (A[13] == 1) ? A[21] : 1023;'
+mut set_exprinfo 'T40_EXPR_US(A[43])' 'A[43]'
+mut set_exprinfo 'A[26], A[31]);   /* OEM prints' 'A[27], A[31]);   /* OEM prints'
+mut set_exprinfo '" short sdg_manual' '"short sdg_manual'
+mut set_exprinfo 'A[1], A[6], A[7], A[8], A[9]);' 'A[1], A[6], A[7], A[9], A[8]);'
 [ $NF = 0 ] || { echo "t40_ae_leaf_host: FAIL ($NF mutations not detected)"; exit 1; }
 echo "t40_ae_leaf_host: ok (0 mismatches, $NM mutations detected)"
