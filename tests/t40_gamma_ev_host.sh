@@ -34,6 +34,7 @@ e = 0xffffffffU;@e = 0xfffffffeU;
 if (ev_hi >> 10)@if (ev_hi >> 11)
 if (*saved + freq < fnum) {@if (*saved + freq <= fnum) {
 *ev_saved = ev;@*ev_saved = ev + 1;
+if (manual || t40_gamma_interp_by_ev@if (t40_gamma_interp_by_ev
 MUT
-[ $fail = 0 ] && echo "t40_gamma_ev_host: ok ($nm/13 mutations detected)"
+[ $fail = 0 ] && echo "t40_gamma_ev_host: ok ($nm/14 mutations detected)"
 exit $fail

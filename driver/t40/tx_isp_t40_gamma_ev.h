@@ -12,6 +12,13 @@
  *
  * OEM functions (vendor image build): tisp_gamma_interp_by_ev, tisp_gamma_strength_transform (with
  * tisp_round_int64(x, 8)), the gate of tisp_gamma_ev_update.  Only stdint types: also built for the host.
+ *
+ * Deviations of the driver glue (t40_gamma_ev_update in tx_isp_t40_recovered.c, not covered by the oracle):
+ *  - fnum is t40_ct_fnum (tx_isp_t40_vawb.h, +1 per AWB process), not the OEM frame counter; only the write cadence
+ *    (more than gamma_wlut_frequency = 5 counts since the last write) depends on it.
+ *  - the LUT is written at once in the AWB/event thread (t40_soft_gamma_write: 129 registers + 0x50080) instead of the
+ *    OEM "arm gamma_wlut_flag, write at frame done"; a change can therefore land mid-frame (only when the strength moves,
+ *    which the Eufy sc830ai banks never reach: day strengths 255 up to EV 880000, night 255 everywhere).
  */
 #ifndef TX_ISP_T40_GAMMA_EV_H
 #define TX_ISP_T40_GAMMA_EV_H

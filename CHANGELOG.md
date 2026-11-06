@@ -4,6 +4,13 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-06: T40 #204 close-out: gamma EV deviations documented, manual-gate mutation, shipped bins checked (#204; host)
+
+- `tx_isp_t40_gamma_ev.h`: the two deviations of the driver glue are now in the header: `fnum` is `t40_ct_fnum` (+1 per AWB process) instead of the OEM frame counter (only the write cadence depends on it), and the LUT is written at once in the AWB/event thread instead of armed for frame done (a change can land mid-frame). `ev_wdr_l` comment corrected (the OEM `tisp_wdr_main_long_ev_update` 0x39cb8 writes words 0..1).
+- `tests/t40_gamma_ev_host.sh`: mutation of the manual-curve gate (`manual ||` removed) added, 14/14 detected; `tests/README.oracles.md` section for `diff_gamma_ev.py`.
+- Gamma EV follow-up (default `t40_gamma_ev=1`) per shipped T40 bin (thingino ingenic-sdk sensor-iq/t40, 37 bins, both banks): strengths 255 everywhere (no picture change) on bf20a1, gc2053, gc4653-sdk, imx415, jxf23, os05a10, os08a10, sc223a, sc2310, sc5235, sc8238; < 255 only above EV 880000 (day) on sc830ai, imx327, jxf37, jxh63, jxk04, mis2008*, mis2031, os02g10*, sc200ai, sc3335 and above 1160000 on gc4653 / gc4653-light; lower nodes, where the picture follows the EV like the vendor's: gc5603 / gc5603-cust-t40 / imx307 / imx334 (day > 1620, night > 1200), c4390 night > 3200, jxq03 night > 1200, mis4001* day > 40960, ov01a1s day > 20000 (all below the Eufy ceiling 286848), and jxq03 day > 320000, sc201cs day > 320000, sc500ai day > 400000. List: `audit/issue204/gamma_str_bins.txt` (agent scratch).
+- Not changed: the AE setters (oracle-proven against both Eufy builds, no in-tree caller); class D stays out (#85).
+
 ## 2026-11-06: T31 review follow-up: "ch0 done" counted once, no idle IRQ threads, dead ISR/WDR code gone (#223)
 
 - D1 / M4: `isp_dev->frame_count` was incremented by the VIC frame done (tx_isp_module.c) and by the core channel 0 drain, so `/proc/jz/isp/isp-m0` "ch0 done"/"ip done" and isp-w00/w01 showed about twice the frame count. Now only channel 0 completions count (core drain, bypass graph). No consumer in openimp/timps parses the value.
