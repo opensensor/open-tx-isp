@@ -13943,6 +13943,29 @@ static void regtrace_t23_source_ae_stats_irq(uint32_t status,
     regtrace_t23_source_ae_stats_snapshot(status);
 }
 
+/*
+ * The zone sums of the snapshot below only feed its log lines and decide
+ * whether the HLIL capture gets the bank.  When the capture would return at
+ * once (HLIL off, or not an interval snapshot) and no log line is due, the
+ * 4 KiB cache invalidate, the 225-zone pass and the two divisions are
+ * skipped; the counter still advances.  Default interval 4: three of four
+ * AWB interrupts.
+ */
+static bool regtrace_t23_awb_snapshot_unused(uint32_t snapshot)
+{
+    uint32_t interval = regtrace_t23_source_awb_hlil_interval;
+
+    if (snapshot <= 8U)
+        return false;
+#ifndef TX_ISP_T23_NO_TRACE
+    if (!(snapshot & (snapshot - 1U)))
+        return false;
+#endif
+    if (!regtrace_t23_source_awb_hlil)
+        return true;
+    return interval && (snapshot % interval);
+}
+
 static void regtrace_t23_source_awb_stats_snapshot(uint32_t status)
 {
     const uint32_t *words;
@@ -13958,6 +13981,11 @@ static void regtrace_t23_source_awb_stats_snapshot(uint32_t status)
 
     if (!regtrace_t23_core_dma_bufs[2].virt)
         return;
+    if (regtrace_t23_awb_snapshot_unused(
+            regtrace_t23_source_awb_stats_snapshots + 1U)) {
+        regtrace_t23_source_awb_stats_snapshots++;
+        return;
+    }
 
     bank = system_reg_read(0xb050U) & 3U;
     words = (const uint32_t *)((const unsigned char *)
@@ -44732,6 +44760,17 @@ int32_t tisp_event_push(uint32_t channel, const void *event)
         return -EINVAL;
 
     spin_lock_irqsave(&tisp_event_lock, flags);
+    /*
+     * tisp_event_init() has no caller in this module (its stock caller,
+     * tisp_core_switch_bin, is not linked), so the zeroed list heads would
+     * make list_first_entry() below a NULL dereference.  No event thread
+     * drains the queue either; an event is dropped as on a full queue.
+     */
+    if (!queue->free.next) {
+        ++event_busy[channel];
+        spin_unlock_irqrestore(&tisp_event_lock, flags);
+        return -ENODEV;
+    }
     if (list_empty(&queue->free)) {
         ++event_busy[channel];
         spin_unlock_irqrestore(&tisp_event_lock, flags);
@@ -102486,6 +102525,10 @@ free_dev:
 int32_t system_irq_func_set(int32_t arg1, int32_t arg2, int32_t arg3)
 {
     int32_t *p = irq_func_cb;
+
+    /* 32 slots (one per core status bit); stock does not check the index */
+    if ((uint32_t)arg2 >= sizeof(irq_func_cb) / sizeof(void *))
+        return -EINVAL;
     ((void **)p)[arg2] = arg3;
     return 0;
 }

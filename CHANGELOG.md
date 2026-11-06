@@ -4,6 +4,13 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-06: T23 review: AWB statistics pass only when used, two latent NULL/overflow guards (Lu-Fi/openimp#224; build + host tests, device proof pending)
+
+- AWB statistics interrupt (core bit 30, every frame): `regtrace_t23_source_awb_stats_snapshot` invalidated the 4 KiB statistics page and summed all 225 zones (36 instructions per zone, two `div64_u64`) on every frame, but the sums only feed its log lines and the HLIL capture, which takes every 4th snapshot (`source_awb_hlil_interval` 4). The pass is now skipped when the capture would return at once and no log line is due (snapshot > 8; with `TX_ISP_T23_TRACE=y` also not on powers of two); the snapshot counter still advances. Three of four AWB interrupts lose the page invalidate and the zone pass; captured snapshots, log lines and the 0xb000 re-arm are unchanged.
+- `tisp_event_push`: the event queues are never initialised (`tisp_event_init` is only called from `tisp_core_switch_bin`, which is not linked) and never drained, so a push would have dereferenced the zeroed list head. It now drops the event (-ENODEV, counted in `event_busy`). Reachable only from the recovered ADR interrupt, which nothing dispatches today.
+- `system_irq_func_set`: index checked against the 32 slots of `irq_func_cb` (stock does not check).
+- Size: .text +156 B (module RAM 868237 -> 868393 B); imports, exports and .modinfo identical. Not device-tested.
+
 ## 2026-11-06: T30 GetEVAttr ev: the automatic AE publishes system item 16 as the vendor (#202; Unicorn oracle, device proof pending)
 
 - Cause: `IMP_ISP_Tuning_GetEVAttr().ev` reads system item 16 (`SYSTEM_MANUAL_EXPOSURE_TIME`, SDK `apical_isp_ev_g_attr`). The vendor `ae_calculate_exposure` (SDK-built ko 0x31cdc, store at 0x31ec0) writes `math_exp2(max(exposure, 0), 16, 6)` there on every automatic AE run (lines x total gain, Q6); the compact AE never did, so ev read 0 (T30X b9: open 0, vendor 8314092 = 3195 lines x 40.7).
