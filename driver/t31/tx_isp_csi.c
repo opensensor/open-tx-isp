@@ -2,6 +2,7 @@
 #include <linux/platform_device.h>
 #include <linux/of.h>
 #include <linux/interrupt.h>
+#include <linux/ratelimit.h>
 #include "include/tx_isp.h"
 #include "include/tx_isp_csi.h"
 #include "include/tx_isp_device.h"
@@ -295,15 +296,13 @@ static irqreturn_t tx_isp_csi_irq_handler(int irq, void *dev_id)
     static unsigned long last_interrupt_time = 0;
     unsigned long current_time = jiffies;
 
-    /* CRITICAL: Log CSI interrupt activity to understand timing */
+    /* Shared line: the CSI may fire before or after the ISP device exists. */
+    if (!sd || !ourISPdev)
+        return IRQ_NONE;
+
     pr_info("*** CSI INTERRUPT: irq=%d, dev_id=%p, time_delta=%lu ms ***\n",
             irq, dev_id, jiffies_to_msecs(current_time - last_interrupt_time));
     last_interrupt_time = current_time;
-
-    if (!sd) {
-        pr_warn("*** CSI INTERRUPT: sd is NULL - returning IRQ_NONE ***\n");
-        return IRQ_NONE;
-    }
 
     csi_dev = ourISPdev->csi_dev;
     if (!csi_dev) {
@@ -330,19 +329,26 @@ static irqreturn_t tx_isp_csi_irq_handler(int irq, void *dev_id)
 
 
     if (err1 || err2) {
+        /* Hard IRQ, up to 13 lines per interrupt and MIPI errors can repeat
+         * every frame: report rate-limited, clear the status always. */
+        static DEFINE_RATELIMIT_STATE(csi_irq_err_rs, 5 * HZ, 4);
+        bool report = __ratelimit(&csi_irq_err_rs);
+
         ret = IRQ_HANDLED;
 
         /* Handle protocol errors (ERR1) */
         if (err1) {
-            ISP_ERROR("CSI Protocol errors (ERR1): 0x%08x\n", err1);
+            if (report) {
+                ISP_ERROR("CSI Protocol errors (ERR1): 0x%08x\n", err1);
 
-            if (err1 & 0x1) ISP_ERROR("  - SOT Sync Error\n");
-            if (err1 & 0x2) ISP_ERROR("  - SOTHS Sync Error\n");
-            if (err1 & 0x4) ISP_ERROR("  - ECC Single-bit Error (corrected)\n");
-            if (err1 & 0x8) ISP_ERROR("  - ECC Multi-bit Error (uncorrectable)\n");
-            if (err1 & 0x10) ISP_ERROR("  - CRC Error\n");
-            if (err1 & 0x20) ISP_ERROR("  - Packet Size Error\n");
-            if (err1 & 0x40) ISP_ERROR("  - EoTp Error\n");
+                if (err1 & 0x1) ISP_ERROR("  - SOT Sync Error\n");
+                if (err1 & 0x2) ISP_ERROR("  - SOTHS Sync Error\n");
+                if (err1 & 0x4) ISP_ERROR("  - ECC Single-bit Error (corrected)\n");
+                if (err1 & 0x8) ISP_ERROR("  - ECC Multi-bit Error (uncorrectable)\n");
+                if (err1 & 0x10) ISP_ERROR("  - CRC Error\n");
+                if (err1 & 0x20) ISP_ERROR("  - Packet Size Error\n");
+                if (err1 & 0x40) ISP_ERROR("  - EoTp Error\n");
+            }
 
             /* Clear errors by writing back the status */
             writel(err1, csi_base + 0x20);
@@ -351,12 +357,14 @@ static irqreturn_t tx_isp_csi_irq_handler(int irq, void *dev_id)
 
         /* Handle application errors (ERR2) */
         if (err2) {
-            ISP_ERROR("CSI Application errors (ERR2): 0x%08x\n", err2);
+            if (report) {
+                ISP_ERROR("CSI Application errors (ERR2): 0x%08x\n", err2);
 
-            if (err2 & 0x1) ISP_ERROR("  - Data ID Error\n");
-            if (err2 & 0x2) ISP_ERROR("  - Frame Sync Error\n");
-            if (err2 & 0x4) ISP_ERROR("  - Frame Data Error\n");
-            if (err2 & 0x8) ISP_ERROR("  - Frame Sequence Error\n");
+                if (err2 & 0x1) ISP_ERROR("  - Data ID Error\n");
+                if (err2 & 0x2) ISP_ERROR("  - Frame Sync Error\n");
+                if (err2 & 0x4) ISP_ERROR("  - Frame Data Error\n");
+                if (err2 & 0x8) ISP_ERROR("  - Frame Sequence Error\n");
+            }
 
             /* Clear errors by writing back the status */
             writel(err2, csi_base + 0x24);
@@ -364,7 +372,7 @@ static irqreturn_t tx_isp_csi_irq_handler(int irq, void *dev_id)
         }
 
         /* Update error state */
-        if ((err1 & 0x38) || (err2 & 0xE)) { /* Serious errors */
+        if (report && ((err1 & 0x38) || (err2 & 0xE))) { /* Serious errors */
             pr_err("CSI: Serious errors detected, may need recovery\n");
         }
     }

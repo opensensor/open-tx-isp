@@ -1640,11 +1640,9 @@ static int tx_isp_map_mainline_irqs(void)
 
 /* Forward declarations - Using actual function names from reference driver */
 struct frame_channel_device; /* Forward declare struct */
-static int tx_isp_vic_handle_event(void *vic_subdev, int event_type, void *data);
 int vic_framedone_irq_function(struct tx_isp_vic_device *vic_dev);
 extern int vic_mdma_irq_function(struct tx_isp_vic_device *vic_dev, int channel);
 irqreturn_t isp_irq_handle(int irq, void *dev_id);
-irqreturn_t isp_irq_thread_handle(int irq, void *dev_id);
 static int tx_isp_send_event_to_remote_local(void *subdev, int event_type, void *data);
 static int tx_isp_detect_and_register_sensors(struct tx_isp_dev *isp_dev);
 static int tx_isp_init_hardware_interrupts(struct tx_isp_dev *isp_dev);
@@ -3429,10 +3427,10 @@ int tx_isp_request_irq2(struct platform_device *pdev, struct tx_isp_dev *isp_dev
         /* Binary Ninja: private_spin_lock_init(arg2) */
         spin_lock_init(&isp_dev->lock);
 
-        /* Binary Ninja: if (private_request_threaded_irq($v0_1, isp_irq_handle, isp_irq_thread_handle, IRQF_SHARED, *arg1, arg2) != 0) */
+        /* Binary Ninja: private_request_threaded_irq($v0_1, isp_irq_handle, isp_irq_thread_handle, ...): the thread never ran (no IRQ_WAKE_THREAD) */
         ret = request_threaded_irq(irq_num,
                                   isp_irq_handle,          /* Binary Ninja: isp_irq_handle */
-                                  isp_irq_thread_handle,   /* Binary Ninja: isp_irq_thread_handle */
+                                  NULL,                    /* top half finishes all work */
                                   IRQF_SHARED,             /* FIXED: Use only IRQF_SHARED to match existing IRQ registration */
                                   dev_name(&pdev->dev),    /* Binary Ninja: *arg1 */
                                   isp_dev);                /* Binary Ninja: arg2 */
@@ -3590,7 +3588,9 @@ static irqreturn_t isp_vic_interrupt_service_routine(int irq, void *dev_id)
         if ((v1_7 & 1) != 0) {
             /* OEM HLIL: *($s0 + 0x160) += 1 */
             vic_dev->frame_count++;
-            isp_dev->frame_count++;
+            /* isp_dev->frame_count ("ch0 done" in isp-m0) counts channel 0
+             * completions only: the core ch0 drain and the bypass graph
+             * add them; counting here as well doubled it. */
             /* One frame-done tick per captured frame for IMP WaitFrame
              * (tuning 0x8000162).  The OEM raises it as tuning event
              * 0x4000002 after the core's channel 0 drain; here the MSCA
@@ -7657,39 +7657,6 @@ static void push_buffer_fifo(struct list_head *fifo_head, struct vic_buffer_entr
     spin_unlock_irqrestore(&irq_cb_lock, flags);
 }
 
-static struct tx_isp_dev *tx_isp_irq_resolve_isp_dev(void *dev_id,
-						      struct tx_isp_subdev **owner_sd)
-{
-	if (owner_sd)
-		*owner_sd = NULL;
-
-	if (!dev_id)
-		return NULL;
-
-	if (ourISPdev && dev_id == ourISPdev) {
-		if (owner_sd)
-			*owner_sd = &ourISPdev->sd;
-		return ourISPdev;
-	}
-
-	if (!ourISPdev)
-		return NULL;
-
-	if (dev_id == &ourISPdev->sd_irq_info) {
-		if (owner_sd)
-			*owner_sd = &ourISPdev->sd;
-		return ourISPdev;
-	}
-
-	if (ourISPdev->vic_dev && dev_id == &ourISPdev->vic_dev->sd_irq_info) {
-		if (owner_sd)
-			*owner_sd = &ourISPdev->vic_dev->sd;
-		return ourISPdev;
-	}
-
-	return NULL;
-}
-
 /* isp_irq_handle - dispatch by IRQ number to correct subsystem ISR.
  *
  * OEM reference: tx_isp_subdev_init calls tx_isp_request_irq for EACH
@@ -7717,61 +7684,9 @@ irqreturn_t isp_irq_handle(int irq, void *dev_id)
     return IRQ_NONE;
 }
 
-/* isp_irq_thread_handle - EXACT Binary Ninja implementation with CORRECT structure access */
-irqreturn_t isp_irq_thread_handle(int irq, void *dev_id)
-{
-	struct tx_isp_subdev *owner_sd = NULL;
-	struct tx_isp_dev *isp_dev = tx_isp_irq_resolve_isp_dev(dev_id, &owner_sd);
-
-	pr_debug("*** isp_irq_thread_handle: Threaded IRQ %d (dev_id=%p owner_sd=%p isp=%p) ***\n",
-		 irq, dev_id, owner_sd, isp_dev);
-
-	/* The active top halves currently complete all work in hardirq context and
-	 * do not return IRQ_WAKE_THREAD. Keep the threaded handler safe for both
-	 * legacy (isp_dev) and OEM-style (irq_info) dev_id forms.
-	 */
-	if (!isp_dev)
-		return IRQ_HANDLED;
-
-	pr_debug("*** isp_irq_thread_handle: no threaded work queued for IRQ %d ***\n", irq);
-
-    /* Binary Ninja: return 1 */
-	return IRQ_HANDLED;
-}
-
 /* vic_mdma_irq_function is now in tx_isp_vic.c (single non-static definition).
  * Forward declaration is at line 1210.
  */
-
-/* ip_done_interrupt_handler - Binary Ninja ISP processing complete interrupt (renamed local to avoid SDK symbol clash) */
-static irqreturn_t ispmodule_ip_done_irq_handler(int irq, void *dev_id)
-{
-    struct tx_isp_dev *isp_dev = (struct tx_isp_dev *)dev_id;
-
-    if (!isp_dev) {
-        return IRQ_NONE;
-    }
-
-    pr_debug("*** ISP IP DONE INTERRUPT: Processing complete ***\n");
-
-//    /* Handle ISP processing completion - wake up any waiters */
-//    if (isp_dev->frame_complete.done == 0) {
-//        complete(&isp_dev->frame_complete);
-//    }
-
-    /* Update frame processing statistics */
-    isp_dev->frame_count++;
-
-    /* Wake up frame channel waiters */
-//    int i;
-//    for (i = 0; i < num_channels; i++) {
-//        if (frame_channels[i].state.streaming) {
-//            frame_channel_wakeup_waiters(&frame_channels[i]);
-//        }
-//    }
-
-    return IRQ_HANDLED;
-}
 
 /* tx_isp_handle_sync_sensor_attr_event is now defined in tx_isp_core.c */
 
@@ -8261,68 +8176,6 @@ static int __enqueue_in_driver(void *arg1)
     return result;
 }
 
-
-/* VIC event handler - manages buffer flow between frame channels and VIC */
-static int tx_isp_vic_handle_event(void *vic_subdev, int event_type, void *data)
-{
-    struct tx_isp_vic_device *vic_dev = (struct tx_isp_vic_device *)vic_subdev;
-
-    if (!vic_dev) {
-        return -EINVAL;
-    }
-
-    switch (event_type) {
-    case TX_ISP_EVENT_FRAME_QBUF: {
-        /* Queue buffer for VIC processing */
-        if (data) {
-            int channel = *(int*)data;
-            struct list_head *buffer_entry;
-
-            pr_debug("VIC: Queue buffer event for channel %d\n", channel);
-
-            // Create a dummy buffer entry for the queue
-            buffer_entry = kmalloc(sizeof(struct list_head), GFP_ATOMIC);
-            if (buffer_entry) {
-                INIT_LIST_HEAD(buffer_entry);
-                ispvic_frame_channel_qbuf(vic_dev, buffer_entry);
-            }
-        }
-        return 0;
-    }
-    case TX_ISP_EVENT_FRAME_DQBUF: {
-        /* Handle buffer completion - this would normally be called by interrupt */
-        int channel = data ? *(int*)data : 0;
-        pr_debug("VIC: Dequeue buffer event for channel %d\n", channel);
-
-        /* Do not simulate frame completion here; rely on real hardware IRQ */
-        return 0;
-    }
-    case TX_ISP_EVENT_FRAME_STREAMON: {
-        /* Enable VIC streaming */
-        pr_info("VIC: Stream ON event - activating frame pipeline\n");
-
-        // Activate VIC
-        if (vic_dev->state == 1) {
-            int ret;
-            vic_dev->state = 2;
-            ret = tx_isp_activate_csi_subdev(ourISPdev);
-    		if (ret) {
-        		pr_err("Failed to activate CSI subdev: %d\n", ret);
-                return ret;
-    		}
-            pr_info("VIC: Pipeline activated\n");
-        }
-
-        // Don't trigger work queue here to avoid deadlock
-        pr_info("VIC: Stream ON event completed\n");
-
-        return 0;
-    }
-    default:
-        pr_debug("VIC: Unknown event type: 0x%x\n", event_type);
-        return -0x203; /* 0xfffffdfd */
-    }
-}
 
 /* Wake up waiters when frame is ready - matches reference driver pattern */
 void frame_channel_wakeup_waiters(struct frame_channel_device *fcd)

@@ -104,4 +104,12 @@ ifneq ($(TX_ISP_GC),n)
 ccflags-y += -ffunction-sections
 LDFLAGS_MODULE += --gc-sections --undefined=init_module --undefined=cleanup_module \
 	-T $(abspath $(src)/../tx_isp_merge.lds)
+# -fdata-sections only for the units where it costs (almost) no anchor code
+# but lets --gc-sections drop the strings and data of their unused helpers
+# (measured on 3.10/gcc 16: -6.4 KiB rodata/data/bss for +0.4 KiB text).
+# tx_isp_tuning.o stays without it (+17 KiB text for 2.6 KiB dead data).
+TX_ISP_T31_FDS_OBJS := tx_isp_core tx_isp_module tx_isp_subdev tx_isp_csi \
+	tx_isp_vic tx_isp_vic_debug tx_isp_vin tx_isp_sysfs tx_isp_subdev_mgmt \
+	tx_isp_reset
+$(foreach o,$(TX_ISP_T31_FDS_OBJS),$(eval CFLAGS_$(o).o += -fdata-sections))
 endif

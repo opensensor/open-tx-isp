@@ -18,11 +18,26 @@ extern int t31_runtime_trace;
 
 #undef pr_info
 #undef pr_info_ratelimited
+
+/*
+ * The 3.10 no_printk() is an inline function: a dropped pr_info()/pr_debug()
+ * still evaluates its arguments, i.e. every readl()/system_reg_read() in a
+ * trace line is still executed (MMIO in the per-frame paths).  This form
+ * keeps the format check but evaluates nothing.
+ */
+#define TX_ISP_NO_PRINTK(fmt, ...) \
+	({ if (0) printk(fmt, ##__VA_ARGS__); 0; })
+
+#if !defined(DEBUG) && !defined(CONFIG_DYNAMIC_DEBUG)
+#undef pr_debug
+#define pr_debug(fmt, ...) TX_ISP_NO_PRINTK(KERN_DEBUG pr_fmt(fmt), ##__VA_ARGS__)
+#endif
+
 #if defined(TX_ISP_T31_NO_TRACE)
 /* Production build (Kbuild TX_ISP_T31_TRACE=n): drop the trace and its
  * strings (~100 KB of module memory); t31_runtime_trace has no effect. */
-#define pr_info(fmt, ...) no_printk(KERN_INFO pr_fmt(fmt), ##__VA_ARGS__)
-#define pr_info_ratelimited(fmt, ...) no_printk(KERN_INFO pr_fmt(fmt), ##__VA_ARGS__)
+#define pr_info(fmt, ...) TX_ISP_NO_PRINTK(KERN_INFO pr_fmt(fmt), ##__VA_ARGS__)
+#define pr_info_ratelimited(fmt, ...) TX_ISP_NO_PRINTK(KERN_INFO pr_fmt(fmt), ##__VA_ARGS__)
 #else
 #define pr_info(fmt, ...) \
 	do { if (t31_runtime_trace) printk(KERN_INFO pr_fmt(fmt), ##__VA_ARGS__); } while (0)

@@ -1555,7 +1555,6 @@ irqreturn_t ispcore_interrupt_service_routine(int irq, void *dev_id)
     u32 interrupt_status;
     u32 hw_interrupt_status; /* raw HW status before bit-0 forcing */
     int drained_total = 0;
-    u32 error_check;
     int i;
 
     if (!isp_dev) {
@@ -1594,14 +1593,11 @@ irqreturn_t ispcore_interrupt_service_routine(int irq, void *dev_id)
      * AWB DMA bank cycling — banks 0-2 worked but bank 3 went dead,
      * killing AWB stats from frame 4 onward. Let HW control bit 0. */
 
-    /* Binary Ninja: if (($s1 & 0x3f8) == 0) */
-    if ((interrupt_status & 0x3f8) == 0) {
-        /* Normal interrupt processing - NO ERRORS */
-        error_check = readl(isp_regs + 0xc) & 0x40;
-        if (error_check == 0) {
-            /* Binary Ninja: tisp_lsc_write_lut_datas() - LSC LUT processing */
-        }
-    } else {
+    /* Binary Ninja: if (($s1 & 0x3f8) == 0).  The no-error branch read the
+     * LSC bypass bit (0xc & 0x40) for a tisp_lsc_write_lut_datas() call that
+     * runs from the IP-done callback (irq_func_cb[13], ip_done_interrupt_static)
+     * instead; the read had no user and is gone (one MMIO read per IRQ). */
+    if ((interrupt_status & 0x3f8) != 0) {
         /* Binary Ninja: Error interrupt processing */
         u32 error_reg_84c = readl(vic_regs + 0x84c);
         pr_err_ratelimited("ispcore: irq-status 0x%08x, err 0x%x,0x%x, 084c=0x%x\n",
@@ -1818,12 +1814,15 @@ irqreturn_t ispcore_interrupt_service_routine(int irq, void *dev_id)
     }
 #endif
 
-    /* Binary Ninja: IRQ callback array processing */
-    /* Binary Ninja: for (int i = 0; i != 0x20; i++) */
-    for (i = 0; i < 0x20; i++) {
-        u32 bit_mask = 1 << (i & 0x1f);
-        if (interrupt_status & bit_mask) {
-            /* Binary Ninja: if (irq_func_cb[i] != 0) */
+    /* Binary Ninja: for (int i = 0; i != 0x20; i++) if (status & 1 << i &&
+     * irq_func_cb[i]) irq_func_cb[i](...).  Same callbacks in the same
+     * ascending bit order, but only the set bits are visited. */
+    {
+        u32 pending = interrupt_status;
+
+        while (pending) {
+            i = __ffs(pending);
+            pending &= pending - 1;
             if (irq_func_cb[i] != NULL)
                 irq_func_cb[i](irq, dev_id);
         }

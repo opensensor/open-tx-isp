@@ -74,7 +74,6 @@
 #include "include/tx_isp_regmap.h"
 
 /* Forward declaration for exported ISP event callback array */
-extern void (*isp_event_func_cb[32])(void);
 extern struct tx_isp_dev *ourISPdev;
 extern const char *tx_isp_get_default_bin_path(void);
 extern uint32_t tisp_math_exp2(uint32_t value, uint32_t precision, uint32_t shift);
@@ -1755,7 +1754,6 @@ struct t31_wdr_buffers {
 };
 static struct t31_wdr_buffers *wdr_buf;
 static u32 wdr_blocks_snapshot[225];
-static u32 wdr_hist_Y1[256];
 static void *wdr_dma_buffer;
 static dma_addr_t wdr_dma_phys;
 static bool wdr_ready, wdr_stats_pending, wdr_ev_pending;
@@ -5124,7 +5122,6 @@ void private_complete(struct completion *comp);
 static int tisp_ae0_get_statistics(void *buffer, uint32_t flags);
 static int tisp_ae1_get_statistics(void *buffer, uint32_t flags);
 static int tisp_ae0_get_hist(void *buffer, int mode, int flag);
-static int tisp_ae1_get_hist(void *buffer);
 static int tisp_ae0_ctrls_update(void);
 static int tisp_ae0_process_impl(void);
 static int tiziano_ae0_fpga_run(void);
@@ -5321,22 +5318,6 @@ static int tisp_ae0_get_hist(void *buffer, int mode, int flag)
 
     pr_debug("AE0 histogram unpacked from DMA: mode=%d flag=%d total=%u\n",
              mode, flag, total);
-    return 0;
-}
-
-static int tisp_ae1_get_hist(void *buffer)
-{
-    const u32 *packed = buffer;
-    unsigned long flags;
-    u32 i;
-    if (!buffer)
-        return -EINVAL;
-    if (!READ_ONCE(wdr_ready))
-        return 0;
-    spin_lock_irqsave(&wdr_stats_lock, flags);
-    for (i = 0; i < 256; ++i)
-        wdr_hist_Y1[i] = packed[i] & 0x1fffff;
-    spin_unlock_irqrestore(&wdr_stats_lock, flags);
     return 0;
 }
 
@@ -10344,9 +10325,6 @@ struct af_zone_data af_zone_data = {
 typedef int (*tisp_event_cb_t)(int, int, int, int, int, int, int, int);
 static tisp_event_cb_t cb[32] = {NULL};
 
-/* ISP event callback function array - Binary Ninja reference */
-void (*isp_event_func_cb[32])(void) = {NULL};
-EXPORT_SYMBOL(isp_event_func_cb);
 
 /* ISP interrupt state */
 static spinlock_t isp_irq_lock;
@@ -31667,47 +31645,6 @@ int tisp_event_set_cb(int event_id, void *callback)
     return 0;
 }
 
-/* ISP interrupt dispatcher - calls registered IRQ handlers */
-static irqreturn_t isp_irq_dispatcher(int irq, void *dev_id)
-{
-    struct tx_isp_dev *dev = (struct tx_isp_dev *)dev_id;
-    uint32_t irq_status;
-    unsigned long flags;
-    int handled = 0;
-
-    if (!dev || !dev->core_regs) {
-        pr_err("isp_irq_dispatcher: Invalid device or register base\n");
-        return IRQ_NONE;
-    }
-
-    /* Read ISP interrupt status */
-    irq_status = readl(dev->core_regs + 0x40);
-
-    if (!irq_status) {
-        return IRQ_NONE; /* Not our interrupt */
-    }
-
-    pr_debug("isp_irq_dispatcher: IRQ status 0x%x\n", irq_status);
-
-    spin_lock_irqsave(&isp_irq_lock, flags);
-
-    /* Process each set interrupt bit */
-    for (int i = 0; i < 32; i++) {
-        if ((irq_status & (1 << i)) && isp_event_func_cb[i]) {
-            pr_debug("isp_irq_dispatcher: Calling IRQ handler %d\n", i);
-            isp_event_func_cb[i]();
-            handled = 1;
-        }
-    }
-
-    spin_unlock_irqrestore(&isp_irq_lock, flags);
-
-    /* Clear handled interrupts */
-    writel(irq_status, ourISPdev->core_regs + 0x40);
-
-    return handled ? IRQ_HANDLED : IRQ_NONE;
-}
-
 /* ISP event dispatcher - calls registered event callbacks */
 static int isp_event_dispatcher(int event_id)
 {
@@ -31951,7 +31888,6 @@ void isp_cleanup_irq_handling(struct tx_isp_dev *dev)
     /* Clear callback arrays */
     if (isp_irq_initialized) {
         spin_lock_irqsave(&isp_irq_lock, flags);
-        memset(isp_event_func_cb, 0, sizeof(isp_event_func_cb));
         memset(cb, 0, sizeof(cb));
         spin_unlock_irqrestore(&isp_irq_lock, flags);
     }
@@ -32356,7 +32292,8 @@ static int tisp_gb_blc_again_interp(uint32_t gain, int channel)
     case 0x16: fp=blc_gr; s1_out=blc_ir; v1_out=blc_b;  s2_out=blc_gb; s0_out=blc_r;  break;
     case 0x17: fp=blc_ir; s1_out=blc_gr; v1_out=blc_gb; s2_out=blc_b;  s0_out=blc_r;  break;
     default:
-        pr_err("blc byper error!!!\n");
+        /* Runs per gain change with local IRQs off (tisp_event_process). */
+        pr_err_ratelimited("blc byper error!!!\n");
         fp = 0; s1_out = 0; v1_out = 0; s2_out = 0; s0_out = 0;
         break;
     }
@@ -35853,8 +35790,7 @@ int ae1_interrupt_hist(void)
 
     buffer_addr = (void *)(buffer_offset + data_b2f60);
 
-    /* AE1 histogram feeds only the WDR engine (tisp_ae1_get_hist() ignores
-     * it without wdr_ready) and the event 6 callback, tisp_ae1_process(),
+    /* AE1 histogram is only synced for the WDR engine and the event 6 callback, tisp_ae1_process(),
      * is empty. In linear mode skip the sync and the event thread wakeup. */
     if (!READ_ONCE(wdr_ready))
         return 2;
@@ -35862,8 +35798,10 @@ int ae1_interrupt_hist(void)
     /* Binary Ninja: private_dma_cache_sync(0, $s0 + data_b2f60, 0x800, 0) */
     private_dma_cache_sync(NULL, buffer_addr, 0x800, 0);
 
-    /* Binary Ninja: tisp_ae1_get_hist($s0 + data_b2f60) */
-    tisp_ae1_get_hist(buffer_addr);
+    /* OEM tisp_ae1_get_hist(0x4f270) unpacks the 256 bins into an AE1
+     * histogram that nothing in the OEM or in this port reads; the port's
+     * copy (wdr_hist_Y1, 256 stores under wdr_stats_lock per WDR frame)
+     * was write-only and is gone. */
 
     /* Binary Ninja: Create and push event - int32_t var_38 = 6; tisp_event_push(&var_40) */
 
@@ -36610,37 +36548,9 @@ int tisp_s_aeroi_weight(uint32_t *roi)
     return 0;
 }
 
-/* OEM EXACT: tisp_wdr_rx_ae0_infm (0x5c78c) */
-static uint32_t wdr_hist_Y0[256];
-static uint32_t wdr_block_mean0[225];
-
-int tisp_wdr_rx_ae0_infm(uint32_t *hist, uint32_t *block_mean)
-{
-    if (!hist || !block_mean)
-        return -EINVAL;
-    memcpy(wdr_hist_Y0, hist, sizeof(wdr_hist_Y0));
-    memcpy(wdr_block_mean0, block_mean, sizeof(wdr_block_mean0));
-    return 0;
-}
-
-/* OEM EXACT: tisp_wdr_rx_ae0_dms (0x5c844) */
-int tisp_wdr_rx_ae0_dms(uint32_t *r, uint32_t *g, uint32_t *b, uint32_t *params)
-{
-    u32 i, cols, rows, area;
-    if (!r || !g || !b || !params)
-        return -EINVAL;
-    cols = params[1];
-    rows = params[3];
-    if (!cols || cols > 15 || !rows || rows > 15)
-        return -EINVAL;
-    for (i = 0; i < cols * rows; ++i) {
-        area = params[4 + i % cols] * params[19 + i / cols];
-        if (!area)
-            return -EINVAL;
-        wdr_block_mean0[i] = (r[i] + g[i] + b[i]) / area;
-    }
-    return 0;
-}
+/* OEM tisp_wdr_rx_ae0_infm (0x5c78c) / tisp_wdr_rx_ae0_dms (0x5c844) are not
+ * ported: nothing calls them and nothing read the AE0 histogram/block-mean
+ * copies they filled (1924 B of BSS). */
 
 /* OEM EXACT: tisp_wdr_rx_ae1_infm (0x5c7e8) */
 
@@ -36650,7 +36560,7 @@ int tisp_wdr_rx_ae1_infm(uint32_t *hist, uint32_t *block_mean)
     if (!hist || !block_mean)
         return -EINVAL;
     spin_lock_irqsave(&wdr_stats_lock, flags);
-    memcpy(wdr_hist_Y1, hist, sizeof(wdr_hist_Y1));
+    /* OEM also copies hist into wdr_hist_Y1 (0x5c810); nothing reads it. */
     memcpy(wdr_block_mean1, block_mean, sizeof(wdr_block_mean1));
     spin_unlock_irqrestore(&wdr_stats_lock, flags);
     return 0;
