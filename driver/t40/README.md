@@ -879,6 +879,28 @@ max_again). Exposure-neutral, at most one analog index per sample, IT only upwar
 frozen AE. `t40_ae_split_legacy=1` restores the old path-dependent split for A/B; `t40_ae_split_moves` counts
 re-splits.
 
+AE target and metering (#84, 2026-11-06, `tx_isp_t40_ae_target.h`): the fixed frame target 122 on the output-Y mean
+is replaced by the OEM flow. Target = `tisp_ae_long_target` over the ten EV nodes / targets of the live tuning bank
+(tparams + 0x80 + 0x2d8 / 0x300; sc830ai day 50..320000 / 72..40, night 10..162000 / 50..34), the lists scaled by
+the scene / AeTargetComp words like `tisp_ae_long_tune2` and `tisp_ae_s_comp`, looked up at the current EV and at
+the EV the step aims at. Metered luma = `tisp_ae_long_weight_mean2` (bank zone weights or SetAeWeight, pixels of the
+bright band >= 230 weighted (p4 - 1) / p10 = 5/3 more on the day bank) plus the `tisp_ae_long_alogrithm` highlight
+term of mode 1 (quadratic over the histogram bins >= 153). The OEM values are in the AE statistics domain (before
+gamma); the frame AE maps each output-Y sample through the inverse of the bank gamma and maps luma and target back
+for its step logic. On the vendor's own light-box frames this reproduces its operating point (metered / target 0.95
+/ 0.97, inside the OEM hold window 950..1150/1024); with the 2/3 band threshold the register path suggests it would
+be 0.84 (`t40_ae_hi_thr` overrides the band threshold). Not ported: histogram target factor (off in the OEM
+`.data`), AE-cache manual target, Pweight (off in the T40 bins). HLC / BLC / face AE keep the old metering and
+target. `t40_ae_target_oem=0` = the old fixed target; diagnostics: line `oem` of `t40_ae_api`. Oracle:
+`tests/t40_ae_target_host.sh` (Unicorn, 0 differences, 21 mutations).
+
+Night antiflicker per tuning bank (#84): the OEM `tisp_s_antiflick` writes the request into tparamsN and into the
+bank of the running mode, and the day/night switch loads the other bank's words (+0x80 + 0x314 enable / NORMAL,
++0x320 frequency). A day request therefore does not reach the night; the sc830ai night bank has antiflicker off,
+so the vendor night AE goes below one 50 Hz rung (IT 176) where the open one stayed on 450 lines. The frame AE now
+uses at night the night bank's words unless SetAntiFlickerAttr came in night mode; `t40_ae_af_night_bin=0` = the
+day request at night too.
+
 ## AF statistics, RGB coefficients (2026-10-26, `claude/gate-1026`)
 
 GetAfStatistics / GetAFMetricesInfo read the AF DMA ring (buffer 4 of the tisp DMA set, 0x1a0cc..0x1a0d8) on demand:
