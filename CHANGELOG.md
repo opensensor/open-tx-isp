@@ -4,6 +4,13 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-06: T40 vendor gamma EV follow-up and WDR EV store (#204 part 3; host oracle only, Eufy proof pending)
+
+- New `driver/t40/tx_isp_t40_gamma_ev.h`: OEM `tisp_gamma_interp_by_ev`, `tisp_gamma_strength_transform` and the `tisp_gamma_ev_update` gate as plain C. The EV fan-out (`t40_main_long_ev_update`, TOP bit 10 clear) now interpolates the bin gamma strength over the bin EV nodes (gamma section tparams+0x106ec: nodes +0x204, strengths +0x22c) and, on a change past the OEM `gamma_wlut_frequency` cadence, rewrites the soft-gamma LUT with the curve blended toward the identity ramp. Init and day/night writes apply the current strength too. A user/sRGB/HDR curve (SetGammaAttr mode 1..3) stops the follow-up like the OEM manual mode.
+- Strength 255 gives the bin curve bit-exact, so below the first node with a lower strength nothing changes: on the sc830ai bin the day strengths are 255 up to EV 880000 and 160 at 1000000 (EV = IT x total gain, Q10 >> 10). New module parameters `t40_gamma_ev` (default 1; 0 = fixed bin curve as before), read-only `t40_gamma_ev_str`, `t40_gamma_ev_writes`.
+- WDR (TOP bit 3 clear): the OEM `tisp_wdr_main_long_ev_update` store (`wdr_ev_changed`, `ev_wdr_l`) read by `tisp_wdr_main_process`; WDR sensors only.
+- Proof: Unicorn oracle `tools/ko_emu/diff_gamma_ev.py` / `tests/t40_gamma_ev_host.sh` (new in `make check` and `check-oracles`): 3000 random calls (interp with skip/force, transform, full ev_update with cadence and armed write), 0 differences against the vendor image build and the factory Eufy build; 13/13 mutations detected. Module symbol set unchanged (functions inlined), `.text` +1240 B. Not run on a camera yet (EV above 880000 = very dark scene).
+
 ## 2026-11-06: T40 AE rung trade: black frame and gain-ladder bound (Opus review C2, C3; host test, Eufy proof pending)
 
 - C2: with a black frame (`luma_ae` 0) the rung-up overshoot test divided by zero, `t40_ae_log2_ratio` returned 0 and every rung up was refused (integration time stayed on its rung in total darkness). The denominator is now at least 1 (`max_t(luma_ae, 1)`).

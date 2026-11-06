@@ -10796,7 +10796,50 @@ static uint32_t t40_gamma_user_mode T40C2;
 static uint16_t t40_gamma_user_lut[129] T40C2;
 static DEFINE_MUTEX(t40_gamma_user_mutex);
 
+#include "tx_isp_t40_gamma_ev.h"
+/* #204: OEM gamma EV follow-up (tisp_gamma_ev_update, TOP bit 10 of tisp_main_long_ev_update): the bin curve is
+ * blended toward the identity ramp by the strength the EV selects from the bin node tables (strength 255 = the
+ * curve itself, bit-exact).  State of the OEM gamma ctx for sensor 0: strength (p8[0]), last EV (p16[0]), saved
+ * frame number (gamma_frame_num_saved[0]); the cadence uses the OEM gamma_wlut_frequency[0]. */
+static bool regtrace_t40_gamma_ev = true;
+module_param_named(t40_gamma_ev, regtrace_t40_gamma_ev, bool, 0644);
+MODULE_PARM_DESC(t40_gamma_ev, "T40: OEM gamma EV follow-up (bin strength nodes; 0 = fixed bin curve, the pre-#204 behaviour)");
+static unsigned int t40_gamma_ev_writes;
+module_param_named(t40_gamma_ev_writes, t40_gamma_ev_writes, uint, 0444);
+static uint32_t t40_gamma_ev_str = 255U;
+module_param_named(t40_gamma_ev_str, t40_gamma_ev_str, uint, 0444);
+static uint32_t t40_gamma_ev_e;
+static uint64_t t40_gamma_ev_saved;
+
+static void t40_soft_gamma_write(bool ev_step);
 static void regtrace_soft_gamma_write(void)
+{
+    t40_soft_gamma_write(false);
+}
+
+/* OEM tisp_gamma_ev_update(0, -, ev_lo, ev_hi, fnum): called from t40_main_long_ev_update (event thread) */
+static void t40_gamma_ev_update(uint32_t lo, uint32_t hi, uint64_t fnum)
+{
+    const uint8_t *g;
+    uint32_t node[10];
+    uint8_t str[10];
+
+    if (!regtrace_t40_gamma_ev || !regtrace_enable_soft_gamma || !regtrace_t40_gamma_from_bin || !tparamsN[0])
+        return;
+    g = (const uint8_t *)(uintptr_t)tparamsN[0] + T40_GAMMA_BIN_OFF;
+    memcpy(node, g + T40_GAMMA_EV_NODES, sizeof(node));
+    memcpy(str, g + T40_GAMMA_EV_STR, sizeof(str));
+    mutex_lock(&t40_gamma_user_mutex);
+    /* a user / sRGB / HDR curve is the OEM manual mode (gamma ctx p16[5] = 1): no EV follow-up */
+    if (t40_gamma_ev_due(node, str, &t40_gamma_ev_str, &t40_gamma_ev_e, lo, hi, t40_gamma_user_mode != 0,
+                         gamma_wlut_frequency[0], fnum, &t40_gamma_ev_saved)) {
+        t40_gamma_ev_writes++;
+        t40_soft_gamma_write(true);
+    }
+    mutex_unlock(&t40_gamma_user_mutex);
+}
+
+static void t40_soft_gamma_write(bool ev_step)
 {
     static const uint16_t lut[129] = {
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 144,
@@ -10832,13 +10875,29 @@ static void regtrace_soft_gamma_write(void)
             valid = false;
         if (valid)
             active_lut = bin_lut;
+        /* #204 OEM tisp_gamma_init / dn_params_refresh: interp_by_ev (forced, here with the last EV) and
+         * strength_transform; the EV step (tisp_gamma_ev_update) has interpolated already */
+        if (valid && regtrace_t40_gamma_ev && !t40_gamma_user_mode) {
+            uint32_t node[10];
+            uint8_t str[10];
+            uint16_t ev_lut[129];
+
+            if (!ev_step) {
+                memcpy(node, source + T40_GAMMA_EV_NODES, sizeof(node));
+                memcpy(str, source + T40_GAMMA_EV_STR, sizeof(str));
+                (void)t40_gamma_interp_by_ev(node, str, &t40_gamma_ev_str, &t40_gamma_ev_e, t40_gamma_ev_e, 0, 1);
+            }
+            t40_gamma_strength_lut(bin_lut, t40_gamma_ev_str, ev_lut);
+            memcpy(bin_lut, ev_lut, sizeof(bin_lut));
+        }
     }
     if (t40_gamma_user_mode) {
         memcpy(bin_lut, t40_gamma_user_lut, sizeof(bin_lut));
         active_lut = bin_lut;
     }
-    printk(KERN_INFO "tx_isp_t40_recovered: gamma source=%s nodes=%u/%u/%u/%u/%u\n",
-           t40_gamma_user_mode ? "user" : active_lut == bin_lut ? "active-bin" : "fallback",
+    if (!ev_step)
+        printk(KERN_INFO "tx_isp_t40_recovered: gamma source=%s strength=%u nodes=%u/%u/%u/%u/%u\n",
+           t40_gamma_user_mode ? "user" : active_lut == bin_lut ? "active-bin" : "fallback", t40_gamma_ev_str,
            active_lut[0], active_lut[1], active_lut[11],
            active_lut[64], active_lut[128]);
 
@@ -10858,7 +10917,8 @@ static void regtrace_soft_gamma_write(void)
     (void)system_reg_write(0x50080, 0x7f0102);
     memcpy(t40_gamma_live, active_lut, sizeof(t40_gamma_live));
     t40_gamma_live_valid = true;
-    printk(KERN_INFO "tx_isp_t40_recovered: soft-gamma 2.2 LUT written\n");
+    if (!ev_step)
+        printk(KERN_INFO "tx_isp_t40_recovered: soft-gamma 2.2 LUT written\n");
 }
 
 #include "tx_isp_t40_bcsh.h"
