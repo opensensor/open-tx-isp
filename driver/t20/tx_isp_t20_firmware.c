@@ -2774,7 +2774,15 @@ int32_t apical_fw_init(int32_t *arg1)
 {
 	/* Exact OEM immediates: firmware context is 0x2fd0 bytes and the
 	 * semaphore/context offsets are 0x0c/0x18 bytes, respectively. */
+	/* Not OEM: every core init (stream restart, day/night re-init) used to
+	 * leak the previous semaphore, the memset dropped its only pointer.
+	 * The fw thread is stopped here (isp_core_ops_init only re-inits in
+	 * STATE_STOP), so nothing waits on it; free it after the memset, so the
+	 * window with a stale pointer stays the vendor one (NULL). */
+	uintptr_t old_sem = *(uintptr_t *)((uintptr_t)arg1 + 0x0c);
 	memset(arg1, 0, 0x2fd0);
+	if (old_sem)
+		destroy_semaphore((uintptr_t)&old_sem);
 	init_semaphore((uintptr_t)arg1 + 0x0c);
 	apical_fw_interrupts_init(arg1);
 	((void **)arg1)[1] = 1;

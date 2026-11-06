@@ -10,11 +10,13 @@ extern int isp_runtime_trace;
 static unsigned int t20_top_irq_trace_count;
 static void tx_isp_enable_irq(struct tx_isp_irq_device *irq_dev, int enable)
 {
-	volatile unsigned int reg = tx_isp_readl(irq_dev->base, TX_ISP_TOP_IRQ_ENABLE);
+	volatile unsigned int reg;
 	unsigned long flags;
+	/* read-modify-write under slock, as in tx_isp_disable_irq() */
+	spin_lock_irqsave(&irq_dev->slock, flags);
+	reg = tx_isp_readl(irq_dev->base, TX_ISP_TOP_IRQ_ENABLE);
 	reg |= enable;
 	tx_isp_writel(irq_dev->base, TX_ISP_TOP_IRQ_ENABLE, reg);
-	spin_lock_irqsave(&irq_dev->slock, flags);
 	if(irq_dev->state == 0){
 		irq_dev->state = 1;
 		refcnt++;
@@ -26,9 +28,10 @@ static void tx_isp_enable_irq(struct tx_isp_irq_device *irq_dev, int enable)
 }
 static void tx_isp_disable_irq(struct tx_isp_irq_device *irq_dev, int enable)
 {
-	volatile unsigned int reg = tx_isp_readl(irq_dev->base, TX_ISP_TOP_IRQ_ENABLE);
+	volatile unsigned int reg;
 	unsigned long flags;
 	spin_lock_irqsave(&irq_dev->slock, flags);
+	reg = tx_isp_readl(irq_dev->base, TX_ISP_TOP_IRQ_ENABLE);
 	reg &= ~enable;
 	tx_isp_writel(irq_dev->base, TX_ISP_TOP_IRQ_ENABLE, reg);
 	/*
@@ -42,15 +45,23 @@ static void tx_isp_disable_irq(struct tx_isp_irq_device *irq_dev, int enable)
 }
 static void tx_isp_mask_irq(struct tx_isp_irq_device *irq_dev, int mask)
 {
-	volatile unsigned int reg = tx_isp_readl(irq_dev->base, TX_ISP_TOP_IRQ_MASK);
+	volatile unsigned int reg;
+	unsigned long flags;
+	spin_lock_irqsave(&irq_dev->slock, flags);
+	reg = tx_isp_readl(irq_dev->base, TX_ISP_TOP_IRQ_MASK);
 	reg |= mask;
 	tx_isp_writel(irq_dev->base, TX_ISP_TOP_IRQ_MASK, reg);
+	spin_unlock_irqrestore(&irq_dev->slock, flags);
 }
 static void tx_isp_unmask_irq(struct tx_isp_irq_device *irq_dev, int mask)
 {
-	volatile unsigned int reg = tx_isp_readl(irq_dev->base, TX_ISP_TOP_IRQ_MASK);
+	volatile unsigned int reg;
+	unsigned long flags;
+	spin_lock_irqsave(&irq_dev->slock, flags);
+	reg = tx_isp_readl(irq_dev->base, TX_ISP_TOP_IRQ_MASK);
 	reg &= ~mask;
 	tx_isp_writel(irq_dev->base, TX_ISP_TOP_IRQ_MASK, reg);
+	spin_unlock_irqrestore(&irq_dev->slock, flags);
 }
 
 static inline void tx_isp_clear_irq(struct tx_isp_irq_device *irq_dev, unsigned int clear)

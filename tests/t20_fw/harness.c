@@ -495,6 +495,7 @@ static int irq_off;
 int32_t system_hw_interrupts_disable(void) { irq_off++; return 0; }
 int32_t system_hw_interrupts_enable(void) { irq_off--; return 0; }
 int32_t *init_semaphore(uintptr_t a) { (void)a; ev("SEM init"); return 0; }
+int32_t destroy_semaphore(uintptr_t a) { (void)a; ev("SEM destroy"); return 0; }
 static unsigned sem_raised;
 int32_t raise_semaphore(uintptr_t a) { (void)a; sem_raised++; return 0; }
 int32_t wait_semaphore(uintptr_t a, uint32_t t) { (void)a; EVF("SEM wait %u pending=%u", t, sem_raised); sem_raised = 0; return 0; }

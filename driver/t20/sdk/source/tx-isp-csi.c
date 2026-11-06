@@ -53,6 +53,9 @@ failed_to_get_clk:
 	}
 	kfree(clks);
 exit:
+	/* probe goes on without the clocks: set/release must see none */
+	csd->clks = NULL;
+	csd->clk_num = 0;
 	return ret;
 }
 
@@ -61,6 +64,8 @@ static long isp_csi_set_clk(struct tx_isp_csi_driver *csd, int state)
 	struct clk **clks = csd->clks;
 	int i;
 
+	if(!clks)
+		return ISP_SUCCESS;
 	if(state){
 		for(i = 0; i < csd->clk_num; i++)
 			clk_enable(clks[i]);
@@ -351,6 +356,13 @@ int csi_phy_stop(struct tx_isp_csi_driver *csd)
 	return 0;
 }
 
+/* vin.attr is NULL until the first SYNC_VIDEO_IN and again after SYNC_VIDEO_IN(0) */
+static inline int csi_vin_is_mipi(struct tx_isp_csi_driver *csd)
+{
+	return csd->vin.attr &&
+		csd->vin.attr->dbus_type == TX_SENSOR_DATA_INTERFACE_MIPI;
+}
+
 static long isp_csi_ops_private_ioctl(struct tx_isp_csi_driver *csd, struct isp_private_ioctl *ctl)
 {
 	long ret = ISP_SUCCESS;
@@ -359,13 +371,13 @@ static long isp_csi_ops_private_ioctl(struct tx_isp_csi_driver *csd, struct isp_
 			ret = isp_csi_set_clk(csd, ctl->value);
 			break;
 		case TX_ISP_PRIVATE_IOCTL_SUBDEV_PREPARE_CHANGE:
-			if(csd->vin.attr->dbus_type == TX_SENSOR_DATA_INTERFACE_MIPI){
+			if(csi_vin_is_mipi(csd)){
 	//			memcpy(&csd->vin, (void *)(ctl->value), sizeof(struct tx_isp_video_in));
 				ret = csi_phy_stop(csd);
 			}
 			break;
 		case TX_ISP_PRIVATE_IOCTL_SUBDEV_FINISH_CHANGE:
-			if(csd->vin.attr->dbus_type == TX_SENSOR_DATA_INTERFACE_MIPI){
+			if(csi_vin_is_mipi(csd)){
 				ret = csi_phy_start(csd);
 			}
 			break;
@@ -424,7 +436,7 @@ static int csi_s_stream(struct v4l2_subdev *sd, int enable)
 {
 	struct tx_isp_csi_driver *csd = sd_to_tx_isp_csi_driver(sd);
 	int ret = ISP_SUCCESS;
-	if(csd->vin.attr->dbus_type == TX_SENSOR_DATA_INTERFACE_MIPI){
+	if(csi_vin_is_mipi(csd)){
 		if (enable) {
 			ret = csi_phy_start(csd);//sd--lanes ???????
 			/*printk("csi------------start\n");*/

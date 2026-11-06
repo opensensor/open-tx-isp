@@ -1,3 +1,4 @@
+#include <linux/vmalloc.h>
 #include "tx-isp-load-parameters.h"
 
 /*****************************************************
@@ -57,11 +58,16 @@ static inline TXispPrivParamManage * malloc_tx_isp_priv_param_manage(void)
 {
 	int index = 0;
 //	LookupTable** c = NULL;
-	TXispPrivParamManage *m = kmalloc(sizeof(*m), GFP_KERNEL);
+	/*
+	 * vmalloc instead of kmalloc (manager 8.9 KiB, IQ bin copy ~60 KiB,
+	 * fw tables ~30 KiB): the CPU is the only reader of these tables
+	 * (they are copied into the ISP through register writes, never DMA),
+	 * and kmalloc rounded them up to order-2/3/4 blocks (16/64/32 KiB).
+	 */
+	TXispPrivParamManage *m = vzalloc(sizeof(*m));
 	if(!m)
 		return NULL;
 
-	memset(m, 0, sizeof(*m));
 	snprintf(m->version, sizeof(m->version), "%s", TX_ISP_VERSION_ID);
 	for(index = 0; index < TX_ISP_PRIV_PARAM_MAX_INDEX; index++){
 		snprintf(m->headers[index].flag, TX_ISP_PRIV_PARAM_FLAG_SIZE, "header%d", index);
@@ -79,11 +85,9 @@ void free_tx_isp_priv_param_manage(void)
 	if(manager){
 		manager->customer = NULL;
 		init_tx_isp_customer_parameter(manager->customer);
-		if(manager->data)
-			kfree(manager->data);
-		if(manager->fw_data)
-			kfree(manager->fw_data);
-		kfree(manager);
+		vfree(manager->data);
+		vfree(manager->fw_data);
+		vfree(manager);
 		manager = NULL;
 	}
 }
@@ -137,7 +141,7 @@ TXispPrivParamManage* load_tx_isp_parameters(struct tx_isp_sensor_attribute *att
 	/* check version and first header */
 
 	if(manager->data == NULL){
-		manager->data = kmalloc(fsize, GFP_KERNEL);
+		manager->data = vmalloc(fsize);
 		if(manager->data == NULL){
 			printk("%s[%d]: Failed to alloc %lld KB buffer!\n",__func__,__LINE__, fsize >> 10);
 			ret = -1;
@@ -150,7 +154,12 @@ TXispPrivParamManage* load_tx_isp_parameters(struct tx_isp_sensor_attribute *att
 		ret = -1;
 		goto failed_check_total_size;
 	}
-	vfs_read(file, manager->data, fsize, pos);
+	/* A short read left the tail of the previous bin in the buffer. */
+	if(vfs_read(file, manager->data, fsize, pos) != fsize){
+		printk("ISP: short read of %s\n", file_name);
+		ret = -1;
+		goto failed_read;
+	}
 	filp_close(file, NULL);
 	set_fs(old_fs);
 
@@ -175,7 +184,7 @@ TXispPrivParamManage* load_tx_isp_parameters(struct tx_isp_sensor_attribute *att
 	header->size = ((TXispPrivParamHeader *)cursor)->size;
 	header->crc = ((TXispPrivParamHeader *)cursor)->crc;
 	if(manager->fw_data == NULL){
-		manager->fw_data = kmalloc(header->size >> 1, GFP_KERNEL);
+		manager->fw_data = vmalloc(header->size >> 1);
 		if(manager->fw_data == NULL){
 			printk("%s[%d]: Failed to alloc %d KB buffer!\n",__func__,__LINE__, header->size >> 11);
 			ret = -1;
@@ -249,12 +258,15 @@ TXispPrivParamManage* load_tx_isp_parameters(struct tx_isp_sensor_attribute *att
 
 	init_tx_isp_customer_parameter(manager->customer);
 	return manager;
+	/* the file is already closed (and the old fs restored) after the read */
 failed_crc_header1:
 failed_check_header1:
 failed_crc_header0:
 failed_malloc_fw_data:
 failed_check_header0:
 failed_check_version:
+	return NULL;
+failed_read:
 failed_check_total_size:
 failed_malloc_data:
 	filp_close(file, NULL);

@@ -366,7 +366,7 @@ static int isp_vic_interrupt_service_routine(struct v4l2_subdev *sd, u32 status,
 		tmp = tx_isp_vic_readl(vd, VIC_CONTROL);
 		tmp |= VIC_RESET;
 		tx_isp_vic_writel(vd, VIC_CONTROL, tmp);
-		printk("## VIC ERROR status = 0x%08x\n", status);
+		printk_ratelimited("## VIC ERROR status = 0x%08x\n", status);
 		tx_isp_vic_writel(vd, VIC_CONTROL, VIC_SRART);
 	}
 #else
@@ -380,7 +380,7 @@ static int isp_vic_interrupt_service_routine(struct v4l2_subdev *sd, u32 status,
 		tmp = tx_isp_vic_readl(vd, VIC_CONTROL);
 		tmp |= VIC_RESET;
 		tx_isp_vic_writel(vd, VIC_CONTROL, tmp);
-		printk("## VIC ERROR status = 0x%08x\n", status);
+		printk_ratelimited("## VIC ERROR status = 0x%08x\n", status);
 	}
 #endif
 
