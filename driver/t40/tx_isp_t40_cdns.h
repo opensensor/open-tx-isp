@@ -17,8 +17,8 @@
  * day/night bank refresh on a first load) copies the section, selects the half, forgets the
  * remembered gain and packs at EV 1.0 (once; the OEM main_init packs the same
  * values twice); the frame-done DNS step repacks when the EV moved by at
- * least t40 cdns_thresh (OEM .data word: 0x10000 at load, 256 after
- * cdns_remove).
+ * least t40 cdns_thresh (OEM .data word gain_thres: 256 at load and after
+ * cdns_remove; 0x10000 is only the init call argument).
  *
  * The OEM keeps the section copy, a 30-pointer field table and the 32-byte
  * value buffer in vmalloc memory (main_cdns / main_cdns_comb /
@@ -42,7 +42,11 @@ static unsigned int regtrace_cdns_init_count;
 static unsigned int regtrace_cdns_refresh_count;
 static unsigned int regtrace_cdns_skip_count;
 static uint32_t regtrace_cdns_gain_now;
-static uint regtrace_cdns_thresh = 0x10000U;
+/* Vendor .data word gain_thres = 0x100 at load (tx-isp-t40.ko .data+0x2bfd0 and +0x2c8f0, both 0x100, read
+ * from the file 2026-11-06); 0x10000 is only the third argument of the one-off init call
+ * tisp_cdns_par_refresh(0, 0x10000, 0x10000) in tisp_cdns_main_init, see t40_cdns_init(). The
+ * open lift had taken that init argument as the running default (Opus review of #213). */
+static uint regtrace_cdns_thresh = 256U;
 t40_bringup_param_named(cdns_thresh, regtrace_cdns_thresh, uint, 0644);
 module_param_named(enable_cdns, regtrace_enable_cdns, bool, 0644);
 MODULE_PARM_DESC(enable_cdns, "CDNS chroma denoise (TOP bit 19): follows the bank flag like the OEM (set at bank apply); force on with t40_force_active bit 19 (0x80000), off with t40_force_bypass bit 19");

@@ -4,6 +4,10 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-06: T40 chroma denoise repack threshold like the OEM (cdns_thresh 256, #213; host build, Eufy measurement pending)
+
+- `cdns_thresh` defaulted to 0x10000 (1 EV): the chroma NR (CDNS) only repacked its tables when the gain had moved by a whole EV since the last repack, so it ran on a remembered gain that could be up to 2x off and depended on history (chroma temporal noise 0.65 vs 1.02-1.21 between two operating points of the same scene, #84 A/A 2026-11-06). The OEM word `gain_thres` is 0x100 (256) at load (vendor tx-isp-t40.ko `.data` +0x2bfd0 and +0x2c8f0, both 0x100); 0x10000 is only the third argument of the one-off init call `tisp_cdns_par_refresh(0, 0x10000, 0x10000)`, which `t40_cdns_init` still issues. Default now 256 (module parameter unchanged), like ydns/mdns/sdns.
+
 ## 2026-11-06: T40 AE exposure split like the OEM: IT on the highest rung, analog gain before ISP dgain (#84; host test, Eufy proof pending)
 
 - Cause (Eufy T40XP light box 1106a, one scene, OPUS_AE_SPLIT.md): the frame AE moved one stage per sample and never re-split the exposure, so the operating point depended on the path: IT 1800 / AeAGain idx 5 / ISP dgain 2.22x (run1) vs idx 10 / 1.08x (run3). The antiflicker rung trade (#211) moves only the analog gain, so ISP dgain gathered during a climb and stayed (any split inside the +-9 % gain window is a fixed point). The integration ceiling was the rung below max_it (1800 lines), the OEM uses 2241.
