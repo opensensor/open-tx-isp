@@ -2,6 +2,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 
 #include "../driver/t40/tx_isp_t40_ae_api.h"
 
@@ -539,6 +540,348 @@ static void test_af_trade(void)
 	}
 }
 
+
+/* ---------------- #84 OEM exposure split ---------------- */
+
+/*
+ * Transcription of the OEM split (vendor tx-isp-t40.ko tisp_ae_long_tune2 0x35b58, deflicker ladder branch,
+ * audit/issue84/decomp_ae_split/vendor_tisp_ae_long_tune2.c l.699-729 with l.613-626), minimum gains 1x:
+ * ladder entries k * step above max_it + 20 are dropped (l.703), R = highest entry <= EV / min gain
+ * (l.711-718), IT = min(R, max_it) (l.719-721), again = EV / IT (l.722); again <= max_again: dgain 1x
+ * (l.723 -> l.615), else again = max_again, dgain = rest clamped to max_dgain (l.724-728).
+ */
+struct oem_split {
+	double it, ag, dg;
+};
+
+static struct oem_split oracle_oem_split(double ev, u32 max_it, u32 step, double max_ag, double max_dg)
+{
+	struct oem_split o;
+	u32 top = step, r = step;
+
+	while (top + step <= max_it + 20U)
+		top += step;
+	while (r + step <= top && r + step <= ev)
+		r += step;
+	o.it = r < max_it ? r : max_it;
+	o.ag = ev / o.it;
+	o.dg = 1.0;
+	if (o.ag > max_ag) {
+		o.dg = o.ag / max_ag;
+		o.ag = max_ag;
+		if (o.dg > max_dg)
+			o.dg = max_dg;
+	}
+	return o;
+}
+
+static double t_gain(u32 ag, u32 dg)
+{
+	return t_exp2(t_log2_gain(ag) / 65536.0) * dg / 1024.0;
+}
+
+/* re-split until the state is the OEM one; returns the number of moves */
+static int split_fix(u32 *it, u32 *ag, u32 *dg, u32 step, u32 max_it, u32 max_ag, u32 dg_max)
+{
+	int n = 0;
+
+	while (t40_ae_oem_split(it, ag, dg, step, max_it, 0, max_ag, dg_max, true, t_log2_gain))
+		assert(++n < 40);
+	return n;
+}
+
+/*
+ * One frame-3A AE sample of the T40-AE-API loop (tx_isp_t40_recovered.c regtrace_frame_3a_sample, the
+ * regtrace_enable_ae_sensor_apply block) with antiflicker NORMAL (it_floor = rung), nothing manual, no
+ * highlight guard, neutral speed: IT steps (trade), again / ISP dgain gain bands, then (oem) the #84 split.
+ */
+struct ae_sim {
+	u32 it, ag, dg;
+};
+
+static void ae_sim_step(struct ae_sim *s, u32 luma, u32 target, int oem)
+{
+	const u32 deadband = 4, step = 450, max_it = 2241, max_ag = 20, min_ag = 0, dg_max = 4096;
+	u32 it_cap = oem ? t40_ae_af_it_cap(max_it, step) : t40_ae_af_floor(max_it, step);
+	u32 again_band = (target * 9U + 99U) / 100U, dgain_band = target * 5U / 100U;
+	unsigned int moves = (luma * 2U < target || luma > target * 2U) ? 2U : 1U, n;
+	u32 it = s->it, again = s->ag, dgain = s->dg;
+	int it_down = 0;
+
+	if (again_band < deadband)
+		again_band = deadband;
+	if (dgain_band < deadband)
+		dgain_band = deadband;
+	if (it > it_cap)
+		it = it_cap;
+	if (it > step && it % step && it != it_cap)
+		it = t40_ae_af_floor(it, step);
+	if (it < step)
+		it = step;
+	for (n = 0; n < moves; n++) {
+		if (luma + deadband < target) {
+			u32 next_it = it, next_ag = again;
+
+			if (it < it_cap) {
+				u32 up_it = it + step < it_cap ? it + step : it_cap;
+				u32 up_ag = t40_ae_af_trade_again(it, up_it, again, min_ag, max_ag, t_log2_gain);
+				u32 ev_up = t40_ae_af_trade_log2(it, up_it, again, up_ag, t_log2_gain);
+
+				next_it = up_it;
+				next_ag = up_ag;
+				if (ev_up > t40_ae_log2_ratio(target + again_band, luma ? luma : 1U) &&
+				    ((again < max_ag || dgain < dg_max) ||
+				     ev_up > t40_ae_log2_ratio(2U * target - luma, luma ? luma : 1U))) {
+					next_it = it;
+					next_ag = again;
+				}
+			}
+			if (next_it != it) {
+				it = next_it;
+				again = next_ag;
+				break;
+			} else if (again < max_ag && luma + again_band < target) {
+				again++;
+			} else if (dgain < dg_max && luma + dgain_band < target) {
+				dgain = dgain + dgain / 12U < dg_max ? dgain + dgain / 12U : dg_max;
+			} else {
+				break;
+			}
+		} else if (luma > target + deadband) {
+			if (dgain > 1024U && luma > target + dgain_band) {
+				dgain = dgain - dgain / 13U > 1024U ? dgain - dgain / 13U : 1024U;
+			} else if (again > min_ag && luma > target + again_band) {
+				again--;
+			} else if (dgain > 1024U || again > min_ag) {
+				break;
+			} else if (it > step) {
+				u32 dn = it % step ? t40_ae_af_floor(it, step) : it - step;
+
+				if (dn < step)
+					dn = step;
+				if (luma <= target + again_band)
+					break;
+				again = t40_ae_af_trade_again(it, dn, again, min_ag, max_ag, t_log2_gain);
+				it = dn;
+				it_down = 1;
+				break;
+			} else {
+				break;
+			}
+		} else {
+			break;
+		}
+	}
+	if (oem)
+		(void)t40_ae_oem_split(&it, &again, &dgain, step, max_it, min_ag, max_ag, dg_max, !it_down,
+				       t_log2_gain);
+	s->it = it;
+	s->ag = again;
+	s->dg = dgain;
+}
+
+/* plant: luma = 255 * (k * exposure)^0.45 (gamma), one-sample statistics lag; returns the last luma */
+static double ae_sim_lo, ae_sim_hi;	/* exposure range of the second half of a run */
+
+static u32 ae_sim_runn(struct ae_sim *s, double k, u32 target, int oem, int samples, int amp)
+{
+	static const int pat[8] = { 0, 1, -1, 1, 0, -1, 1, -1 };
+	double ev_prev = s->it * t_gain(s->ag, s->dg);
+	u32 l = 0;
+	int i;
+
+	ae_sim_lo = 1e30;
+	ae_sim_hi = 0;
+	for (i = 0; i < samples; i++) {
+		double ev = s->it * t_gain(s->ag, s->dg), x = k * ev_prev;
+		int v;
+
+		ev_prev = ev;
+		if (i >= samples / 2) {
+			ae_sim_lo = ev < ae_sim_lo ? ev : ae_sim_lo;
+			ae_sim_hi = ev > ae_sim_hi ? ev : ae_sim_hi;
+		}
+		v = (x >= 1.0 ? 255 : (int)(255.0 * exp(0.45 * log(x)) + 0.5)) + pat[i & 7] * amp;
+		l = v < 1 ? 1U : (u32)v;
+		ae_sim_step(s, l, target, oem);
+	}
+	return l;
+}
+
+static u32 ae_sim_run(struct ae_sim *s, double k, u32 target, int oem, int samples)
+{
+	return ae_sim_runn(s, k, target, oem, samples, 0);
+}
+
+static void test_oem_split(void)
+{
+	u32 it, ag, dg, d;
+	int oem, n;
+
+	/* OEM ceiling: 50 Hz rung 450, max_it 2241 -> 2250 kept, clamped 2241; 60 Hz rung 375 -> 2250 -> 2241 */
+	assert(t40_ae_af_it_cap(2241, 450) == 2241 && t40_ae_af_it_cap(2241, 375) == 2241);
+	assert(t40_ae_af_it_cap(2000, 450) == 1800 && t40_ae_af_it_cap(2241, 0) == 2241);
+	assert(t40_ae_af_it_cap(300, 450) == 300 && t40_ae_af_it_cap(2230, 450) == 2230);
+	/* exp2 inverse of log2_ratio */
+	assert(t40_ae_q10_exp2_floor(0) == 1024 && t40_ae_q10_exp2_floor(65536) == 2048);
+	assert(t40_ae_q10_exp2_floor(10U << 16) == 32767);
+	for (d = 1024; d < 32768; d += 7) {
+		u32 l = t40_ae_log2_ratio(d, 1024), e = t40_ae_q10_exp2_floor(l);
+
+		assert(e >= d && t40_ae_log2_ratio(e, 1024) == l);
+		assert(e == 32767 || t40_ae_log2_ratio(e + 1, 1024) > l);
+	}
+
+	/* Eufy 1106a run1 (OPUS_AE_SPLIT.md Q1): IT 1800, AeAGain idx 5, ISP dgain step 10 (2275), EV 9435 */
+	it = 1800, ag = 5, dg = 2275;
+	{
+		double ev0 = it * t_gain(ag, dg);
+		struct oem_split o = oracle_oem_split(ev0, 2241, 450, 32.0, 4.0);
+
+		n = split_fix(&it, &ag, &dg, 450, 2241, 20, 4096);
+		printf("oem84 run1 1800/5/2275 (EV %.0f) -> %u/%u/%u in %d moves; OEM IT %.0f again %.3f dgain %.2f\n",
+		       ev0, it, ag, dg, n, o.it, o.ag, o.dg);
+		assert(it == 2241 && o.it == 2241);
+		assert(ag == 8 && dg < 1024U + 1024U * 17U / 100U);		/* 4.0 x 1.05 = OEM 4.21x analog */
+		assert(fabs(t_gain(ag, dg) / o.ag - 1.0) < 0.002);
+		assert(fabs(it * t_gain(ag, dg) / ev0 - 1.0) < 0.002);	/* exposure-neutral */
+	}
+	/* run3: IT 1800, idx 10, dgain step 1 (1109): the same rule, same kind of point */
+	it = 1800, ag = 10, dg = 1109;
+	(void)split_fix(&it, &ag, &dg, 450, 2241, 20, 4096);
+	assert(it == 2241 && ag == 9);
+	/* vendor pass (1105e): EV 3511 at IT 2241 -> again 1.57x (OEM AGain 1600); open: idx 2 (1.39x) + dgain 1.13x */
+	it = 1800, ag = 1, dg = 1024U * 3511U / 1800U * 1024U / 1200U;
+	(void)split_fix(&it, &ag, &dg, 450, 2241, 20, 4096);
+	assert(it == 2241 && ag == 2);
+	/* canonical states are left alone (no register churn): gain at min, sub-step dgain */
+	it = 1800, ag = 0, dg = 1024;
+	assert(!t40_ae_oem_split(&it, &ag, &dg, 450, 2241, 0, 20, 4096, true, t_log2_gain));
+	it = 2241, ag = 3, dg = 1100;
+	assert(!t40_ae_oem_split(&it, &ag, &dg, 450, 2241, 0, 20, 4096, true, t_log2_gain));
+	/* IT above the OEM point (2241 at 1x: OEM 1800 + 1.245x) stays: never moved down, less gain */
+	it = 2241, ag = 0, dg = 1024;
+	assert(!t40_ae_oem_split(&it, &ag, &dg, 450, 2241, 0, 20, 4096, true, t_log2_gain));
+	/* IT not free (manual or stepped down this sample): only dgain -> again */
+	it = 900, ag = 0, dg = 2275;
+	assert(t40_ae_oem_split(&it, &ag, &dg, 450, 2241, 0, 20, 4096, false, t_log2_gain) && it == 900 && ag == 1);
+	/* above max_again: analog at max, dgain the rest (OEM l.724-728) */
+	it = 2241, ag = 19, dg = 3000;
+	assert(t40_ae_oem_split(&it, &ag, &dg, 450, 2241, 0, 20, 4096, true, t_log2_gain) && ag == 20);
+	assert(!t40_ae_oem_split(&it, &ag, &dg, 450, 2241, 0, 20, 4096, true, t_log2_gain));
+	/* no antiflicker: only the gain part */
+	it = 1000, ag = 2, dg = 2048;
+	(void)split_fix(&it, &ag, &dg, 0, 2241, 20, 4096);
+	assert(it == 1000 && ag == 5);	/* 2 + 1 EV = 96713 -> idx 5 (81158) */
+
+	/*
+	 * Against the OEM transcription: any path state (IT on a rung, any analog index, any dgain up to 4x)
+	 * re-split equals the OEM point of its exposure whenever the OEM IT is not below the state's IT:
+	 * same IT, total gain within rounding, dgain below one analog step while the analog gain is below max.
+	 */
+	{
+		static const u32 rungs[] = { 450, 900, 1350, 1800, 2241 };
+		unsigned int seed = 84, cnt = 0, kept = 0;
+		int k;
+
+		for (k = 0; k < 20000; k++) {
+			u32 i0, a0, d0;
+			double ev0;
+			struct oem_split o;
+
+			seed = seed * 1103515245U + 12345U;
+			i0 = rungs[(seed >> 16) % 5];
+			seed = seed * 1103515245U + 12345U;
+			a0 = (seed >> 16) % 21;
+			seed = seed * 1103515245U + 12345U;
+			d0 = 1024U + (seed >> 12) % 3072U;
+			it = i0, ag = a0, dg = d0;
+			ev0 = i0 * t_gain(a0, d0);
+			o = oracle_oem_split(ev0, 2241, 450, t_exp2(t_log2_gain(20) / 65536.0), 4.0);
+			n = split_fix(&it, &ag, &dg, 450, 2241, 20, 4096);
+			/* never more exposure; each move loses < 1/1024 (Q10 dgain rounded down) */
+			assert(it * t_gain(ag, dg) <= ev0 * 1.0001 && it * t_gain(ag, dg) >= ev0 * (1.0 - 0.0011 * n));
+			if (o.it < i0) {			/* IT only moves up: less gain than the OEM */
+				assert(it == i0);
+				kept++;
+				continue;
+			}
+			assert(it == (u32)o.it);
+			assert(fabs(t_gain(ag, dg) / (o.ag * o.dg) - 1.0) < 0.0011 * n + 0.0001);
+			if (ag < 20)
+				assert(t40_ae_log2_ratio(dg, 1024) < t_log2_gain(ag + 1) - t_log2_gain(ag));
+			cnt++;
+		}
+		printf("oem84 oracle: %u states equal to the OEM split, %u above it kept (less gain)\n", cnt, kept);
+		assert(cnt > 15000);
+	}
+
+	/*
+	 * Path dependence (OPUS_AE_SPLIT.md Q1): one scene, three histories - (a) from dark (450 lines / 1x),
+	 * (b) from bright (max exposure), (c) low target first (comp 28: target 27) then the default 122,
+	 * (d) the logged run1 point (IT 1800, idx 5, ISP dgain 2275) as the start.
+	 * Legacy: the operating points differ and run1 is a fixed point; OEM split: one point, the OEM one.
+	 */
+	for (oem = 0; oem < 2; oem++) {
+		const double k = 0.1941 / 9435.0;	/* run1: EV 9435 -> luma 122 (gamma 0.45) */
+		struct ae_sim h[4] = { { 450, 0, 1024 }, { 2241, 20, 4096 }, { 450, 0, 1024 }, { 1800, 5, 2275 } };
+		u32 l[4];
+		int j, differ = 0;
+
+		l[0] = ae_sim_run(&h[0], k, 122, oem, 400);
+		l[1] = ae_sim_run(&h[1], k, 122, oem, 400);
+		(void)ae_sim_run(&h[2], k, t40_ae_comp_target(122, 28, 8, 250), oem, 200);
+		l[2] = ae_sim_run(&h[2], k, 122, oem, 400);
+		l[3] = ae_sim_run(&h[3], k, 122, oem, 400);
+		for (j = 0; j < 4; j++)
+			printf("oem84 %s history %c: IT %u again %u dgain %u luma %u EV %.0f\n", oem ? "oem   " : "legacy",
+			       'a' + j, h[j].it, h[j].ag, h[j].dg, l[j], h[j].it * t_gain(h[j].ag, h[j].dg));
+		/* the split is a function of the exposure (the AE window around the target still allows several EVs) */
+		for (j = 0; j < 4; j++) {
+			struct oem_split o = oracle_oem_split(h[j].it * t_gain(h[j].ag, h[j].dg), 2241, 450,
+							      t_exp2(t_log2_gain(20) / 65536.0), 4.0);
+			int eq = h[j].it == (u32)o.it &&
+				 t40_ae_log2_ratio(h[j].dg, 1024) < t_log2_gain(h[j].ag + 1) - t_log2_gain(h[j].ag);
+
+			differ += !eq;
+			assert(l[j] + 11 >= 122 && l[j] <= 122 + 11);
+		}
+		if (!oem) {
+			assert(differ == 4);	/* IT 1800 everywhere (OEM 2241), run1 keeps its 2.22x ISP dgain */
+			assert(h[3].it == 1800 && h[3].ag == 5 && h[3].dg == 2275);
+		} else {
+			assert(!differ);
+		}
+	}
+	/* the OEM loop holds one exposure (no hunting) at a steady scene: 200 more samples, no change */
+	{
+		struct ae_sim s = { 450, 0, 1024 }, s0;
+		int j;
+
+		(void)ae_sim_run(&s, 0.1941 / 9435.0, 122, 1, 400);
+		s0 = s;
+		for (j = 0; j < 200; j++)
+			(void)ae_sim_run(&s, 0.1941 / 9435.0, 122, 1, 1);
+		assert(s.it == s0.it && s.ag == s0.ag && s.dg == s0.dg);
+	}
+	/* statistics noise up to +-4 levels: no more exposure spread than the legacy loop, at most one gain step */
+	{
+		int amp;
+
+		for (amp = 0; amp <= 4; amp++) {
+			struct ae_sim s = { 450, 0, 1024 }, s2 = { 450, 0, 1024 };
+			double r_oem, r_leg;
+
+			(void)ae_sim_runn(&s, 0.1941 / 9435.0, 122, 1, 600, amp);
+			r_oem = ae_sim_hi / ae_sim_lo;
+			(void)ae_sim_runn(&s2, 0.1941 / 9435.0, 122, 0, 600, amp);
+			r_leg = ae_sim_hi / ae_sim_lo;
+			printf("oem84 noise %d: exposure spread oem %.3f legacy %.3f\n", amp, r_oem, r_leg);
+			assert(r_oem <= 1.18 && r_oem <= r_leg + 0.001);
+		}
+	}
+}
+
 int main(void)
 {
 	test_comp();
@@ -548,6 +891,7 @@ int main(void)
 	test_af_speed();
 	test_expr();
 	test_af_trade();
+	test_oem_split();
 	puts("tx_isp_t40_ae_api tests passed");
 	return 0;
 }

@@ -9418,6 +9418,12 @@ static uint32_t t40_ae_af_req_mode T40C2, t40_ae_af_req_freq T40C2;   /* last Se
 static bool t40_ae_af_req_set T40C2;
 static uint t40_ae_af_step_now T40C2;          /* integration lines per half mains period in use, 0 = off */
 module_param_named(t40_ae_af_step_now, t40_ae_af_step_now, uint, 0444);
+/* #84: 1 = the pre-#84 exposure split (IT cap on the rung below max_it, no re-split) for A/B runs; 0 = the OEM
+ * tisp_ae_long_tune2 split (t40_ae_af_it_cap, t40_ae_oem_split in tx_isp_t40_ae_api.h) */
+static uint t40_ae_split_legacy T40C2;
+module_param_named(t40_ae_split_legacy, t40_ae_split_legacy, uint, 0644);
+static uint t40_ae_split_moves T40C2;          /* exposure-neutral OEM re-splits done (diagnostic) */
+module_param_named(t40_ae_split_moves, t40_ae_split_moves, uint, 0444);
 
 static uint32_t regtrace_t40_ae_max_it(void);
 static uint32_t regtrace_t40_lines_to_us(uint32_t lines);
@@ -77068,7 +77074,8 @@ static void regtrace_frame_3a_sample(int channel, uint32_t y_phys, uint32_t uv_p
         uint32_t luma_ae = READ_ONCE(t40_ae_metered) ? READ_ONCE(t40_ae_metered) : luma;
         struct t40_ae_expr ex;
         uint32_t man_it, man_ag, min_again, it_cap, it_floor, af_step, speed;
-        bool af_normal = false, it_fixed, ag_fixed, dg_fixed, up;
+        bool af_normal = false, it_fixed, ag_fixed, dg_fixed, up, it_down = false;
+        bool oem_split = !READ_ONCE(t40_ae_split_legacy);
         unsigned long flags;
 
         spin_lock_irqsave(&t40_ae_api_lock, flags);
@@ -77083,7 +77090,9 @@ static void regtrace_frame_3a_sample(int channel, uint32_t y_phys, uint32_t uv_p
         af_step = regtrace_t40_ae_af_step(&af_normal);
         if (af_step > max_it)
             af_step = 0;
-        it_cap = af_step ? t40_ae_af_floor(max_it, af_step) : max_it;
+        /* #84: OEM ceiling = highest rung <= max_it + 20, clamped to max_it (Eufy 50 Hz: 2241, legacy 1800) */
+        it_cap = !af_step ? max_it :
+                 oem_split ? t40_ae_af_it_cap(max_it, af_step) : t40_ae_af_floor(max_it, af_step);
         it_floor = (af_step && af_normal) ? af_step : regtrace_ae_soft_min_it;
         WRITE_ONCE(t40_ae_af_step_now, af_step);
 
@@ -77109,7 +77118,7 @@ static void regtrace_frame_3a_sample(int channel, uint32_t y_phys, uint32_t uv_p
                 it = it_cap;
                 changed = true;
             }
-            if (af_step && it > af_step && it % af_step) {
+            if (af_step && it > af_step && it % af_step && it != it_cap) {
                 it = t40_ae_af_floor(it, af_step);
                 changed = true;
             }
@@ -77258,7 +77267,9 @@ static void regtrace_frame_3a_sample(int channel, uint32_t y_phys, uint32_t uv_p
                      * target stepped down 1/3, the next sample stepped up again (Eufy T40 comp 58: IT
                      * 900 <-> 1350 lines at gain 1x, frame means 32..82).
                      */
-                    uint32_t dn_it = max_t(uint32_t, it - af_step, af_step);
+                    /* #84: from the clamped OEM ceiling (not a rung multiple) down to the rung below it */
+                    uint32_t dn_it = max_t(uint32_t, it % af_step ? t40_ae_af_floor(it, af_step) :
+                                                                    it - af_step, af_step);
 
                     if (!protect_highlights && luma_ae <= target + again_band)
                         break;
@@ -77266,6 +77277,7 @@ static void regtrace_frame_3a_sample(int channel, uint32_t y_phys, uint32_t uv_p
                         again = t40_ae_af_trade_again(it, dn_it, again, min_again, max_again,
                                                       regtrace_gc4653_again_log2_gain);
                     it = dn_it;
+                    it_down = true;
                 } else {
                     uint32_t error = luma_ae > target ?
                         luma_ae - target : deadband;
@@ -77282,11 +77294,26 @@ static void regtrace_frame_3a_sample(int channel, uint32_t y_phys, uint32_t uv_p
                     it = it > step ? it - step : it_floor;
                     if (it < it_floor)
                         it = it_floor;
+                    it_down = true;
                 }
                 changed = true;
                 break;
             }
         }
+        }
+        /*
+         * #84: OEM split of the exposure the step above produced (tisp_ae_long_tune2: IT = highest rung, analog
+         * gain = the rest, digital gain only above max_again), exposure-neutral.  Without it the split depended on
+         * the path (analog-only rung trade, ISP dgain ratchet).  Not with manual gains or a frozen AE; IT stays
+         * when it is manual or stepped down in this sample (the next sample lowers the gain first).
+         */
+        if (oem_split && !ex.freeze && !ag_fixed && !dg_fixed &&
+            t40_ae_oem_split(&it, &again, &dgain, af_step, max_it,
+                             min_again, max_again, dgain_max, !it_fixed && !it_down,
+                             regtrace_gc4653_again_log2_gain)) {
+            changed = true;
+            dgain_changed = true;
+            WRITE_ONCE(t40_ae_split_moves, t40_ae_split_moves + 1U);
         }
         if (dgain_changed) {
             WRITE_ONCE(regtrace_ae_isp_dgain_cur, dgain);
