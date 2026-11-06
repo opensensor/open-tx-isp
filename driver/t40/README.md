@@ -871,6 +871,14 @@ caps), AeWeight, FaceAe, AeSpeed and antiflicker. Plain-data part and OEM formul
 `t40_ae_stats_src` 0 auto / 1 hardware / 2 frame grid; `t40_ae_af_enable`, `t40_ae_af_step_now`.
 Not acting on the AE: AeExpList (stored, read back), AeStartEv (stored), SetAeAlgoFunc (not offered).
 
+Exposure split (#84, 2026-11-06): after each frame-AE step the exposure is re-split like the OEM
+`tisp_ae_long_tune2` deflicker ladder (`t40_ae_oem_split`, `t40_ae_af_it_cap` in `tx_isp_t40_ae_api.h`):
+integration time = highest antiflicker rung <= max_it + 20 lines (clamped to max_it, Eufy 50 Hz 2241 instead of
+1800), analog gain index = the rest, ISP digital gain only the remainder below one analog step (or the rest above
+max_again). Exposure-neutral, at most one analog index per sample, IT only upwards, off with manual gains or a
+frozen AE. `t40_ae_split_legacy=1` restores the old path-dependent split for A/B; `t40_ae_split_moves` counts
+re-splits.
+
 ## AF statistics, RGB coefficients (2026-10-26, `claude/gate-1026`)
 
 GetAfStatistics / GetAFMetricesInfo read the AF DMA ring (buffer 4 of the tisp DMA set, 0x1a0cc..0x1a0d8) on demand:

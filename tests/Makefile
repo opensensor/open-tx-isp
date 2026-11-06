@@ -80,7 +80,7 @@ tx_isp_t40_osd_slot_test: tx_isp_t40_osd_slot_test.c ../driver/t40/tx_isp_t40_os
 	$(CC) $(CFLAGS) -o $@ $<
 
 tx_isp_t40_ae_api_test: tx_isp_t40_ae_api_test.c ../driver/t40/tx_isp_t40_ae_api.h
-	$(CC) $(CFLAGS) -o $@ $<
+	$(CC) $(CFLAGS) -o $@ $< -lm
 
 tx_isp_t31_framedrop_test: tx_isp_t31_framedrop_test.c ../driver/t31/tx_isp_t31_framedrop.h
 	$(CC) $(CFLAGS) -o $@ $<
