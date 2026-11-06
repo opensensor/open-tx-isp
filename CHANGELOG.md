@@ -13,9 +13,10 @@ marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned 
 - D3/D5: removed the dead `tx_isp_vic_handle_event` (queued an 8-byte `list_head` kmalloc as a VIC buffer), `ispmodule_ip_done_irq_handler`, `isp_irq_thread_handle`, `isp_irq_dispatcher` and the unused `isp_event_func_cb[32]`.
 - D4: `wdr_hist_Y1` dropped: write-only in the OEM (HLIL 0x5c810) and here; the per-WDR-frame 256-word copy under `wdr_stats_lock` in `tisp_ae1_get_hist` is gone (the OEM unpacks into an AE1 area nothing reads).
 - Size: module RAM 702796 -> 701460 B (.bss -1152); trace build 829116 -> 827780 B; exports and .modinfo identical. `make -C tests check` 0.
+- Device test (full OTA of agg67d + this driver, then agg67d restored; .224 sc4336p T31X, .29 sc2336 T31L): /proc/modules 719712 -> 703544 B (.224) and 719792 -> 703624 B (.29), both incl. the review commit and c8e3d4d3; parameter list identical (47); `irq/37-isp-m0` and `irq/38-isp-w02` gone; ISP IRQ rate unchanged at the same uptime (.224 isp-m0 103-104/s, isp-w02 29/s; .29 90/s, 30/s), "ch0 done" 29 -> 14-15/s at 15 fps; no oops; snapshots and a night -> day -> night switch OK on both.
 - Not done: M1 (tx_isp_tuning.o has 580 B dead data left after this, the flag costs +17 KiB text), M3 (200 ms fw thread timeout is the OEM's 20 jiffies), M5, R1/R2.
 
-## 2026-11-06: T31 module review: -15.5 KB module RAM, no MMIO in dropped trace lines, rate-limited IRQ errors (#223; build/host only, device test pending)
+## 2026-11-06: T31 module review: -15.5 KB module RAM, no MMIO in dropped trace lines, rate-limited IRQ errors (#223; device-tested with the follow-up above)
 
 - Size (sc4336p agg67d tree, 3.10.14, gcc 16.2, default build): module RAM (.text+.rodata+.data+.bss) 718317 -> 702796 B, .ko 693420 -> 682336 B; trace build (`TX_ISP_T31_TRACE=y`) 852773 -> 829116 B. Exports (27) and .modinfo identical; imports lose only `jiffies_to_msecs`.
 - `-fdata-sections` for ten units (core, module, subdev, csi, vic, vic_debug, vin, sysfs, subdev_mgmt, reset; not tx_isp_tuning: +17 KiB anchor code there) so `--gc-sections` drops the strings, tables and fops of unused helpers (and the functions only those tables kept alive): -11.0 KB RAM.
