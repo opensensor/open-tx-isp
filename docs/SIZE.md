@@ -148,6 +148,18 @@ The kernel log lines start with `t23: ` and `t41: ` (`pr_fmt` for the
 `tx_isp_t23_recovered: `, `tx_isp_t41_recovered: `, `tx_isp_t41: ` and
 `tx-isp-t41: `. The T23 trace filter matches the new prefix.
 
+## Dead ISR chain and event queues (T23, Lu-Fi/openimp#224)
+
+The hand-written `isp_irq_handle` dispatches the core status bits itself and
+the ISP lines have no thread_fn, so core ops +0x20/+0x24 stay NULL; the
+recovered `ispcore_interrupt_service_routine` / `ispcore_irq_thread_handle`
+and everything only they call are no longer linked. `tisp_event_push` drops
+events without touching `tisp_event_queues` (never initialised, never
+drained), which removes that 7.7 KB .bss. Module RAM 868393 -> 857173 B.
+If a stock event thread or the stock core ISR is ever wired up again, both
+have to come back together (`tisp_event_init` caller + queue path in
+`tisp_event_push`, core ops +0x20/+0x24).
+
 ## Open (not changed)
 
 - **T21 day/night parameter copies (`tparams_day`, `tparams_night`, 2 x

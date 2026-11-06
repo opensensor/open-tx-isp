@@ -9310,7 +9310,6 @@ static int32_t sub_b1e4(void);
 int32_t isp_irq_handle(int32_t arg1, void *arg2);
 /* MSCA channel config: front crop (ioctl) vs the core ISR FIFO drain */
 static DEFINE_SPINLOCK(regtrace_t23_msca_lock);
-int32_t isp_irq_thread_handle(int32_t arg1, void *arg2);
 int32_t tx_isp_enable_irq(uintptr_t a0);
 int32_t tx_isp_disable_irq(uintptr_t a0);
 int tx_isp_request_irq(struct platform_device *pdev, struct tx_isp_irq_info *irq_info);
@@ -17352,12 +17351,19 @@ static void regtrace_framechan_complete_fifo(int channel,
         (slot + 1U) % REGTRACE_FRAMECHAN_DONE_SLOTS;
     regtrace_framechan_done_count[channel]++;
     count = ++regtrace_framechan_done_total[channel];
+    /*
+     * The log line uses the ring entry; once the lock is dropped a DQBUF can
+     * consume the slot and the next completion overwrite it, so the values
+     * are taken here (uv_phys is the argument).
+     */
+    slot = done->index;
+    y_phys = done->userptr;
     spin_unlock_irqrestore(&regtrace_framechan_done_lock, flags);
 
     wake_up_interruptible(&regtrace_framechan_done_wait[channel]);
     if (regtrace_t23_log_irq_count(count))
         printk(KERN_INFO "t23: framechan%d MSCA completion idx=%u y=0x%x uv=0x%x count=%u\n",
-               channel, done->index, done->userptr, done->uv_phys, count);
+               channel, slot, y_phys, uv_phys, count);
 }
 
 /*
@@ -21063,8 +21069,13 @@ static void __init regtrace_patch_relocated_data(void)
     *(const void **)((char *)ispcore_sensor_ops + 0x8) = (const void *)&ispcore_sensor_ops_ioctl;
     *(const void **)((char *)ispcore_subdev_core_ops + 0x4) = (const void *)&ispcore_core_ops_init;
     *(const void **)((char *)ispcore_subdev_core_ops + 0x1c) = (const void *)&ispcore_core_ops_ioctl;
-    *(const void **)((char *)ispcore_subdev_core_ops + 0x20) = (const void *)&ispcore_interrupt_service_routine;
-    *(const void **)((char *)ispcore_subdev_core_ops + 0x24) = (const void *)&ispcore_irq_thread_handle;
+    /*
+     * core ops +0x20 (stock ispcore_interrupt_service_routine) and +0x24
+     * (ispcore_irq_thread_handle) stay NULL: nothing in this module calls
+     * them (isp_irq_handle is hand-written and dispatches the core status
+     * bits itself; the IRQ has no thread_fn), so the recovered bodies and
+     * the irq_func_cb dispatch they carry are not linked.
+     */
     *(const void **)((char *)fs_work + 0x4) = (const void *)((char *)((char *)&fs_work + 0x4));
     *(const void **)((char *)fs_work + 0x8) = (const void *)((char *)((char *)&fs_work + 0x4));
     *(const void **)((char *)fs_work + 0xc) = (const void *)&t23_fs_work_timed;
@@ -35412,12 +35423,6 @@ static int32_t isp_irq_handle_body(int32_t irq, void *dev_id)
     return IRQ_NONE;
 }
 
-int32_t isp_irq_thread_handle(int32_t irq, void *dev_id)
-{
-    (void)irq;
-    (void)dev_id;
-    return IRQ_HANDLED;
-}
 
 static int32_t __maybe_unused isp_irq_handle_generated_unused(int32_t arg1, void *arg2) {
     int *i = 0;
@@ -35716,7 +35721,14 @@ int tx_isp_request_irq(struct platform_device *pdev, struct tx_isp_irq_info *irq
     if (irq >= 0) {
         private_spin_lock_init(irq_info);
 
-        ret = private_request_threaded_irq(irq, isp_irq_handle, isp_irq_thread_handle,
+        /*
+         * No thread_fn: isp_irq_handle never returns IRQ_WAKE_THREAD (the
+         * stock threaded half ran the core ops +0x24 hook, which the
+         * hand-written ISR does not use), so a handler thread per line would
+         * only be an idle irq/N-* kthread.  Same line, name and flags
+         * (IRQF_ONESHOT) as before.
+         */
+        ret = private_request_threaded_irq(irq, isp_irq_handle, NULL,
                                            0x2000, dev_name(&pdev->dev), irq_info);
         if (ret != 0) {
             ((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t))isp_printf)((uintptr_t)(2), (uintptr_t)("%s[%d] Failed to request irq(%d).\n"), (uintptr_t)("tx_isp_request_irq"), (uintptr_t)(94), (uintptr_t)(irq));
@@ -44750,41 +44762,17 @@ int tisp_event_set_cb(uint32_t channel, uint32_t event_id, void *callback)
 /* WHOLE_DRIVER_CANDIDATE fn_0000000000018060 origin=fragment_seed original=tisp_event_push */
 int32_t tisp_event_push(uint32_t channel, const void *event)
 {
-    const struct tisp_event_record *source = event;
-    struct tisp_event_channel *queue;
-    struct tisp_event_record *record;
-    unsigned long flags;
-
-    queue = tisp_event_channel_get(channel);
-    if (!queue || !source)
-        return -EINVAL;
-
-    spin_lock_irqsave(&tisp_event_lock, flags);
     /*
      * tisp_event_init() has no caller in this module (its stock caller,
-     * tisp_core_switch_bin, is not linked), so the zeroed list heads would
-     * make list_first_entry() below a NULL dereference.  No event thread
-     * drains the queue either; an event is dropped as on a full queue.
+     * tisp_core_switch_bin, is not linked) and no event thread runs
+     * tisp_event_process(), so the stock queues are never set up: every
+     * event is dropped and counted as on a full queue.  Not touching the
+     * queues here lets gcc drop tisp_event_queues (2 x 3868 B .bss).
      */
-    if (!queue->free.next) {
-        ++event_busy[channel];
-        spin_unlock_irqrestore(&tisp_event_lock, flags);
-        return -ENODEV;
-    }
-    if (list_empty(&queue->free)) {
-        ++event_busy[channel];
-        spin_unlock_irqrestore(&tisp_event_lock, flags);
-        return -ENOMEM;
-    }
-
-    record = list_first_entry(&queue->free, struct tisp_event_record, link);
-    list_del(&record->link);
-    record->event_id = source->event_id;
-    memcpy(record->args, source->args, sizeof(record->args));
-    list_add_tail(&record->link, &queue->pending);
-    spin_unlock_irqrestore(&tisp_event_lock, flags);
-    complete(&queue->completion);
-    return 0;
+    if (channel >= TISP_EVENT_CHANNELS || !event)
+        return -EINVAL;
+    ++event_busy[channel];
+    return -ENODEV;
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_00000000000181c0 origin=model_output original=tisp_event_exit */
@@ -65613,11 +65601,14 @@ int32_t tiziano_adr_init(uint32_t arg0, uint32_t width, uint32_t height)
     if (ret)
         return ret;
 
-    if (regtrace_t23_source_adr_dynamic) {
-        system_irq_func_set(0, 0x12,
-                            (int32_t)(uintptr_t)tiziano_adr_interrupt_static);
+    /*
+     * Stock also registers tiziano_adr_interrupt_static as irq_func_cb[0x12];
+     * irq_func_cb is only read by the stock core ISR, which this module does
+     * not run (core ops +0x20 is NULL), so the slot stays empty and the
+     * recovered handler is not linked.
+     */
+    if (regtrace_t23_source_adr_dynamic)
         tisp_event_set_cb(0, 2, (void *)(uintptr_t)tisp_adr_process);
-    }
     regtrace_t23_source_adr_initialized = true;
     printk(KERN_WARNING
            "t23: ADR initialized %ux%u active=%u dynamic=%u ctl=%u radius=%u cwd=%u/%u\n",
@@ -101176,8 +101167,13 @@ int32_t system_reg_write(uint32_t a0, uint32_t a1)
     base = *(uint32_t *)((char *)sd + 184);
     if (!base)
         return -ENODEV;
+    /*
+     * Plain uncached store as the vendor (tx-isp-t23.ko 1.3.0 0x6a448:
+     * lw base; addu; sw; jr - the vendor module contains no `sync` at all)
+     * and as writel() on this kernel (no barrier outside Octeon).  The
+     * former wmb() put a `sync` after every inlined register write.
+     */
     *(volatile uint32_t *)(base + a0) = a1;
-    wmb();
     return 0;
 }
 
