@@ -627,9 +627,14 @@ Recommended line for colour work on this board:
   bin's mode word `ctx[11] + 38` is 1 (`t40_ag_lum_by_ev`), and `tisp_awb_main_ev_update` tail-calls `set_lum_th_freq(ctx, 0)`.
 - The OEM tgain fan-out (`tisp_main_long_tgain_update`, last step) calls `tisp_awb_tgain_update(0, -, tgain)` unless TOP bits
   0x44 are both bypassed; the open fan-out (`regtrace_gc4653_tuning_again_update`) never did, so the regional and luma thresholds
-  stayed at knot 0 of the bin at every gain. It now hands the 16.16 log2 total gain on every change (`t40_awb_tgain_last`).
-- Effect with the Eufy sc830ai bin (mode word 0): day (total gain < 64x) only the low luma threshold moves (knot 0: 22, knot 1: 20);
-  the regional thresholds move above 64x total gain (knot 7 = 128x: e.g. 90 -> 40, 350 -> 400, 440 -> 480), i.e. at night.
+  stayed at knot 0 of the bin at every gain. It now hands the 16.16 log2 total gain on every change (`t40_awb_tgain_last`),
+  from the AWB thread (the gain update in the frame-3A worker only stores it; in the OEM both are callbacks of one event
+  thread) and once after AWB init with the current gain (manual exposure).
+- Effect with the Eufy sc830ai bin (mode word 0): the low luma threshold (row 8) follows the total gain per stop 22, 20, 20, 18,
+  15, 12, 10, 10, 10, 10, 10 (1x .. 1024x), interpolated between stops (comp 128 day, 3.3x: 20 = 0x14 in the low byte of
+  0x13318038, baseline 0x16; comp 80, 1.39x: 21); rows 9/10 stay 128 / 230. The regional thresholds change only at knot 7
+  (128x total gain): 90 -> 40, 350 -> 400, 50 -> 30 (20 at knot 9), 220 -> 260, 230 -> 200, 440 -> 480, i.e. at night
+  (0x13318028 = 0x01900028).
 - This is not the cause of the +5-6 % B/G of the 2026-11-06 light-box comparison (see CHANGELOG): that one follows the exposure
   point. Proof of the code: `tests/t40_vawb_oracle.sh` (Unicorn, both modules, 0 mismatches, 7 mutations detected).
 

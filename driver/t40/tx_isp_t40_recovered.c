@@ -12043,6 +12043,7 @@ static void regtrace_t40_ev_fanout(uint32_t again_log2)
 
 static uint32_t t40_awb_tgain_last = 0xffffffffU;	/* last total gain handed to tisp_awb_tgain_update (#84) */
 t40_bringup_param_named(t40_awb_tgain_last, t40_awb_tgain_last, uint, 0444);
+static uint32_t t40_awb_tgain_total = 0xffffffffU;	/* total gain of the last AE gain update, for the AWB thread (#84) */
 static void regtrace_gc4653_tuning_again_update(uint32_t again_index)
 {
     uint32_t gain = regtrace_gc4653_again_log2_gain(again_index);
@@ -12094,16 +12095,16 @@ static void regtrace_gc4653_tuning_again_update(uint32_t again_index)
     if (regtrace_enable_gib_lit && gain != regtrace_gib_lit_gain_now)
         (void)regtrace_gib_main_gain_update_lit(gain, false);
     /*
-     * #84: the last step of the OEM fan-out (tisp_main_long_tgain_update 0x1c7e4..0x1c800 in the vendor e48557c2 / Eufy
-     * e64d88e9 modules): unless both AWB bits of TOP (0x44) are bypassed, tisp_awb_tgain_update(0, -, tgain) stores the
-     * 16.16 log2 total gain as the AWB interpolation position (ctx[117]) and re-reads the regional and luma statistics
-     * thresholds of the bin at that gain (tx_isp_t40_awb_gain.inc).  The open fan-out never called it, so the thresholds
-     * stayed at the init position (knot 0) at every gain.  Called when the total gain changed.
+     * #84: the last step of the OEM fan-out (tisp_main_long_tgain_update, function 0x1bc60, AWB step 0x1be54..0x1be74 in
+     * the vendor e48557c2 module, 0x1c5f0 in the Eufy e64d88e9 one): unless both AWB bits of TOP (0x44) are bypassed,
+     * tisp_awb_tgain_update(0, -, tgain) stores the 16.16 log2 total gain as the AWB interpolation position (ctx[117]) and
+     * re-reads the regional and luma statistics thresholds of the bin at that gain (tx_isp_t40_awb_gain.inc).  The open
+     * fan-out never called it, so the thresholds stayed at the init position (knot 0) at every gain.
+     * In the OEM this fan-out and the AWB EV update (set_lum_th_freq) are callbacks of one event thread.  Here the gain
+     * update runs in the frame-3A worker, so it only stores the gain; the AWB thread hands it to tisp_awb_tgain_update
+     * before its EV update (t40_vawb_tgain_follow in tx_isp_t40_vawb.h): one writer for the threshold block.
      */
-    if (READ_ONCE(t40_vawb_live) && total != t40_awb_tgain_last && ((uint32_t)system_reg_read(0x40U) & 0x44U) != 0x44U) {
-        t40_awb_tgain_last = total;
-        (void)t40_vawb_tgain_update(0, 0, total);
-    }
+    WRITE_ONCE(t40_awb_tgain_total, total);
 }
 
 
@@ -76588,7 +76589,11 @@ int32_t tisp_awb_main_init(uint32_t a0, uint32_t a1)
 {
     int vret = t40_vawb_main_init(a0, a1);
 
-    t40_awb_tgain_last = 0xffffffffU;	/* fresh AWB context: the next gain update sets the interpolation position (#84) */
+    t40_awb_tgain_last = 0xffffffffU;	/* fresh AWB context: the next AWB pass sets the interpolation position (#84) */
+    /* #84: the current total gain, so the first AWB pass sets the thresholds even when the gain does not move (manual
+     * exposure) */
+    WRITE_ONCE(t40_awb_tgain_total, regtrace_gc4653_again_log2_gain(READ_ONCE(regtrace_ae_soft_cur_again)) +
+                                    regtrace_t40_ae_isp_dgain_log2());
     WRITE_ONCE(t40_vawb_live, vret == 0);
     if (vret)
         printk(KERN_WARNING "tx_isp_t40_recovered: AWB init failed (%d)\n", vret);
