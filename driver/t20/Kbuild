@@ -38,10 +38,13 @@ ifeq ($(TX_ISP_LOAD_STATS),y)
 ccflags-y += -DTX_ISP_LOAD_STATS
 endif
 
-# Bring-up traces (t20_trace, t20_runtime_trace, t20_trace_events: off at
-# runtime by default) stay compiled in.  TX_ISP_TRACE=n compiles them and the
-# three parameters out (the default build is unchanged): make ... TX_ISP_TRACE=n
-ifeq ($(TX_ISP_TRACE),n)
+# Bring-up traces (t20_trace, t20_runtime_trace, t20_trace_events) are compiled out by
+# default since 2026-11-06 (about -10 KiB module RAM, -15 KiB .ko; nothing
+# in OpenIMP, the streamer, the tools or /etc/modules.d sets them; note that the
+# 3.10 kernel refuses an unknown module parameter).  TX_ISP_TRACE=y builds
+# them in for bring-up work.
+TX_ISP_TRACE ?= n
+ifneq ($(TX_ISP_TRACE),y)
 ccflags-y += -DTX_ISP_NO_TRACE
 endif
 

@@ -6916,6 +6916,16 @@ static void t21_ae_comp_refresh(void)
 #ifndef TX_ISP_T21_TRACE
 #undef isp_printf
 #endif
+/*
+ * Beyond vendor (docs/BEYOND_VENDOR.md): the stock isp_printf adds a
+ * dump_stack() to every level >= 2 message (console flood, ~100 ms per
+ * stack at 115200 baud, inside the ISP paths).  Off by default;
+ * warn_stack=1 restores the vendor behaviour.
+ */
+static bool t21_warn_stack;
+module_param_named(warn_stack, t21_warn_stack, bool, 0644);
+MODULE_PARM_DESC(warn_stack, "1: dump_stack() after level>=2 ISP messages (vendor behaviour)");
+
 int32_t isp_printf(uint32_t level, const char *fmt, ...)
 {
 	struct va_format vaf;
@@ -6931,7 +6941,7 @@ int32_t isp_printf(uint32_t level, const char *fmt, ...)
 	result = printk("%pV", &vaf);
 	va_end(args);
 
-	if (level >= 2)
+	if (level >= 2 && t21_warn_stack)
 		dump_stack();
 
 	return result;
