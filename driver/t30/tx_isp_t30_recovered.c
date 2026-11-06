@@ -52198,6 +52198,11 @@ static void tx_isp_t30_simple_ae_update(void)
 	 * exposure history keeps it current, the compact AE has to publish it itself (#202) */
 	if (!manual.integration)
 		T30_STAB16(24) = (u16)state->integration_time;
+	/* OEM ae_calculate_exposure 0x31ec0: the automatic AE publishes its exposure
+	 * into item 16 (GetEVAttr ev); a manual exposure keeps the user value (#202) */
+	if (!manual.exposure)
+		T30_STAB32(16) = t30_ae_exposure_time_item(
+			state->total_exposure_request_log2);
 
 	/*
 	 * Publish the applied Q16 log2 gain through both OEM state interfaces.

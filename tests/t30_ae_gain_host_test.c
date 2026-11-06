@@ -26,6 +26,7 @@ typedef uint16_t u16;
 typedef uint32_t u32;
 typedef int32_t s32;
 #include "../driver/t30/tx_isp_t30_ae_manual.h"
+#include "t30_ae_item16_oracle.h"
 
 #define CK(c) do { if (!(c)) { printf("FAIL line %d: %s\n", __LINE__, #c); bad++; } } while (0)
 
@@ -168,6 +169,21 @@ int main(void)
 	CK(t30_oem_math_exp2(0, 16, 8) == 0x100);
 	CK(t30_oem_math_exp2(65536, 16, 8) == 0x200);
 	CK(t30_oem_math_exp2((u32)-65536, 16, 8) == 0x80);
+
+	/* Part 5 (#202): item 16 (GetEVAttr ev) as the vendor ae_calculate_exposure,
+	 * table from tools/ko_emu/diff_t30_ae_exposure_item.py (SDK-built ko, Unicorn). */
+	{
+		unsigned int k, n = sizeof(t30_vendor_ae_item16) / sizeof(t30_vendor_ae_item16[0]);
+
+		for (k = 0; k < n; k++)
+			CK(t30_ae_exposure_time_item((s32)t30_vendor_ae_item16[k][0]) ==
+			   t30_vendor_ae_item16[k][1]);
+		CK(n >= 500);
+		CK(t30_ae_exposure_time_item(-5) == 0x40);
+		/* b9 vendor GetEVAttr ev 8314092 = 3195 lines x 40.66 total gain, Q6 */
+		CK(t30_ae_exposure_time_item(1113268) / 64 > 129000 &&
+		   t30_ae_exposure_time_item(1113268) / 64 < 131000);
+	}
 
 	if (bad) { printf("t30_ae_gain_host_test: %d FAILED\n", bad); return 1; }
 	printf("t30_ae_gain_host_test: PASS\n");
