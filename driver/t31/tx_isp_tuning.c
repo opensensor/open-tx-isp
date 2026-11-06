@@ -32356,7 +32356,8 @@ static int tisp_gb_blc_again_interp(uint32_t gain, int channel)
     case 0x16: fp=blc_gr; s1_out=blc_ir; v1_out=blc_b;  s2_out=blc_gb; s0_out=blc_r;  break;
     case 0x17: fp=blc_ir; s1_out=blc_gr; v1_out=blc_gb; s2_out=blc_b;  s0_out=blc_r;  break;
     default:
-        pr_err("blc byper error!!!\n");
+        /* Runs per gain change with local IRQs off (tisp_event_process). */
+        pr_err_ratelimited("blc byper error!!!\n");
         fp = 0; s1_out = 0; v1_out = 0; s2_out = 0; s0_out = 0;
         break;
     }
@@ -36610,37 +36611,9 @@ int tisp_s_aeroi_weight(uint32_t *roi)
     return 0;
 }
 
-/* OEM EXACT: tisp_wdr_rx_ae0_infm (0x5c78c) */
-static uint32_t wdr_hist_Y0[256];
-static uint32_t wdr_block_mean0[225];
-
-int tisp_wdr_rx_ae0_infm(uint32_t *hist, uint32_t *block_mean)
-{
-    if (!hist || !block_mean)
-        return -EINVAL;
-    memcpy(wdr_hist_Y0, hist, sizeof(wdr_hist_Y0));
-    memcpy(wdr_block_mean0, block_mean, sizeof(wdr_block_mean0));
-    return 0;
-}
-
-/* OEM EXACT: tisp_wdr_rx_ae0_dms (0x5c844) */
-int tisp_wdr_rx_ae0_dms(uint32_t *r, uint32_t *g, uint32_t *b, uint32_t *params)
-{
-    u32 i, cols, rows, area;
-    if (!r || !g || !b || !params)
-        return -EINVAL;
-    cols = params[1];
-    rows = params[3];
-    if (!cols || cols > 15 || !rows || rows > 15)
-        return -EINVAL;
-    for (i = 0; i < cols * rows; ++i) {
-        area = params[4 + i % cols] * params[19 + i / cols];
-        if (!area)
-            return -EINVAL;
-        wdr_block_mean0[i] = (r[i] + g[i] + b[i]) / area;
-    }
-    return 0;
-}
+/* OEM tisp_wdr_rx_ae0_infm (0x5c78c) / tisp_wdr_rx_ae0_dms (0x5c844) are not
+ * ported: nothing calls them and nothing read the AE0 histogram/block-mean
+ * copies they filled (1924 B of BSS). */
 
 /* OEM EXACT: tisp_wdr_rx_ae1_infm (0x5c7e8) */
 

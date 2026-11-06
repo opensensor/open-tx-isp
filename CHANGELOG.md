@@ -4,6 +4,16 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-06: T31 module review: -15.5 KB module RAM, no MMIO in dropped trace lines, rate-limited IRQ errors (#223; build/host only, device test pending)
+
+- Size (sc4336p agg67d tree, 3.10.14, gcc 16.2, default build): module RAM (.text+.rodata+.data+.bss) 718317 -> 702796 B, .ko 693420 -> 682336 B; trace build (`TX_ISP_T31_TRACE=y`) 852773 -> 829116 B. Exports (27) and .modinfo identical; imports lose only `jiffies_to_msecs`.
+- `-fdata-sections` for ten units (core, module, subdev, csi, vic, vic_debug, vin, sysfs, subdev_mgmt, reset; not tx_isp_tuning: +17 KiB anchor code there) so `--gc-sections` drops the strings, tables and fops of unused helpers (and the functions only those tables kept alive): -11.0 KB RAM.
+- `tx_isp_debug.h`: dropped `pr_info()` (release build) and `pr_debug()` no longer evaluate their arguments. The 3.10 `no_printk()` is an inline function, so ~140 `system_reg_read()`/`readl()` calls inside trace lines (AWB/MDNS/GIB diagnostics, CSI ISR, VIC start) still ran; -2.7 KiB text. Audited: no argument has a side effect (no FIFO-pop register, no ++/assignment).
+- Core ISR: the unused read of 0xc (LSC bypass) on every interrupt is gone (the LSC LUT write runs from irq_func_cb[13]).
+- Removed `tisp_wdr_rx_ae0_infm`/`_dms`: never called; their AE0 copies were never read (also write-only in the OEM HLIL): -1924 B BSS.
+- Rate-limited: CSI ISR error report (up to 13 lines per interrupt in hard IRQ), VIC MDMA "vic dma addrrss error", BLC "byper error" (fw thread, IRQs off). Status clearing unchanged.
+- `make -C tests check` 0. Not device-tested; steps in #223.
+
 ## 2026-11-06: T30 GetEVAttr ev: the automatic AE publishes system item 16 as the vendor (#202; Unicorn oracle, device proof pending)
 
 - Cause: `IMP_ISP_Tuning_GetEVAttr().ev` reads system item 16 (`SYSTEM_MANUAL_EXPOSURE_TIME`, SDK `apical_isp_ev_g_attr`). The vendor `ae_calculate_exposure` (SDK-built ko 0x31cdc, store at 0x31ec0) writes `math_exp2(max(exposure, 0), 16, 6)` there on every automatic AE run (lines x total gain, Q6); the compact AE never did, so ev read 0 (T30X b9: open 0, vendor 8314092 = 3195 lines x 40.7).

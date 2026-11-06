@@ -846,6 +846,8 @@ static void vic_bypass_requeue(struct tx_isp_vic_device *vic_dev, u32 addr)
  *   processing != 0 (streaming): pop done buffer, deliver frame via raw_pipe,
  *                                 rotate next queued buffer into VIC DMA slot.
  */
+static DEFINE_RATELIMIT_STATE(vic_mdma_err_rs, 5 * HZ, 10);
+
 int vic_mdma_irq_function(struct tx_isp_vic_device *vic_dev, int channel)
 {
 	void __iomem *vic_base;
@@ -954,7 +956,9 @@ int vic_mdma_irq_function(struct tx_isp_vic_device *vic_dev, int channel)
 						vic_bypass_requeue(vic_dev, extra->buffer_addr);
 				}
 
-				if (i >= (int)vic_dev->active_buffer_count) {
+				/* Hard IRQ, can repeat every frame: rate-limited. */
+				if (i >= (int)vic_dev->active_buffer_count &&
+				    __ratelimit(&vic_mdma_err_rs)) {
 					pr_err("function: %s ; vic dma addrrss error!!!\n",
 					       __func__);
 					if (vic_base)
