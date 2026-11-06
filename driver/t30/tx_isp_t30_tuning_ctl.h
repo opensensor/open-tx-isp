@@ -1150,13 +1150,23 @@ static int tx_isp_t30_tuning_ctl_set(void *tuning, void *core,
 		return tctl_scene_level(tuning, core, TCTL_OFF_SHARPNESS,
 					TCTL_CU_SHARPNESS, TCTL_SCENE_SHARPENING,
 					c->value, false);
-	/*
-	 * AWB_CWF_SHIFT (0x8000001) is only read here.  Writing the light source
-	 * table back goes through apical_api_calibration(CALIBRATION_LIGHT_SRC), whose
-	 * lifted calibration-update dispatch for table index 0xef reaches
-	 * iridix_init_pre_post_gamma() with a garbage state pointer (oops in QEMU);
-	 * the set stays with the lifted switch (-1) until that path is repaired.
-	 */
+	case 0x08000001: {	/* AWB_CWF_SHIFT: vendor apical_isp_awb_cwf_s_shift */
+		struct tx_isp_t30_lookup_table *t = tctl_table(tuning, core,
+							       TCTL_TBL_LIGHT_SRC);
+		int ret = 0;
+
+		if (t && t->ptr) {
+			u16 *w = t->ptr;
+
+			w[0] = c->value >> 16;
+			w[1] = c->value & 0xffff;
+			apical_api_calibration(TCTL_CAL_LIGHT_SRC, 0,
+					       (uintptr_t)t->ptr,
+					       t->rows * t->cols * t->width,
+					       (uintptr_t)&ret);
+		}
+		return ret;
+	}
 	case 0x08000004: {	/* WB_ATTR */
 		struct tctl_wb_attr wb;
 		int mode;

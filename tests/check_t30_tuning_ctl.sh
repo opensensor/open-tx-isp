@@ -43,6 +43,9 @@ for id in 0x08000001 0x08000004 0x08000005 0x08000006 0x08000007 0x08000008 0x08
 	a=$(awk '/^static int tx_isp_t30_tuning_ctl_get/{g=1} /^static int tx_isp_t30_tuning_ctl_set/{g=0} g&&/case '"$id"':/{n++} END{print n+0}' "$c")
 	[ "$a" -ge 1 ] || { echo "check_t30_tuning_ctl: no getter arm for $id"; fail=1; }
 done
+# AWB_CWF_SHIFT has a setter arm (vendor apical_isp_awb_cwf_s_shift writes the light source table)
+a=$(awk '/^static int tx_isp_t30_tuning_ctl_set/{g=1} g&&/case 0x08000001:/{n++} END{print n+0}' "$c")
+[ "$a" -ge 1 ] || { echo "check_t30_tuning_ctl: no setter arm for 0x08000001"; fail=1; }
 # the ioctl asks the handlers first, at all four sites
 n=$(grep -c "tx_isp_t30_tuning_ctl_\(get\|set\)(" "$r")
 [ "$n" -ge 4 ] || { echo "check_t30_tuning_ctl: tuning ioctl calls the handlers $n times (want 4)"; fail=1; }
