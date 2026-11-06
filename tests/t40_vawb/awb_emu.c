@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
- * The C AWB init / EV / process chain (tx_isp_t40_awb_init.inc, tx_isp_t40_awb_main.inc and the chains they call) built for
+ * The C AWB init / EV / process chain and the gain / threshold chain (tx_isp_t40_awb_init.inc, _main.inc, _gain.inc) built for
  * mipsel as a relocatable object, for tools/ko_emu/diff_awb_chain.py: Unicorn runs this object and the OEM tx-isp-t40.ko on the same
  * random state and compares every byte of it.  The system register / event / completion calls are left undefined (the script hooks
  * them and logs the arguments).  Build: tests/t40_vawb/build_emu.sh <mipsel-linux-gcc> <out.o>
@@ -69,6 +69,10 @@ EMU(set_hardware_param, vawb_s_tisp_awb_set_hardware_param(a0, a1, a2, a3, (u32)
 EMU(dn_params_refresh, vawb_s_tisp_awb_dn_params_refresh(a0, a1, a2, a3, (u32)(uintptr_t)emu_argarea))
 EMU(main_ev_update, vawb_s_tisp_awb_main_ev_update(a0, a1, a2, a3, (u32)(uintptr_t)emu_argarea))
 EMU(ev_update_Ywgt, vawb_s_tisp_awb_ev_update_Ywgt(a0, a1, a2, a3, (u32)(uintptr_t)emu_argarea))
+EMU(set_regional_threshold, vawb_s_tisp_awb_set_regional_threshold(a0, a1, a2, a3, (u32)(uintptr_t)emu_argarea))
+EMU(set_lum_th_freq, vawb_s_tisp_awb_set_lum_th_freq(a0, a1, a2, a3, (u32)(uintptr_t)emu_argarea))
+EMU(tgain_update, vawb_s_tisp_awb_tgain_update(a0, a1, a2, a3, (u32)(uintptr_t)emu_argarea))
+EMU(set_gain, vawb_s_tisp_awb_set_gain(a0, a1, a2, a3, (u32)(uintptr_t)emu_argarea))
 #ifdef HAVE_AWB_MAIN
 EMU(long_par_update, vawb_s_tisp_awb_long_par_update(a0, a1, a2, a3, (u32)(uintptr_t)emu_argarea))
 EMU(spec_calculate, vawb_s_tisp_awb_spec_calculate(a0, a1, a2, a3, (u32)(uintptr_t)emu_argarea))

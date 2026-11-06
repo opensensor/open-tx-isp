@@ -2,7 +2,7 @@
 
 Host checks that compare our C code with the instructions of the vendor module under the Unicorn
 emulator:
-`t40_ccm_conv_host t40_ccm_chain_host t40_ct_chain_host t40_dmsc_chain_host t40_mdns_chain_host t40_ysp_chain_host t40_ydns_host t40_gib_host t40_lsc_host t40_blc_host t40_ae_leaf_host t40_clm_host`
+`t40_ccm_conv_host t40_ccm_chain_host t40_ct_chain_host t40_dmsc_chain_host t40_mdns_chain_host t40_ysp_chain_host t40_ydns_host t40_gib_host t40_lsc_host t40_blc_host t40_vawb_oracle t40_ae_leaf_host t40_clm_host`
 (need `T40_OEM_KO`, and `T40_CC` for the chain ones), and
 `t40_bcsh_dn_host` (`T40_TUNING_BIN`, or the initialised `external/ingenic-sdk` submodule).
 
@@ -50,6 +50,17 @@ Function-level diff (instructions with relocations compared by symbol, `jr`/`jr.
 - `t40_bcsh_dn_host` is not a mismatch: the strict run failed because the `external/ingenic-sdk` submodule is not initialised, so the
   default tuning bin is missing. With any T40 tuning bin it passes (0 words differ), e.g. the Ingenic T40 SDK `resource/sensor_settings_t40/gc2053-t40.bin`
   (also sc200ai, os08a10, gc4653: all PASS): `T40_TUNING_BIN=<bin> make -C tests t40_bcsh_dn_host`.
+
+## AWB chain (2026-11-06, #84)
+
+`t40_vawb_oracle` runs `tools/ko_emu/diff_awb_chain.py`: the C of `driver/t40/tx_isp_t40_awb_init.inc`, `_main.inc` and `_gain.inc`
+(built for mipsel by `tests/t40_vawb/build_emu.sh`) against the vendor module, 12 functions (params_transmit/refresh,
+set_hardware_param, dn_params_refresh, main_ev_update, ev_update_Ywgt, long_par_update, spec_calculate, set_regional_threshold,
+set_lum_th_freq, tgain_update, set_gain), 100 random states each, every byte of both channels' state plus the register log, and 7
+one-token mutations of the newer-build code (luma thresholds by exposure value, main_ev_update tail call) that must be detected.
+Checked with the vendor module of the #84 light-box runs (md5 e48557c2) and the Eufy firmware module (H20240605a, e64d88e9): 0 mismatches.
+`tests/t40_vawb_host.sh GR_REF=...` compares against the translation of an earlier OEM build; it clears a mode word of 1 (that build
+has no exposure-value branch) and adds the main_ev_update tail call to its reference.
 
 ## BLC (2026-11-03)
 

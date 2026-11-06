@@ -261,7 +261,9 @@ static void t40_am_ev_update_ywgt(const u32 *ctx)
 	}
 }
 
-/* OEM tisp_awb_main_ev_update: the AE event's exposure value (Q10 gain times time) */
+/* OEM tisp_awb_main_ev_update: the AE event's exposure value (Q10 gain times time).  Newer OEM builds (Eufy H20240605a
+ * e64d88e9, vendor e48557c2: 0x34b3c..0x34b80) tail-call tisp_awb_set_lum_th_freq(ctx, 0) after the Y weights, so the luma
+ * thresholds follow the exposure value when the bin selects that (tx_isp_t40_awb_gain.inc, #84). */
 static void t40_am_main_ev_update(u32 ev)
 {
 	const u32 *ctx = pstMainAwbOri;
@@ -269,6 +271,7 @@ static void t40_am_main_ev_update(u32 ev)
 	if (unlikely(!vawb_ok(ctx[116], 3))) { vawb_fault_note(ctx[116], 217032U); return; }
 	*T40_AM_P32(116) = ev >> 10;
 	t40_am_ev_update_ywgt(ctx);
+	vawb_s_tisp_awb_set_lum_th_freq((u32)(uintptr_t)ctx, 0, 0, 0, 0);
 }
 
 /* adapters (same o32 arguments as the OEM calls; no caller uses the return value) */
