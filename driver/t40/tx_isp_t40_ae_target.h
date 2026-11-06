@@ -29,6 +29,14 @@
 #ifndef TX_ISP_T40_AE_TARGET_H
 #define TX_ISP_T40_AE_TARGET_H
 
+/* 64-bit division: the kernel has no __udivdi3 for modules (1106k: "unknown symbol" at insmod) */
+#ifdef __KERNEL__
+#include <linux/math64.h>
+#define t40_aet_div64(a, b) div64_u64((a), (b))
+#else
+#define t40_aet_div64(a, b) ((uint64_t)(a) / (uint64_t)(b))
+#endif
+
 #define T40_AET_OUTER		0x80U	/* tparams + 0x80 = OEM stMainAeOuter */
 #define T40_AET_ZONE		0x000U	/* u16: [0] y0 [1] rows [2] x0 [3] cols [4..18] col w [19..33] row h [34] lo [35] hi */
 #define T40_AET_MP48		0x288U	/* u16[11] (word 9: Pweight enable) */
@@ -275,7 +283,7 @@ static inline uint32_t t40_aet_wmean(const uint32_t *s0, const uint32_t *s1, con
 		}
 	if (!den)
 		return 1;	/* OEM: divide by zero */
-	num /= den;
+	num = t40_aet_div64(num, den);
 	return (uint32_t)num ? (uint32_t)num : 1U;
 }
 

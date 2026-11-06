@@ -12,6 +12,7 @@ marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned 
 - Desk check on the recorded frames (same model the driver uses): vendor 1106g/h metered / target 0.95 / 0.97 (inside the OEM hold window); open 1106j comp 128 predicted to settle at x0.90 exposure, frame Y ~111 (now 118); open night x0.54, EV ~363 (below one rung), Y ~85.
 - Host: `tests/t40_ae_target_host.sh` (Unicorn vs the vendor image module: target, weight_mean2, alogrithm, tune2 target lists and both lookup EVs, s_comp; 0 differences in 1000 cases, 21/21 mutations; inverse-gamma check without vendor files). `make -C tests check` 0.
 - Not ported: histogram target factor (OEM stMainAeInterOri + 0x4560 = 0), AE-cache manual target, Pweight (off in the T40 bins), highlight modes >= 2 use scene 0. HLC / BLC / face AE keep the old metering. Device script: `audit/lightbox/results/b84-open-T40-1106k/run84_aetarget.sh` (not run).
+- Fix 2026-11-07: the first test module (1106k, dc334bd3) failed insmod with "unknown symbol": a u64 division in `t40_aet_wmean` pulled `__udivdi3` (the kernel exports none); now `div64_u64`. New guard: `driver/t40/Kbuild` fails the module build when the linked object imports a libgcc helper the T40 kernel does not export (proven to fail on the old header), and `tests/t40_ko_libgcc_check.sh` (in `make check`) keeps the guard and nm-checks any built `driver/t40/*.ko`.
 
 ## 2026-11-06: T40 chroma denoise repack threshold like the OEM (cdns_thresh 256, #213; host build, Eufy measurement pending)
 

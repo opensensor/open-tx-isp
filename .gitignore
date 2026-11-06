@@ -61,3 +61,4 @@ script.sh
 sdk-patch.diff
 *.png.bak
 /tests/t31_awb_*.inc
+*.libgcc

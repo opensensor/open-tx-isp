@@ -69,3 +69,14 @@ TX_ISP_T40_DEBUG_PROC ?= n
 ifeq ($(TX_ISP_T40_DEBUG_PROC),y)
 ccflags-y += -DTX_ISP_T40_DEBUG_PROC
 endif
+
+# The module must not import a libgcc helper the kernel does not export (2026-11-06, Eufy 1106k: a u64 "/" in
+# tx_isp_t40_ae_target.h pulled __udivdi3, insmod failed "unknown symbol").  Use div_u64 / div64_u64 / do_div.
+# Allowed: the helpers arch/mips/lib exports (Module.symvers of the T40 kernel).  Checked on the linked object
+# before modpost, so the build fails; tests/t40_ko_libgcc_check.sh checks the rule is here and any built .ko.
+T40_LIBGCC_OK := __ashldi3|__ashrdi3|__lshrdi3|__cmpdi2|__ucmpdi2|__clzdi2|__ctzdi2|__clzsi2|__ctzsi2|__bswapsi2|__bswapdi2
+always += tx-isp-t40.libgcc
+$(obj)/tx-isp-t40.libgcc: $(obj)/tx-isp-t40.o
+	$(Q)u=$$($(NM) -u $< | awk '{print $$NF}' | grep -E '^__[a-z]+(di|si|ti)[234]$$' | grep -v -x -E '$(T40_LIBGCC_OK)' | tr '\n' ' '); \
+	if [ -n "$$u" ]; then echo "tx-isp-t40: imports libgcc helper(s) the kernel does not export: $$u(use div_u64 / div64_u64)" >&2; exit 1; fi; \
+	touch $@
