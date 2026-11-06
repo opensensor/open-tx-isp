@@ -4,6 +4,11 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-06: T20 module RAM -9.7 KiB, optional trace compile-out (build + host tests only, branch claude/t20-opt; no device test yet)
+
+- `driver/t20/Kbuild` gets the same three changes as the T10 Kbuild below (T10 and T20 build the same `driver/t20` sources): `sdk/system-chardev.o` not linked (nothing calls `system_chardev_*()`), per-object data sections for vic, csi, system-isp-io, system-i2c and log, and the `TX_ISP_TRACE=n` knob (drops `t20_trace`, `t20_runtime_trace`, `t20_trace_events`). tx-isp-t20.ko: .text 211348 -> 210872, .rodata(.str) 31376 -> 30316, .data 46064 -> 45904, .bss 37136 -> 28856 (module RAM 325924 -> 315948 bytes), file 402568 -> 400252; with `TX_ISP_TRACE=n` 305840 bytes RAM, file 384440. Exports and .modinfo unchanged; imports lose only the kfifo/misc helpers.
+- Review report (defects, MEDIUM list, device-test steps): issue "[T20] Driver/module review".
+
 ## 2026-11-06: T10 module RAM -9.7 KiB, optional trace compile-out (build + host tests only, branch claude/t10-opt; no device test yet)
 
 - `driver/t10/Kbuild`: `sdk/system-chardev.o` is no longer linked. The Apical control-tool char device is off in the firmware config (`ISP_HAS_CONNECTION_CHARDEV 0`), nothing calls `system_chardev_*()`; only its two 4 KiB kfifos and the never-registered misc device (whose fops kept 484 bytes of code alive) were left. Per-object data sections for five units (vic, csi, system-isp-io, system-i2c, log) let `--gc-sections` drop the format strings of functions it already removed. tx-isp-t10.ko: .text 209336 -> 208848, .rodata(.str) 31116 -> 30100, .data 46064 -> 45904, .bss 37136 -> 28856 (module RAM 323652 -> 313708 bytes), file 399752 -> 397452. Exports, imports used by the sensor modules and .modinfo unchanged; imports lose only the kfifo/misc helpers.
