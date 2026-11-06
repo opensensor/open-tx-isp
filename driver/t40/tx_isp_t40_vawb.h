@@ -612,7 +612,8 @@ static void t40_main_long_ev_update(u64 ev)
 	if (ev == t40_ev_last)
 		return;
 	top = (u32)system_reg_read(0x40U);
-	/* gamma (bit 10): the driver's gamma has no EV follow-up (OEM tisp_gamma_ev_update not ported) */
+	if (!(top & 0x400U))
+		t40_gamma_ev_update(lo, hi, t40_ct_fnum);	/* OEM tisp_gamma_ev_update(0, -, lo, hi, fnum) (#204) */
 	if ((top & 0x44U) != 0x44U)
 		t40_am_main_ev_update(lo);
 	if (!(top & 0x200U) && regtrace_t40_ev_follow && regtrace_enable_ccm && regtrace_ccm_ct_track &&
@@ -627,7 +628,11 @@ static void t40_main_long_ev_update(u64 ev)
 		t40_defog_ev_update(ev);
 	if (!(top & 0x8000U) && regtrace_t40_ev_follow)
 		t40_bcsh_main_ev_update(e);	/* OEM tisp_bcsh_main_ev_update 0x6a990 */
-	/* WDR (bit 3): linear sensors only, the driver has no WDR EV follow-up */
+	if (!(top & 0x8U)) {	/* OEM tisp_wdr_main_long_ev_update: read by tisp_wdr_main_process (WDR sensors) */
+		*(uint8_t *)&wdr_ev_changed = 1;
+		ev_wdr_l[0] = e;
+		ev_wdr_l[1] = hi >> 10;
+	}
 	t40_ev_last = ev;
 }
 static void t40_vawb_ev_follow(void)
