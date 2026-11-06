@@ -25,6 +25,21 @@ marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned 
 - Removed `tisp_wdr_rx_ae0_infm`/`_dms`: never called; their AE0 copies were never read (also write-only in the OEM HLIL): -1924 B BSS.
 - Rate-limited: CSI ISR error report (up to 13 lines per interrupt in hard IRQ), VIC MDMA "vic dma addrrss error", BLC "byper error" (fw thread, IRQs off). Status clearing unchanged.
 - `make -C tests check` 0. Not device-tested; steps in #223.
+## 2026-11-06: T23 review MEDIUM items: no idle IRQ threads, dead ISR chain and event queues unlinked, no barrier per register write (Lu-Fi/openimp#224; build + host tests, device test see #224)
+
+- M2: `tx_isp_request_irq` requests the three ISP lines (isp-m0, isp-w02, isp-ivdc) without a thread_fn. `isp_irq_handle` never returns IRQ_WAKE_THREAD, so the `irq/N-isp-*` kthreads (3 x 8 KiB stack) never ran. Same line, name and flags (IRQF_ONESHOT); the hard handler is unchanged.
+- M4: core ops +0x20 (`ispcore_interrupt_service_routine`) and +0x24 (`ispcore_irq_thread_handle`) stay NULL: nothing in the module calls them (the hand-written ISR dispatches the core status bits itself). With them the linker drops their callees (`tisp_set_frame_drop`, the `tisp_msca_*` OSD/mask chain, `exception_handle`, `private_schedule_work`), the `irq_func_cb` reader, and `tiziano_adr_interrupt_static` (its irq_func_cb[0x12] registration in the ADR fallback is gone, it was never dispatched). `tisp_event_push` no longer touches the never-initialised queues (it already dropped every event with -ENODEV), so `tisp_event_queues` (7736 B .bss) is dropped.
+- M1: `system_reg_write` is a plain uncached store as the vendor (tx-isp-t23.ko 1.3.0 0x6a448 `lw; addu; sw; jr`, the vendor module has no `sync` instruction at all) and as `writel()` on this kernel; the `wmb()` after each write is removed.
+- M5: `regtrace_framechan_complete_fifo` takes the values for its KERN_INFO line (TRACE=y builds) while it still holds the lock.
+- Not done: M3 (one work item for AE/ADR/defog/AWB; changes the order and timing of the per-frame runs), RISKY R1-R5 (list in #224).
+- Size: module RAM 868393 -> 857173 B (.text -3476, .bss -7744); TRACE=y + BRINGUP_PARAMS=y 901509 -> 890221 B; imports, exports (23) and .modinfo identical.
+
+## 2026-11-06: T23 review: AWB statistics pass only when used, two latent NULL/overflow guards (Lu-Fi/openimp#224; build + host tests, device proof pending)
+
+- AWB statistics interrupt (core bit 30, every frame): `regtrace_t23_source_awb_stats_snapshot` invalidated the 4 KiB statistics page and summed all 225 zones (36 instructions per zone, two `div64_u64`) on every frame, but the sums only feed its log lines and the HLIL capture, which takes every 4th snapshot (`source_awb_hlil_interval` 4). The pass is now skipped when the capture would return at once and no log line is due (snapshot > 8; with `TX_ISP_T23_TRACE=y` also not on powers of two); the snapshot counter still advances. Three of four AWB interrupts lose the page invalidate and the zone pass; captured snapshots, log lines and the 0xb000 re-arm are unchanged.
+- `tisp_event_push`: the event queues are never initialised (`tisp_event_init` is only called from `tisp_core_switch_bin`, which is not linked) and never drained, so a push would have dereferenced the zeroed list head. It now drops the event (-ENODEV, counted in `event_busy`). Reachable only from the recovered ADR interrupt, which nothing dispatches today.
+- `system_irq_func_set`: index checked against the 32 slots of `irq_func_cb` (stock does not check).
+- Size: .text +156 B (module RAM 868237 -> 868393 B); imports, exports and .modinfo identical. Not device-tested.
 
 ## 2026-11-06: T30 GetEVAttr ev: the automatic AE publishes system item 16 as the vendor (#202; Unicorn oracle, device proof pending)
 
