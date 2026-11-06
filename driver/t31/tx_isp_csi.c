@@ -296,15 +296,13 @@ static irqreturn_t tx_isp_csi_irq_handler(int irq, void *dev_id)
     static unsigned long last_interrupt_time = 0;
     unsigned long current_time = jiffies;
 
-    /* CRITICAL: Log CSI interrupt activity to understand timing */
+    /* Shared line: the CSI may fire before or after the ISP device exists. */
+    if (!sd || !ourISPdev)
+        return IRQ_NONE;
+
     pr_info("*** CSI INTERRUPT: irq=%d, dev_id=%p, time_delta=%lu ms ***\n",
             irq, dev_id, jiffies_to_msecs(current_time - last_interrupt_time));
     last_interrupt_time = current_time;
-
-    if (!sd) {
-        pr_warn("*** CSI INTERRUPT: sd is NULL - returning IRQ_NONE ***\n");
-        return IRQ_NONE;
-    }
 
     csi_dev = ourISPdev->csi_dev;
     if (!csi_dev) {

@@ -4,6 +4,17 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-06: T31 review follow-up: "ch0 done" counted once, no idle IRQ threads, dead ISR/WDR code gone (#223)
+
+- D1 / M4: `isp_dev->frame_count` was incremented by the VIC frame done (tx_isp_module.c) and by the core channel 0 drain, so `/proc/jz/isp/isp-m0` "ch0 done"/"ip done" and isp-w00/w01 showed about twice the frame count. Now only channel 0 completions count (core drain, bypass graph). No consumer in openimp/timps parses the value.
+- M2: the two ISP IRQs (isp-m0, isp-w02) are requested without a thread handler; the top halves never returned `IRQ_WAKE_THREAD`, so the `irq/37-isp-m0` and `irq/38-isp-w02` kthreads only slept. Same handler, flags and name.
+- M6: the core ISR walks only the set status bits (`__ffs`) instead of 32 iterations; same callbacks in the same ascending order.
+- D2: CSI ISR returns `IRQ_NONE` before touching `ourISPdev` when the ISP device is not there (shared line).
+- D3/D5: removed the dead `tx_isp_vic_handle_event` (queued an 8-byte `list_head` kmalloc as a VIC buffer), `ispmodule_ip_done_irq_handler`, `isp_irq_thread_handle`, `isp_irq_dispatcher` and the unused `isp_event_func_cb[32]`.
+- D4: `wdr_hist_Y1` dropped: write-only in the OEM (HLIL 0x5c810) and here; the per-WDR-frame 256-word copy under `wdr_stats_lock` in `tisp_ae1_get_hist` is gone (the OEM unpacks into an AE1 area nothing reads).
+- Size: module RAM 702796 -> 701460 B (.bss -1152); trace build 829116 -> 827780 B; exports and .modinfo identical. `make -C tests check` 0.
+- Not done: M1 (tx_isp_tuning.o has 580 B dead data left after this, the flag costs +17 KiB text), M3 (200 ms fw thread timeout is the OEM's 20 jiffies), M5, R1/R2.
+
 ## 2026-11-06: T31 module review: -15.5 KB module RAM, no MMIO in dropped trace lines, rate-limited IRQ errors (#223; build/host only, device test pending)
 
 - Size (sc4336p agg67d tree, 3.10.14, gcc 16.2, default build): module RAM (.text+.rodata+.data+.bss) 718317 -> 702796 B, .ko 693420 -> 682336 B; trace build (`TX_ISP_T31_TRACE=y`) 852773 -> 829116 B. Exports (27) and .modinfo identical; imports lose only `jiffies_to_msecs`.

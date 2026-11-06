@@ -1814,12 +1814,15 @@ irqreturn_t ispcore_interrupt_service_routine(int irq, void *dev_id)
     }
 #endif
 
-    /* Binary Ninja: IRQ callback array processing */
-    /* Binary Ninja: for (int i = 0; i != 0x20; i++) */
-    for (i = 0; i < 0x20; i++) {
-        u32 bit_mask = 1 << (i & 0x1f);
-        if (interrupt_status & bit_mask) {
-            /* Binary Ninja: if (irq_func_cb[i] != 0) */
+    /* Binary Ninja: for (int i = 0; i != 0x20; i++) if (status & 1 << i &&
+     * irq_func_cb[i]) irq_func_cb[i](...).  Same callbacks in the same
+     * ascending bit order, but only the set bits are visited. */
+    {
+        u32 pending = interrupt_status;
+
+        while (pending) {
+            i = __ffs(pending);
+            pending &= pending - 1;
             if (irq_func_cb[i] != NULL)
                 irq_func_cb[i](irq, dev_id);
         }

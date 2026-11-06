@@ -220,7 +220,6 @@ static void tx_isp_irq_info_disable(struct tx_isp_irq_info *irq_info)
 
 /* Binary Ninja interrupt handlers - EXACT reference implementation */
 irqreturn_t isp_irq_handle(int irq, void *dev_id);
-irqreturn_t isp_irq_thread_handle(int irq, void *dev_id);
 
 /* Platform data structure moved to tx_isp.h for global access */
 
@@ -832,7 +831,7 @@ int tx_isp_request_irq(struct platform_device *pdev, struct tx_isp_irq_info *irq
 
 	ret = request_threaded_irq(irq_num,
 					   isp_irq_handle,
-					   isp_irq_thread_handle,
+					   NULL,
 					   IRQF_SHARED,
 					   dev_name(&pdev->dev),
 					   irq_info);

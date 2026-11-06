@@ -27,6 +27,17 @@ functions nothing references.
 The other SoCs export at most 14 symbols nobody imports (under 2 KB), so they
 keep their export tables; the check runs for them too.
 
+## T31 runtime (review #223)
+
+- The ISP IRQs (isp-m0, isp-w02) have no thread handler: no idle
+  `irq/NN-isp-*` kthreads (the top halves finish all work).
+- `/proc/jz/isp/isp-m0` "ch0 done" counts channel 0 completions once per
+  frame (was about 2x: VIC frame done and core drain both counted).
+- `tx_isp_tuning.o` stays without `-fdata-sections`: 580 B of dead data
+  left, the flag costs about +17 KiB of anchor code there.
+- Kept on purpose (vendor behaviour): the fw thread's 200 ms idle timeout
+  (OEM 20 jiffies) and event dispatch with local IRQs off.
+
 ## Section garbage collection and anchors (T10, T20)
 
 T10 and T20 now build like T21/T23/T31/T41: `-ffunction-sections`,
