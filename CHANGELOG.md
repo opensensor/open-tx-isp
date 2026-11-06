@@ -4,6 +4,10 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-06: T40 chroma denoise repack threshold like the OEM (cdns_thresh 256, #213; host build, Eufy measurement pending)
+
+- `cdns_thresh` defaulted to 0x10000 (1 EV): the chroma NR (CDNS) only repacked its tables when the gain had moved by a whole EV since the last repack, so it ran on a remembered gain that could be up to 2x off and depended on history (chroma temporal noise 0.65 vs 1.02-1.21 between two operating points of the same scene, #84 A/A 2026-11-06). The OEM word `gain_thres` is 0x100 (256) at load (vendor tx-isp-t40.ko `.data` +0x2bfd0 and +0x2c8f0, both 0x100); 0x10000 is only the third argument of the one-off init call `tisp_cdns_par_refresh(0, 0x10000, 0x10000)`, which `t40_cdns_init` still issues. Default now 256 (module parameter unchanged), like ydns/mdns/sdns.
+
 ## 2026-11-06: T40 AE rung trade: black frame and gain-ladder bound (Opus review C2, C3; host test, Eufy proof pending)
 
 - C2: with a black frame (`luma_ae` 0) the rung-up overshoot test divided by zero, `t40_ae_log2_ratio` returned 0 and every rung up was refused (integration time stayed on its rung in total darkness). The denominator is now at least 1 (`max_t(luma_ae, 1)`).

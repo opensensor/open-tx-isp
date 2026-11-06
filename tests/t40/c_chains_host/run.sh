@@ -15,7 +15,7 @@ lce) git -C "$REPO" show "$LIT_REF:driver/t40/tx_isp_t40_lce_lit.inc" | sed 's/r
 sdns) git -C "$REPO" show "$LIT_REF:driver/t40/tx_isp_t40_sdns_lit.inc" > "$OUT/lit/sdns_lit.inc" ;;
 adr) git -C "$REPO" show "${LIT_REF_ADR:-7471ad73}:driver/t40/tx_isp_t40_adr_lit.inc" | sed 's/regtrace_t40_adr_on/lit_t40_adr_on/g' > "$OUT/lit/adr_lit.inc" ;;
 defog) git -C "$REPO" show "${LIT_REF_DEFOG:-1bc9b8e2}:driver/t40/tx_isp_t40_defog_lit.inc" | sed 's/regtrace_t40_defog_on/lit_t40_defog_on/g' > "$OUT/lit/defog_lit.inc" ;;
-cdns) git -C "$REPO" show "${LIT_REF_CDNS:-e96b92ea}:driver/t40/tx_isp_t40_cdns_lit.inc" | sed 's/regtrace_cdns_/lit_cdns_/g; s/regtrace_enable_cdns/lit_enable_cdns/g; s/regtrace_t40_cdns_top_bit/lit_t40_cdns_top_bit/g' > "$OUT/lit/cdns_lit.inc" ;;
+cdns) git -C "$REPO" show "${LIT_REF_CDNS:-e96b92ea}:driver/t40/tx_isp_t40_cdns_lit.inc" | sed 's/regtrace_cdns_/lit_cdns_/g; s/regtrace_enable_cdns/lit_enable_cdns/g; s/regtrace_t40_cdns_top_bit/lit_t40_cdns_top_bit/g; s/lit_cdns_thresh = 0x10000U;/lit_cdns_thresh = 256U;/' > "$OUT/lit/cdns_lit.inc" ;;   # 2026-11-06: the OEM .data word gain_thres is 0x100 at load (not the 0x10000 of the old lift)
 bcsh) git -C "$REPO" show "${LIT_REF_BCSH:-e96b92ea}:driver/t40/tx_isp_t40_bcsh_lit.inc" | sed 's/regtrace_bcsh_/lit_bcsh_/g; s/regtrace_enable_bcsh/lit_enable_bcsh/g' > "$OUT/lit/bcsh_lit.inc"
       git -C "$REPO" show "${LIT_REF_BCSH:-e96b92ea}:driver/t40/tx_isp_t40_recovered.c" | awk '/^static unsigned char __attribute__\(\(aligned\(4\)\)\) (au16|as32)BT/{p=1} p{print} p&&/^};/{p=0}' > "$OUT/lit/csc_tables.inc" ;;
 *) echo "unknown chain $CHAIN"; exit 2 ;;
