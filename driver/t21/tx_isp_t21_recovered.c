@@ -10095,13 +10095,14 @@ void *isp_core_tuning_init(void *arg1)
     void *ptr;
     void *lock_ptr;
 
-	ptr = private_kmalloc(0x40d0, 208);
+	/* vzalloc: the 16.2 KiB tuning state is CPU-only; kmalloc made it an
+	 * order-3 block (32 KiB). */
+	ptr = vzalloc(0x40d0);
     if (ptr == NULL) {
         isp_printf(2, "Failed to allocate isp image tuning device\n", 0);
         return NULL;
     }
 
-    memset(ptr, 0, 0x40d0);
     *(void **)ptr = arg1;
     lock_ptr = (void *)((char *)ptr + 0x40b8);
     private_spin_lock_init((spinlock_t *)lock_ptr);
@@ -10117,7 +10118,7 @@ int isp_core_tuning_deinit(int32_t arg1)
 {
 	if (arg1 == 0)
 		return 0;
-	private_kfree(arg1);
+	vfree((void *)(uintptr_t)arg1);
 	return 0;
 }
 
@@ -16109,7 +16110,9 @@ int32_t tisp_param_operate_process(void *payload, int payload_len)
 /* WHOLE_DRIVER_CANDIDATE fn_000000000000df00 origin=model_output original=tisp_param_operate_init */
 int32_t tisp_param_operate_init(void)
 {
-    opmsg = (uintptr_t)private_kmalloc(0x10018, 208);
+    /* vzalloc: the 64 KiB + 24 B netlink reply buffer is CPU-only (copied
+     * into the skb); kmalloc made it an order-5 block (128 KiB). */
+    opmsg = (uintptr_t)vzalloc(0x10018);
 
     if (opmsg == NULL) {
         ((uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t, uintptr_t))isp_printf)((uintptr_t)(2), (uintptr_t)("%s,%d: private_kmalloc error\n"), (uintptr_t)("tisp_param_operate_init"), (uintptr_t)(270));
@@ -16130,7 +16133,7 @@ int32_t tisp_param_operate_deinit(void)
 	opmsg_1 = (uint32_t)opmsg;
 
 	if (opmsg_1 != 0) {
-		private_kfree((void *)opmsg_1);
+		vfree((void *)opmsg_1);
 		opmsg = 0;
 	}
 
@@ -16660,9 +16663,12 @@ static const size_t t21_tisp_stats_size[5] = {
 
 static void *t21_tisp_stats_buffer(unsigned int index)
 {
+	/* alloc_pages_exact: physically contiguous like kmalloc, but the
+	 * 24 KiB AE buffer no longer occupies a whole order-3 block (32 KiB). */
 	if (!t21_tisp_stats[index])
 		t21_tisp_stats[index] =
-			private_kmalloc(t21_tisp_stats_size[index], GFP_KERNEL);
+			alloc_pages_exact(t21_tisp_stats_size[index],
+					  GFP_KERNEL | __GFP_ZERO);
 	return t21_tisp_stats[index];
 }
 
@@ -16678,7 +16684,8 @@ static void t21_tisp_stats_free(void)
 		return;
 	}
 	for (i = 0; i < ARRAY_SIZE(t21_tisp_stats); i++) {
-		private_kfree(t21_tisp_stats[i]);
+		if (t21_tisp_stats[i])
+			free_pages_exact(t21_tisp_stats[i], t21_tisp_stats_size[i]);
 		t21_tisp_stats[i] = NULL;
 	}
 }
