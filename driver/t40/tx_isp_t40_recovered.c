@@ -77251,9 +77251,10 @@ static void regtrace_frame_3a_sample(int channel, uint32_t y_phys, uint32_t uv_p
 
                     next_it = up_it;
                     next_ag = up_ag;
-                    if (ev_up > t40_ae_log2_ratio(target + again_band, luma_ae) &&
+                    /* Opus review C2: a black frame (luma 0) must not block every rung up: den >= 1 */
+                    if (ev_up > t40_ae_log2_ratio(target + again_band, max_t(uint32_t, luma_ae, 1U)) &&
                         (((!ag_fixed && again < max_again) || (!dg_fixed && dgain < dgain_max)) ||
-                         ev_up > t40_ae_log2_ratio(2U * target - luma_ae, luma_ae))) {
+                         ev_up > t40_ae_log2_ratio(2U * target - luma_ae, max_t(uint32_t, luma_ae, 1U)))) {
                         next_it = it;
                         next_ag = again;
                     }

@@ -4,6 +4,12 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-06: T40 AE rung trade: black frame and gain-ladder bound (Opus review C2, C3; host test, Eufy proof pending)
+
+- C2: with a black frame (`luma_ae` 0) the rung-up overshoot test divided by zero, `t40_ae_log2_ratio` returned 0 and every rung up was refused (integration time stayed on its rung in total darkness). The denominator is now at least 1 (`max_t(luma_ae, 1)`).
+- C3: `t40_ae_af_trade_again` clamps `hi` to the 26-index gain ladder (`T40_AE_AGAIN_LADDER_MAX` 25) and `again` to `hi`: with the module parameter `ae_sensor_apply_max_again_index` set huge the loop could run for up to 2^32 iterations in the AE path. Host test extended (`tx_isp_t40_ae_api_test`).
+- Not done yet (C1): the trade uses the GC4653 gain table for every sensor; the Eufy proof of #211 covers sc830ai at comp 58/85 only.
+
 ## 2026-11-05: T40 AE antiflicker rungs traded against the analog gain, no rung flip-flop (#211; host test + Eufy T40XP device proof)
 
 - Cause (Eufy T40XP comp 58, IT 450/900/1350 lines, frame means 32..82): the frame AE moved the integration time by a whole 50 Hz rung (450 lines, exposure x1.5 / x0.67) without touching the gain, accepted a rung up while the prediction stayed inside target + again_band, but stepped down already at target + deadband. An exposure that landed in between stepped down and up again; with one sample of statistics lag the loop also passed the 1350 / AGain 1200 state (exposure 1582) and 450 lines.

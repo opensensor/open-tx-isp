@@ -440,6 +440,8 @@ static inline u32 t40_ae_log2_ratio(u32 num, u32 den)
  * lowers it by at most new_it / it (exposure ends >= old).  log2_gain gives
  * the 16.16 log2 gain of an index; lo / hi bound the index.
  */
+#define T40_AE_AGAIN_LADDER_MAX	25U
+
 static inline u32 t40_ae_af_trade_again(u32 it, u32 new_it, u32 again,
 					u32 lo, u32 hi,
 					u32 (*log2_gain)(u32 idx))
@@ -448,6 +450,12 @@ static inline u32 t40_ae_af_trade_again(u32 it, u32 new_it, u32 again,
 
 	if (!it || !new_it || it == new_it || !log2_gain)
 		return again;
+	/* Opus review C3 (2026-11-06): the gain ladder has 26 indices (0..25) and log2_gain()
+	 * clamps above it, so an unclamped hi (module parameter) would let the loop run to hi. */
+	if (hi > T40_AE_AGAIN_LADDER_MAX)
+		hi = T40_AE_AGAIN_LADDER_MAX;
+	if (again > hi)
+		again = hi;
 	g0 = log2_gain(again);
 	if (new_it < it) {
 		room = t40_ae_log2_ratio(it, new_it);

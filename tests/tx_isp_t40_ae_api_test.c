@@ -488,6 +488,9 @@ static void test_af_trade(void)
 	assert(t40_ae_log2_ratio(900, 900) == 0 && t40_ae_log2_ratio(5, 0) == 0);
 	/* rung down 1350 -> 900 at 1x: two gain indices (1.39x, exposure 1251 of 1350) */
 	assert(t40_ae_af_trade_again(1350, 900, 0, 0, 25, t_log2_gain) == 2);
+	/* Opus review C3: an unclamped hi must not run past the 26-index ladder */
+	assert(t40_ae_af_trade_again(1350, 900, 0, 0, 0x7fffffffU, t_log2_gain) <= 25U);
+	assert(t40_ae_af_trade_again(1350, 900, 100, 0, 0x7fffffffU, t_log2_gain) <= 25U);
 	/* 900 -> 450: four indices (exactly 2x, 65535 <= 65536) */
 	assert(t40_ae_af_trade_again(900, 450, 0, 0, 25, t_log2_gain) == 4);
 	/* rung up 900 -> 1350 from index 1 (the logged 1350 / AGain 1200 state) and 3 */
