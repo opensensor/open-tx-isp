@@ -101188,6 +101188,14 @@ int32_t system_reg_write(uint32_t a0, uint32_t a1)
      * lw base; addu; sw; jr - the vendor module contains no `sync` at all)
      * and as writel() on this kernel (no barrier outside Octeon).  The
      * former wmb() put a `sync` after every inlined register write.
+     *
+     * #231 L2 audit: no register write here starts a device read of memory
+     * the CPU wrote through the cache.  Every dma_cache_sync of this module
+     * is on a statistics ring the ISP writes (AE/AWB/ADR/defog/AF, synced
+     * before the CPU reads it); frame buffers and OSD pictures are
+     * physical addresses owned by user space.  The explicit wmb() of the
+     * MSCA/VIC/ISR paths (not this function) are kept.  Vendor module
+     * 7695c89c: 0 `sync` instructions; this module still has 57.
      */
     *(volatile uint32_t *)(base + a0) = a1;
     return 0;
