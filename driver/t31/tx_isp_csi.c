@@ -296,15 +296,21 @@ static irqreturn_t tx_isp_csi_irq_handler(int irq, void *dev_id)
     static unsigned long last_interrupt_time = 0;
     unsigned long current_time = jiffies;
 
-    /* Shared line: the CSI may fire before or after the ISP device exists. */
-    if (!sd || !ourISPdev)
+    /*
+     * Shared line: the CSI may fire before or after the ISP device exists.
+     * dev_id is the CSI subdev itself (tx_isp_csi_start), so the CSI status
+     * is read and cleared from it without ourISPdev; an asserted source is
+     * then always acknowledged and cannot leave the shared line (which
+     * carries the ISP as well) to the "nobody cared" disable (#231 L4).
+     */
+    if (!sd)
         return IRQ_NONE;
 
     pr_info("*** CSI INTERRUPT: irq=%d, dev_id=%p, time_delta=%lu ms ***\n",
             irq, dev_id, jiffies_to_msecs(current_time - last_interrupt_time));
     last_interrupt_time = current_time;
 
-    csi_dev = ourISPdev->csi_dev;
+    csi_dev = container_of(sd, struct tx_isp_csi_device, sd);
     if (!csi_dev) {
         pr_warn("*** CSI INTERRUPT: csi_dev is NULL - returning IRQ_NONE ***\n");
         return IRQ_NONE;
@@ -414,6 +420,15 @@ int tx_isp_csi_start(struct tx_isp_subdev *sd)
 
     /* CRITICAL: Register CSI interrupt handler if not already registered */
     if (!csi_irq_registered) {
+        /* nothing may be pending or unmasked while the handler goes in on
+         * the shared line: mask all sources, clear ERR1/ERR2 (#231 L4) */
+        void __iomem *base = container_of(sd, struct tx_isp_csi_device, sd)->csi_regs;
+
+        csi_write32(CSI_INT_MASK, 0xFFFFFFFF);
+        if (base) {
+            writel(readl(base + 0x20), base + 0x20);
+            writel(readl(base + 0x24), base + 0x24);
+        }
         pdev = to_platform_device(sd->module.dev);
         irq = platform_get_irq(pdev, 0);
         if (irq < 0) {
