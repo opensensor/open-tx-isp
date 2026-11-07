@@ -3,7 +3,7 @@
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd); D=${T40_DRV_DIR:-$HERE/../../driver/t40}; W=$(mktemp -d); trap 'rm -rf $W' EXIT
 CC=$1; OUT=$2
-sed -n '/^#include "tx_isp_t40_vawb_gen.inc"/q;p' $D/tx_isp_t40_vawb.h > $W/top.h
+sed -n '/^\/\* end of the host harness part/q;p' $D/tx_isp_t40_vawb.h > $W/top.h
 sed -i -e 's/a >= 0x80000000U \&\& a < 0xfffff000U \&\& !(a \& align)/(a >= 0x1000U \&\& !(a \& align))/' $W/top.h
 echo '#endif' >> $W/top.h
 for f in fix_point_div_32 fix_point_div fix_point_mult2_32 fix_point_mult3_32; do

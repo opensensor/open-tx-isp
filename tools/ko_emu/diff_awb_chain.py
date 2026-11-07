@@ -21,7 +21,9 @@ from unicorn.mips_const import UC_MIPS_REG_A0, UC_MIPS_REG_A1, UC_MIPS_REG_A2, U
 
 ap = argparse.ArgumentParser(); ap.add_argument("oem"); ap.add_argument("our")
 ap.add_argument("--n", type=int, default=300); ap.add_argument("--seed", type=int, default=7)
-ap.add_argument("--fn", default="params_transmit,params_refresh,set_hardware_param,dn_params_refresh,main_ev_update,ev_update_Ywgt,long_par_update,spec_calculate")
+ap.add_argument("--fn", default="params_transmit,params_refresh,set_hardware_param,dn_params_refresh,main_ev_update,ev_update_Ywgt,long_par_update,spec_calculate,"
+                                "set_regional_threshold,set_lum_th_freq,tgain_update,set_gain")
+ap.add_argument("--skip-ev-tail", action="store_true", help="skip the OEM tail call main_ev_update -> set_lum_th_freq (C before #84)")
 a = ap.parse_args(); rnd = random.Random(a.seed)
 M32 = 0xffffffff
 FN = {  # name -> (OEM symbol, our symbol)
@@ -29,7 +31,10 @@ FN = {  # name -> (OEM symbol, our symbol)
     "set_hardware_param": ("tisp_awb_set_hardware_param", "emu_set_hardware_param"), "dn_params_refresh": ("tisp_awb_dn_params_refresh", "emu_dn_params_refresh"),
     "main_ev_update": ("tisp_awb_main_ev_update", "emu_main_ev_update"), "ev_update_Ywgt": ("tisp_awb_ev_update_Ywgt", "emu_ev_update_Ywgt"),
     "long_par_update": ("tisp_awb_long_par_update", "emu_long_par_update"), "spec_calculate": ("tisp_awb_spec_calculate", "emu_spec_calculate"),
-    "main_process": ("tisp_awb_main_process", "emu_main_process")}
+    "main_process": ("tisp_awb_main_process", "emu_main_process"),
+    "set_regional_threshold": ("tisp_awb_set_regional_threshold", "emu_set_regional_threshold"),
+    "set_lum_th_freq": ("tisp_awb_set_lum_th_freq", "emu_set_lum_th_freq"), "tgain_update": ("tisp_awb_tgain_update", "emu_tgain_update"),
+    "set_gain": ("tisp_awb_set_gain", "emu_set_gain")}
 # state symbols: role -> (OEM name, our name, size)
 SYM = {"mctx": ("pstMainAwbOri", "pstMainAwbOri", 512), "sctx": ("pstSecAwbOri", "pstSecAwbOri", 512),
        "mct": ("pstMainAwbCtDetectOri", "pstMainAwbCtDetectOri", 136),
@@ -68,9 +73,11 @@ for name in ("system_reg_read", "system_reg_write", "tisp_event_push", "private_
     def hook(uc, addr, size, ud, cb=cb):
         rv = cb(oem); oem.set_reg(UC_MIPS_REG_V0, rv & M32); oem.set_reg(UC_MIPS_REG_PC, oem.get_reg(UC_MIPS_REG_RA))
     oem.uc.hook_add(UC_HOOK_CODE, hook, None, ad, ad)
-# Known differences of this OEM build (the translation tx_isp_t40_vawb_gen.inc was generated from an earlier Eufy build, the C follows that one):
-#  - tisp_awb_main_ev_update additionally calls tisp_awb_set_lum_th_freq(ctx, 0) after the Y weights: the hook skips that tail call
+# Known differences of this OEM build (the translation tx_isp_t40_vawb_gen.inc was generated from an earlier Eufy build):
 #  - tisp_awb_params_refresh of the second channel also copies outer +456 (36 B) and +492 (20 B): those 56 bytes of the second outer block are not compared
+# Followed by the C since #84 (2026-11-06): tisp_awb_main_ev_update tail-calls tisp_awb_set_lum_th_freq(ctx, 0) after the Y weights, and
+# set_lum_th_freq / tgain_update take the luma thresholds from the exposure value when the bin's mode word (ctx[11] + 38) is 1.
+# --skip-ev-tail skips that tail call in the OEM (the C before #84 had none).
 import re
 _ev = oem.symaddr["tisp_awb_main_ev_update"]
 def _skip_tail(uc, addr, size, ud):
@@ -80,7 +87,7 @@ def _skip_tail(uc, addr, size, ud):
 # the `lw ra,20(sp)` after the Ywgt call is the first instruction following the jalr (delay slot included): find it by its encoding
 _w = [struct.unpack("<I", oem.read(_ev + o, 4))[0] for o in range(0, 0x60, 4)]
 _i = next(k for k, w in enumerate(_w) if w == 0x8fbf0014)        # lw ra,20(sp)
-oem.uc.hook_add(UC_HOOK_CODE, _skip_tail, None, _ev + 4 * _i, _ev + 4 * _i)
+if a.skip_ev_tail: oem.uc.hook_add(UC_HOOK_CODE, _skip_tail, None, _ev + 4 * _i, _ev + 4 * _i)
 MASK = {"so": [(456, 512)]}
 E = (oem, our)
 def symaddr(e, k, which): return e.addr(k[which])
@@ -172,6 +179,17 @@ def fuzz_state(blk, sensor):
     for i in range(32): w16(c[29] + 2 * i, small(900) if small(4) else rnd.getrandbits(16))
     for i in range(32): w16(c[30] + 2 * i, small(900) if small(4) else rnd.getrandbits(16))
     w32l(c[7], 1500 + small(14000) if small(4) else r32())
+    # luma threshold source (set_lum_th_freq / tgain_update): mode word 1 = by exposure value, else by the interpolation position
+    w16(c[11] + 38, 1 if small(2) else (0 if small(2) else rnd.getrandbits(16)))
+    if small(4) == 0: w32l(c[116], thr[small(9)])      # exactly on a zone edge (the < / <= boundaries of the EV branch)
+    w32l(c[117], (small(12) << 16 | rnd.getrandbits(16)) if small(4) else r32())
+    # set_gain: precision / shift, CT zone table, override mode, gain history (sane ranges most of the time)
+    w16(c[3], 10 + small(11) if small(4) else rnd.getrandbits(5)); w16(c[3] + 2, 1 + small(12) if small(4) else rnd.getrandbits(5))
+    for i in range(6): w32l(c[36] + 4 * i, 900 + small(250) if small(4) else r32())
+    w32l(c[36] + 24, 3000 + small(5000)); w32l(c[36] + 28, 2000 + small(4000))
+    w32l(c[5] + 16, small(4096) if small(4) else r32()); w32l(c[5] + 20, small(4096) if small(4) else r32())
+    w32l(c[56], 1500 + small(14000)); w8(c[120], small(11) if small(2) else rnd.getrandbits(8))
+    for i in range(2): w16(c[122] + 2 * i, small(2048))
     # the same custom-algorithm flags in both: draw once
     cu = struct.pack("<II", int(small(3) == 0), int(small(3) == 0))
     if "cust" in ROLES:
@@ -213,7 +231,11 @@ for it in range(a.n):
                 "set_hardware_param": lambda i: (sym(i, "sctx" if sensor else "mctx"), sensor), "dn_params_refresh": lambda i: (sensor,),
                 "main_ev_update": lambda i: (r32() >> small(20),), "ev_update_Ywgt": lambda i: (sym(i, "mctx"),),
                 "long_par_update": lambda i: (sym(i, "mctx"), sym(i, "mct"), blk["mi"]), "spec_calculate": lambda i, ch=small(2): (sym(i, "mctx"), ch),
-                "main_process": lambda i: ()}[name]
+                "main_process": lambda i: (),
+                "set_regional_threshold": lambda i: (sym(i, "sctx" if sensor else "mctx"), sensor),
+                "set_lum_th_freq": lambda i: (sym(i, "sctx" if sensor else "mctx"), sensor),
+                "tgain_update": lambda i, pos=r32() if small(4) == 0 else (small(12) << 16 | rnd.getrandbits(16)): (sensor, 0, pos),
+                "set_gain": lambda i: (sym(i, "sctx" if sensor else "mctx"), sensor)}[name]
         if name == "main_ev_update":
             evv = r32() >> small(20); args = lambda i, evv=evv: (evv,)
         snap0 = snapshot(0, blk)

@@ -647,11 +647,29 @@ static void t40_vawb_ev_follow(void)
 	t40_main_long_ev_update(ev);
 }
 
+/*
+ * #84: the AE's total gain (16.16 log2, stored by regtrace_gc4653_tuning_again_update) to tisp_awb_tgain_update, in the
+ * AWB thread like the OEM event thread (tisp_main_long_tgain_update AWB step: both AWB TOP bits 0x44 bypassed = skip),
+ * when it changed.  Runs before the EV update, so both threshold writers (tgain_update and the set_lum_th_freq tail of
+ * main_ev_update) share this thread.
+ */
+static void t40_vawb_tgain_follow(void)
+{
+	u32 total = READ_ONCE(t40_awb_tgain_total);
+
+	if (!READ_ONCE(t40_vawb_live) || total == 0xffffffffU || total == t40_awb_tgain_last ||
+	    ((u32)system_reg_read(0x40U) & 0x44U) == 0x44U)
+		return;
+	t40_awb_tgain_last = total;
+	(void)t40_vawb_tgain_update(0, 0, total);
+}
+
 static void t40_vawb_ct_follow(void)
 {
 	u32 ct = vawb_ok(pstMainAwbOri[7], 3) ? *(u32 *)(uintptr_t)pstMainAwbOri[7] : 0;
 	u64 ls = tx_ls_work_begin();
 
+	t40_vawb_tgain_follow();
 	t40_vawb_ev_follow();
 	tx_ls_work_end(T40_LS_WORK_VAWB_EV, ls);
 	ls = tx_ls_work_begin();

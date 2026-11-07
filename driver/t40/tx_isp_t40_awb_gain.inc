@@ -9,6 +9,10 @@
  * They run in place of the translated OEM code (VAE_STOP, tx_isp_t40_vawb.h), bit for bit the same
  * (tests/t40_vawb_host.sh with GR_REF: both versions on every call with fuzzed state, register write
  * order and values, all state the functions touch).
+ * Newer OEM builds (Eufy firmware tx-isp-t40.ko H20240605a, md5 e64d88e9, and the vendor module of the #84 light-box runs, e48557c2):
+ * set_lum_th_freq / tgain_update take the three luma thresholds from the exposure value ctx[116] over the nine zones ctx[21]
+ * when the bin's mode word ctx[11] + 38 is 1 (t40_ag_lum_by_ev); proven against both modules in Unicorn
+ * (tools/ko_emu/diff_awb_chain.py, tests/t40_vawb_oracle.sh).  The Eufy sc830ai bin has mode 0.
  *
  * The OEM tele path of set_gain (tisp_awb_calc_tele_gain + tisp_awb_calc_div_sqrt_distance, taken only
  * when awb_wide_tele_para[0] == 1) is not translated: the open stack runs one sensor and
@@ -34,8 +38,8 @@
 /* every pointer of ctx[] the functions use must be a valid (aligned kernel) address, as the guarded loads require */
 static bool t40_ag_ctx_ok(const u32 *ctx)
 {
-	static const u8 w32[] = { 5, 7, 9, 36, 56, 58, 117, 121 };
-	static const u8 w16[] = { 0, 3, 34, 122, 124 };
+	static const u8 w32[] = { 5, 7, 9, 21, 36, 56, 58, 116, 117, 121 };
+	static const u8 w16[] = { 0, 3, 11, 34, 122, 124 };
 	static const u8 w8[] = { 118, 119, 120 };
 	u32 i;
 
@@ -114,15 +118,57 @@ static void t40_ag_regional_threshold(const u32 *ctx, u32 ch)
 	}
 }
 
+/*
+ * The three luma thresholds (rows 8..10 of ctx[34]) by the exposure value: OEM mode word ctx[11] + 38 == 1.
+ * ev <= zones[0]: knot 0; ev > zones[8]: knot 10; otherwise every segment i with zones[i] < ev is interpolated in turn (the last one
+ * wins), with the 16-bit wrap and the unsigned 32-bit arithmetic of the OEM; a zero-width segment keeps knot i.
+ */
+static void t40_ag_lum_by_ev(const u32 *ctx, u16 *cfg, const u16 *tbl)
+{
+	const u32 *zones = T40_AG_P32(21);
+	u32 ev = *T40_AG_P32(116), i, k;
+
+	if (!(zones[0] < ev)) {
+		for (k = 0; k < 3; k++)
+			cfg[42 + k] = tbl[88 + 11 * k];
+		return;
+	}
+	if (zones[8] < ev) {
+		for (k = 0; k < 3; k++)
+			cfg[42 + k] = tbl[98 + 11 * k];
+		return;
+	}
+	for (i = 0; i < 8; i++) {
+		u32 z0 = zones[i], z1 = zones[i + 1], d = z1 > z0 ? z1 - z0 : z0 - z1;
+
+		if (!(z0 < ev))
+			continue;
+		for (k = 0; k < 3; k++) {
+			u32 a = tbl[88 + 11 * k + i], b = tbl[88 + 11 * k + i + 1];
+
+			if (z0 == z1)
+				cfg[42 + k] = a;
+			else if (b < a)
+				cfg[42 + k] = (u16)(a - t40_ag_divu((a - b) * (ev - z0), d, 199000U));
+			else
+				cfg[42 + k] = (u16)(a + t40_ag_divu((b - a) * (ev - z0), d, 199004U));
+		}
+	}
+}
+
 static void t40_ag_lum_th_freq(const u32 *ctx, u32 ch)
 {
 	u16 *cfg = T40_AG_P16(0);
 	const u16 *tbl = T40_AG_P16(34);
 	u32 pos = *T40_AG_P32(117), idx = pos >> 16, frac = pos & 0xffff;
 
-	cfg[42] = t40_ag_intp(idx, frac, tbl + 88);
-	cfg[43] = t40_ag_intp(idx, frac, tbl + 99);
-	cfg[44] = t40_ag_intp(idx, frac, tbl + 110);
+	if (T40_AG_P16(11)[19] == 1) {	/* mode word at ctx[11] + 38: thresholds by exposure value */
+		t40_ag_lum_by_ev(ctx, cfg, tbl);
+	} else {
+		cfg[42] = t40_ag_intp(idx, frac, tbl + 88);
+		cfg[43] = t40_ag_intp(idx, frac, tbl + 99);
+		cfg[44] = t40_ag_intp(idx, frac, tbl + 110);
+	}
 	t40_ag_ae_mean(ch ? pstSecAeOri_storage : pstMainAeOri_storage);
 	system_reg_write(ch ? 0x18238U : 0x18038U,
 			 (u32)cfg[45] << 24 | (u32)cfg[44] << 16 | (u32)cfg[43] << 8 | cfg[42]);

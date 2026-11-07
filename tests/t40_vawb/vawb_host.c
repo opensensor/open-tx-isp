@@ -454,12 +454,45 @@ static void gr_ae_setup(void)
 }
 /* run the reference and the C version on one state: fn_ref returns, fn_c is the C adapter */
 typedef u64 (*gr_fn)(u32, u32, u32, u32, u32);
+/*
+ * The reference is the translation of an earlier OEM build.  Newer builds (Eufy H20240605a e64d88e9, vendor e48557c2), followed
+ * by the C since #84: (1) set_lum_th_freq / tgain_update take the luma thresholds from the exposure value when the mode word
+ * ctx[11] + 38 is 1 - the old build has no such branch, so gr_cmp clears a mode word of 1 before both runs (counted; that branch
+ * is proven against the real modules in Unicorn, tests/t40_vawb_oracle.sh); (2) main_ev_update tail-calls set_lum_th_freq(ctx, 0):
+ * gr_ref_mainev adds that call to the reference.
+ */
+static unsigned long gr_mode1_masked;
+static void gr_mode_mask(void)
+{
+	u32 *t[2] = { pstMainAwbOri, pstSecAwbOri }, k, p;
+
+	for (k = 0; k < 2; k++) {
+		p = t[k][11] + 38;	/* only a word inside one of the outer blocks (the fuzz also hands out junk tables) */
+		if ((p & 1) || !((p >= (u32)(uintptr_t)outer && p < (u32)(uintptr_t)outer + sizeof(outer) - 1) ||
+				 (p >= (u32)(uintptr_t)secouter && p < (u32)(uintptr_t)secouter + sizeof(secouter) - 1)))
+			continue;
+		if (*(u16 *)(uintptr_t)p == 1) { *(u16 *)(uintptr_t)p = 0; gr_mode1_masked++; }
+	}
+	for (k = 0; k < 2; k++) {	/* and in the tuning source params_refresh copies it from (dn_params_refresh) */
+		u8 *src = k ? bank2 : bank;
+
+		if (tparamsN[k] == (u32)(uintptr_t)src && *(u16 *)(src + 4288 + 254) == 1) { *(u16 *)(src + 4288 + 254) = 0; gr_mode1_masked++; }
+	}
+}
+static u64 gr_ref_mainev(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
+{
+	u64 rv = vgr_tisp_awb_main_ev_update(a0, a1, a2, a3, csp);
+
+	(void)vgr_tisp_awb_set_lum_th_freq((u32)(uintptr_t)pstMainAwbOri, 0, 0, 0, csp);
+	return rv;
+}
 static u64 gr_cmp(int id, const char *name, gr_fn fn_ref, gr_fn fn_c, u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
 {
 	u32 f0, fr, fc, n1, n2, i, r, bad = 0, first = ~0U, at = 0;
 	u64 rv;
 
 	gr_regions();
+	gr_mode_mask();
 	gr_save(gr_s0);
 	rd_fuzz = 1; rd_seed ^= rd_seed << 13; rd_seed ^= rd_seed >> 17; rd_seed ^= rd_seed << 5;
 	rd_x = rd_seed | 1;
@@ -517,7 +550,7 @@ static u64 vawb_s_tisp_awb_set_hardware_param(u32 a0, u32 a1, u32 a2, u32 a3, u3
 static u64 vawb_s_tisp_awb_dn_params_refresh(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
 { return gr_cmp(13, "dn_params_refresh", vgr_tisp_awb_dn_params_refresh, vgr_c_dnrefresh, a0, a1, a2, a3, csp); }
 static u64 vawb_s_tisp_awb_main_ev_update(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
-{ return gr_cmp(14, "main_ev_update", vgr_tisp_awb_main_ev_update, vgr_c_mainev, a0, a1, a2, a3, csp); }
+{ return gr_cmp(14, "main_ev_update", gr_ref_mainev, vgr_c_mainev, a0, a1, a2, a3, csp); }
 static u64 vawb_s_tisp_awb_ev_update_Ywgt(u32 a0, u32 a1, u32 a2, u32 a3, u32 csp)
 { return gr_cmp(15, "ev_update_Ywgt", vgr_tisp_awb_ev_update_Ywgt, vgr_c_ywgt, a0, a1, a2, a3, csp); }
 #ifdef HAVE_AWB_MAIN
@@ -715,7 +748,7 @@ static void pr_run(u32 n)
 
 		printf("init_process_chain C vs OEM:");
 		for (k = 0; k < 9; k++) { tn += gr_n[10 + k]; tb += gr_bad[10 + k]; printf(" %s %lu/%lu", nm[k], gr_n[10 + k], gr_bad[10 + k]); }
-		printf("\ninit_process_chain C vs OEM: %lu calls, %lu differ\n", tn, tb);
+		printf("\ninit_process_chain C vs OEM: %lu calls, %lu differ (mode word 1 cleared %lu times: newer OEM build only)\n", tn, tb, gr_mode1_masked);
 	}
 }
 /* fuzz loop: FUZZP=seed [FUZZN=calls] */
