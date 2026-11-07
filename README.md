@@ -54,7 +54,7 @@ Earlier state: the release candidate (`claude/agg-28` on top of `next`, 2026-10-
 **Completeness** of the vendor API at RC1 (done = device-tested + host-tested + audited): T10 89.2 %, T20 90.5 %, T21 93.2 %, T23 93.8 %, T31 96.4 % (release), T41 59.3 %, T40 25.4 %, T30 not device-audited (experimental). Table: [OpenIMP README, Completeness](https://github.com/opensensor/openimp/blob/aperto/README.md#completeness). Release notes: [docs/RELEASE-v2026.10.11-rc1.md](docs/RELEASE-v2026.10.11-rc1.md).
 
 Per feature and SoC:
-[FEATURE_MATRIX](https://github.com/opensensor/openimp/blob/aperto/docs/FEATURE_MATRIX.md).
+the rendered **[feature matrix](https://lu-fi.github.io/openimp/feature-matrix.html)** (source: [FEATURE_MATRIX](https://github.com/Lu-Fi/openimp/blob/next/docs/FEATURE_MATRIX.md)).
 History: [CHANGELOG.md](CHANGELOG.md).
 
 ## T23 module parameters (release candidate defaults)
