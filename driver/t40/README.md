@@ -635,6 +635,8 @@ Recommended line for colour work on this board:
   0x13318038, baseline 0x16; comp 80, 1.39x: 21); rows 9/10 stay 128 / 230. The regional thresholds change only at knot 7
   (128x total gain): 90 -> 40, 350 -> 400, 50 -> 30 (20 at knot 9), 220 -> 260, 230 -> 200, 440 -> 480, i.e. at night
   (0x13318028 = 0x01900028).
+- Day/night switch: `tisp_awb_dn_params_refresh` now runs in the bank switch like the OEM (before 2026-11-07 the AWB kept the
+  bank of its init: night rows in day mode after a night start).
 - This is not the cause of the +5-6 % B/G of the 2026-11-06 light-box comparison (see CHANGELOG): that one follows the exposure
   point. Proof of the code: `tests/t40_vawb_oracle.sh` (Unicorn, both modules, 0 mismatches, 7 mutations detected).
 
