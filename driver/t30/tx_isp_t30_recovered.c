@@ -15130,6 +15130,22 @@ static int32_t ispcore_irq_thread_handle_body(void *arg1)
 #ifndef REGTRACE_KERNEL_TREE_BUILD
 int64_t ispcore_frame_channel_streamoff_isra_0(uintptr_t a0) __asm__("ispcore_frame_channel_streamoff.isra.0");
 #endif
+/* Direct (bypass) writer counters, see tx_isp_t30_core_direct_irq(). */
+static u32 tx_isp_t30_direct_stat[7];
+
+static void tx_isp_t30_core_direct_report(const char *when, int index)
+{
+	u32 base = 0xb00 + index * 0x100;
+
+	pr_err("tx-isp-t30: direct ch=%d %s irq fs=%u fe=%u fr=%u ds=%u filled=%u done=%u nobank=%u wr=%08x ctl=%08x banks=%08x b0=%08x b1=%08x\n",
+	       index, when, tx_isp_t30_direct_stat[0], tx_isp_t30_direct_stat[1],
+	       tx_isp_t30_direct_stat[2], tx_isp_t30_direct_stat[3],
+	       tx_isp_t30_direct_stat[4], tx_isp_t30_direct_stat[5],
+	       tx_isp_t30_direct_stat[6], APICAL_READ_32(base),
+	       APICAL_READ_32(base + 0x24), APICAL_READ_32(base + 0x1c),
+	       APICAL_READ_32(base + 0x08), APICAL_READ_32(base + 0x0c));
+}
+
 static int tx_isp_t30_ispcore_stream_off(struct tx_isp_t30_subdev_pad *pad)
 {
 	struct tx_isp_t30_core_output_channel *chan;
@@ -15159,6 +15175,8 @@ static int tx_isp_t30_ispcore_stream_off(struct tx_isp_t30_subdev_pad *pad)
 	}
 	spin_unlock_irqrestore(&chan->slock, flags);
 
+	if (!(pad->link.flag & BIT(5)))
+		tx_isp_t30_core_direct_report("streamoff", chan->index);
 	if (pad->link.flag & BIT(5)) {
 		if (tx_isp_t30_streamoff_trace_count++ < 12)
 			pr_err("tx-isp-t30: core LFB wait irqs=%d\n",
@@ -16904,6 +16922,14 @@ static int tx_isp_t30_ispcore_stream_on(struct tx_isp_t30_subdev_pad *pad)
 	case V4L2_PIX_FMT_SGRBG12:
 	case V4L2_PIX_FMT_SRGGB12:
 		/* SDK: the raw (bypass) formats use the primary writer only. */
+		if (!(pad->link.flag & BIT(5)))
+			/*
+			 * Direct writer: frame_write_cancel until the IRQ path has
+			 * real bank addresses (the LFB session before left it on,
+			 * banks at the LFB defaults).  The SDK has this write
+			 * commented out; dma_state 0 matches it.
+			 */
+			APICAL_WRITE_32(base + 0x24, 0x03);
 		primary = APICAL_READ_32(base) | BIT(9);
 		APICAL_WRITE_32(base, primary);
 		APICAL_WRITE_32(base + 0x1c,
@@ -16921,6 +16947,10 @@ static int tx_isp_t30_ispcore_stream_on(struct tx_isp_t30_subdev_pad *pad)
 	APICAL_WRITE_32(0x104, APICAL_READ_32(0x104) & 0xf800ffff);
 	pr_err("tx-isp-t30: core stream ch=%d running banks=%u link=%08x\n",
 	       chan->index, chan->usingbanks, pad->link.flag);
+	if (!(pad->link.flag & BIT(5))) {
+		memset(tx_isp_t30_direct_stat, 0, sizeof(tx_isp_t30_direct_stat));
+		tx_isp_t30_core_direct_report("streamon", chan->index);
+	}
 	return 0;
 }
 
@@ -18737,6 +18767,133 @@ static void tx_isp_t30_ispcore_enable_lfb_channel(
 }
 
 /*
+ * Frame channel linked to the core directly (bypass graph, link without the
+ * LFB bit): the core DMA writer writes into the channel's own buffers.  SDK
+ * tx-isp-core.c isp_configure_base_addr(), isp_enable_channel(),
+ * isp_enable_dma_transfer() and isp_core_update_addr(), raw (single writer)
+ * formats only; the LFB path above is unchanged.  Without these the queued
+ * buffers stayed in chan->fifo, no bank address was written and the writer
+ * was never enabled (T30X: 0/10 raw frames, #218).
+ */
+/* tx_isp_t30_direct_stat[]: fs fe fr ds filled done nobank */
+
+static bool tx_isp_t30_core_chan_direct(struct tx_isp_t30_core_output_channel *chan)
+{
+	if (!chan || chan->state != TX_ISP_T30_MODULE_RUNNING || !chan->pad ||
+	    IS_ERR(chan->pad) || (chan->pad->link.flag & BIT(5)) ||
+	    !chan->usingbanks || chan->usingbanks > 5)
+		return false;
+	switch (chan->fmt.pix.pixelformat) {
+	case V4L2_PIX_FMT_SBGGR12:
+	case V4L2_PIX_FMT_SGBRG12:
+	case V4L2_PIX_FMT_SGRBG12:
+	case V4L2_PIX_FMT_SRGGB12:
+		return true;
+	default:
+		return false;
+	}
+}
+
+static void tx_isp_t30_core_direct_fill(struct tx_isp_t30_core_output_channel *chan)
+{
+	struct tx_isp_t30_frame_buffer *buf;
+	u32 base = 0xb00 + chan->index * 0x100;
+	u32 bank = (APICAL_READ_32(base + 0x24) >> 8) & 7;
+	u32 i;
+
+	spin_lock(&chan->slock);
+	for (i = 0; i < chan->usingbanks; i++, bank++) {
+		bank %= chan->usingbanks;
+		if (chan->bank_flag[bank])
+			continue;
+		if (list_empty(&chan->fifo))
+			break;
+		buf = list_first_entry(&chan->fifo, struct tx_isp_t30_frame_buffer,
+				       entry);
+		list_del_init(&buf->entry);
+		isp_set_buffer_address_vflip_disable_isra_0(chan, buf, bank);
+		chan->vflip_flag[bank] = 0;
+		chan->bank_flag[bank] = 1;
+		chan->banks_addr[bank] = buf->addr;
+		tx_isp_t30_direct_stat[4]++;
+	}
+	spin_unlock(&chan->slock);
+}
+
+static void tx_isp_t30_core_direct_enable(struct tx_isp_t30_core_output_channel *chan)
+{
+	u32 base = 0xb00 + chan->index * 0x100;
+	u32 next = (((APICAL_READ_32(base + 0x24) >> 8) & 7) + 1) %
+		   chan->usingbanks;
+
+	if (chan->bank_flag[next] ^ chan->dma_state) {
+		chan->dma_state = chan->bank_flag[next];
+		/* axi_port_enable 1; frame_write_cancel 0 (on) / 1 (off) */
+		APICAL_WRITE_32(base + 0x24, chan->dma_state ? 0x02 : 0x03);
+	}
+}
+
+static void tx_isp_t30_core_direct_done(struct tx_isp_t30_core_video_view *core,
+					struct tx_isp_t30_core_output_channel *chan)
+{
+	struct tx_isp_t30_frame_buffer buf = { };
+	u32 base = 0xb00 + chan->index * 0x100;
+	u32 hw = APICAL_READ_32(base + 0x24);
+	u32 cur = (hw >> 8) & 7;
+	u32 bank = (hw & BIT(16)) ? (hw >> 11) & 7 : cur;
+
+	if (bank < chan->usingbanks && chan->bank_flag[bank]) {
+		buf.addr = chan->banks_addr[bank];
+		buf.priv = core->frame_sequence;
+		chan->bank_flag[bank] = 0;
+		tx_isp_t30_direct_stat[5]++;
+		if (tx_isp_t30_direct_stat[5] <= 3)
+			pr_err("tx-isp-t30: direct ch=%d done bank=%u hw=%08x addr=%08x seq=%u\n",
+			       chan->index, bank, hw, buf.addr, buf.priv);
+		tx_isp_send_event_to_remote(chan->pad,
+					    TX_ISP_FRAME_EVENT_BUFFER_DONE, &buf);
+	} else {
+		tx_isp_t30_direct_stat[6]++;
+	}
+	if (chan->bank_flag[(cur + 1) % chan->usingbanks] != 1)
+		tx_isp_t30_core_direct_enable(chan);
+}
+
+static void tx_isp_t30_core_direct_irq(struct tx_isp_t30_core_video_view *core,
+				       u32 status)
+{
+	u32 i;
+
+	if (!core->channels || !core->num_channels)
+		return;
+	if (status & BIT(0)) {
+		tx_isp_t30_direct_stat[1]++;
+		for (i = 0; i < core->num_channels; i++)
+			if (tx_isp_t30_core_chan_direct(&core->channels[i]))
+				tx_isp_t30_core_direct_fill(&core->channels[i]);
+		if (tx_isp_t30_core_chan_direct(&core->channels[0]) &&
+		    core->channels[0].dma_state != 1)
+			tx_isp_t30_core_direct_enable(&core->channels[0]);
+	}
+	if (status & BIT(5)) {
+		tx_isp_t30_direct_stat[2]++;
+		if (tx_isp_t30_core_chan_direct(&core->channels[0]))
+			tx_isp_t30_core_direct_done(core, &core->channels[0]);
+	}
+	if ((status & BIT(6)) && core->num_channels > 1) {
+		tx_isp_t30_direct_stat[3]++;
+		if (tx_isp_t30_core_chan_direct(&core->channels[1]))
+			tx_isp_t30_core_direct_done(core, &core->channels[1]);
+	}
+	if (status & BIT(7)) {
+		tx_isp_t30_direct_stat[0]++;
+		for (i = 0; i < core->num_channels; i++)
+			if (tx_isp_t30_core_chan_direct(&core->channels[i]))
+				tx_isp_t30_core_direct_fill(&core->channels[i]);
+	}
+}
+
+/*
  * 1 while the firmware instance (event queue, FSM state) is initialised.  The
  * OEM driver reaches the same guarantee by keeping the ISP interrupt masked
  * until apical_fw_init() has finished; this driver's IRQ line can fire inside
@@ -18887,6 +19044,7 @@ static int tx_isp_t30_ispcore_interrupt(struct tx_isp_t30_subdev *sd)
 			core->daynight_switch = 0;
 		}
 	}
+	tx_isp_t30_core_direct_irq(core, irq_status);
 	tx_isp_t30_dispatch_firmware_irqs(irq_status);
 	if (simple_3a && (irq_status & BIT(3)))
 		ret = IRQ_WAKE_THREAD;
