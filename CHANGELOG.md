@@ -4,6 +4,13 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-07: T40 AeTargetComp acts like the OEM on every AE path (#232; host test, Eufy check pending)
+
+- Report (#232, Eufy c1 rows of the awb2 run): ae_compensation 40/128/200 gave open frame Y 39.8/115.3/239.7 (EV 625/5561/56853), vendor 92.6/109.5/140.5 (EV 1689/4269/10423). That run used a module without the #84 AE target, so the legacy path scaled the OUTPUT-Y target by the comp factor (`t40_ae_comp_target`, 122 x 40/128 = 38).
+- OEM: `tisp_ae_s_comp` (Ghidra 0x39ed4) writes the target-scale word (bin word x comp >> 7, or bin + comp x 300 / 127 - 302 above 128), and `tisp_ae_long_tune2` (0x35b58, l.214-216) multiplies the statistics-domain target list by it, so the vendor EV follows comp almost linearly (0.40x / 2.44x at comp 40 / 200) while the gamma'd frame Y moves little. Since the #84 AE target (in next) the main open path does exactly that (`t40_aet_comp_word` / `t40_aet_lists`, Unicorn oracle cases C and G).
+- Now also the fallback that keeps an output-Y target (HLC / BLC / face metering, or no usable bank OEM path): `t40_aet_comp_out` takes the target through the bank gamma into the statistics domain, scales it by the OEM word and maps it back (sc830ai: comp 40 / 80 / 160 / 200 -> target 60 / 92 / 156 / 191 instead of 38 / 76 / 152 / 250). `t40_ae_target_oem=0` keeps the old output-domain scaling.
+- Host: `tests/t40_ae_target_host.sh` host part (Python transcription on two curves, comp 0..255; comp 128 = identity, monotonic).
+
 ## 2026-11-07: T40 AE rung trade in the gain the sensor applies (#219 C1; host test, device proof with the combined module)
 
 - The antiflicker rung trade (`t40_ae_af_trade_again` / `_log2`, frame AE in `tx_isp_t40_recovered.c`) modelled the GC4653 ladder value, but the sensor applies its own `alloc_again` floor of it (`t40_ae_sensor_again_log2`, M3); on a sensor with a coarser or offset table the trade removed a different gain than modelled and the next sample could move the rung back (Opus review 1106 C1). The OEM AE likewise works with the gain alloc_again returns.

@@ -16,7 +16,31 @@ c5 = list(reversed(c1))
 for c in (c1, c2, c3, c4, c5): print("I " + " ".join(map(str, c)))
 PY
 )
+# #232 AeTargetComp through the gamma (t40_aet_comp_out) against a Python transcription on the gamma-0.45-like curve and the
+# sc830ai-like curve c4: base 122, comp 0 / 40 / 80 / 128 / 160 / 200 / 255; comp 128 must give the base back (+-1)
+k=$(python3 - "$W0/h" <<'PY'
+import subprocess, sys
+c2 = [round(4095 * (i / 128) ** 0.45) for i in range(129)]
+c4 = [0, 144, 288, 412, 526, 625, 714, 796] + [min(4095, 796 + 27 * k) for k in range(1, 122)]
+def g8(g, l):
+    l = min(l, 255); i = l >> 1; v = g[i] + ((g[i + 1] - g[i]) // 2 if l & 1 else 0); return min(255, v >> 4)
+def word(c):
+    return (128 * c) >> 7 if c < 0x81 else (128 + (c * 300) // 0x7f - 0x12e) & 0xffff
+def comp_out(g, base, c):
+    best = min(range(256), key=lambda l: (abs(g8(g, l) - base), l)); v = best * word(c) >> 7; return g8(g, min(v, 255))
+cases, exp = [], []
+for g in (c2, c4):
+    for c in (0, 40, 80, 128, 160, 200, 255):
+        cases.append("K " + " ".join(map(str, g)) + " 122 %d" % c); exp.append(comp_out(g, 122, c))
+out = subprocess.run([sys.argv[1]], input="\n".join(cases) + "\n", capture_output=True, text=True).stdout.split()
+bad = sum(1 for a, b in zip(out, exp) if int(a) != b) + abs(len(out) - len(exp))
+mono = all(int(out[i]) <= int(out[i + 1]) for j in (0, 7) for i in range(j, j + 6))
+ident = all(abs(int(out[j + 3]) - 122) <= 1 for j in (0, 7))
+print("ok" if not bad and mono and ident else "bad %d mono %s ident %s %s" % (bad, mono, ident, out))
+PY
+)
 rm -rf "$W0"
+[ "$k" = ok ] || { echo "t40_ae_target_host: FAIL (comp through gamma: $k)"; exit 1; }
 [ "$(echo $r)" = "0 0 0 0 invalid" ] || { echo "t40_ae_target_host: FAIL (inverse gamma: $r)"; exit 1; }
 if [ ! -r "${T40_OEM_KO:-}" ] || ! python3 -c "import unicorn, elftools" 2>/dev/null; then echo "t40_ae_target_host: SKIP (T40_OEM_KO / python3 unicorn+pyelftools missing)"; [ -z "${T40_ORACLE_STRICT:-}" ] || exit 1; exit 0; fi
 W=$(mktemp -d); trap 'rm -rf "$W"' EXIT

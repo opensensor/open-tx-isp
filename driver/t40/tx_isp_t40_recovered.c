@@ -9458,7 +9458,26 @@ static uint32_t regtrace_t40_frame_3a_target_eff(void)
     if (READ_ONCE(t40_ae_oem_live))
         return READ_ONCE(t40_ae_oem_tout);   /* AeTargetComp is in the OEM lists (t40_aet_comp_word) */
 
-    /* OEM tisp_ae_s_comp factor (128 = 1.0, 255 = 3.34x) */
+    /*
+     * #232: the OEM applies AeTargetComp to the target in the statistics domain (tisp_ae_s_comp word, 128 = 1.0,
+     * 255 = 3.34x, scaled into the target list by tisp_ae_long_tune2), so on this output-Y target it goes through the
+     * bank gamma (t40_aet_comp_out).  t40_ae_target_oem=0 keeps the pre-#84 output-domain scaling.
+     */
+    if (READ_ONCE(t40_ae_target_oem) && tparamsN[0]) {
+        const uint8_t *gs = (const uint8_t *)(uintptr_t)tparamsN[0] + 0x106ecU;
+        uint16_t g[129];
+        unsigned int i;
+        bool ok = true;
+
+        for (i = 0; i < 129U; i++) {
+            g[i] = (uint16_t)(gs[2U * i] | gs[2U * i + 1U] << 8);
+            if (i && g[i] < g[i - 1U])
+                ok = false;
+        }
+        if (ok && g[128] > g[0])
+            return clamp_t(uint32_t, t40_aet_comp_out(g, t, t40_aet_comp_word(128U, READ_ONCE(t40_ae_sc.comp))), 8U, 250U);
+    }
+    /* OEM tisp_ae_s_comp factor (128 = 1.0, 255 = 3.34x) on the output target (legacy) */
     return t40_ae_comp_target(t, READ_ONCE(t40_ae_sc.comp), 8U, 250U);
 }
 static uint32_t regtrace_t40_ae_isp_dgain_max_eff(void)
