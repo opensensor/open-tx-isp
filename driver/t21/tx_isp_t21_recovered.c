@@ -15812,12 +15812,23 @@ int32_t tisp_log2_fixed_to_fixed_64(uint32_t a0, uint32_t a1, uint32_t a2, uint3
 }
 #endif
 
+/*
+ * #231 L7 (not vendor): the tuning netlink receive path (user sendmsg
+ * context) runs tisp_param_operate_process on opmsg and nlsk; stream-off
+ * (tisp_deinit -> tisp_param_operate_deinit) releases the socket and frees
+ * opmsg.  Both now run under this mutex and the receive path drops a
+ * message once opmsg is gone, so a tuning message during stream-off no
+ * longer writes the freed reply buffer.  Vendor: no lock.
+ */
+static DEFINE_MUTEX(t21_opmsg_mutex);
+
 /* WHOLE_DRIVER_CANDIDATE fn_000000000000d350 origin=model_output original=netlink_rcv_msg */
 int netlink_rcv_msg(void *arg1)
 {
 	struct sk_buff *skb = arg1;
 	struct nlmsghdr *nlh;
 	int (*event_cb)(void *, int);
+	int ret;
 
 	if (!skb || skb->len < NLMSG_HDRLEN)
 		return 1;
@@ -15827,11 +15838,15 @@ int netlink_rcv_msg(void *arg1)
 	    nlh->nlmsg_len > skb->len)
 		return 0;
 
+	mutex_lock(&t21_opmsg_mutex);
 	event_cb = (int (*)(void *, int))(uintptr_t)net_event_process;
-	if (!event_cb)
+	if (!event_cb || !opmsg) {
+		mutex_unlock(&t21_opmsg_mutex);
 		return 0;
-
-	return event_cb(nlmsg_data(nlh), nlmsg_len(nlh));
+	}
+	ret = event_cb(nlmsg_data(nlh), nlmsg_len(nlh));
+	mutex_unlock(&t21_opmsg_mutex);
+	return ret;
 }
 
 /* WHOLE_DRIVER_CANDIDATE fn_000000000000d390 origin=model_output original=netlink_send_msg */
@@ -16139,6 +16154,8 @@ int32_t tisp_param_operate_deinit(void)
 {
 	uint32_t opmsg_1;
 
+	/* no receive path is running or starts on opmsg/nlsk (#231 L7) */
+	mutex_lock(&t21_opmsg_mutex);
 	tisp_netlink_exit();
 	opmsg_1 = (uint32_t)opmsg;
 
@@ -16146,6 +16163,7 @@ int32_t tisp_param_operate_deinit(void)
 		vfree((void *)opmsg_1);
 		opmsg = 0;
 	}
+	mutex_unlock(&t21_opmsg_mutex);
 
 	return 0;
 }
