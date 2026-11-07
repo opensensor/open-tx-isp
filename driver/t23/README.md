@@ -77,6 +77,27 @@ The subdevice adapter supplies T23's graph table and legacy pad-slot offsets
 to the shared name/type/index resolver. Its recovered graph descriptor reads
 also use the common 8-byte endpoint wire positions.
 
+## Stock 3A event flows (#231)
+
+The stock module runs its 3A from the core ISR (`irq_func_cb[bit]`) and the
+`tisp_event` queue drained by the `isp_fw_process` thread.  This driver has
+neither (`tisp_event_push` drops, see its comment); the same stock flows run
+as follows:
+
+| stock flow | here | counters |
+|---|---|---|
+| AE0: bit 26/27 `ae0_interrupt_*`, event 1 `tisp_ae0_process` | lifted stock code, ISR + work item (`tx_isp_t23_ae_oem_glue.inc`, `source_ae_oem=1`) | - |
+| ADR / defog: bit 18 / 20 `tiziano_*_interrupt_static`, events 2 / 3 `tisp_adr_process` / `tisp_defog_process` | lifted stock code, ISR + work item (`tx_isp_t23_adr_oem_glue.inc`, `source_adr_oem=1`) | `adr_oem_runs` (adr irq, adr process, defog irq, defog process) |
+| AWB: bit 30 `awb_interrupt_static` (statistics, `tiziano_awb_set_lum_th_freq`), event 9 `JZ_Isp_Awb`, event 8 `tisp_ct_update` | statistics snapshot + `t23x_awb_set_lum_th_freq` in the ISR, HLIL AWB work (every `source_awb_hlil_interval`-th interrupt, default 4) calling the CT updates directly | `awb_lum_th_runs`, `awb_lum_th_last` (0444) |
+
+`t23x_awb_set_lum_th_freq` writes 0xb038 on every AWB interrupt like stock:
+`par[176] << 16 | par[172] << 8 | max(1, min(wmean, par[168]) * _ae_reg[8] >> 10)`
+(`_awb_parameter` = IQ 0x1028, loaded with the bank; wmean = stock
+`tisp_ae_mean_update` over the AE0 zone means of the lifted AE).  Before #231
+0xb038 stayed at 0x0001f005.  `source_awb_lum_th=0` (0644) restores that.
+sc2336p bank words: day 10 / 235 / 1, night 10 / 240 / 1.  Oracle:
+`tests/t23_awb_lum_oracle.sh` (`T23_OEM_KO`, built `tx-isp-t23.o`).
+
 ## ISP OSD
 
 The ISP-drawn OSD (libimp `IMP_ISP_Tuning_*OsdRgn` / `IMP_OSD_*_ISP`, used by

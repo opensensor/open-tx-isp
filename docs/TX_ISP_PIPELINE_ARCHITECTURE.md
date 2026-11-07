@@ -1359,11 +1359,11 @@ For channel N: add `(N << 8)` to base offset.
 
 | Entry | Purpose | Write Commands |
 |-------|---------|----------------|
-| `isp-w00` | VIN frame counter | - |
-| `isp-w01` | CSI status/frame count | `snapraw`, `enable`, `disable` |
+| `isp-w00` | VIC frame counter (T31: `vic_dev->frame_count`, the first value of `isp-w02`; #231) | - |
+| `isp-w01` | VIC frame counter (T31, as isp-w00) | `snapraw`, `enable`, `disable` |
 | `isp-w02` | VIC statistics (critical format) | `snapraw [N]`, `snapnv12 [N]`, `enable`, `disable` |
 | `vic-mdma` | MDMA register snapshots (5 banks) | - |
-| `isp-fs` | Frame source status | `enable`, `disable` |
+| `isp-fs` | VIC frame counter (T31, as isp-w00; the OEM prints the framesource status here) | `enable`, `disable` |
 | `isp-m0` | ISP core status | `enable`, `disable` |
 | `clks` | Clock rates (cgu_isp, isp, csi) | - |
 
