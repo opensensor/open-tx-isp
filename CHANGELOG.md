@@ -4,6 +4,12 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-07: T40 frame AE meters the hardware AE statistics like the OEM (#232; device check pending)
+
+- Cause (Fable review audit/issue232/FABLE_REVIEW.md, comp sweep run-1107-1040): the comp code is OEM-equal, but the #84 path metered the sampled NV12 Y through the inverse bank gamma; the rest of the open tone path stayed in, so the "statistic" grew ~EV^0.66 where the OEM RAW statistic grows ~EV^1.03. Effect: open 22 % less EV at comp 128 (3335 vs 4285) and far too little below 128 (EV x0.27 / x0.40 at comp 40 / 80 vs the vendor's x0.39 / x0.63).
+- Now the OEM metering (`t40_aet_wmean`, `t40_aet_hl_boost`) reads what `tisp_ae_long_weight_mean2` / `tisp_ae_long_alogrithm` read: the hardware AE zone band sums and counts (pstMainAeOri +80/+84/+88, +96/+100) with the zone geometry table (+284) and the RAW histogram (+104), copied with interrupts off, while the AE statistics interrupts run (both within 1 s, as GetAeStatistics; `t40_ae_stats_src=2` forces the frame grid). The NV12 inverse-gamma path stays as the fallback. Comp word, lists and target unchanged. `t40_ae_api` line `oem` shows `hw=1` when the hardware statistics are used.
+- Not changed: the IT floor. Vendor lowest IT in both runs = 2 of its antiflicker steps (1350 = 2 x 675, 1500 = 2 x 750) with free gain; the open floor is its own step (450 lines at 50 Hz); the different vendor step length is open.
+
 ## 2026-11-07: T40 AeTargetComp acts like the OEM on every AE path (#232; host test, Eufy check pending)
 
 - Report (#232, Eufy c1 rows of the awb2 run): ae_compensation 40/128/200 gave open frame Y 39.8/115.3/239.7 (EV 625/5561/56853), vendor 92.6/109.5/140.5 (EV 1689/4269/10423). That run used a module without the #84 AE target, so the legacy path scaled the OUTPUT-Y target by the comp factor (`t40_ae_comp_target`, 122 x 40/128 = 38).

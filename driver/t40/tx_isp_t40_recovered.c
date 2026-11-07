@@ -9449,7 +9449,8 @@ static uint t40_ae_hi_thr T40C2;
 module_param_named(t40_ae_hi_thr, t40_ae_hi_thr, uint, 0644);
 static bool t40_ae_oem_live T40C2;              /* the last sample used the OEM target / metering */
 static uint32_t t40_ae_oem_tout T40C2;          /* its target (output Y) */
-static uint32_t t40_ae_oem_diag[6] T40C2;       /* luma (stats), luma after the highlight term, EV, target (stats), aim EV, luma out */
+static uint32_t t40_ae_oem_diag[6] T40C2;
+static bool t40_ae_oem_hw T40C2;                /* #232: the last OEM metering used the hardware AE statistics */       /* luma (stats), luma after the highlight term, EV, target (stats), aim EV, luma out */
 
 static uint32_t regtrace_t40_frame_3a_target_eff(void)
 {
@@ -76907,7 +76908,7 @@ static int t40_ae_api_get(char *buf, const struct kernel_param *kp)
         "expr freeze=%u it_man=%u(%u lines) ag_man=%u(idx %u) ispdg_man=%u min_ag_idx=%u caps it=%u ag=%u ispdg=%u af_step=%u\n"
         "cur it=%u again=%u ispdg=%u frame zone77=%u hist_n=%u %ux%u\n"
         "hw hist irqs=%u age=%ums sum=%u zone irqs=%u age=%ums tbl rows=%u cols=%u colw0=%u rowh0=%u src=%u\n"
-        "oem on=%u live=%u luma=%u hl=%u ev=%u tlin=%u aim=%u lout=%u tout=%u hi_thr=%u af_night_bin=%u req_n=%u/%u/%u\n",
+        "oem on=%u live=%u hw=%u luma=%u hl=%u ev=%u tlin=%u aim=%u lout=%u tout=%u hi_thr=%u af_night_bin=%u req_n=%u/%u/%u\n",
         sc.comp, regtrace_t40_frame_3a_target_eff(), READ_ONCE(regtrace_frame_3a_last_luma),
         READ_ONCE(t40_ae_metered), READ_ONCE(t40_ae_stable), sc.hlc_en, sc.hlc_str, sc.blc_en, sc.blc_str,
         t40_ae_weight_on ? 1U : 0U, t40_ae_ld32(t40_ae_face, 0), t40_ae_speed[0], t40_ae_speed[1],
@@ -76922,7 +76923,7 @@ static int t40_ae_api_get(char *buf, const struct kernel_param *kp)
         regtrace_is_kernel_ptr((void *)tbl) ? tbl[1] : 0U, regtrace_is_kernel_ptr((void *)tbl) ? tbl[3] : 0U,
         regtrace_is_kernel_ptr((void *)tbl) ? tbl[4] : 0U, regtrace_is_kernel_ptr((void *)tbl) ? tbl[19] : 0U,
         t40_ae_stats_src,
-        t40_ae_target_oem, READ_ONCE(t40_ae_oem_live) ? 1U : 0U, t40_ae_oem_diag[0], t40_ae_oem_diag[1],
+        t40_ae_target_oem, READ_ONCE(t40_ae_oem_live) ? 1U : 0U, READ_ONCE(t40_ae_oem_hw) ? 1U : 0U, t40_ae_oem_diag[0], t40_ae_oem_diag[1],
         t40_ae_oem_diag[2], t40_ae_oem_diag[3], t40_ae_oem_diag[4], t40_ae_oem_diag[5], READ_ONCE(t40_ae_oem_tout),
         t40_ae_hi_thr, t40_ae_af_night_bin ? 1U : 0U, t40_ae_af_req_set_n ? 1U : 0U, t40_ae_af_req_mode_n,
         t40_ae_af_req_freq_n);
@@ -77225,6 +77226,57 @@ static void regtrace_frame_3a_sample(int channel, uint32_t y_phys, uint32_t uv_p
             uint32_t evl[T40_AET_N], tgl[T40_AET_N], ev, aim, tl, ag;
             const uint16_t *g = (const uint16_t *)((const uint8_t *)(uintptr_t)tparamsN[0] + T40_GAMMA_BIN_OFF);
 
+            /*
+             * #232: the OEM meters the hardware AE statistics (RAW domain, linear in EV): tisp_ae_long_weight_mean2 reads
+             * the zone band sums / counts pstMainAeOri +80/+84/+88 / +96/+100 with the geometry table +284, and
+             * tisp_ae_long_alogrithm the histogram +104.  The NV12 Y through the inverse gamma kept the rest of the open
+             * tone path (luma ~ EV^0.66 instead of ~EV^1, Eufy comp sweep run-1107-1040), so it is only the fallback
+             * when the hardware statistics do not run (same rule as GetAeStatistics; t40_ae_stats_src 2 = frame grid).
+             */
+            const uint8_t *ori = pstMainAeOri_storage;
+            const uint16_t *tbl = (const uint16_t *)(uintptr_t)*(const uint32_t *)(ori + 284);
+            uint32_t now = (uint32_t)jiffies, rows = T40_AE_ZONE_N, cols = T40_AE_ZONE_N;
+            bool hw = READ_ONCE(t40_ae_stats_src) != 2U &&
+                      READ_ONCE(t40_ae_hw_zone_irqs) && now - READ_ONCE(t40_ae_hw_zone_jif) < (uint32_t)HZ &&
+                      READ_ONCE(t40_ae_hw_hist_irqs) && now - READ_ONCE(t40_ae_hw_hist_jif) < (uint32_t)HZ &&
+                      regtrace_is_kernel_ptr((void *)tbl) &&
+                      regtrace_is_kernel_ptr((void *)(uintptr_t)*(const uint32_t *)(ori + 80)) &&
+                      regtrace_is_kernel_ptr((void *)(uintptr_t)*(const uint32_t *)(ori + 84)) &&
+                      regtrace_is_kernel_ptr((void *)(uintptr_t)*(const uint32_t *)(ori + 88)) &&
+                      regtrace_is_kernel_ptr((void *)(uintptr_t)*(const uint32_t *)(ori + 96)) &&
+                      regtrace_is_kernel_ptr((void *)(uintptr_t)*(const uint32_t *)(ori + 100)) &&
+                      regtrace_is_kernel_ptr((void *)(uintptr_t)*(const uint32_t *)(ori + 104));
+
+            if (hw && (!tbl[1] || tbl[1] > T40_AE_ZONE_N || !tbl[3] || tbl[3] > T40_AE_ZONE_N))
+                hw = false;
+            if (hw) {
+                static const uint32_t off[5] = { 80, 84, 88, 96, 100 };
+                unsigned long iflags;
+                uint32_t j;
+
+                rows = tbl[1];
+                cols = tbl[3];
+                for (k = 0; k < T40_AE_ZONE_N; k++) {
+                    colw[k] = tbl[4 + k];
+                    rowh[k] = tbl[19 + k];
+                }
+                npix = (uint32_t)colw[0] * rowh[0] * cols * rows;   /* OEM tisp_ae_long_alogrithm */
+                local_irq_save(iflags);   /* the AE statistics ISR rewrites them (GetAeStatistics does the same) */
+                for (j = 0; j < 5U; j++) {
+                    const uint32_t *src = (const uint32_t *)(uintptr_t)*(const uint32_t *)(ori + off[j]);
+
+                    memcpy(j < 3U ? s[j] : c[j - 3U], src, sizeof(s[0]));
+                }
+                {
+                    const uint32_t *hb = (const uint32_t *)(uintptr_t)*(const uint32_t *)(ori + 104);
+
+                    for (k = 0; k < T40_AE_BINS; k++)
+                        hs[k] = hb[k] & 0x1fffffU;
+                }
+                local_irq_restore(iflags);
+                for (z = 0; z < T40_AE_ZONES; z++)
+                    wz[z] = t40_ae_weight_on ? f3a_weight[z] : b->w[z];
+            } else {
             for (k = 0; k < T40_AE_ZONE_N; k++) {
                 rowh[k] = (uint16_t)rh;
                 colw[k] = (uint16_t)cw;
@@ -77240,8 +77292,10 @@ static void regtrace_frame_3a_sample(int channel, uint32_t y_phys, uint32_t uv_p
             }
             for (k = 0; k < T40_AE_BINS; k++)
                 hs[k] = hn ? (uint32_t)div64_u64((uint64_t)f3a_lhist[k] * npix, hn) : 0U;
+            }
+            WRITE_ONCE(t40_ae_oem_hw, hw);
             t40_aet_band_params(b, 0, &p3, &p4, &p10);
-            lum = t40_aet_wmean(s[0], s[1], s[2], c[0], c[1], rowh, colw, T40_AE_ZONE_N, T40_AE_ZONE_N, wz, p3, p4, p10);
+            lum = t40_aet_wmean(s[0], s[1], s[2], c[0], c[1], rowh, colw, rows, cols, wz, p3, p4, p10);
             lumb = b->hl[0] == 1U ? t40_aet_hl_boost(lum, hs, b->zone[35], p4, p10, npix) : lum;
             ag = tx_isp_exp2_u32(regtrace_gc4653_again_log2_gain(READ_ONCE(regtrace_ae_soft_cur_again)), 16, 10);
             ev = t40_aet_ev_q10(READ_ONCE(regtrace_ae_soft_cur_it), ag ? ag : 1024U,
