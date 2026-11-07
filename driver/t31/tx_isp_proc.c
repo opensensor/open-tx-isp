@@ -37,6 +37,20 @@ struct proc_context {
 };
 
 /* ISP-W00 file operations - matches reference driver behavior */
+/*
+ * isp-w00 / isp-w01 / isp-fs print one integer, the VIC frame counter
+ * (vic_dev->frame_count, OEM vic +0x160, the value isp-w02 prints first).
+ * isp->frame_count is the "ch0 done" counter of isp-m0: it counts channel 0
+ * completions only and stops while channel 0 has no queued buffer although
+ * the VIC still runs (#231 L1).
+ */
+static u32 tx_isp_proc_vic_frames(const struct tx_isp_dev *isp)
+{
+    const struct tx_isp_vic_device *vic = isp ? isp->vic_dev : NULL;
+
+    return vic ? ACCESS_ONCE(vic->frame_count) : 0;
+}
+
 static int tx_isp_proc_w00_show(struct seq_file *m, void *v)
 {
     struct tx_isp_dev *isp = m->private;
@@ -48,7 +62,7 @@ static int tx_isp_proc_w00_show(struct seq_file *m, void *v)
 
 
     /* Reference driver outputs single integer for vic frame counter */
-    seq_printf(m, "%u", isp->frame_count);
+    seq_printf(m, "%u", tx_isp_proc_vic_frames(isp));
 
     return 0;
 }
@@ -77,7 +91,7 @@ static int tx_isp_proc_w01_show(struct seq_file *m, void *v)
     }
 
     /* Reference driver outputs single integer for vic frame counter */
-    seq_printf(m, "%u", isp->frame_count);
+    seq_printf(m, "%u", tx_isp_proc_vic_frames(isp));
 
     return 0;
 }
@@ -219,7 +233,7 @@ static int tx_isp_proc_fs_show(struct seq_file *m, void *v)
     }
 
     /* FS proc entry for Frame Source status */
-    seq_printf(m, "%u", isp->frame_count);
+    seq_printf(m, "%u", tx_isp_proc_vic_frames(isp));
 
     return 0;
 }
