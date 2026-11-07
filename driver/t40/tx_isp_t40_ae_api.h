@@ -471,6 +471,41 @@ static inline u32 t40_ae_af_trade_again(u32 it, u32 new_it, u32 again,
 }
 
 /*
+ * #219 C1: the per-index log2 gain the SENSOR applies (its alloc_again floors the ladder value to its own table; the
+ * OEM AE likewise works with the gain alloc_again returns, tisp_ae_long_tune2 l.722 + the sensor allocation), cached
+ * for the frame AE: refilled when key (alloc_again pointer / enable) changes or after `period` lookups, so a rung
+ * trade costs array reads, not up to 26 alloc_again table walks.  sensor_log2 must be monotonic in idx like the
+ * ladder (a floor of a rising ladder is).
+ */
+struct t40_ae_gain_cache {
+	u32 key, uses, valid;
+	u32 g[T40_AE_AGAIN_LADDER_MAX + 1U];
+};
+
+static inline void t40_ae_gain_cache_sync(struct t40_ae_gain_cache *c, u32 key, u32 period,
+					  u32 (*sensor_log2)(u32 idx))
+{
+	u32 i;
+
+	if (c->valid && c->key == key && c->uses < period)
+		return;
+	for (i = 0; i <= T40_AE_AGAIN_LADDER_MAX; i++)
+		c->g[i] = sensor_log2(i);
+	for (i = 1; i <= T40_AE_AGAIN_LADDER_MAX; i++)	/* keep it monotonic for the trade loops */
+		if (c->g[i] < c->g[i - 1U])
+			c->g[i] = c->g[i - 1U];
+	c->key = key;
+	c->uses = 0;
+	c->valid = 1;
+}
+
+static inline u32 t40_ae_gain_cache_get(struct t40_ae_gain_cache *c, u32 idx)
+{
+	c->uses++;
+	return c->g[idx > T40_AE_AGAIN_LADDER_MAX ? T40_AE_AGAIN_LADDER_MAX : idx];
+}
+
+/*
  * 16.16 log2 of the exposure change of a rung move (it, again) ->
  * (new_it, new_again) traded as above: its magnitude (up for new_it > it,
  * down otherwise).

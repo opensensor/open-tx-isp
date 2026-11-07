@@ -348,6 +348,12 @@ static u32 t_log2_gain(u32 i)
 	return gc_lut[i > 25U ? 25U : i];
 }
 
+static struct t40_ae_gain_cache *t_cache;
+static u32 t_cache_get(u32 idx)
+{
+	return t40_ae_gain_cache_get(t_cache, idx);
+}
+
 static double t_exp2(double x)
 {
 	double r = 1.0, term = 1.0, f;
@@ -471,6 +477,59 @@ static double af_sim_run(double luma_per_line, u32 target, int amp, int lag, int
 		af_sim_step(&s, l < 1 ? 1U : (u32)l, target, legacy);
 	}
 	return ev_hi / ev_lo;
+}
+
+/* #219 C1: a sensor whose own gain table is coarser than the GC4653 ladder (floors to 29491 / 65536 log2 = 1.366x steps,
+ * with one non-monotonic glitch) and the cached per-index gain the frame AE trades with */
+static u32 coarse_calls;
+static u32 t_coarse_log2(u32 i)
+{
+	u32 g = t_log2_gain(i);
+
+	coarse_calls++;
+	if (i == 7U)
+		return 0;	/* glitch: the cache keeps it monotonic */
+	return g / 29491U * 29491U;
+}
+
+static void test_gain_cache(void)
+{
+	struct t40_ae_gain_cache c;
+	u32 i, room = t40_ae_log2_ratio(1350, 900);
+
+	memset(&c, 0, sizeof(c));
+	t40_ae_gain_cache_sync(&c, 5, 4, t_coarse_log2);
+	assert(coarse_calls == 26U && c.valid && c.key == 5U);
+	for (i = 1; i <= 25U; i++)
+		assert(c.g[i] >= c.g[i - 1U]);
+	assert(c.g[7] == c.g[6] && c.g[2] == 29491U && c.g[3] == 29491U && c.g[4] == 58982U);
+	assert(t40_ae_gain_cache_get(&c, 99) == c.g[25]);
+	t40_ae_gain_cache_sync(&c, 5, 4, t_coarse_log2);	/* same key, 1 use < 4: no refill */
+	assert(coarse_calls == 26U);
+	t40_ae_gain_cache_sync(&c, 6, 4, t_coarse_log2);	/* new sensor key: refill */
+	assert(coarse_calls == 52U);
+	for (i = 0; i < 4U; i++)
+		(void)t40_ae_gain_cache_get(&c, i);
+	t40_ae_gain_cache_sync(&c, 6, 4, t_coarse_log2);	/* period reached: refill */
+	assert(coarse_calls == 78U && c.uses == 0);
+	/*
+	 * rung down 1350 -> 900 at idx 0 (room 0.585 stop): the GC4653 ladder trade gives idx 2 (1.39x modelled) but this
+	 * sensor applies only 29491 there; traded with the sensor gains the index goes to 3 (still 29491 <= room, idx 4 =
+	 * 58982 > room) and the modelled exposure change is the real one.
+	 */
+	{
+		/* function-pointer adapter over the cache, like t40_ae_trade_log2_gain in the driver */
+		u32 ag_gc = t40_ae_af_trade_again(1350, 900, 0, 0, 25, t_log2_gain);
+		u32 (*fn)(u32) = t_cache_get;
+		u32 ag_s, d;
+
+		t_cache = &c;
+		ag_s = t40_ae_af_trade_again(1350, 900, 0, 0, 25, fn);
+		assert(ag_gc == 2 && ag_s == 3);
+		d = t40_ae_af_trade_log2(1350, 900, 0, ag_s, fn);
+		assert(d == room - 29491U);
+	}
+	printf("gain_cache: ok (sensor trade idx 3 vs ladder 2, real exposure change %u)\n", room - 29491U);
 }
 
 static void test_af_trade(void)
@@ -891,6 +950,7 @@ int main(void)
 	test_af_speed();
 	test_expr();
 	test_af_trade();
+	test_gain_cache();
 	test_oem_split();
 	puts("tx_isp_t40_ae_api tests passed");
 	return 0;

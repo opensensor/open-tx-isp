@@ -4,6 +4,12 @@ Condensed from the open-stack campaign changelog; only open-tx-isp (kernel drive
 Newest first, grouped by date. Everything listed was device-tested on the SoC named unless
 marked otherwise. Release tags `vYYYY.MM.DD` on the `aperto` branch are planned (the first one after the long soak of the release candidate); until then dates are the reference. Branch names are historic: the topic branches were merged into `next` and deleted.
 
+## 2026-11-07: T40 AE rung trade in the gain the sensor applies (#219 C1; host test, device proof with the combined module)
+
+- The antiflicker rung trade (`t40_ae_af_trade_again` / `_log2`, frame AE in `tx_isp_t40_recovered.c`) modelled the GC4653 ladder value, but the sensor applies its own `alloc_again` floor of it (`t40_ae_sensor_again_log2`, M3); on a sensor with a coarser or offset table the trade removed a different gain than modelled and the next sample could move the rung back (Opus review 1106 C1). The OEM AE likewise works with the gain alloc_again returns.
+- Now the trades use `t40_ae_trade_log2_gain`: the per-index sensor gain cached in `struct t40_ae_gain_cache` (`tx_isp_t40_ae_api.h`), refilled when the sensor's alloc_again pointer / `t40_ae_sensor_alloc_again` changes and every 4096 lookups, kept monotonic. Context: the frame-3A worker (process context); alloc_again is a table walk without locks or bus access, at most 26 calls per refill instead of up to ~26 per rung move. `t40_ae_trade_sensor_gain=0` = the ladder as before. The OEM exposure split (`t40_ae_oem_split`) still models the ladder.
+- Host: `tx_isp_t40_ae_api_test` `test_gain_cache` (cache fill / key / period / monotonic fix; a coarse sensor table: trade index 3 vs 2 on the ladder, modelled exposure change = the applied one).
+
 ## 2026-11-06: T40 AE target and metering like the OEM, night antiflicker per tuning bank (#84; host oracle, Eufy proof pending)
 
 - Cause (light box, both stacks default AE, comp 128; FABLE_AUDIT.md B.1/B.3): the open frame AE regulated the output-Y mean on a fixed target 122 (`tx_isp_t40_recovered.c` `regtrace_frame_3a_target`): frame Y 117-121, 13 clipped chart patches, vendor 107-112 / 2-4 (1106a/f/j vs 1106g/h). At night the open stayed on the 50 Hz floor (IT 450, Y 108, 11.4 % clipped), vendor IT 176, Y 70, 0 % (1106i vs 1106g).

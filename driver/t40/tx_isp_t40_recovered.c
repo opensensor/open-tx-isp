@@ -74188,6 +74188,30 @@ static uint32_t t40_ae_sensor_again_log2(uint32_t idx)
     return log2;
 }
 
+/* #219 C1: the frame AE rung trade models the gain the sensor applies (cached t40_ae_sensor_again_log2), not the GC4653
+ * ladder value.  t40_ae_trade_sensor_gain=0 = the ladder (pre-#219). */
+static struct t40_ae_gain_cache t40_ae_trade_gc T40C2;
+static bool t40_ae_trade_sensor_gain T40C2 = true;
+module_param_named(t40_ae_trade_sensor_gain, t40_ae_trade_sensor_gain, bool, 0644);
+static void t40_ae_trade_gain_sync(void)
+{
+    uint32_t key = regtrace_t40_ae_sensor_alloc_again ? 1U : 0U;
+
+    if (regtrace_is_kernel_ptr(regtrace_sensor_subdev)) {
+        uintptr_t attr = regtrace_get_u32((uintptr_t)regtrace_sensor_subdev, 0x304);
+
+        if (regtrace_is_kernel_ptr((void *)attr))
+            key ^= (uint32_t)regtrace_get_u32(attr, 0xc4);
+    }
+    /* frame-3A worker (process context): alloc_again is a table walk without locks or bus access (sensor drivers);
+     * refilled on a new sensor / switch and every 4096 lookups */
+    t40_ae_gain_cache_sync(&t40_ae_trade_gc, key, 4096U, t40_ae_sensor_again_log2);
+}
+static uint32_t t40_ae_trade_log2_gain(uint32_t idx)
+{
+    return t40_ae_gain_cache_get(&t40_ae_trade_gc, idx);
+}
+
 int32_t tisp_ae_algo_handle(uintptr_t a0, uintptr_t a1)
 {
     const uint32_t ch = (uint32_t)a0;
@@ -77225,6 +77249,9 @@ static void regtrace_frame_3a_sample(int channel, uint32_t y_phys, uint32_t uv_p
         uint32_t man_it, man_ag, min_again, it_cap, it_floor, af_step, speed;
         bool af_normal = false, it_fixed, ag_fixed, dg_fixed, up, it_down = false;
         bool oem_split = !READ_ONCE(t40_ae_split_legacy);
+        /* #219 C1: rung trades in the gain the sensor applies */
+        uint32_t (*trade_gain)(uint32_t) = READ_ONCE(t40_ae_trade_sensor_gain) ?
+                                          t40_ae_trade_log2_gain : regtrace_gc4653_again_log2_gain;
         unsigned long flags;
 
         spin_lock_irqsave(&t40_ae_api_lock, flags);
@@ -77244,6 +77271,8 @@ static void regtrace_frame_3a_sample(int channel, uint32_t y_phys, uint32_t uv_p
                  oem_split ? t40_ae_af_it_cap(max_it, af_step) : t40_ae_af_floor(max_it, af_step);
         it_floor = (af_step && af_normal) ? af_step : regtrace_ae_soft_min_it;
         WRITE_ONCE(t40_ae_af_step_now, af_step);
+        if (trade_gain == t40_ae_trade_log2_gain)
+            t40_ae_trade_gain_sync();
 
         if (dgain_clamped)
             dgain = dgain_max;
@@ -77345,10 +77374,8 @@ static void regtrace_frame_3a_sample(int channel, uint32_t y_phys, uint32_t uv_p
                      */
                     uint32_t up_it = min_t(uint32_t, it + af_step, it_cap);
                     uint32_t up_ag = ag_fixed ? again :
-                        t40_ae_af_trade_again(it, up_it, again, min_again, max_again,
-                                              regtrace_gc4653_again_log2_gain);
-                    uint32_t ev_up = t40_ae_af_trade_log2(it, up_it, again, up_ag,
-                                                          regtrace_gc4653_again_log2_gain);
+                        t40_ae_af_trade_again(it, up_it, again, min_again, max_again, trade_gain);
+                    uint32_t ev_up = t40_ae_af_trade_log2(it, up_it, again, up_ag, trade_gain);
 
                     next_it = up_it;
                     next_ag = up_ag;
@@ -77424,8 +77451,7 @@ static void regtrace_frame_3a_sample(int channel, uint32_t y_phys, uint32_t uv_p
                     if (!protect_highlights && luma_ae <= target + again_band)
                         break;
                     if (!ag_fixed)
-                        again = t40_ae_af_trade_again(it, dn_it, again, min_again, max_again,
-                                                      regtrace_gc4653_again_log2_gain);
+                        again = t40_ae_af_trade_again(it, dn_it, again, min_again, max_again, trade_gain);
                     it = dn_it;
                     it_down = true;
                 } else {
