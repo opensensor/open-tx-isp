@@ -368,4 +368,27 @@ static inline int t40_aet_ginv_build(const uint16_t *g, uint8_t *inv)
 	return 0;
 }
 
+/*
+ * #232: AeTargetComp on an output-Y target like the OEM: the OEM scales the target in the statistics domain
+ * (tisp_ae_s_comp 0x39ed4 word x tisp_ae_long_tune2 l.214-216: target x word / 128), so on the gamma'd output the
+ * effect is far weaker than scaling the output target (Eufy c1 run, legacy path: comp 40 / 200 -> frame Y 39.8 / 239.7,
+ * vendor 92.6 / 140.5).  Used where the frame AE keeps an output-domain target (HLC / BLC / face metering).  The
+ * statistics value of base_out is the nearest gamma inverse; the scaled value is clamped to 255.
+ */
+static inline uint32_t t40_aet_comp_out(const uint16_t *g, uint32_t base_out, uint16_t word)
+{
+	uint32_t l, best = 0, bd = 0xffffffffU, d, v;
+
+	for (l = 0; l < 256U; l++) {
+		v = t40_aet_gamma8(g, l);
+		d = v > base_out ? v - base_out : base_out - v;
+		if (d < bd) {
+			bd = d;
+			best = l;
+		}
+	}
+	v = best * word >> 7;
+	return t40_aet_gamma8(g, v > 255U ? 255U : v);
+}
+
 #endif /* TX_ISP_T40_AE_TARGET_H */

@@ -119,6 +119,15 @@ int main(void)
 				if (t40_aet_gamma8(g, inv[t40_aet_gamma8(g, l)]) != t40_aet_gamma8(g, l))
 					bad++;
 			printf("%u\n", bad);
+		} else if (m == 'K') {	/* K curve[129] base comp -> t40_aet_comp_out(curve, base, comp_word(128, comp)) */
+			uint16_t g[129];
+			uint32_t base, comp;
+
+			for (i = 0; i < 129; i++)
+				g[i] = (uint16_t)rd();
+			base = rd();
+			comp = rd();
+			printf("%u\n", t40_aet_comp_out(g, base, t40_aet_comp_word(128U, comp)));
 		} else if (m == 'C') {	/* C bin comp -> word */
 			uint32_t bin = rd(), comp = rd();
 
