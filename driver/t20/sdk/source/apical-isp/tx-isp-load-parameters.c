@@ -1,5 +1,6 @@
 #include <linux/vmalloc.h>
 #include "tx-isp-load-parameters.h"
+#include "tx-isp-param-validate.h"
 
 /*****************************************************
 	the struct of ISP parameters data is as follow:
@@ -41,6 +42,43 @@ static unsigned int crc32(const unsigned int *p, unsigned int len)
 	}
 
 	return crc;
+}
+
+/*
+ * #231 L6 (not vendor): a reload used to read straight into manager->data,
+ * the buffer the day/night tables (c_day/c_night) of the last good load
+ * point into, and only then checked version, headers and CRC.  A file that
+ * was read but then rejected left those tables pointing at its contents;
+ * the next day/night switch copied them into the ISP.  The file is now read
+ * into a scratch buffer and checked here first, with the parse below walked
+ * in bounds; only a file that passes is copied into manager->data.  The fw
+ * table space (allocated at the first load) must hold the new day tables.
+ */
+static unsigned int fw_data_size;
+
+static int tx_isp_param_validate(const TXispPrivParamManage *m, const char *buf,
+				 loff_t fsize)
+{
+	static unsigned char used[_CALIBRATION_TOTAL_SIZE];
+	LookupTable **c = tmp_isp_param.calibrations;
+	struct txp_validate v = {
+		.version = m->version,
+		.flag0 = m->headers[TX_ISP_PRIV_PARAM_BASE_INDEX].flag,
+		.flag1 = m->headers[TX_ISP_PRIV_PARAM_CUSTOM_INDEX].flag,
+		.used = used,
+		.ntables = _CALIBRATION_TOTAL_SIZE,
+		.lt_size = sizeof(LookupTable),
+		.lt_dims = offsetof(LookupTable, rows),
+		.crc = crc32,
+	};
+	int index;
+
+	for (index = 0; index < _CALIBRATION_TOTAL_SIZE; index++)
+		used[index] = c[index] && c[index]->ptr;
+	/* fw table space: allocated at the first load as header0 size / 2 */
+	v.fw_cap = m->fw_data ? fw_data_size :
+		   (fsize >= 24 ? txp_rd32(buf + 16) >> 1 : 0);
+	return txp_param_validate(&v, buf, (unsigned long)fsize);
 }
 
 static void full_the_tables_space(TXispPrivParamManage *m)
@@ -87,6 +125,7 @@ void free_tx_isp_priv_param_manage(void)
 		init_tx_isp_customer_parameter(manager->customer);
 		vfree(manager->data);
 		vfree(manager->fw_data);
+		fw_data_size = 0;
 		vfree(manager);
 		manager = NULL;
 	}
@@ -105,6 +144,7 @@ TXispPrivParamManage* load_tx_isp_parameters(struct tx_isp_sensor_attribute *att
 	char file_name[64];
 	char *cursor = NULL;
 	char *fw_cursor = NULL;
+	char *scratch = NULL;
 	unsigned int size = 0;
 	LookupTable** c = NULL;
 	LookupTable** c_day = NULL;
@@ -154,14 +194,29 @@ TXispPrivParamManage* load_tx_isp_parameters(struct tx_isp_sensor_attribute *att
 		ret = -1;
 		goto failed_check_total_size;
 	}
-	/* A short read left the tail of the previous bin in the buffer. */
-	if(vfs_read(file, manager->data, fsize, pos) != fsize){
+	/* Read and check in a scratch buffer: a short read or a rejected file
+	 * must not touch the tables of the last good load (#231 L6). */
+	scratch = vmalloc(fsize);
+	if(scratch == NULL){
+		ret = -1;
+		goto failed_read;
+	}
+	if(vfs_read(file, scratch, fsize, pos) != fsize){
 		printk("ISP: short read of %s\n", file_name);
+		vfree(scratch);
 		ret = -1;
 		goto failed_read;
 	}
 	filp_close(file, NULL);
 	set_fs(old_fs);
+	if(tx_isp_param_validate(manager, scratch, fsize)){
+		printk("ISP: %s.bin rejected (version/header/CRC/size); the previous parameters stay in use\n",
+		       attr->name);
+		vfree(scratch);
+		return NULL;
+	}
+	memcpy(manager->data, scratch, fsize);
+	vfree(scratch);
 
 	cursor = manager->data;
 	if(strncmp(manager->version, cursor, TX_ISP_VERSION_SIZE)){
@@ -190,6 +245,7 @@ TXispPrivParamManage* load_tx_isp_parameters(struct tx_isp_sensor_attribute *att
 			ret = -1;
 			goto failed_malloc_fw_data;
 		}
+		fw_data_size = header->size >> 1;
 	}
 	cursor += sizeof(TXispPrivParamHeader);
 	if(header->crc != crc32((unsigned int*)cursor, header->size / 4)){

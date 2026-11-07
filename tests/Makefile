@@ -93,6 +93,7 @@ TESTS += tx_isp_t23_crumbs_test
 TESTS += tx_isp_t23_scratch_test
 TESTS += tx_isp_t23_bypass_test
 TESTS += tx_isp_t23_mdns_hold_test
+TESTS += tx_isp_t20_param_validate_test
 TESTS += tx_isp_t32_mem_rcfg_test
 TESTS += tx_isp_t32_msca_curve_test
 TESTS += tx_isp_t32_lsc_test
@@ -151,6 +152,9 @@ t23_awb_lum_oracle:
 # T31 defog tables from the tuning bank vs the vendor refresh (static always; Unicorn needs T31_OEM_KO + T31_TUNING_BINS, else SKIP)
 t31_defog_bank_host:
 	./t31_defog_bank_host.sh
+
+tx_isp_t20_param_validate_test: tx_isp_t20_param_validate_test.c ../driver/t20/sdk/source/apical-isp/tx-isp-param-validate.h
+	$(CC) $(CFLAGS) -o $@ $<
 
 tx_isp_t23_mdns_hold_test: tx_isp_t23_mdns_hold_test.c ../driver/t23/tx_isp_t23_mdns_hold.h
 	$(CC) $(CFLAGS) -o $@ $<
