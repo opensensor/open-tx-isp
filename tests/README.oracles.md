@@ -107,3 +107,11 @@ zone geometry, weights, band sums / counts, p3/p4/p10), `tisp_ae_long_alogrithm`
 scenes 0..2 / other, luma handed to `tisp_ae_long_tune2`; weight_mean2 hooked), `tisp_ae_long_tune2` up to its two `tisp_ae_long_target` calls (both
 EVs and the scaled EV / target lists; the target hooked) and `tisp_ae_s_comp` (the stored target-scale word). 21 source mutations. Without vendor files
 only the host inverse-gamma part runs.
+## Gamma EV follow-up (2026-11-06, #204 part 3)
+
+`t40_gamma_ev_host` covers `driver/t40/tx_isp_t40_gamma_ev.h` (`tools/ko_emu/diff_gamma_ev.py`): `tisp_gamma_interp_by_ev` (skip / force, ties,
+EV at node +-1, unsorted tables, the sc830ai / gc2053 day table in 30 % of the cases), `tisp_gamma_strength_transform` (129-entry LUT) and the
+`tisp_gamma_ev_update` gate (EV hi word saturation, manual 0/1/2, cadence against `gamma_wlut_frequency` with 64-bit frame numbers; the armed
+write is seen through a hook on `tisp_gamma_prepare_write_lut`), 1000 calls per kind against the vendor image build (also passes with the
+factory module). 14 source mutations. Not covered: the driver glue (`t40_gamma_ev_update`, the soft writer, the TOP bit 10 call site, the
+WDR store); see the deviations in the header.

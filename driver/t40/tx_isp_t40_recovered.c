@@ -1228,7 +1228,7 @@ static uintptr_t ev_change_switch;
 static uintptr_t ev_last;
 static uintptr_t ev_last_switch;
 static uintptr_t ev_short_last;
-static uint32_t ev_wdr_l[4];	/* OEM 16 bytes: tisp_wdr_*_long_ev_update write [2..3] */
+static uint32_t ev_wdr_l[4];	/* OEM 16 bytes: tisp_wdr_main_long_ev_update (vendor 0x39cb8) writes [0..1] = EV >> 10, hi >> 10 */
 static uintptr_t ev_wdr_s;
 static uintptr_t fix_y_tmp;
 static uintptr_t fliker_info;
