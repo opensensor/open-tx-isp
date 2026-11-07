@@ -674,6 +674,58 @@ static bool t23_aelift_irq(uint32_t status)
 	return true;
 }
 
+/*
+ * Stock tisp_ae_mean_update (tiziano_awb_set_lum_th_freq, hard IRQ) on the
+ * objects of the running stock AE: the AE0 zone means behind
+ * IspAe0WmeanParam +0x1c (stock tiziano_ae_para_addr: IspAeStatic +0x32ac),
+ * the zone grid _ae_parameter u16 +4 (rows) and u16 +12 (columns), _ae_reg
+ * +8.  As stock, the sum starts from the last wmean_new (stock .data 0x400)
+ * and a frame without zones keeps it.  False (no update, the caller keeps
+ * its register) when the AE is not running, the zone pointer is not inside
+ * IspAeStatic, or _ae_reg +8 is still 0 (stock would divide by it).
+ */
+static uint32_t t23_aelift_wmean_new = 0x400U;
+
+static noinline bool t23_aelift_mean_update(uint32_t *mean, uint32_t *scale)
+{
+	const uint32_t *zones;
+	uint32_t rows, cols, div, sum, r, c;
+	uintptr_t z, base = (uintptr_t)oem_IspAeStatic;
+	bool any = false;
+
+	if (!regtrace_t23_source_ae_oem || !t23_aelift_ready)
+		return false;
+	spin_lock(&t23_aelift_irq_lock);
+	if (t23_aelift_busy) {
+		spin_unlock(&t23_aelift_irq_lock);
+		return false;
+	}
+	rows = *(const uint16_t *)(oem__ae_parameter + 4);
+	cols = *(const uint16_t *)(oem__ae_parameter + 12);
+	div = *(const uint32_t *)(oem__ae_reg + 8);
+	z = *(const uint32_t *)(oem_IspAe0WmeanParam + 0x1c);
+	if (!div || !rows || !cols || rows > 15U || cols > 15U ||
+	    z < base || z + rows * 60U > base + sizeof(oem_IspAeStatic)) {
+		spin_unlock(&t23_aelift_irq_lock);
+		return false;
+	}
+	sum = t23_aelift_wmean_new;
+	for (r = 0; r < rows; r++) {
+		zones = (const uint32_t *)(z + r * 60U);
+		for (c = 0; c < cols; c++) {
+			sum += zones[c];
+			any = true;
+		}
+	}
+	if (any)
+		t23_aelift_wmean_new = sum;
+	t23_aelift_wmean_new = ((t23_aelift_wmean_new / (rows * cols)) << 10) / div;
+	*mean = t23_aelift_wmean_new;
+	*scale = div;
+	spin_unlock(&t23_aelift_irq_lock);
+	return true;
+}
+
 static void t23_aelift_work_fn(struct work_struct *work)
 {
 	struct t23_aelift_event ev[T23_AELIFT_EVENTS];

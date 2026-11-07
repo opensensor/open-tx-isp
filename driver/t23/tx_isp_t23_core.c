@@ -14059,6 +14059,9 @@ static void regtrace_t23_source_awb_stats_irq(uint32_t status,
 
     regtrace_t23_source_awb_stats_snapshot(status);
     system_reg_write(0xb000U, 1U);
+    /* stock awb_interrupt_static: after the statistics, before event 9 */
+    if (awb_irq)
+        t23x_awb_set_lum_th_freq();
 }
 
 static uint32_t regtrace_t23_ccm_profile_dp[5];
@@ -44768,6 +44771,16 @@ int32_t tisp_event_push(uint32_t channel, const void *event)
      * tisp_event_process(), so the stock queues are never set up: every
      * event is dropped and counted as on a full queue.  Not touching the
      * queues here lets gcc drop tisp_event_queues (2 x 3868 B .bss).
+     *
+     * The stock per-frame event flows run elsewhere (#231 L3): AE0 (event
+     * 1) and ADR / defog (events 2 / 3) as lifted stock code, dispatched by
+     * core status bit from the core ISR with a work item in place of the
+     * event thread (tx_isp_t23_ae_oem_glue.inc t23_aelift_event_push,
+     * tx_isp_t23_adr_oem_glue.inc t23_adrlift_event_push, counters
+     * adr_oem_runs); AWB (irq_func_cb[30] awb_interrupt_static, event 9
+     * JZ_Isp_Awb, event 8 tisp_ct_update) as regtrace_t23_source_awb_stats_irq
+     * + t23x_awb_set_lum_th_freq in the ISR and the HLIL AWB work, which
+     * calls the CT updates directly.  Only this source-C path is unused.
      */
     if (channel >= TISP_EVENT_CHANNELS || !event)
         return -EINVAL;
@@ -65605,7 +65618,10 @@ int32_t tiziano_adr_init(uint32_t arg0, uint32_t width, uint32_t height)
      * Stock also registers tiziano_adr_interrupt_static as irq_func_cb[0x12];
      * irq_func_cb is only read by the stock core ISR, which this module does
      * not run (core ops +0x20 is NULL), so the slot stays empty and the
-     * recovered handler is not linked.
+     * recovered handler is not linked.  This is the source_adr_oem=0 path
+     * (static curves).  The stock dynamic ADR (default, source_adr_oem=1)
+     * runs as lifted stock code from core status bit 18 and a work item:
+     * tx_isp_t23_adr_oem_glue.inc t23_adrlift_irq / t23_adrlift_adr_work_fn.
      */
     if (regtrace_t23_source_adr_dynamic)
         tisp_event_set_cb(0, 2, (void *)(uintptr_t)tisp_adr_process);
@@ -101172,6 +101188,14 @@ int32_t system_reg_write(uint32_t a0, uint32_t a1)
      * lw base; addu; sw; jr - the vendor module contains no `sync` at all)
      * and as writel() on this kernel (no barrier outside Octeon).  The
      * former wmb() put a `sync` after every inlined register write.
+     *
+     * #231 L2 audit: no register write here starts a device read of memory
+     * the CPU wrote through the cache.  Every dma_cache_sync of this module
+     * is on a statistics ring the ISP writes (AE/AWB/ADR/defog/AF, synced
+     * before the CPU reads it); frame buffers and OSD pictures are
+     * physical addresses owned by user space.  The explicit wmb() of the
+     * MSCA/VIC/ISR paths (not this function) are kept.  Vendor module
+     * 7695c89c: 0 `sync` instructions; this module still has 57.
      */
     *(volatile uint32_t *)(base + a0) = a1;
     return 0;

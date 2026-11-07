@@ -32,6 +32,75 @@ static uint32_t regtrace_t23_awb_absdiff(uint32_t a, uint32_t b)
 }
 
 /*
+ * Stock awb_interrupt_static -> tiziano_awb_set_lum_th_freq, on every AWB
+ * statistics interrupt (core status bit 30, stock irq_func_cb[30]):
+ *   0xb038 = par[176] << 16 | par[172] << 8 | max(1, min(wmean, par[168]) * s >> 10)
+ * with _awb_parameter (IQ 0x1028, 180 bytes, stock tiziano_awb_params_refresh)
+ * and wmean / s from stock tisp_ae_mean_update over the AE0 zone means of
+ * the running AE (t23_aelift_mean_update).  The three IQ words are read
+ * with the bank (stream start, day/night) since the interrupt cannot read
+ * the file.  source_awb_lum_th=0 keeps the fixed startup value 0x0001f005.
+ */
+#define T23X_AWB_LUM_PAR_OFFSET (0x1028U + 168U)
+static bool t23x_awb_lum_th_en = true;
+module_param_named(source_awb_lum_th, t23x_awb_lum_th_en, bool, 0644);
+MODULE_PARM_DESC(source_awb_lum_th,
+                 "stock per-interrupt AWB luminance threshold 0xb038 from the AE mean (default 1); 0 = fixed startup value");
+static DEFINE_SPINLOCK(t23x_awb_lum_lock);
+/* [0] cap (+168), [1] bits 15:8 (+172), [2] bits 23:16 (+176) */
+static uint32_t t23x_awb_lum_par[3];
+static bool t23x_awb_lum_par_valid;
+/* 0xb038 writes by the AWB interrupt, last value written */
+static uint t23x_awb_lum_th_runs;
+static uint t23x_awb_lum_th_last;
+module_param_named(awb_lum_th_runs, t23x_awb_lum_th_runs, uint, 0444);
+MODULE_PARM_DESC(awb_lum_th_runs, "AWB interrupts that rewrote 0xb038 (stock tiziano_awb_set_lum_th_freq)");
+module_param_named(awb_lum_th_last, t23x_awb_lum_th_last, uint, 0444);
+MODULE_PARM_DESC(awb_lum_th_last, "last 0xb038 value written by the AWB interrupt");
+
+static bool t23_aelift_mean_update(uint32_t *mean, uint32_t *scale);
+
+static void t23x_awb_lum_load_bank(void)
+{
+    uint32_t par[3];
+    unsigned long flags;
+    bool ok;
+
+    ok = !regtrace_t23_read_tuning_data(T23X_AWB_LUM_PAR_OFFSET, par,
+                                        sizeof(par));
+    spin_lock_irqsave(&t23x_awb_lum_lock, flags);
+    if (ok)
+        memcpy(t23x_awb_lum_par, par, sizeof(par));
+    t23x_awb_lum_par_valid = ok;
+    spin_unlock_irqrestore(&t23x_awb_lum_lock, flags);
+}
+
+/* hard IRQ, after the AE0 handlers of the same interrupt */
+static noinline void t23x_awb_set_lum_th_freq(void)
+{
+    uint32_t mean, scale, lum, val;
+
+    if (!t23x_awb_lum_th_en)
+        return;
+    spin_lock(&t23x_awb_lum_lock);
+    if (!t23x_awb_lum_par_valid ||
+        !t23_aelift_mean_update(&mean, &scale)) {
+        spin_unlock(&t23x_awb_lum_lock);
+        return;
+    }
+    lum = (min(mean, t23x_awb_lum_par[0]) * scale) >> 10;
+    if (!lum)
+        lum = 1;
+    val = (t23x_awb_lum_par[2] << 16) | (t23x_awb_lum_par[1] << 8) | lum;
+    spin_unlock(&t23x_awb_lum_lock);
+    /* stock system_reg_write_awb(1, ...): 0xb000 = 1 before the write */
+    system_reg_write(0xb000U, 1U);
+    system_reg_write(0xb038U, val);
+    t23x_awb_lum_th_last = val;
+    t23x_awb_lum_th_runs++;
+}
+
+/*
  * The cluster and trend objects from the active IQ bank, as stock
  * tiziano_awb_params_refresh (stream start, day/night switch): the IQ
  * status word and block become *_api_status[0] and *_api_para, the pending
@@ -47,6 +116,8 @@ static void regtrace_t23_awb_api_load_bank(void)
     uint32_t tr[T23X_AWB_TREND_WORDS];
     uint32_t *st;
 
+    /* stock tiziano_awb_params_refresh also reloads _awb_parameter */
+    t23x_awb_lum_load_bank();
     if (regtrace_t23_read_tuning_data(REGTRACE_T23_AWB_CLUSTER_STATUS_OFFSET,
                                       &cl_status, sizeof(cl_status)) ||
         regtrace_t23_read_tuning_data(REGTRACE_T23_AWB_CLUSTER_OFFSET, cl,

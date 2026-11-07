@@ -115,3 +115,12 @@ EV at node +-1, unsorted tables, the sc830ai / gc2053 day table in 30 % of the c
 write is seen through a hook on `tisp_gamma_prepare_write_lut`), 1000 calls per kind against the vendor image build (also passes with the
 factory module). 14 source mutations. Not covered: the driver glue (`t40_gamma_ev_update`, the soft writer, the TOP bit 10 call site, the
 WDR store); see the deviations in the header.
+
+## T23 AWB luminance threshold (2026-11-07, #231)
+
+`t23_awb_lum_oracle` runs `driver/t23/audit/awb_lum_emu.py` (pure-Python MIPS emulator, no Unicorn): the built
+`driver/t23/tx-isp-t23.o` (`t23x_awb_set_lum_th_freq` + `t23_aelift_mean_update`) against the vendor
+`tiziano_awb_set_lum_th_freq` / `tisp_ae_mean_update`, 0xb038 and wmean_new frame by frame. Needs
+`T23_OEM_KO=<vendor tx-isp-t23.ko (ISVP T23 1.3.0)>` and a built T23 module (`T23_OBJ`, default
+`driver/t23/tx-isp-t23.o`; the .ko has no local symbols); else SKIP.
+
