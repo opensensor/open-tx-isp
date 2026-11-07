@@ -18,6 +18,7 @@
 #include <linux/mm.h>
 #include <linux/poll.h>
 #include <linux/device.h>
+#include <linux/semaphore.h>
 #include <linux/platform_device.h>
 #include <linux/ioport.h>
 #include <linux/miscdevice.h>
@@ -2777,13 +2778,25 @@ int32_t apical_fw_init(int32_t *arg1)
 	/* Not OEM: every core init (stream restart, day/night re-init) used to
 	 * leak the previous semaphore, the memset dropped its only pointer.
 	 * The fw thread is stopped here (isp_core_ops_init only re-inits in
-	 * STATE_STOP), so nothing waits on it; free it after the memset, so the
-	 * window with a stale pointer stays the vendor one (NULL). */
+	 * STATE_STOP), so nothing waits on it.  The semaphore object is kept
+	 * and re-initialised like init_semaphore (sema_init(psem, 1)) instead
+	 * of freed: a raiser that read fw+0x0c before the memset (Apical IRQ
+	 * apical_fw_raise_event, an API path through apical_isp_raise_event)
+	 * still finds valid memory (#231 L5, was a use-after-free window).
+	 * Local interrupts are off across the memset and the re-init, so no
+	 * Apical handler sees the NULL pointer the vendor leaves there. */
 	uintptr_t old_sem = *(uintptr_t *)((uintptr_t)arg1 + 0x0c);
+	unsigned long flags;
+
+	local_irq_save(flags);
 	memset(arg1, 0, 0x2fd0);
-	if (old_sem)
-		destroy_semaphore((uintptr_t)&old_sem);
-	init_semaphore((uintptr_t)arg1 + 0x0c);
+	if (old_sem) {
+		*(uintptr_t *)((uintptr_t)arg1 + 0x0c) = old_sem;
+		sema_init((struct semaphore *)old_sem, 1);
+	}
+	local_irq_restore(flags);
+	if (!old_sem)
+		init_semaphore((uintptr_t)arg1 + 0x0c);
 	apical_fw_interrupts_init(arg1);
 	((void **)arg1)[1] = 1;
 	((void **)arg1)[0] = 0;
