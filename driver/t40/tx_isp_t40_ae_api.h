@@ -45,6 +45,7 @@
 #define t40_ae_div64(a, b) div64_u64((a), (b))
 #else
 #include <stdint.h>
+#include <stdbool.h>
 #include <errno.h>
 #include <string.h>
 typedef uint64_t u64;
@@ -470,6 +471,41 @@ static inline u32 t40_ae_af_trade_again(u32 it, u32 new_it, u32 again,
 }
 
 /*
+ * #219 C1: the per-index log2 gain the SENSOR applies (its alloc_again floors the ladder value to its own table; the
+ * OEM AE likewise works with the gain alloc_again returns, tisp_ae_long_tune2 l.722 + the sensor allocation), cached
+ * for the frame AE: refilled when key (alloc_again pointer / enable) changes or after `period` lookups, so a rung
+ * trade costs array reads, not up to 26 alloc_again table walks.  sensor_log2 must be monotonic in idx like the
+ * ladder (a floor of a rising ladder is).
+ */
+struct t40_ae_gain_cache {
+	u32 key, uses, valid;
+	u32 g[T40_AE_AGAIN_LADDER_MAX + 1U];
+};
+
+static inline void t40_ae_gain_cache_sync(struct t40_ae_gain_cache *c, u32 key, u32 period,
+					  u32 (*sensor_log2)(u32 idx))
+{
+	u32 i;
+
+	if (c->valid && c->key == key && c->uses < period)
+		return;
+	for (i = 0; i <= T40_AE_AGAIN_LADDER_MAX; i++)
+		c->g[i] = sensor_log2(i);
+	for (i = 1; i <= T40_AE_AGAIN_LADDER_MAX; i++)	/* keep it monotonic for the trade loops */
+		if (c->g[i] < c->g[i - 1U])
+			c->g[i] = c->g[i - 1U];
+	c->key = key;
+	c->uses = 0;
+	c->valid = 1;
+}
+
+static inline u32 t40_ae_gain_cache_get(struct t40_ae_gain_cache *c, u32 idx)
+{
+	c->uses++;
+	return c->g[idx > T40_AE_AGAIN_LADDER_MAX ? T40_AE_AGAIN_LADDER_MAX : idx];
+}
+
+/*
  * 16.16 log2 of the exposure change of a rung move (it, again) ->
  * (new_it, new_again) traded as above: its magnitude (up for new_it > it,
  * down otherwise).
@@ -490,6 +526,126 @@ static inline u32 t40_ae_af_trade_log2(u32 it, u32 new_it, u32 again,
 		d = ng > g ? ng - g : 0;
 	}
 	return l > d ? l - d : 0;
+}
+
+/*
+ * Largest Q10 gain d in [1024, 32767] with log2(d / 1024) <= l (16.16):
+ * the inverse of t40_ae_log2_ratio (monotonic), rounded down.
+ */
+static inline u32 t40_ae_q10_exp2_floor(u32 l)
+{
+	u32 lo = 1024U, hi = 32767U;
+
+	if (l >= 5U << 16)
+		return hi;
+	while (lo < hi) {
+		u32 mid = lo + (hi - lo + 1U) / 2U;
+
+		if (t40_ae_log2_ratio(mid, 1024U) <= l)
+			lo = mid;
+		else
+			hi = mid - 1U;
+	}
+	return lo;
+}
+
+/*
+ * #84: the integration ceiling of the OEM deflicker ladder (vendor
+ * tx-isp-t40.ko tisp_ae_long_tune2 0x35b58, decomp l.699-721): ladder entries
+ * above max_it + 20 lines are dropped, the highest remaining rung is clamped
+ * to max_it.  Eufy T40XP 50 Hz: rung 450, max_it 2241 -> 2250 kept -> 2241
+ * (the pre-#84 open cap was the rung below max_it, 1800).
+ */
+#define T40_AE_AF_TOP_SLACK	20U
+
+static inline u32 t40_ae_af_it_cap(u32 max_it, u32 step)
+{
+	u32 top;
+
+	if (!step || max_it < step)
+		return max_it;
+	top = t40_ae_af_floor(max_it + T40_AE_AF_TOP_SLACK, step);
+	return top < max_it ? top : max_it;
+}
+
+/*
+ * #84: OEM exposure split, applied exposure-neutral after the frame AE step.
+ * The vendor recomputes (integration, analog gain, digital gain) from the
+ * exposure value on every change (tisp_ae_long_tune2, deflicker ladder
+ * branch l.699-729 and l.613-626): IT = min(highest rung R <= max_it + 20
+ * with R <= EV / min gain, max_it), analog gain = EV / IT, digital gain 1x
+ * until the analog gain is at its maximum, then the rest clamped.  The open
+ * frame AE moves one stage per sample and never rebalanced, so the split
+ * depended on the path (Eufy 1106a: IT 1800 / again idx 5 / ISP dgain 2.22x
+ * vs idx 10 / 1.08x at one scene, OPUS_AE_SPLIT.md Q1).
+ *
+ * Here: the exposure above the minimum gain (gl, 16.16 log2) is re-split
+ * with the OEM priority.  IT only moves UP to the OEM rung (the loop lowers
+ * gains before IT, so a move down is never needed for the OEM order; IT
+ * fixed or a rung-down this sample: it_free = false), the analog gain index
+ * is the highest one the exposure covers, and the ISP dgain keeps only the
+ * remainder below one analog step (the OEM analog gain is continuous, this
+ * ladder has 1.17x steps) or the rest above max_again, clamped to dgain_max.
+ * Nothing is changed when IT and the gain index are already the OEM ones
+ * (the dgain bits stay as they are); the gain index rises at most one
+ * step per call (the rest stays in the dgain).  The split never raises the exposure;
+ * rounding loses < 1/1024.  Returns true when *it / *again / *dgain changed.
+ */
+static inline bool t40_ae_oem_split(u32 *it, u32 *again, u32 *dgain,
+				    u32 af_step, u32 max_it, u32 lo, u32 hi,
+				    u32 dgain_max, bool it_free,
+				    u32 (*log2_gain)(u32 idx))
+{
+	u32 i = *it, a = *again, d = *dgain, ni = i, na, gl, g0;
+
+	if (!log2_gain || !i || d < 1024U)
+		return false;
+	if (hi > T40_AE_AGAIN_LADDER_MAX)
+		hi = T40_AE_AGAIN_LADDER_MAX;
+	if (lo > hi || a < lo || a > hi)
+		return false;
+	if (dgain_max < 1024U)
+		dgain_max = 1024U;
+	g0 = log2_gain(lo);
+	gl = log2_gain(a) - g0 + t40_ae_log2_ratio(d, 1024U);
+	if (it_free && af_step && max_it >= af_step && gl) {
+		u32 top = t40_ae_af_floor(max_it + T40_AE_AF_TOP_SLACK, af_step);
+		u64 want = ((u64)i * t40_ae_q10_exp2_floor(gl)) >> 10;
+		u32 r = want >= top ? top : t40_ae_af_floor((u32)want, af_step);
+
+		/* want is rounded down: one rung more if it still fits exactly */
+		if (r >= af_step && r + af_step <= top &&
+		    (r + af_step <= i || t40_ae_log2_ratio(r + af_step, i) <= gl))
+			r += af_step;
+		while (r > i && r >= af_step && t40_ae_log2_ratio(r, i) > gl)
+			r -= af_step;
+		if (r >= af_step) {
+			u32 c = r < max_it ? r : max_it;
+
+			if (c > i) {
+				gl -= t40_ae_log2_ratio(c, i);
+				ni = c;
+			}
+		}
+	}
+	na = lo;
+	while (na < hi && log2_gain(na + 1U) - g0 <= gl)
+		na++;
+	/*
+	 * At most one analog index up per sample: the ISP dgain
+	 * acts on the next frame, the sensor gain 1-2 frames later, so a big
+	 * dgain -> again move would show as a dark frame; one 1.17x step is
+	 * no larger than a normal AE gain step.
+	 */
+	if (na > a + 1U)
+		na = a + 1U;
+	if (ni == i && na == a)
+		return false;
+	d = t40_ae_q10_exp2_floor(gl - (log2_gain(na) - g0));
+	*it = ni;
+	*again = na;
+	*dgain = d < dgain_max ? d : dgain_max;
+	return true;
 }
 
 /* ---------------- IMPISPAEExprInfo ---------------- */

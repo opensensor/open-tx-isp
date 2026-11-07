@@ -2,7 +2,7 @@
 
 Host checks that compare our C code with the instructions of the vendor module under the Unicorn
 emulator:
-`t40_ccm_conv_host t40_ccm_chain_host t40_ct_chain_host t40_dmsc_chain_host t40_mdns_chain_host t40_ysp_chain_host t40_ydns_host t40_gib_host t40_lsc_host t40_blc_host t40_ae_leaf_host t40_clm_host`
+`t40_ccm_conv_host t40_ccm_chain_host t40_ct_chain_host t40_dmsc_chain_host t40_mdns_chain_host t40_ysp_chain_host t40_ydns_host t40_gib_host t40_lsc_host t40_blc_host t40_ae_leaf_host t40_clm_host t40_ae_target_host`
 (need `T40_OEM_KO`, and `T40_CC` for the chain ones), and
 `t40_bcsh_dn_host` (`T40_TUNING_BIN`, or the initialised `external/ingenic-sdk` submodule).
 
@@ -86,3 +86,12 @@ The OEM min/max takes the 164-byte block by value (a0..a3 + stack), the C a poin
 The two Eufy builds have the same instructions for these three (only the `.bss` offset of `pst{Main,Sec}AeOri` and the string labels differ), so they are also
 compared with the factory module (`min_max_fac`, `set_exprinfo_fac`). Skipped calls: times in us (A[0] != 0) with a zero line time (OEM `divu` by zero).
 22 more mutations (113 in total; the roi_point `x1 <= x0` mutation now runs 400 calls, the new buffers changed the random stream).
+
+## AE target and metering (2026-11-06, #84)
+
+`t40_ae_target_host` covers `driver/t40/tx_isp_t40_ae_target.h` (`tools/ko_emu/diff_ae_target.py`, vendor image module): `tisp_ae_long_target`
+(return value, random sorted / unsorted node lists, Q 0/4/10/16), `tisp_ae_long_weight_mean2` (metered luma; Pweight off, AE-cache override off, random
+zone geometry, weights, band sums / counts, p3/p4/p10), `tisp_ae_long_alogrithm` (band parameters handed to weight_mean2 for highlight modes 0..3 and
+scenes 0..2 / other, luma handed to `tisp_ae_long_tune2`; weight_mean2 hooked), `tisp_ae_long_tune2` up to its two `tisp_ae_long_target` calls (both
+EVs and the scaled EV / target lists; the target hooked) and `tisp_ae_s_comp` (the stored target-scale word). 21 source mutations. Without vendor files
+only the host inverse-gamma part runs.
