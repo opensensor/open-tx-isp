@@ -16390,6 +16390,12 @@ static void tx_isp_t30_start_input_port(void)
 	APICAL_WRITE_32(TX_ISP_T30_INPUT_PORT_MODE_REQUEST, mode);
 }
 
+static void tx_isp_t30_set_raw_output_format(u32 pattern);
+static int tx_isp_t30_ispcore_get_format(void *pad, void *data);
+static int tx_isp_t30_ispcore_fifo_event(struct tx_isp_t30_subdev_pad *pad,
+					 u32 event,
+					 struct tx_isp_t30_frame_buffer *buf);
+
 static int tx_isp_t30_ispcore_video_start(
 	struct tx_isp_t30_core_video_view *core)
 {
@@ -16453,6 +16459,7 @@ static int tx_isp_t30_ispcore_video_start(
 	core->control.pattern = pattern;
 	core->control.format_start = 0;
 	core->control.format_end = ARRAY_SIZE(tx_isp_t30_isp_output_fmt) - 1;
+	tx_isp_t30_set_raw_output_format(pattern);
 
 	APICAL_WRITE_32(0x18, (APICAL_READ_32(0x18) & ~0x3U) | pattern);
 	APICAL_WRITE_32(0x10, (APICAL_READ_32(0x10) & 0xffff0000U) |
@@ -16760,9 +16767,28 @@ static int tx_isp_t30_ispcore_config_dma(void *chan,
 	u32 base = 0xb00 + index * 0x100;
 	int command_ret = 0;
 
-	if (fmt->pix.pixelformat != V4L2_PIX_FMT_NV12 &&
-	    fmt->pix.pixelformat != V4L2_PIX_FMT_NV21)
+	switch (fmt->pix.pixelformat) {
+	case V4L2_PIX_FMT_SBGGR12:
+	case V4L2_PIX_FMT_SGBRG12:
+	case V4L2_PIX_FMT_SGRBG12:
+	case V4L2_PIX_FMT_SRGGB12:
+		/*
+		 * SDK ispcore_config_dma_channel_write(), raw (bypass): one
+		 * writer, no output-mode command, CSC register left at 0x0f.
+		 */
+		APICAL_WRITE_32(base, cfmt->priv & 0x0f);
+		APICAL_WRITE_32(base + 0x04,
+				(fmt->pix.height << 16) | fmt->pix.width);
+		APICAL_WRITE_32(base + 0x20, *(u32 *)((char *)chan + 0x98));
+		APICAL_WRITE_32(index == 0 ? 0x570 : index == 1 ? 0x6b0 : 0x7b0,
+				0x0f);
+		return 0;
+	case V4L2_PIX_FMT_NV12:
+	case V4L2_PIX_FMT_NV21:
+		break;
+	default:
 		return -EINVAL;
+	}
 
 	/* UV writer followed by the Y writer, matching OEM fall-through. */
 	pr_err("tx-isp-t30: core fmt ch=%u dma UV begin\n", index);
@@ -16872,6 +16898,12 @@ static int tx_isp_t30_ispcore_stream_on(struct tx_isp_t30_subdev_pad *pad)
 		APICAL_WRITE_32(base + 0x9c,
 				chan->usingbanks ? chan->usingbanks - 1 : 0);
 		/* OEM fall-through: enable the Y writer as well. */
+		/* fall through */
+	case V4L2_PIX_FMT_SBGGR12:
+	case V4L2_PIX_FMT_SGBRG12:
+	case V4L2_PIX_FMT_SGRBG12:
+	case V4L2_PIX_FMT_SRGGB12:
+		/* SDK: the raw (bypass) formats use the primary writer only. */
 		primary = APICAL_READ_32(base) | BIT(9);
 		APICAL_WRITE_32(base, primary);
 		APICAL_WRITE_32(base + 0x1c,
@@ -16889,6 +16921,98 @@ static int tx_isp_t30_ispcore_stream_on(struct tx_isp_t30_subdev_pad *pad)
 	APICAL_WRITE_32(0x104, APICAL_READ_32(0x104) & 0xf800ffff);
 	pr_err("tx-isp-t30: core stream ch=%d running banks=%u link=%08x\n",
 	       chan->index, chan->usingbanks, pad->link.flag);
+	return 0;
+}
+
+/*
+ * Raw output entry, the last one of the table (SDK tx-isp-core.c
+ * isp_core_input_port_config(); the OEM memcpy targets were collapsed onto
+ * tx_isp_platform_device by the lift): the 12-bit Bayer fourcc of the sensor
+ * pattern, 16 bits per pixel, DMA_FORMAT_RAW16.  It is the only channel format
+ * while the ISP core is bypassed (ISP_PROCESS 0, link graph 1).
+ */
+static void tx_isp_t30_set_raw_output_format(u32 pattern)
+{
+	static const struct {
+		const char *name;
+		u32 fourcc;
+	} raw[4] = {
+		{ "Bayer formats (sRGGB)", V4L2_PIX_FMT_SRGGB12 },
+		{ "Bayer formats (sGRBG)", V4L2_PIX_FMT_SGRBG12 },
+		{ "Bayer formats (sGBRG)", V4L2_PIX_FMT_SGBRG12 },
+		{ "Bayer formats (sBGGR)", V4L2_PIX_FMT_SBGGR12 },
+	};
+	struct tx_isp_t30_frame_channel_format *f =
+		&tx_isp_t30_isp_output_fmt[ARRAY_SIZE(tx_isp_t30_isp_output_fmt) - 1];
+
+	strlcpy((char *)f->name, raw[pattern & 3].name, sizeof(f->name));
+	f->fourcc = raw[pattern & 3].fourcc;
+	f->depth = 16;
+	f->priv = 6;	/* DMA_FORMAT_RAW16 */
+}
+
+/*
+ * SDK ispcore_frame_channel_get_fmt(): the channel format, while the ISP core
+ * is bypassed the raw entry with crop and scaler off.  The lifted bypass branch
+ * stored the fields into unrelated globals (collapsed relocations).
+ */
+static int tx_isp_t30_ispcore_get_format(void *pad, void *data)
+{
+	struct tx_isp_t30_frame_image_format *fmt = data;
+	void *chan;
+	void *core;
+	u32 end;
+
+	if (!pad || IS_ERR(pad) || !fmt)
+		return 0;
+	chan = *(void **)((char *)pad + 0x20);
+	if (!chan || IS_ERR(chan))
+		return 0;
+	core = *(void **)((char *)chan + 0x58);
+	if (!core || IS_ERR(core) || *(u32 *)((char *)core + 0x160) != 1) {
+		memcpy(fmt, chan, sizeof(*fmt));
+		return 0;
+	}
+	end = *(u32 *)((char *)core + 0x150);
+	if (end >= ARRAY_SIZE(tx_isp_t30_isp_output_fmt))
+		end = ARRAY_SIZE(tx_isp_t30_isp_output_fmt) - 1;
+	fmt->pix.width = *(u32 *)((char *)chan + 0x04);
+	fmt->pix.height = *(u32 *)((char *)chan + 0x08);
+	fmt->pix.pixelformat = tx_isp_t30_isp_output_fmt[end].fourcc;
+	fmt->pix.sizeimage = *(u32 *)((char *)chan + 0x18);
+	fmt->crop_enable = 0;
+	fmt->scaler_enable = 0;
+	return 0;
+}
+
+/*
+ * SDK ispcore_frame_channel_qbuf() / _freebufs(): buffers of a frame channel
+ * linked to the core directly (bypass graph) go to the channel fifo under its
+ * spinlock; nothing behind the LFB link.  The lifted branches kept the
+ * preempt count in an unrelated global and dropped the saved IRQ flags.
+ */
+static int tx_isp_t30_ispcore_fifo_event(struct tx_isp_t30_subdev_pad *pad,
+					 u32 event,
+					 struct tx_isp_t30_frame_buffer *buf)
+{
+	struct tx_isp_t30_core_output_channel *chan;
+	struct tx_isp_t30_frame_buffer *pos, *tmp;
+	unsigned long flags;
+
+	if (!pad || IS_ERR(pad) || (pad->link.flag & BIT(5)))
+		return 0;
+	chan = pad->priv;
+	if (!chan || IS_ERR(chan))
+		return 0;
+	spin_lock_irqsave(&chan->slock, flags);
+	if (event == TX_ISP_FRAME_EVENT_QUEUE_BUFFER) {
+		if (buf)
+			list_add_tail(&buf->entry, &chan->fifo);
+	} else {
+		list_for_each_entry_safe(pos, tmp, &chan->fifo, entry)
+			list_del_init(&pos->entry);
+	}
+	spin_unlock_irqrestore(&chan->slock, flags);
 	return 0;
 }
 
@@ -16966,6 +17090,9 @@ static int tx_isp_t30_ispcore_set_format(void *pad, void *data)
 
 	start = *(u32 *)((char *)core + 0x14c);
 	end = *(u32 *)((char *)core + 0x150);
+	/* SDK ispcore_frame_channel_try_fmt(): bypassed, only the raw entry */
+	if (*(u32 *)((char *)core + 0x160) == 1)
+		start = end;
 	cfmt = tx_isp_t30_find_output_format(fmt->pix.pixelformat,
 					      start, end);
 	if (!cfmt) {
@@ -17057,6 +17184,26 @@ int64_t ispcore_pad_event_handle(uintptr_t a0, uint32_t a1, uintptr_t a2)
 
     /* fragment 0: Prologue */
     /* function prologue: stack frame and callee-saved register setup */
+	if (a1 == TX_ISP_FRAME_EVENT_GET_FORMAT)
+		return tx_isp_t30_ispcore_get_format((void *)a0, (void *)a2);
+	if (a1 == TX_ISP_FRAME_EVENT_QUEUE_BUFFER ||
+	    a1 == TX_ISP_T30_FRAME_EVENT_FREE_BUFFER)
+		return tx_isp_t30_ispcore_fifo_event(
+			(struct tx_isp_t30_subdev_pad *)a0, a1,
+			(struct tx_isp_t30_frame_buffer *)a2);
+	if (a1 == TX_ISP_T30_FRAME_EVENT_SET_BANKS) {
+		/*
+		 * SDK ispcore_frame_channel_s_banks(): the DMA writer uses at most
+		 * 5 banks, none behind the LFB link.  Reached only when a frame
+		 * channel is linked to the core directly (bypass graph); the
+		 * lifted branch returned the bank count instead of 0.
+		 */
+		if (a0 && a2 && !(*(u32 *)(a0 + 20) & BIT(5)) &&
+		    *(void **)(a0 + 0x20))
+			*(u8 *)(*(char **)(a0 + 0x20) + 159) =
+				min_t(u32, *(u32 *)a2, 5);
+		return 0;
+	}
 	if (a1 == TX_ISP_FRAME_EVENT_SET_FORMAT)
 		return tx_isp_t30_ispcore_set_format((void *)a0, (void *)a2);
 	if (a1 == TX_ISP_FRAME_EVENT_STREAM_ON)
@@ -33654,6 +33801,19 @@ int32_t tx_isp_video_link_destroy_isra_0(void *arg1)
 
 		if (!source || !sink)
 			continue;
+		/*
+		 * A frame channel can still stream through this link when the
+		 * graph is rebuilt at run time (SetISPBypass on a running
+		 * channel).  Stop that output first so its queue (mscaler fifo)
+		 * no longer holds the channel's buffers, which user space frees
+		 * after its own STREAMOFF reaches the new graph.
+		 */
+		if (((struct tx_isp_t30_subdev_pad *)source)->state ==
+			    TX_ISP_ABI_PADSTATE_STREAM &&
+		    ((struct tx_isp_t30_subdev_pad *)sink)->state ==
+			    TX_ISP_ABI_PADSTATE_STREAM)
+			tx_isp_send_event_to_remote(sink,
+					TX_ISP_FRAME_EVENT_STREAM_OFF, NULL);
 		ret = subdev_video_destroy_link_isra_0(
 			(int32_t *)((char *)source + 8));
 		if (ret && ret != -ENOIOCTLCMD)
