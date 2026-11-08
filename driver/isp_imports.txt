@@ -103,6 +103,8 @@ t31 tx_isp_handle_sync_sensor_attr_event src:t31/gc2053.c
 t31 tx_isp_register_sensor_subdev src:t31/gc2053.c
 t31 tx_isp_sinfo_driver_add ko:sensor_sc4336p_t31.ko
 t31 tx_isp_sinfo_driver_del ko:sensor_sc4336p_t31.ko
+t31 tx_isp_sinfo_sensor_bind sdk-d93ddb9:t31/include/sensor-common.h
+t31 tx_isp_sinfo_sensor_unbind sdk-d93ddb9:t31/include/sensor-common.h
 t31 tx_isp_subdev_deinit ko:sensor_sc4336p_t31.ko
 t31 tx_isp_subdev_init ko:sensor_sc4336p_t31.ko
 t31 tx_isp_unregister_sensor_subdev src:t31/gc2053.c

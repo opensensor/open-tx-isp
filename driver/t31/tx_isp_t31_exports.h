@@ -34,6 +34,17 @@ TX_ISP_T31_EXPORT(tx_isp_handle_sync_sensor_attr_event)
 TX_ISP_T31_EXPORT(tx_isp_register_sensor_subdev)
 TX_ISP_T31_EXPORT(tx_isp_sinfo_driver_add)
 TX_ISP_T31_EXPORT(tx_isp_sinfo_driver_del)
+/*
+ * Older sensor modules (thingino master's ingenic-sdk pin, d93ddb9) call
+ * tx_isp_sinfo_sensor_bind/unbind themselves from their
+ * tx_isp_subdev_init/deinit wrappers (isp/t31/include/sensor-common.h).
+ * Newer ones leave that to tx_isp_register_sensor_subdev().  Both calls are
+ * idempotent (a slot already holding the subdev is reused, a second unbind
+ * only logs "unmatched"), so exporting them lets both generations load.
+ * T10/T20/T21/T23/T41 export them already (no whitelist there).
+ */
+TX_ISP_T31_EXPORT(tx_isp_sinfo_sensor_bind)
+TX_ISP_T31_EXPORT(tx_isp_sinfo_sensor_unbind)
 TX_ISP_T31_EXPORT(tx_isp_subdev_deinit)
 TX_ISP_T31_EXPORT(tx_isp_subdev_init)
 TX_ISP_T31_EXPORT(tx_isp_unregister_sensor_subdev)
